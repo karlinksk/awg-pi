@@ -188,7 +188,7 @@ export DEBIAN_FRONTEND=noninteractive
 apt-get update
 apt-get install -y --no-install-recommends \
   ca-certificates curl git jq build-essential make pkg-config \
-  iproute2 iputils-ping dnsutils nftables dnsmasq procps \
+  iproute2 iputils-ping iputils-arping dnsutils nftables dnsmasq procps \
   python3-minimal openssl dialog
 
 command -v nft >/dev/null || die "nft не установлен"
@@ -493,6 +493,23 @@ echo 1 >"$VPN_ENABLED_FILE"
 chmod 600 "$VPN_ENABLED_FILE"
 fi
 
+# Duplicate-address detection. In DAD mode arping returns success when no peer
+# answers for the address, so this is safe even though the Pi already owns PI_IP.
+if command -v arping >/dev/null 2>&1; then
+  if arping -D -I "$LAN_IF" -c 2 -w 3 "$PI_IP" >/dev/null 2>&1; then
+    ok "Конфликт IPv4 не обнаружен: $PI_IP"
+  else
+    die "Обнаружен возможный конфликт IPv4 для $PI_IP в LAN. Проверьте DHCP reservation и занятые адреса"
+  fi
+else
+  warn "arping не найден; проверка конфликта IPv4 пропущена"
+fi
+
+if [[ -n "${SSH_CONNECTION:-}" ]]; then
+  SSH_SRC="${SSH_CONNECTION%% *}"
+  ok "Текущая SSH-сессия обнаружена: source=$SSH_SRC; firewall сохранит SSH с LAN-интерфейса $LAN_IF"
+fi
+
 # -----------------------------------------------------------------------------
 # 7. sysctl, watchdog, nftables base setup
 # -----------------------------------------------------------------------------
@@ -566,6 +583,25 @@ table inet awg_pbr {
   set source4 {
     type ipv4_addr
     flags interval
+  }
+
+  chain input_guard {
+    type filter hook input priority filter; policy drop;
+    iifname "lo" accept
+    ct state established,related accept
+    iifname "$LAN_IF" tcp dport 22 accept
+    iifname "$LAN_IF" udp dport 53 accept
+    iifname "$LAN_IF" tcp dport 53 accept
+    iifname "$LAN_IF" ip protocol icmp accept
+    iifname "$LAN_IF" meta l4proto ipv6-icmp accept
+    iifname "$LAN_IF" udp sport 67 udp dport 68 accept
+  }
+
+  chain forward_guard {
+    type filter hook forward priority filter; policy drop;
+    ct state established,related accept
+    iifname "$LAN_IF" ip saddr $LAN_CIDR oifname "$LAN_IF" accept
+    iifname "$LAN_IF" ip saddr $LAN_CIDR oifname "$VPN_IF" accept
   }
 
   chain prerouting_mark {
