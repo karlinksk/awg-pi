@@ -6,6 +6,8 @@ META_DIR=/etc/awg-pbr/sources/opencck/metadata
 BASE_URL=https://iplist.opencck.org/
 AWG_ROUTE=/usr/local/sbin/awg-route
 LOG_TAG=awg-opencck
+# shellcheck disable=SC1091
+source /usr/local/lib/awg-pi/common.sh
 mkdir -p "$META_DIR"
 
 force=0
@@ -17,37 +19,6 @@ for arg in "$@"; do
   esac
 done
 
-valid_domain(){
-  [[ "$1" =~ ^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$ ]]
-}
-normalize_domain(){
-  printf '%s' "$1" | tr '[:upper:]' '[:lower:]' |
-    sed -E 's#^[[:space:]]+##; s#[[:space:]]+$##; s#^https?://##; s#/.*$##; s/:[0-9]+$//; s/^\*\.//; s/^\.//; s/\.$//'
-}
-validate_ip_file(){
-  python3 - "$1" "$2" <<'PY'
-import ipaddress, sys
-path, kind = sys.argv[1], sys.argv[2]
-bad=[]
-with open(path, encoding="utf-8", errors="strict") as f:
-    for n,line in enumerate(f,1):
-        s=line.split("#",1)[0].strip()
-        if not s: continue
-        try:
-            if kind=="ip4":
-                x=ipaddress.ip_address(s)
-                if x.version != 4: raise ValueError("not IPv4")
-            else:
-                x=ipaddress.ip_network(s, strict=False)
-                if x.version != 4: raise ValueError("not IPv4 CIDR")
-        except Exception:
-            bad.append((n,s))
-if bad:
-    for n,s in bad[:20]:
-        print(f"invalid line {n}: {s}", file=sys.stderr)
-    sys.exit(1)
-PY
-}
 canonicalize(){
   local kind="$1" input="$2" output="$3" raw d bad=0
   : >"$output"
@@ -56,8 +27,8 @@ canonicalize(){
       while IFS= read -r raw || [[ -n "$raw" ]]; do
         raw="${raw%%#*}"
         [[ -n "${raw//[[:space:]]/}" ]] || continue
-        d="$(normalize_domain "$raw")"
-        if ! valid_domain "$d"; then
+        d="$(awg_normalize_domain "$raw")"
+        if ! awg_valid_domain "$d"; then
           echo "OpenCCK: некорректный домен: $raw" >&2
           bad=$((bad+1)); continue
         fi
@@ -67,7 +38,7 @@ canonicalize(){
       ;;
     ip4|cidr4)
       sed -E 's/[[:space:]]*#.*$//; /^[[:space:]]*$/d; s/^[[:space:]]+//; s/[[:space:]]+$//' "$input" >"$output"
-      validate_ip_file "$output" "$kind"
+      awg_validate_ipv4_list_file "$output" "$kind"
       ;;
     *) echo "Неизвестный тип: $kind" >&2; return 2 ;;
   esac
