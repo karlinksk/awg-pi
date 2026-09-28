@@ -1,0 +1,24 @@
+name: v1.1.0 CI
+
+on:
+  push:
+    branches:
+      - 'develop/v1.1.0'
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  shell:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Bash syntax
+        run: |
+          bash -n install.sh
+          bash -n src/awg-route
+          bash -n src/awg-opencck-update
+          bash -n src/awg-menu
+      - name: ShellCheck errors
+        run: |
+          shellcheck -S error install.sh src/awg-route src/awg-opencck-update src/awg-menu
