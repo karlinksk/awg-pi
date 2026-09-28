@@ -212,7 +212,6 @@ import_domains(){
   [[ -n "$in" && -r "$in" ]] || { echo "Файл не найден или недоступен: $in" >&2; exit 2; }
   if [[ "$kind" == vpn ]]; then target="$VD"; other="$DD"; else target="$DD"; other="$VD"; fi
   tmp="$(mktemp)"; merged="$(mktemp)"
-  trap 'rm -f "$tmp" "$merged"' RETURN
   while IFS= read -r raw || [[ -n "$raw" ]]; do
     raw="${raw%%#*}"
     [[ -n "${raw//[[:space:]]/}" ]] || continue
@@ -237,8 +236,11 @@ import_domains(){
     grep -Fvx -f "$tmp" "$other" >"$other.tmp" || true
     mv "$other.tmp" "$other"; chmod 600 "$other"
   fi
+  local imported
+  imported="$(wc -l <"$tmp")"
   regen_domains
-  echo "OK: импортировано уникальных доменов: $(wc -l <"$tmp")"
+  rm -f "$tmp" "$merged"
+  echo "OK: импортировано уникальных доменов: $imported"
 }
 export_domains(){
   local kind="$1" out="$2" src
