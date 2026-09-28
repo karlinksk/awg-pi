@@ -86,23 +86,28 @@ update_one(){
   [[ "${ENABLED:-0}" == 1 ]] || { echo "SKIP disabled: ${SOURCE_NAME:-?}"; return 0; }
 
   raw="$(mktemp)"; clean="$(mktemp)"
-  trap 'rm -f "$raw" "$clean"' RETURN
 
   url="$BASE_URL?format=text&data=$SOURCE_TYPE&$SOURCE_KIND=$SOURCE_NAME"
   echo "OpenCCK: $SOURCE_NAME ($SOURCE_TYPE/$SOURCE_KIND)"
   if ! curl -4fLsS --retry 3 --connect-timeout 8 --max-time 45 "$url" -o "$raw"; then
     logger -t "$LOG_TAG" "download failed: $SOURCE_NAME $SOURCE_TYPE"
     echo "  ERROR: загрузка не удалась; сохранён предыдущий кэш" >&2
+    rm -f "$raw" "$clean"
     return 1
   fi
   if ! canonicalize "$SOURCE_TYPE" "$raw" "$clean"; then
     logger -t "$LOG_TAG" "validation failed: $SOURCE_NAME $SOURCE_TYPE"
     echo "  ERROR: проверка списка не пройдена; сохранён предыдущий кэш" >&2
+    rm -f "$raw" "$clean"
     return 1
   fi
 
   new_count="$(wc -l <"$clean" | tr -d ' ')"
-  (( new_count > 0 )) || { echo "  ERROR: пустой список" >&2; return 1; }
+  if (( new_count == 0 )); then
+    echo "  ERROR: пустой список" >&2
+    rm -f "$raw" "$clean"
+    return 1
+  fi
   old_count=0
   [[ -r "$DATA_FILE" ]] && old_count="$(wc -l <"$DATA_FILE" | tr -d ' ')"
 
@@ -110,6 +115,7 @@ update_one(){
     if (( new_count * 5 < old_count || new_count > old_count * 5 )); then
       logger -t "$LOG_TAG" "anomalous size rejected: $SOURCE_NAME old=$old_count new=$new_count"
       echo "  ERROR: аномальное изменение размера: $old_count -> $new_count. Используйте --force после ручной проверки." >&2
+      rm -f "$raw" "$clean"
       return 1
     fi
   fi
@@ -138,6 +144,7 @@ META
   install -m 600 "$tmpmeta" "$meta"
   rm -f "$tmpmeta"
   logger -t "$LOG_TAG" "updated: $SOURCE_NAME type=$SOURCE_TYPE entries=$new_count"
+  rm -f "$raw" "$clean"
   return 0
 }
 
