@@ -1039,6 +1039,9 @@ install_project_helper(){
   install -m 755 "$tmp" "$target"
   rm -f "$tmp"
 }
+mkdir -p /usr/local/lib/awg-pi
+install_project_helper src/awg-common /usr/local/lib/awg-pi/common.sh
+chmod 644 /usr/local/lib/awg-pi/common.sh
 install_project_helper src/awg-route "$ROUTE_CLI"
 install_project_helper src/awg-opencck-update /usr/local/sbin/awg-opencck-update
 install_project_helper src/awg-menu /usr/local/sbin/awg-menu
