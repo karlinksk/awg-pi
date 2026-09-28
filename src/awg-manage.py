@@ -14,6 +14,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import uuid
 
 ENV = '/etc/awg-pbr/env'
 DNS = '/etc/dnsmasq.d/99-awg-pbr.conf'
@@ -235,7 +236,10 @@ def profile(text):
     """Strict native gateway profile; reject executable hooks and unknown fields."""
     allowed = {'Interface': {'PrivateKey', 'Address', 'ListenPort', 'MTU', 'FwMark',
                              'Jc', 'Jmin', 'Jmax', 'S1', 'S2', 'S3', 'S4', 'H1', 'H2', 'H3', 'H4',
-                             'I1', 'I2', 'I3', 'I4', 'I5', 'DNS', 'Table'},
+                             'I1', 'I2', 'I3', 'I4', 'I5', 'DNS', 'Table',
+                             'HeaderProtectionKey', 'ContentPaddingAddition', 'RekeyAfterTime',
+                             'RekeyTimeout', 'RejectAfterTime', 'KeepaliveTimeout',
+                             'MaxHandshakeAttempts', 'RandomTrailers', 'DisableCookies'},
                'Peer': {'PublicKey', 'PresharedKey', 'Endpoint', 'AllowedIPs', 'PersistentKeepalive'}}
     sections = []
     current = None
@@ -257,21 +261,30 @@ def profile(text):
     if [s[0] for s in sections] != ['Interface', 'Peer']:
         raise ValueError('Нужны ровно [Interface] и один [Peer] для gateway')
     interface, peer = sections[0][1], sections[1][1]
-    for section, required in ((interface, ('PrivateKey', 'Address', 'Jc', 'Jmin', 'Jmax', 'S1', 'S2', 'H1', 'H2', 'H3', 'H4')),
+    # AWG v3 header protection profiles need not contain the legacy H1-H4.
+    # Let the installed core validate AWG combinations and value ranges.
+    for section, required in ((interface, ('PrivateKey', 'Address')),
                               (peer, ('PublicKey', 'Endpoint', 'AllowedIPs'))):
         if not all(k in section for k in required):
             raise ValueError('Отсутствуют обязательные native AmneziaWG поля')
+    awg_fields = {'Jc', 'Jmin', 'Jmax', 'S1', 'S2', 'S3', 'S4', 'H1', 'H2', 'H3', 'H4',
+                  'I1', 'I2', 'I3', 'I4', 'I5', 'HeaderProtectionKey'}
+    if not awg_fields.intersection(interface):
+        raise ValueError('В профиле отсутствуют параметры AmneziaWG')
     for section in (interface, peer):
-        for key in ('PrivateKey', 'PublicKey', 'PresharedKey'):
+        for key in ('PrivateKey', 'PublicKey', 'PresharedKey', 'HeaderProtectionKey'):
             if key in section:
                 try:
                     if len(base64.b64decode(section[key], validate=True)) != 32:
                         raise ValueError()
                 except ValueError:
                     raise ValueError('Некорректный ключ в .conf') from None
-    for value in interface['Address'].split(','):
-        ipaddress.IPv4Interface(value.strip())
-    networks = [ipaddress.IPv4Network(v.strip(), strict=False) for v in peer['AllowedIPs'].split(',')]
+    addresses = [ipaddress.ip_interface(v.strip()) for v in interface['Address'].split(',')]
+    if not any(a.version == 4 for a in addresses):
+        raise ValueError('Gateway требует IPv4 Address')
+    # Preserve IPv6 entries from native exports. Table=off means they do not
+    # enable IPv6 routing; this gateway still manages IPv4 policy only.
+    networks = [ipaddress.ip_network(v.strip(), strict=False) for v in peer['AllowedIPs'].split(',')]
     if ipaddress.IPv4Network('0.0.0.0/0') not in networks:
         raise ValueError('Gateway требует AllowedIPs = 0.0.0.0/0')
     if not re.fullmatch(r'[A-Za-z0-9.-]+:[0-9]{1,5}', peer['Endpoint']):
@@ -302,7 +315,9 @@ def preflight(path, env):
     import socket
     socket.getaddrinfo(host, None, socket.AF_INET, socket.SOCK_DGRAM)
     atomic(core, re.sub(r'^Endpoint\s*=.*$', '', stripped, flags=re.M))
-    name = 'ac' + str(os.getpid())
+    # UAPI sockets live outside the net namespace. Avoid reuse while an earlier
+    # userspace daemon is finishing cleanup, including repeated checks in CI.
+    name = 'ac' + uuid.uuid4().hex[:10]
     script = '''set -eu
 trap 'ip link del "$1" 2>/dev/null || true; rm -f "/var/run/amneziawg/$1.sock"' EXIT
 amneziawg-go "$1" >/dev/null 2>&1
@@ -348,6 +363,9 @@ def replace_config(args, env):
         candidate = Path(temp) / (vpn + '.conf')
         atomic(candidate, clean)
         preflight(candidate, env)
+        if args.action == 'check':
+            print('Native профиль и AWG core validation: OK. Рабочая конфигурация и сервисы не изменены.')
+            return
         confirm(args, 'Заменить профиль? На время проверки трафик будет DIRECT')
         tx = Transaction('config', [str(active), str(previous)])
         old = active.read_bytes()
@@ -392,14 +410,14 @@ def main():
     network.add_argument('--yes', action='store_true')
     network.add_argument('--keep-clients', action='store_true')
     config = sub.add_parser('config')
-    config.add_argument('action', choices=['replace', 'rollback'])
+    config.add_argument('action', choices=['check', 'replace', 'rollback'])
     config.add_argument('file', nargs='?')
     config.add_argument('--yes', action='store_true')
     args = parser.parse_args()
     if os.geteuid() != 0:
         parser.error('Требуются права root')
-    if args.command == 'config' and ((args.action == 'replace') != bool(args.file)):
-        parser.error('config replace FILE | config rollback')
+    if args.command == 'config' and ((args.action in ('replace', 'check')) != bool(args.file)):
+        parser.error('config check FILE | config replace FILE | config rollback')
     env = read_env()
     if args.command == 'network' and args.action == 'status':
         network_status(env)

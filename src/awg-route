@@ -68,6 +68,7 @@ VPN policy:
 Проверки/обслуживание:
   awg-route network reconfigure [--yes] [--keep-clients]
   awg-route config replace FILE [--yes]
+  awg-route config check FILE
   awg-route config rollback [--yes]
   awg-route status
   awg-route test DOMAIN
@@ -450,7 +451,7 @@ show_status(){
   printf 'OpenCCK sources: %s total / %s enabled / %s cached entries\n' "$sc_total" "$sc_enabled" "$sc_entries"
   echo
   echo "=== AWG ==="
-  awg show "$VPN_IF" 2>/dev/null || echo "awg0 недоступен"
+  awg_safe_show "$VPN_IF" || echo "awg0 недоступен"
 }
 
 domain_source(){
@@ -534,7 +535,7 @@ run_diagnostics(){
       echo "$s: $(systemctl is-active "$s" 2>/dev/null || true) / enabled=$(systemctl is-enabled "$s" 2>/dev/null || true)"
     done
     echo
-    echo "--- AWG ---"; awg show "$VPN_IF" 2>/dev/null || true
+    echo "--- AWG ---"; awg_safe_show "$VPN_IF" || true
     age="$(handshake_age)"; echo "Handshake age: $age"; echo "Health state: $(health_state)"
     echo "Policy present: $(policy_present && echo yes || echo no)"
     echo
