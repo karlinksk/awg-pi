@@ -41,4 +41,16 @@ awg_validate_ipv4_list_file "$tmp/cidr4" cidr4 || fail "valid CIDR list rejected
 echo '300.1.1.1' >"$tmp/bad"
 ! awg_validate_ipv4_list_file "$tmp/bad" ip4 || fail "invalid IPv4 list accepted"
 
+cat >"$tmp/ranges" <<'EOF'
+10.0.0.1
+10.0.0.0/25
+10.0.0.128/25
+10.0.1.1
+10.0.1.1
+EOF
+awg_ipv4_ranges_to_nft_commands "$tmp/ranges" >"$tmp/nftcmds"
+grep -Fxq 'add element inet awg_pbr source4 { 10.0.0.0/24 }' "$tmp/nftcmds" || fail "overlapping ranges were not collapsed"
+grep -Fxq 'add element inet awg_pbr source4 { 10.0.1.1/32 }' "$tmp/nftcmds" || fail "single IPv4 was not preserved as /32"
+[[ "$(wc -l <"$tmp/nftcmds" | tr -d ' ')" == 2 ]] || fail "unexpected collapsed range count"
+
 echo "common helpers: OK"
