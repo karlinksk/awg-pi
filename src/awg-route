@@ -154,21 +154,7 @@ regen_domains(){
   # Collapse duplicate/overlapping IPv4 addresses and CIDRs before loading an
   # nftables interval set. This prevents "File exists" errors across sources.
   if [[ -s "$tmp_entries" ]]; then
-    python3 - "$tmp_entries" >>"$tmp_static" <<'PY'
-import ipaddress, sys
-items=[]
-with open(sys.argv[1], encoding="utf-8") as f:
-    for line in f:
-        s=line.strip()
-        if not s:
-            continue
-        if "/" in s:
-            items.append(ipaddress.ip_network(s, strict=False))
-        else:
-            items.append(ipaddress.ip_network(s + "/32", strict=False))
-for net in ipaddress.collapse_addresses(items):
-    print(f"add element inet awg_pbr source4 {{ {net} }}")
-PY
+    awg_ipv4_ranges_to_nft_commands "$tmp_entries" inet awg_pbr source4 >>"$tmp_static"
   fi
 
   if ! nft -f "$tmp_static"; then
