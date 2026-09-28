@@ -101,7 +101,7 @@ gateway_update(){
   echo "Backup: $bk"
 
   set +e
-  AWG_PI_REF="$tag" bash "$tmp"
+  AWG_PI_REF="$tag" AWG_PI_UPGRADE_AUTO=1 bash "$tmp"
   rc=$?
   set -e
   rm -f "$tmp"
