@@ -2,6 +2,13 @@
 # Shared validation helpers for AWG Pi Gateway.
 # This file is sourced by management tools; it does not execute actions itself.
 
+# AWG v3 prints HeaderProtectionKey even when WG_HIDE_KEYS is enabled.
+# Redact before output reaches either the terminal or a diagnostics tee/log.
+awg_safe_show(){
+  WG_COLOR_MODE=never WG_HIDE_KEYS=always awg show "$1" 2>/dev/null |
+    sed -E 's/^([[:space:]]*(private key|preshared key|header protection key):).*/\1 (hidden)/I'
+}
+
 awg_valid_ipv4(){
   local IFS=. a b c d
   read -r a b c d <<<"$1" || return 1

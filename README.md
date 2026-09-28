@@ -86,8 +86,11 @@ ones. Empty allow-list means all gateway clients. For unattended use:
 `awg-route network reconfigure --yes --keep-clients`.
 
 `config replace FILE` and `config rollback` also appear in the VPN menu.
-Only native IPv4 gateway profiles with one peer and `AllowedIPs=0.0.0.0/0` are
-accepted. DNS is stripped, Table is forced off, and executable hooks/SaveConfig
+Native gateway profiles need one peer, an IPv4 interface address and IPv4
+default AllowedIPs (`0.0.0.0/0`). Additional IPv6 Address/AllowedIPs entries
+are preserved; Table=off does not enable IPv6 policy routing. AWG v3.1
+HeaderProtectionKey, timing ranges, padding and security options are supported;
+legacy H1-H4 are not mandatory. DNS is stripped, Table is forced off, and executable hooks/SaveConfig
 are rejected. Preflight uses `awg-quick strip` and the installed AWG core on a
 temporary userspace interface in an isolated network namespace (`unshare`,
 `amneziawg-go`, `awg`). Unsupported AWG parameters fail before live changes.
@@ -97,6 +100,12 @@ probe must pass before health monitoring resumes. Failure restores the old
 profile; failure of that tunnel leaves DIRECT with health stopped. Restore
 connectivity, then start `awg-pbr-health.service` manually. Manual rollback
 validates the saved `.conf.previous` through the same transaction.
+
+Use `sudo awg-route config check /etc/amnezia/amneziawg/awg0.conf` to validate
+the current native profile with the installed core without switching the live
+tunnel or restarting services. Status, diagnostics reports and installer AWG
+failure output redact private, preshared and header-protection keys before
+printing or saving them. Reports from older builds are not rewritten.
 
 Backups are under `/var/backups/awg-gateway/{network,config}-*`, directories
 mode 700/files 600. Operations handle command failures and catchable signals;

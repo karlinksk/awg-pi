@@ -928,7 +928,9 @@ for _ in $(seq 1 15); do
 done
 printf "\n"
 if (( VPN_HEALTH == 0 )); then
-  awg show "$VPN_IF" || true
+  # shellcheck disable=SC1091
+  source /usr/local/lib/awg-pi/common.sh
+  awg_safe_show "$VPN_IF" || true
   journalctl -u awg-pbr-health.service -n 50 --no-pager || true
   die "VPN не прошёл health-check: нет рабочего транспорта и/или свежего handshake. PBR не активирован"
 fi

@@ -33,6 +33,23 @@ PublicKey = {KEY}
 Endpoint = 192.0.2.1:51820
 AllowedIPs = 0.0.0.0/0
 '''
+V3_PROFILE = PROFILE
+for legacy in ('H1 = 1\n', 'H2 = 2\n', 'H3 = 3\n', 'H4 = 4\n'):
+    V3_PROFILE = V3_PROFILE.replace(legacy, '')
+V3_PROFILE = V3_PROFILE.replace('[Peer]', f'''S3 = 12
+S4 = 12
+I1 = <r 2><b 0x01020304>
+HeaderProtectionKey = {KEY}
+ContentPaddingAddition = 0-10
+RekeyAfterTime = 100-120
+RekeyTimeout = 3-7
+RejectAfterTime = 150-180
+KeepaliveTimeout = 5-15
+MaxHandshakeAttempts = 15-20
+RandomTrailers = on
+DisableCookies = on
+[Peer]''').replace('AllowedIPs = 0.0.0.0/0', 'AllowedIPs = 0.0.0.0/0, ::/0')
+V3_PROFILE += 'PersistentKeepalive = 25-35\nAdvancedSecurity = on\n'
 
 
 class Maintenance(unittest.TestCase):
@@ -95,11 +112,37 @@ class Maintenance(unittest.TestCase):
 
     def test_profile_rejects_unsafe_and_invalid(self):
         for bad in (PROFILE.replace('DNS =', 'PostUp ='), PROFILE.replace(KEY, 'bad'),
-                    PROFILE.replace('Jc = 4\n', ''), PROFILE + '[Peer]\n',
+                    PROFILE.replace('Address = 10.8.0.2/32\n', ''), PROFILE + '[Peer]\n',
                     PROFILE.replace('0.0.0.0/0', '10.0.0.0/8'),
                     PROFILE.replace('Address = 10.8.0.2/32', 'Address = garbage')):
             with self.subTest(bad=bad[:20]), self.assertRaises(ValueError):
                 m.profile(bad)
+
+    def test_v31_profile_preserves_native_fields_and_dual_stack(self):
+        clean, _ = m.profile(V3_PROFILE)
+        self.assertNotIn('H1 =', clean)
+        for line in V3_PROFILE.splitlines():
+            if line and not line.startswith(('DNS =', 'Table =')):
+                self.assertIn(line, clean)
+        self.assertIn('Table = off', clean)
+        self.assertNotIn('DNS =', clean)
+
+    def test_invalid_header_key_and_unknown_fields_fail_before_preflight(self):
+        for bad in (V3_PROFILE.replace('HeaderProtectionKey = ' + KEY, 'HeaderProtectionKey = invalid'),
+                    V3_PROFILE.replace('RandomTrailers', 'UnknownSetting')):
+            self.new.write_text(bad)
+            with self.assertRaises(ValueError):
+                m.replace_config(self.args(), self.env)
+            self.assertEqual(self.calls, [])
+            self.preflight.assert_not_called()
+
+    def test_v31_replace_then_rollback_accepts_existing_v31_profile(self):
+        self.active.write_text(V3_PROFILE)
+        m.replace_config(self.args(), self.env)
+        self.assertEqual(self.previous.read_text(), V3_PROFILE)
+        m.replace_config(self.args(action='rollback', file=None), self.env)
+        clean, _ = m.profile(V3_PROFILE)
+        self.assertEqual(self.active.read_text(), clean)
 
     def test_network_success_preserves_settings_and_clients(self):
         m.reconfigure(self.args(), self.env)
@@ -170,6 +213,15 @@ class Maintenance(unittest.TestCase):
             m.replace_config(self.args(), self.env)
         self.assertEqual(self.calls, [])
         self.assertEqual(self.active.read_text(), PROFILE)
+
+    def test_check_does_not_change_files_or_services(self):
+        with patch.object(m, 'confirm') as confirm:
+            m.replace_config(self.args(action='check'), self.env)
+        confirm.assert_not_called()
+        self.preflight.assert_called_once()
+        self.assertEqual(self.calls, [])
+        self.assertEqual(self.active.read_text(), PROFILE)
+        self.assertFalse(Path(m.BACKUPS).exists())
 
     def test_config_transport_failure_restores_previous(self):
         self.health.side_effect = [False, True]

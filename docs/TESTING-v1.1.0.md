@@ -277,3 +277,37 @@ and end-to-end packet routing must pass the hardware checklist above.
 
 Create `rc/v1.1.0-rc2` only at the exact successful `develop/v1.1.0` CI SHA.
 No release/tag or changes to main/RC1 are part of this gate.
+
+## 17. Follow-up from the RC2 hardware test
+
+The existing Pi upgrade and reboot were tested with LG playback working,
+the saved LAN/client addresses and OpenCCK youtube cache retained. Health
+initially showed DIRECT after reboot and later recovered to ACTIVE; its
+transient cause was not established from logs.
+
+AWG tools v3.1.20260812 revealed an unmasked header-protection key in human
+`awg show` output. Gateway output now masks it before the diagnostics tee and
+installer log; `WG_HIDE_KEYS=never` cannot bypass the gateway helper. Old
+reports are not rewritten and should not be shared without redaction.
+
+Native v3.1 import/rollback now accepts HeaderProtectionKey and the additional
+core fields without requiring legacy H1-H4. IPv6 AllowedIPs such as `::/0`
+are preserved alongside the required IPv4 default. IPv6 PBR remains unsupported.
+Tests use synthetic keys only, never the real Pi profile.
+
+CI additionally builds the exact upstream versions reported by the Pi:
+tools v3.1.20260812 (`ee0f0a9aa34ff0a0da4b3433b9512781cfe02843`) and
+go v3.1.20260828 (`b5928efb6ca19f0153958460c3d141f04abc5c2e`). It runs real
+`awg-quick strip` and `awg setconf` preflight in isolated network namespaces,
+including a v3.1 profile, legacy profile and invalid core parameter.
+
+After installing the follow-up build, first run the non-switching check:
+
+```bash
+sudo awg-route status
+sudo awg-route config check /etc/amnezia/amneziawg/awg0.conf
+```
+
+Check that key values are hidden and profile validation succeeds with LG still
+playing. Do not attempt profile replacement/network migration until that passes.
+CI does not establish real-server replacement/rollback transport behavior.
