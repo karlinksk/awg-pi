@@ -4,6 +4,8 @@ set -Eeuo pipefail
 
 # shellcheck disable=SC1091
 source /etc/awg-pbr/env
+# shellcheck disable=SC1091
+source /usr/local/lib/awg-pi/common.sh
 
 VD=/etc/awg-pbr/vpn-domains.txt
 DD=/etc/awg-pbr/direct-domains.txt
@@ -67,19 +69,6 @@ DOMAIN без wildcard включает его поддомены в dnsmasq.
 USAGE
 }
 
-valid_ipv4(){
-  local IFS=. a b c d
-  read -r a b c d <<<"$1" || return 1
-  [[ ${a:-} =~ ^[0-9]+$ && ${b:-} =~ ^[0-9]+$ && ${c:-} =~ ^[0-9]+$ && ${d:-} =~ ^[0-9]+$ ]] || return 1
-  ((a<=255 && b<=255 && c<=255 && d<=255))
-}
-normalize_domain(){
-  printf '%s' "$1" | tr '[:upper:]' '[:lower:]' |
-    sed -E 's#^[[:space:]]+##; s#[[:space:]]+$##; s#^https?://##; s#/.*$##; s/:[0-9]+$//; s/^\*\.//; s/^\.//; s/\.$//'
-}
-valid_domain(){
-  [[ "$1" =~ ^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$ ]]
-}
 prune_reports(){
   find "$LOG_DIR" -maxdepth 1 -type f -name 'diagnostics-*.txt' -printf '%T@ %p\n' 2>/dev/null |
     sort -nr | awk 'NR>10{sub(/^[^ ]+ /,""); print}' | xargs -r rm -f
@@ -185,8 +174,8 @@ reload_all(){
 
 add_domain(){
   local kind="$1" raw="$2" d file other
-  d="$(normalize_domain "$raw")"
-  valid_domain "$d" || { echo "Некорректный домен: $d" >&2; exit 2; }
+  d="$(awg_normalize_domain "$raw")"
+  awg_valid_domain "$d" || { echo "Некорректный домен: $d" >&2; exit 2; }
   if [[ "$kind" == vpn ]]; then file="$VD"; other="$DD"; else file="$DD"; other="$VD"; fi
   grep -Fxq "$d" "$file" 2>/dev/null || echo "$d" >>"$file"
   grep -Fxv "$d" "$other" >"$other.tmp" 2>/dev/null || true
@@ -197,7 +186,7 @@ add_domain(){
 }
 del_domain(){
   local kind="$1" raw="$2" d file
-  d="$(normalize_domain "$raw")"
+  d="$(awg_normalize_domain "$raw")"
   file="$VD"; [[ "$kind" == direct ]] && file="$DD"
   grep -Fxv "$d" "$file" >"$file.tmp" 2>/dev/null || true
   mv "$file.tmp" "$file"
@@ -215,8 +204,8 @@ import_domains(){
   while IFS= read -r raw || [[ -n "$raw" ]]; do
     raw="${raw%%#*}"
     [[ -n "${raw//[[:space:]]/}" ]] || continue
-    d="$(normalize_domain "$raw")"
-    if ! valid_domain "$d"; then
+    d="$(awg_normalize_domain "$raw")"
+    if ! awg_valid_domain "$d"; then
       echo "Некорректная строка: $raw" >&2
       invalid=$((invalid+1))
       continue
@@ -353,12 +342,12 @@ client_cmd(){
       if grep -Ev '^\s*(#|$)' "$CF" 2>/dev/null | grep -q .; then cat "$CF"; else echo "(пусто: все устройства с gateway=Pi участвуют в PBR)"; fi
       ;;
     add)
-      valid_ipv4 "$ip" || { echo "Некорректный IPv4: $ip" >&2; exit 2; }
+      awg_valid_ipv4 "$ip" || { echo "Некорректный IPv4: $ip" >&2; exit 2; }
       grep -Fxq "$ip" "$CF" 2>/dev/null || echo "$ip" >>"$CF"; sort -u -o "$CF" "$CF"
       reload_all; echo "OK: client add $ip"
       ;;
     del)
-      valid_ipv4 "$ip" || { echo "Некорректный IPv4: $ip" >&2; exit 2; }
+      awg_valid_ipv4 "$ip" || { echo "Некорректный IPv4: $ip" >&2; exit 2; }
       grep -Fxv "$ip" "$CF" >"$CF.tmp" 2>/dev/null || true; mv "$CF.tmp" "$CF"
       reload_all; echo "OK: client del $ip"
       ;;
@@ -434,7 +423,7 @@ domain_source(){
 
 test_domain(){
   local raw="$1" d ips ip in_vpn in_direct in_static mark route src
-  d="$(normalize_domain "$raw")"; valid_domain "$d" || { echo "Некорректный домен: $d" >&2; exit 2; }
+  d="$(awg_normalize_domain "$raw")"; awg_valid_domain "$d" || { echo "Некорректный домен: $d" >&2; exit 2; }
   src="$(domain_source "$d")"
   echo "=== Test: $d ==="
   echo "Rule source: $src"
