@@ -191,8 +191,10 @@ def reconfigure(args, env):
         if count != 1:
             raise ValueError(f'Ожидалась одна запись {k} в env')
     dns = Path(DNS).read_text()
-    dns = re.sub(r'^interface=.*$', 'interface=' + actual['LAN_IF'], dns, flags=re.M)
-    dns = re.sub(r'^listen-address=' + re.escape(env['PI_IP']) + r'$', 'listen-address=' + actual['PI_IP'], dns, flags=re.M)
+    dns, interfaces = re.subn(r'^interface=.*$', 'interface=' + actual['LAN_IF'], dns, flags=re.M)
+    dns, listeners = re.subn(r'^listen-address=' + re.escape(env['PI_IP']) + r'$', 'listen-address=' + actual['PI_IP'], dns, flags=re.M)
+    if interfaces != 1 or listeners != 1:
+        raise ValueError('Неоднозначная dnsmasq конфигурация; ожидается один LAN interface/listen-address')
     tx = Transaction('network', [ENV, DNS, NFT, DOMAINS, CLIENTS])
     try:
         tx.pause()

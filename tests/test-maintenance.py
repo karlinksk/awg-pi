@@ -197,6 +197,22 @@ class Maintenance(unittest.TestCase):
 
 
 class Discovery(unittest.TestCase):
+    def test_preflight_validates_quick_and_core_without_live_interface(self):
+        with tempfile.TemporaryDirectory() as temp:
+            config = Path(temp) / 'awg0.conf'
+            config.write_text(PROFILE)
+            calls = []
+            def run(*args, **kwargs):
+                calls.append(args)
+                return subprocess.CompletedProcess(args, 0, PROFILE)
+            with patch.object(m, 'run', side_effect=run), patch('socket.getaddrinfo'):
+                m.preflight(config, {'VPN_IF': 'awg0'})
+            self.assertEqual(calls[0][:2], ('awg-quick', 'strip'))
+            self.assertEqual(calls[1][:3], ('unshare', '--net', '--'))
+            self.assertIn('awg setconf', calls[1][5])
+            self.assertNotIn('Endpoint', (Path(temp) / 'core.conf').read_text())
+            self.assertEqual(config.read_text(), PROFILE)
+
     def test_route_and_address_selection(self):
         routes = [{'gateway': '192.168.112.1', 'dev': 'eth0', 'metric': 100}]
         addresses = [{'addr_info': [{'local': '192.168.112.33', 'prefixlen': 24}]}]
