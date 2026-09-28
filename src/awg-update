@@ -89,9 +89,9 @@ gateway_update(){
   tmp="$(mktemp /tmp/awg-pi-install.XXXXXX.sh)"
   curl -4fLsS --retry 3 --connect-timeout 8 --max-time 45 "$RAW/$tag/install.sh" -o "$tmp"
   bash -n "$tmp"
-  internal="$(grep -m1 -E '^VERSION="[0-9]+\.[0-9]+\.[0-9]+"' "$tmp" | cut -d'"' -f2 || true)"
+  internal="$(grep -m1 -E '^(AWG_PI_VERSION|VERSION)="[0-9]+\.[0-9]+\.[0-9]+"' "$tmp" | cut -d'"' -f2 || true)"
   [[ "$internal" == "$latest" ]] || {
-    echo "Отказ: VERSION внутри installer ($internal) не совпадает с релизом $latest" >&2
+    echo "Отказ: AWG_PI_VERSION внутри installer ($internal) не совпадает с релизом $latest" >&2
     rm -f "$tmp"
     return 1
   }

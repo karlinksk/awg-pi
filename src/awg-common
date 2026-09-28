@@ -79,3 +79,10 @@ for net in ipaddress.collapse_addresses(items):
     print(f"add element {family} {table} {setname} {{ {net} }}")
 PY
 }
+
+# DNS service records are not host routing rules. Other malformed names still fail.
+awg_service_domain(){
+  local d="$1"
+  [[ "$d" == *_* && "$d" =~ ^[a-z0-9_.-]+$ ]] || return 1
+  awg_valid_domain "${d//_/a}"
+}

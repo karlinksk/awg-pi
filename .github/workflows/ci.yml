@@ -7,6 +7,7 @@ on:
   pull_request:
     branches:
       - main
+      - 'develop/v1.1.0'
 
 jobs:
   shell:
@@ -30,6 +31,7 @@ jobs:
           bash -n tests/test-opencck-updater.sh
           bash -n tests/mock-curl.sh
           bash -n tests/test-nft-template.sh
+          bash -n tests/test-rc2.sh
       - name: ShellCheck errors
         run: |
           shellcheck -S error install.sh src/awg-common src/awg-route src/awg-opencck-update src/awg-core-update src/awg-update src/awg-menu tests/test-common.sh tests/test-opencck-updater.sh tests/mock-curl.sh tests/test-nft-template.sh
@@ -38,3 +40,5 @@ jobs:
           bash tests/test-common.sh
           bash tests/test-opencck-updater.sh
           bash tests/test-nft-template.sh
+          bash tests/test-rc2.sh
+          python3 tests/test-maintenance.py
