@@ -1,6 +1,17 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 [[ ${EUID:-$(id -u)} -eq 0 ]] || exec sudo "$0" "$@"
+
+# Run from a temporary copy so a gateway update can safely replace awg-menu.
+if [[ "${AWG_MENU_REEXEC:-0}" != 1 ]]; then
+  _menu_tmp="$(mktemp /tmp/awg-menu.XXXXXX)"
+  cp "$0" "$_menu_tmp"
+  chmod 700 "$_menu_tmp"
+  export AWG_MENU_REEXEC=1
+  exec "$_menu_tmp" "$@"
+fi
+trap 'rm -f "$0" 2>/dev/null || true' EXIT
+
 command -v dialog >/dev/null 2>&1 || { echo "Не найден dialog" >&2; exit 1; }
 
 AWG_ROUTE=/usr/local/sbin/awg-route
@@ -238,8 +249,8 @@ update_menu(){
       2)
         confirm "Gateway update" "Проверить новый релиз AWG Pi Gateway и установить его при наличии?" || continue
         run_interactive "AWG Pi Gateway update" "$AWG_UPDATE" gateway
-        VERSION="$(cat /etc/awg-pbr/version 2>/dev/null || echo unknown)"
-        BACKTITLE="AWG Pi Gateway v$VERSION"
+        unset AWG_MENU_REEXEC
+        exec /usr/local/sbin/awg-menu
         ;;
       3)
         confirm "Core update" "Проверить и обновить AmneziaWG core при наличии новой стабильной версии?" || continue
@@ -248,8 +259,8 @@ update_menu(){
       4)
         confirm "Полное обновление" "Проверить обновления AWG Pi Gateway и AmneziaWG core?" || continue
         run_interactive "Полное обновление" "$AWG_UPDATE" all
-        VERSION="$(cat /etc/awg-pbr/version 2>/dev/null || echo unknown)"
-        BACKTITLE="AWG Pi Gateway v$VERSION"
+        unset AWG_MENU_REEXEC
+        exec /usr/local/sbin/awg-menu
         ;;
       0) return 0 ;;
     esac
