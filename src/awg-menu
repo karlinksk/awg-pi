@@ -135,7 +135,7 @@ while true; do
     8) title="Обновление AmneziaWG"; capture /usr/local/sbin/awg-update || true ;;
     9) logs_screen ;;
     10) system_menu ;;
-    11) clear; exec bash -l ;;
-    0) clear; exit 0 ;;
+    11) clear; exit 10 ;;
+    0) clear; exit 20 ;;
   esac
 done
