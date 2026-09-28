@@ -14,6 +14,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import uuid
 
 ENV = '/etc/awg-pbr/env'
 DNS = '/etc/dnsmasq.d/99-awg-pbr.conf'
@@ -315,7 +316,9 @@ def preflight(path, env):
     import socket
     socket.getaddrinfo(host, None, socket.AF_INET, socket.SOCK_DGRAM)
     atomic(core, re.sub(r'^Endpoint\s*=.*$', '', stripped, flags=re.M))
-    name = 'ac' + str(os.getpid())
+    # UAPI sockets live outside the net namespace. Avoid reuse while an earlier
+    # userspace daemon is finishing cleanup, including repeated checks in CI.
+    name = 'ac' + uuid.uuid4().hex[:10]
     script = '''set -eu
 trap 'ip link del "$1" 2>/dev/null || true; rm -f "/var/run/amneziawg/$1.sock"' EXIT
 amneziawg-go "$1" >/dev/null 2>&1
