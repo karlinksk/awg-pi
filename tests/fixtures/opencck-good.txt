@@ -1,0 +1,6 @@
+# OpenCCK-like domain list
+youtube.com
+*.googlevideo.com
+YTIMG.COM
+www.youtube.com
+youtube.com
