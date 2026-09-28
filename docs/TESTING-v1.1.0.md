@@ -3,6 +3,42 @@
 This checklist is intentionally run on real Raspberry Pi 4 hardware before
 merging `develop/v1.1.0` into `main`.
 
+
+## Current RC2 hardware status
+
+Frozen candidate under test:
+
+```text
+rc/v1.1.0-rc2
+43b5f01a97178ca6a5bfeb73e3839f0b2ca125d2
+```
+
+Validated on the existing Raspberry Pi 4 test gateway:
+
+- upgrade of the existing RC test installation to the RC2 code while preserving
+  AWG config, LAN settings, client allow-list and OpenCCK state;
+- DIRECT Internet and manual domain PBR on the LG client;
+- real OpenCCK `youtube` routing with video traffic observed on `awg0`;
+- OpenCCK last-known-good cache behavior;
+- FAIL-OPEN on stopping `awg0`, followed by automatic policy recovery;
+- reboot/persistence of services, OpenCCK source and client state;
+- interactive SSH TUI plus noninteractive SSH and SCP bypass;
+- diagnostics including FAIL-OPEN simulation and secret redaction;
+- additive bulk import/export with deduplication;
+- invalid bulk import rejected transactionally without changing the live list;
+- AWG v3.1 current-profile validation and regression coverage in CI.
+
+Still required before the stable v1.1.0 release:
+
+- controlled real-LAN `network reconfigure` test, including rollback behavior;
+- real second-server `config replace`, manual rollback and automatic rollback
+  from an unreachable/failed profile;
+- complete remaining release-gate checklist items that have not yet been
+  exercised on the frozen RC2 snapshot, including `--replace` bulk import where
+  applicable and final release audit.
+
+Do not move the frozen RC2 branch to include later documentation-only commits.
+
 ## 1. Clean installation
 
 - Raspberry Pi 4 Model B, Raspberry Pi OS Lite 64-bit, Ethernet only.
