@@ -248,18 +248,22 @@ update_menu(){
         ;;
       2)
         confirm "Gateway update" "Проверить новый релиз AWG Pi Gateway и установить его при наличии?" || continue
-        run_interactive "AWG Pi Gateway update" "$AWG_UPDATE" gateway
+        run_interactive "AWG Pi Gateway update" "$AWG_UPDATE" --yes gateway
+        _old_menu_self="$0"
         unset AWG_MENU_REEXEC
+        rm -f "$_old_menu_self" 2>/dev/null || true
         exec /usr/local/sbin/awg-menu
         ;;
       3)
         confirm "Core update" "Проверить и обновить AmneziaWG core при наличии новой стабильной версии?" || continue
-        run_interactive "AmneziaWG core update" "$AWG_UPDATE" core
+        run_interactive "AmneziaWG core update" "$AWG_UPDATE" --yes core
         ;;
       4)
         confirm "Полное обновление" "Проверить обновления AWG Pi Gateway и AmneziaWG core?" || continue
-        run_interactive "Полное обновление" "$AWG_UPDATE" all
+        run_interactive "Полное обновление" "$AWG_UPDATE" --yes all
+        _old_menu_self="$0"
         unset AWG_MENU_REEXEC
+        rm -f "$_old_menu_self" 2>/dev/null || true
         exec /usr/local/sbin/awg-menu
         ;;
       0) return 0 ;;
