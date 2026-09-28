@@ -94,6 +94,8 @@ legacy H1-H4 are not mandatory. DNS is stripped, Table is forced off, and execut
 are rejected. Preflight uses `awg-quick strip` and the installed AWG core on a
 temporary userspace interface in an isolated network namespace (`unshare`,
 `amneziawg-go`, `awg`). Unsupported AWG parameters fail before live changes.
+The kernel-only peer option `AdvancedSecurity` is rejected by this userspace
+gateway, matching the upstream tools' userspace transport restriction.
 Keys are never printed. During switching the health monitor is stopped and
 policy is DIRECT. A fresh handshake and marked, interface-bound transport
 probe must pass before health monitoring resumes. Failure restores the old

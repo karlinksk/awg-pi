@@ -240,8 +240,7 @@ def profile(text):
                              'HeaderProtectionKey', 'ContentPaddingAddition', 'RekeyAfterTime',
                              'RekeyTimeout', 'RejectAfterTime', 'KeepaliveTimeout',
                              'MaxHandshakeAttempts', 'RandomTrailers', 'DisableCookies'},
-               'Peer': {'PublicKey', 'PresharedKey', 'Endpoint', 'AllowedIPs', 'PersistentKeepalive',
-                        'AdvancedSecurity'}}
+               'Peer': {'PublicKey', 'PresharedKey', 'Endpoint', 'AllowedIPs', 'PersistentKeepalive'}}
     sections = []
     current = None
     for raw in text.splitlines():

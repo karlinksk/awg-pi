@@ -49,7 +49,7 @@ MaxHandshakeAttempts = 15-20
 RandomTrailers = on
 DisableCookies = on
 [Peer]''').replace('AllowedIPs = 0.0.0.0/0', 'AllowedIPs = 0.0.0.0/0, ::/0')
-V3_PROFILE += 'PersistentKeepalive = 25-35\nAdvancedSecurity = on\n'
+V3_PROFILE += 'PersistentKeepalive = 25-35\n'
 
 
 class Maintenance(unittest.TestCase):
@@ -129,7 +129,8 @@ class Maintenance(unittest.TestCase):
 
     def test_invalid_header_key_and_unknown_fields_fail_before_preflight(self):
         for bad in (V3_PROFILE.replace('HeaderProtectionKey = ' + KEY, 'HeaderProtectionKey = invalid'),
-                    V3_PROFILE.replace('RandomTrailers', 'UnknownSetting')):
+                    V3_PROFILE.replace('RandomTrailers', 'UnknownSetting'),
+                    V3_PROFILE + 'AdvancedSecurity = on\n'):
             self.new.write_text(bad)
             with self.assertRaises(ValueError):
                 m.replace_config(self.args(), self.env)
