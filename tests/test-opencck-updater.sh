@@ -38,7 +38,7 @@ sudo grep -Fxq youtube.com "$tmp/data/youtube.domains"
 sudo grep -Fxq googlevideo.com "$tmp/data/youtube.domains"
 sudo grep -Fxq ytimg.com "$tmp/data/youtube.domains"
 sudo grep -Fxq www.youtube.com "$tmp/data/youtube.domains"
-[[ "$(sudo wc -l <"$tmp/data/youtube.domains" | tr -d ' ')" == 4 ]]
+[[ "$(sudo wc -l "$tmp/data/youtube.domains" | awk '{print $1}')" == 4 ]]
 sudo grep -Eq '^ENTRY_COUNT=4$' "$tmp/meta/yttest.env"
 grep -Fxq reload "$tmp/route.log"
 
