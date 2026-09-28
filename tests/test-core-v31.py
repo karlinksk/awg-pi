@@ -20,7 +20,17 @@ def test_run(*args, **kwargs):
     if args[0] != 'unshare':
         return original_run(*args, **kwargs)
     args = list(args)
-    args[5] = args[5].replace('>/dev/null 2>&1', '')
+    args[5] = '''set -eu
+pid=''
+trap 'ip link del "$1" 2>/dev/null || true; [ -z "$pid" ] || kill "$pid" 2>/dev/null || true; rm -f "/var/run/amneziawg/$1.sock"' EXIT
+LOG_LEVEL=verbose amneziawg-go -f "$1" >"$2.log" 2>&1 &
+pid=$!
+for n in $(seq 1 50); do
+  [ ! -S "/var/run/amneziawg/$1.sock" ] || break
+  sleep 0.1
+done
+awg setconf "$1" "$2" || { cat "$2.log" >&2; exit 1; }
+'''
     result = subprocess.run(args, text=True, capture_output=True, timeout=90)
     if result.returncode:
         message = re.sub(r'[A-Za-z0-9+/]{43}=', '(synthetic key hidden)', result.stderr)
