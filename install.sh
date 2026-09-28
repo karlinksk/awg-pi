@@ -1044,6 +1044,8 @@ install_project_helper src/awg-common /usr/local/lib/awg-pi/common.sh
 chmod 644 /usr/local/lib/awg-pi/common.sh
 install_project_helper src/awg-route "$ROUTE_CLI"
 install_project_helper src/awg-opencck-update /usr/local/sbin/awg-opencck-update
+install_project_helper src/awg-core-update /usr/local/sbin/awg-core-update
+install_project_helper src/awg-update "$UPDATE_SCRIPT"
 install_project_helper src/awg-menu /usr/local/sbin/awg-menu
 
 mkdir -p /etc/awg-pbr/sources/opencck/metadata
@@ -1397,7 +1399,9 @@ printf "  sudo awg-route vpn import FILE\n"
 printf "  sudo awg-route source add opencck youtube\n"
 printf "  sudo awg-route source list\n"
 printf "  sudo awg-menu\n"
-printf "  sudo awg-update\n"
+printf "  sudo awg-update status\n"
+printf "  sudo awg-update gateway\n"
+printf "  sudo awg-update core\n"
 
 printf "\nДля первого тестового устройства (LG TV):\n"
 printf "  IPv4:    свободный фиксированный адрес в %s\n" "$LAN_CIDR"
