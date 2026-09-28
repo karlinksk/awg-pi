@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
+[[ ${EUID:-$(id -u)} -eq 0 ]] || exec sudo "$0" "$@"
+
 # Re-exec from a temporary copy so an installer may safely replace /usr/local/sbin/awg-update.
 if [[ "${AWG_UPDATE_REEXEC:-0}" != 1 ]]; then
   _self_tmp="$(mktemp /tmp/awg-update.XXXXXX)"
@@ -10,8 +12,6 @@ if [[ "${AWG_UPDATE_REEXEC:-0}" != 1 ]]; then
   exec "$_self_tmp" "$@"
 fi
 trap 'rm -f "$0" 2>/dev/null || true' EXIT
-
-[[ ${EUID:-$(id -u)} -eq 0 ]] || exec sudo -E "$0" "$@"
 
 REPO=karlinksk/awg-pi
 API="https://api.github.com/repos/$REPO/releases/latest"
@@ -47,6 +47,10 @@ backup_gateway(){
   chmod 700 "$dir"
   tar -C / -czf "$dir/gateway-state.tgz"     --ignore-failed-read     etc/awg-pbr     etc/amnezia/amneziawg     etc/dnsmasq.d/99-awg-pbr.conf     etc/dnsmasq.d/99-awg-pbr-domains.conf     etc/nftables.d/99-awg-pbr.nft     etc/sysctl.d/99-awg-pbr.conf     etc/profile.d/awg-menu.sh     etc/systemd/system/awg-pbr-setup.service     etc/systemd/system/awg-pbr-health.service     etc/systemd/system/awg-opencck-update.service     etc/systemd/system/awg-opencck-update.timer     usr/local/lib/awg-pi     usr/local/sbin/awg-route     usr/local/sbin/awg-menu     usr/local/sbin/awg-opencck-update     usr/local/sbin/awg-core-update     usr/local/sbin/awg-update     usr/local/sbin/awg-pbr-setup     usr/local/sbin/awg-pbr-health     usr/local/sbin/awg-pbr-failopen 2>/dev/null || true
   chmod 600 "$dir/gateway-state.tgz"
+  tar -tzf "$dir/gateway-state.tgz" >/dev/null || {
+    echo "Не удалось проверить backup archive" >&2
+    return 1
+  }
 }
 restore_gateway(){
   local dir="$1"
