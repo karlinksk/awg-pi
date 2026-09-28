@@ -155,7 +155,14 @@ while IFS= read -r meta; do
   update_one "$meta" || fail=$((fail+1))
 done < <(meta_files)
 
-(( matches > 0 )) || { echo "OpenCCK source не найден: ${selector:-<none>}" >&2; exit 1; }
+if (( matches == 0 )); then
+  if [[ -z "$selector" ]]; then
+    echo "OpenCCK: источники не настроены"
+    exit 0
+  fi
+  echo "OpenCCK source не найден: $selector" >&2
+  exit 1
+fi
 
 # Применяем только если хотя бы один источник был обработан. При частичной ошибке
 # действующие кэши не повреждаются, поэтому reload безопасен.
