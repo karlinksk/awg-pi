@@ -1031,6 +1031,11 @@ if [ -n "${SSH_CONNECTION:-}" ] && [ -t 0 ] && [ -t 1 ] && [ "${AWG_MENU_DISABLE
   if [ "${AWG_MENU_ACTIVE:-0}" != 1 ]; then
     export AWG_MENU_ACTIVE=1
     sudo /usr/local/sbin/awg-menu
+    _awg_menu_rc=$?
+    if [ "$_awg_menu_rc" -eq 20 ]; then
+      exit
+    fi
+    unset _awg_menu_rc
   fi
 fi
 EOF
