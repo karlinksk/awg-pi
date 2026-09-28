@@ -2,12 +2,13 @@
 set -Eeuo pipefail
 [[ ${EUID:-$(id -u)} -eq 0 ]] || exec sudo "$0" "$@"
 
-META_DIR=/etc/awg-pbr/sources/opencck/metadata
-BASE_URL=https://iplist.opencck.org/
-AWG_ROUTE=/usr/local/sbin/awg-route
+META_DIR="${AWG_OPENCCK_META_DIR:-/etc/awg-pbr/sources/opencck/metadata}"
+BASE_URL="${AWG_OPENCCK_BASE_URL:-https://iplist.opencck.org/}"
+AWG_ROUTE="${AWG_ROUTE_BIN:-/usr/local/sbin/awg-route}"
+COMMON_LIB="${AWG_COMMON_LIB:-/usr/local/lib/awg-pi/common.sh}"
 LOG_TAG=awg-opencck
-# shellcheck disable=SC1091
-source /usr/local/lib/awg-pi/common.sh
+# shellcheck disable=SC1090
+source "$COMMON_LIB"
 mkdir -p "$META_DIR"
 
 force=0
