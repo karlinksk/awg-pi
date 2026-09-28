@@ -102,7 +102,7 @@ domain_matches_file(){
 }
 
 regen_domains(){
-  local m tmp_static entry
+  local m tmp_static tmp_entries entry
   : >"$DC"
 
   add_dns_file(){
@@ -133,6 +133,7 @@ regen_domains(){
   sleep 1
 
   tmp_static="$(mktemp)"
+  tmp_entries="$(mktemp)"
   printf 'flush set inet awg_pbr source4\n' >"$tmp_static"
   while IFS= read -r m; do
     [[ -n "$m" ]] || continue
@@ -144,17 +145,38 @@ regen_domains(){
         while IFS= read -r entry || [[ -n "$entry" ]]; do
           entry="${entry%%#*}"; entry="${entry//[[:space:]]/}"
           [[ -z "$entry" ]] && continue
-          printf 'add element inet awg_pbr source4 { %s }\n' "$entry" >>"$tmp_static"
+          printf '%s\n' "$entry" >>"$tmp_entries"
         done <"$DATA_FILE"
         ;;
     esac
   done < <(source_meta_files)
+
+  # Collapse duplicate/overlapping IPv4 addresses and CIDRs before loading an
+  # nftables interval set. This prevents "File exists" errors across sources.
+  if [[ -s "$tmp_entries" ]]; then
+    python3 - "$tmp_entries" >>"$tmp_static" <<'PY'
+import ipaddress, sys
+items=[]
+with open(sys.argv[1], encoding="utf-8") as f:
+    for line in f:
+        s=line.strip()
+        if not s:
+            continue
+        if "/" in s:
+            items.append(ipaddress.ip_network(s, strict=False))
+        else:
+            items.append(ipaddress.ip_network(s + "/32", strict=False))
+for net in ipaddress.collapse_addresses(items):
+    print(f"add element inet awg_pbr source4 {{ {net} }}")
+PY
+  fi
+
   if ! nft -f "$tmp_static"; then
-    rm -f "$tmp_static"
+    rm -f "$tmp_static" "$tmp_entries"
     echo "Ошибка загрузки статических IP/CIDR OpenCCK в nftables" >&2
     return 1
   fi
-  rm -f "$tmp_static"
+  rm -f "$tmp_static" "$tmp_entries"
 
   # Прогреваем только ручные списки. OpenCCK-домены попадут в nftset при реальных DNS-запросах клиентов.
   for f in "$VD" "$DD"; do
