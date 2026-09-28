@@ -115,6 +115,18 @@ printf "Default = DIRECT. Домены из VPN-list = AmneziaWG. VPN недос
 printf "IPv6 в этой версии не маршрутизируется.\n\n"
 printf "Журнал установки: %s\n\n" "$INSTALL_REPORT"
 
+UPGRADE_EXISTING=0
+EXISTING_VERSION="$(cat /etc/awg-pbr/version 2>/dev/null || true)"
+if [[ -f "$ENV_FILE" && -f "$CONF_FILE" ]]; then
+  printf "Обнаружена существующая AWG Pi Gateway: %s\n" "${EXISTING_VERSION:-версия до v1.1.0}"
+  if confirm "Выполнить безопасное обновление существующей установки до v$VERSION с сохранением AWG-конфига, доменов и клиентов?" "Y"; then
+    UPGRADE_EXISTING=1
+    ok "Режим обновления: пользовательские списки и $CONF_FILE будут сохранены"
+  else
+    die "Обновление отменено пользователем"
+  fi
+fi
+
 # -----------------------------------------------------------------------------
 # 1. Preflight
 # -----------------------------------------------------------------------------
@@ -268,6 +280,7 @@ if [[ -f "$CONF_FILE" ]]; then
   cp -a "$CONF_FILE" "$CONF_FILE.bak.$(date +%Y%m%d-%H%M%S)"
 fi
 
+if (( UPGRADE_EXISTING == 0 )); then
 printf "1) указать путь к .conf\n2) вставить конфиг в терминал\n"
 ask "Способ импорта" "2"
 mode="$REPLY"
@@ -340,6 +353,9 @@ mv "${tmp}.new" "$tmp"
 install -m 600 "$tmp" "$CONF_FILE"
 cleanup_tmp
 trap - EXIT
+else
+  ok "Существующий AWG-конфиг сохранён: $CONF_FILE"
+fi
 
 # Parser-level validation without bringing the tunnel up yet.
 if ! awg-quick strip "$CONF_FILE" >/dev/null 2>&1; then
@@ -352,6 +368,38 @@ ok "Конфиг валиден для awg-quick; Table=off включён; DNS 
 # -----------------------------------------------------------------------------
 STAGE="проверка локальной сети"
 log "[6/12] Archer C64 и локальная сеть"
+if (( UPGRADE_EXISTING == 1 )); then
+  # shellcheck disable=SC1090
+  source "$ENV_FILE"
+  : "${LAN_IF:?В существующем env отсутствует LAN_IF}"
+  : "${LAN_CIDR:?В существующем env отсутствует LAN_CIDR}"
+  : "${PI_IP:?В существующем env отсутствует PI_IP}"
+  : "${ROUTER_IP:?В существующем env отсутствует ROUTER_IP}"
+  : "${UPSTREAM_DNS:?В существующем env отсутствует UPSTREAM_DNS}"
+  DNS_REDIRECT="${DNS_REDIRECT:-1}"
+  HEALTH_INTERVAL="${HEALTH_INTERVAL:-5}"
+  HANDSHAKE_MAX_AGE="${HANDSHAKE_MAX_AGE:-180}"
+  LAN_MAC="$(cat "/sys/class/net/$LAN_IF/address" 2>/dev/null || true)"
+  ip link show "$LAN_IF" >/dev/null 2>&1 || die "Сохранённый LAN интерфейс $LAN_IF отсутствует"
+  ip -o -4 addr show dev "$LAN_IF" | grep -qE "[[:space:]]${PI_IP}/" || die "Сохранённый IP Raspberry Pi $PI_IP сейчас не назначен $LAN_IF"
+  [[ "$(in_cidr "$PI_IP" "$LAN_CIDR")" == "yes" ]] || die "Сохранённый IP $PI_IP не принадлежит $LAN_CIDR"
+  if ! ping -4 -c 2 -W 2 "$ROUTER_IP" >/dev/null 2>&1; then
+    die "Сохранённый роутер $ROUTER_IP не отвечает"
+  fi
+  IFS=',' read -ra DNSA <<<"$UPSTREAM_DNS"
+  DNS_OK=0
+  for d in "${DNSA[@]}"; do
+    d="${d//[[:space:]]/}"
+    valid_ipv4 "$d" || die "В существующем env неверный DNS: $d"
+    if dig +time=3 +tries=1 +short A example.com @"$d" | grep -qE '^[0-9]+\.'; then DNS_OK=$((DNS_OK+1)); fi
+  done
+  (( DNS_OK > 0 )) || die "Upstream DNS из существующей конфигурации не отвечает"
+  touch "$VPN_DOMAINS" "$DIRECT_DOMAINS" "$CLIENTS_FILE"
+  chmod 600 "$VPN_DOMAINS" "$DIRECT_DOMAINS" "$CLIENTS_FILE"
+  [[ -f "$VPN_ENABLED_FILE" ]] || echo 1 >"$VPN_ENABLED_FILE"
+  chmod 600 "$VPN_ENABLED_FILE"
+  ok "Сетевая конфигурация сохранена: Pi=$PI_IP, Router=$ROUTER_IP, LAN=$LAN_CIDR"
+else
 printf "\nIPv4 интерфейсы:\n"
 ip -br -4 addr show | sed 's/^/  /'
 printf "Default route:\n"
@@ -443,6 +491,7 @@ touch "$VPN_DOMAINS" "$DIRECT_DOMAINS" "$CLIENTS_FILE"
 chmod 600 "$VPN_DOMAINS" "$DIRECT_DOMAINS" "$CLIENTS_FILE"
 echo 1 >"$VPN_ENABLED_FILE"
 chmod 600 "$VPN_ENABLED_FILE"
+fi
 
 # -----------------------------------------------------------------------------
 # 7. sysctl, watchdog, nftables base setup
