@@ -127,11 +127,10 @@ regen_domains(){
   done < <(source_meta_files)
 
   dnsmasq --test >/dev/null
-  systemctl restart dnsmasq
-  sleep 1
-
   nft flush set inet awg_pbr vpn4 2>/dev/null || true
   nft flush set inet awg_pbr direct4 2>/dev/null || true
+  systemctl restart dnsmasq
+  sleep 1
 
   tmp_static="$(mktemp)"
   printf 'flush set inet awg_pbr source4\n' >"$tmp_static"
@@ -327,7 +326,21 @@ META
         fi
       done < <(source_meta_files)
       (( found == 1 )) || { echo "Источник не найден: $name" >&2; exit 1; }
-      if [[ "$action" == enable ]]; then "$OPENCCK_UPDATE" "$name" || true; else reload_all; fi
+      if [[ "$action" == enable ]]; then
+        if ! "$OPENCCK_UPDATE" "$name"; then
+          while IFS= read -r m; do
+            [[ -n "$m" ]] || continue
+            load_meta "$m"
+            [[ "${PROVIDER:-}" == "$provider" && "${SOURCE_NAME:-}" == "$name" ]] || continue
+            sed -i -E 's/^ENABLED=.*/ENABLED=0/' "$m"
+          done < <(source_meta_files)
+          reload_all
+          echo "Не удалось обновить источник $name; состояние возвращено в disabled" >&2
+          exit 1
+        fi
+      else
+        reload_all
+      fi
       echo "OK: source $action $name"
       ;;
     *) usage; exit 2 ;;
