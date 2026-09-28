@@ -10,3 +10,5 @@ Raspberry Pi 4 AmneziaWG policy-routing gateway installer.
 curl -fsSL https://raw.githubusercontent.com/karlinksk/awg-pi/main/install.sh -o /tmp/install.sh && sudo bash /tmp/install.sh
 
 curl -fsSL https://raw.githubusercontent.com/karlinksk/awg-pi/v1.0.0/install.sh -o /tmp/install.sh && sudo bash /tmp/install.sh
+
+curl -fsSL https://raw.githubusercontent.com/karlinksk/awg-pi/v1.0.1/install.sh -o /tmp/install.sh && sudo bash /tmp/install.sh
