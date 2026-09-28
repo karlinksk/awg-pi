@@ -16,9 +16,17 @@ jobs:
       - name: Bash syntax
         run: |
           bash -n install.sh
+          bash -n src/awg-common
           bash -n src/awg-route
           bash -n src/awg-opencck-update
           bash -n src/awg-menu
+          bash -n tests/test-common.sh
+          bash -n tests/test-opencck-updater.sh
+          bash -n tests/mock-curl.sh
       - name: ShellCheck errors
         run: |
-          shellcheck -S error install.sh src/awg-route src/awg-opencck-update src/awg-menu
+          shellcheck -S error install.sh src/awg-common src/awg-route src/awg-opencck-update src/awg-menu tests/test-common.sh tests/test-opencck-updater.sh tests/mock-curl.sh
+      - name: Unit tests
+        run: |
+          bash tests/test-common.sh
+          bash tests/test-opencck-updater.sh
