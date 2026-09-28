@@ -13,6 +13,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Test dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y nftables
       - name: Bash syntax
         run: |
           bash -n install.sh
@@ -25,10 +29,12 @@ jobs:
           bash -n tests/test-common.sh
           bash -n tests/test-opencck-updater.sh
           bash -n tests/mock-curl.sh
+          bash -n tests/test-nft-template.sh
       - name: ShellCheck errors
         run: |
-          shellcheck -S error install.sh src/awg-common src/awg-route src/awg-opencck-update src/awg-core-update src/awg-update src/awg-menu tests/test-common.sh tests/test-opencck-updater.sh tests/mock-curl.sh
+          shellcheck -S error install.sh src/awg-common src/awg-route src/awg-opencck-update src/awg-core-update src/awg-update src/awg-menu tests/test-common.sh tests/test-opencck-updater.sh tests/mock-curl.sh tests/test-nft-template.sh
       - name: Unit tests
         run: |
           bash tests/test-common.sh
           bash tests/test-opencck-updater.sh
+          bash tests/test-nft-template.sh
