@@ -228,9 +228,8 @@ log "[4/12] AmneziaWG"
 GO_REPO="https://github.com/amnezia-vpn/amneziawg-go.git"
 TOOLS_REPO="https://github.com/amnezia-vpn/amneziawg-tools.git"
 latest_tag(){
-  git ls-remote --tags --refs "$1" 'refs/tags/v*' \
-    | awk -F/ '{print $3}' \
-    | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+
+  git ls-remote --tags --refs "$1" 'refs/tags/v*' | awk -F/ '{print $3}' | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -1
+}
 sync_repo(){
   local repo="$1" dir="$2" tag="$3"
   mkdir -p "$SRC_ROOT"
