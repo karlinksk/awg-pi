@@ -1079,7 +1079,7 @@ EOF
 cat >/etc/profile.d/awg-menu.sh <<'EOF'
 # AWG Pi Gateway: open TUI only for an interactive SSH login.
 # Set AWG_MENU_DISABLE=1 before login command execution to bypass it.
-if [ -n "${SSH_CONNECTION:-}" ] && [ -t 0 ] && [ -t 1 ] && [ "${AWG_MENU_DISABLE:-0}" != 1 ] && [ -x /usr/local/sbin/awg-menu ]; then
+if [ -n "${SSH_CONNECTION:-}" ] && [ -t 0 ] && [ -t 1 ] && [ "${AWG_MENU_DISABLE:-0}" != 1 ] && [ ! -e "${HOME:-/nonexistent}/.no-awg-menu" ] && [ -x /usr/local/sbin/awg-menu ]; then
   if [ "${AWG_MENU_ACTIVE:-0}" != 1 ]; then
     export AWG_MENU_ACTIVE=1
     sudo /usr/local/sbin/awg-menu
