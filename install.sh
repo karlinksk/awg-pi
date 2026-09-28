@@ -200,6 +200,16 @@ ok "dnsmasq поддерживает nftset"
 # -----------------------------------------------------------------------------
 # 3. Go
 # -----------------------------------------------------------------------------
+if (( UPGRADE_EXISTING == 1 )); then
+  STAGE="проверка существующего AmneziaWG"
+  log "[3-4/12] Сохраняем существующий AmneziaWG core"
+  command -v awg >/dev/null || die "При обновлении не найден awg"
+  command -v awg-quick >/dev/null || die "При обновлении не найден awg-quick"
+  command -v amneziawg-go >/dev/null || die "При обновлении не найден amneziawg-go"
+  GO_TAG="$(git -C "$SRC_ROOT/amneziawg-go" describe --tags --exact-match 2>/dev/null || echo installed)"
+  TOOLS_TAG="$(git -C "$SRC_ROOT/amneziawg-tools" describe --tags --exact-match 2>/dev/null || echo installed)"
+  ok "AmneziaWG core не изменяется при обновлении Gateway (go=$GO_TAG tools=$TOOLS_TAG)"
+else
 STAGE="установка Go"
 log "[3/12] Go"
 install_go(){
@@ -267,6 +277,7 @@ command -v awg-quick >/dev/null || die "awg-quick не установлен"
 command -v amneziawg-go >/dev/null || die "amneziawg-go не установлен"
 ok "$(awg --version 2>/dev/null || echo 'awg установлен')"
 ok "$(amneziawg-go --version 2>/dev/null || echo 'amneziawg-go установлен')"
+fi
 
 # -----------------------------------------------------------------------------
 # 5. Import and validate AWG config
