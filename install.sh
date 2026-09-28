@@ -2,7 +2,9 @@
 set -Eeuo pipefail
 IFS=$'\n\t'
 
-VERSION="1.0.1"
+VERSION="1.1.0"
+PROJECT_REF="${AWG_PI_REF:-develop/v1.1.0}"
+PROJECT_RAW_BASE="https://raw.githubusercontent.com/karlinksk/awg-pi/${PROJECT_REF}"
 TTY=/dev/tty
 STAGE="preflight"
 
@@ -174,7 +176,7 @@ apt-get update
 apt-get install -y --no-install-recommends \
   ca-certificates curl git jq build-essential make pkg-config \
   iproute2 iputils-ping dnsutils nftables dnsmasq procps \
-  python3-minimal openssl
+  python3-minimal openssl dialog
 
 command -v nft >/dev/null || die "nft не установлен"
 command -v dnsmasq >/dev/null || die "dnsmasq не установлен"
@@ -506,9 +508,14 @@ table inet awg_pbr {
   set clients4 {
     type ipv4_addr
   }
+  set source4 {
+    type ipv4_addr
+    flags interval
+  }
 
   chain prerouting_mark {
     type filter hook prerouting priority mangle; policy accept;
+    iifname "$LAN_IF" ${CLIENT_FILTER}ip daddr @source4 meta mark set $VPN_MARK
     iifname "$LAN_IF" ${CLIENT_FILTER}ip daddr @vpn4 meta mark set $VPN_MARK
     iifname "$LAN_IF" ip daddr @direct4 meta mark set 0x0
   }
@@ -970,6 +977,65 @@ esac
 EOF
 chmod 755 "$ROUTE_CLI"
 
+# v1.1.0 helpers are maintained as standalone repository files so the TUI and
+# source manager can be audited independently of this installer.
+STAGE="установка компонентов v1.1.0"
+log "[8b/12] CLI v1.1.0 + OpenCCK + SSH TUI"
+install_project_helper(){
+  local remote="$1" target="$2" tmp
+  tmp="$(mktemp)"
+  curl -4fLsS --retry 3 --connect-timeout 8 --max-time 45 "$PROJECT_RAW_BASE/$remote" -o "$tmp" \
+    || die "Не удалось загрузить $remote из проекта ($PROJECT_REF)"
+  bash -n "$tmp" || die "Синтаксическая проверка $remote не пройдена"
+  install -m 755 "$tmp" "$target"
+  rm -f "$tmp"
+}
+install_project_helper src/awg-route "$ROUTE_CLI"
+install_project_helper src/awg-opencck-update /usr/local/sbin/awg-opencck-update
+install_project_helper src/awg-menu /usr/local/sbin/awg-menu
+
+mkdir -p /etc/awg-pbr/sources/opencck/metadata
+chmod 700 /etc/awg-pbr/sources /etc/awg-pbr/sources/opencck /etc/awg-pbr/sources/opencck/metadata
+printf '%s\n' "$VERSION" >/etc/awg-pbr/version
+chmod 600 /etc/awg-pbr/version
+
+cat >/etc/systemd/system/awg-opencck-update.service <<'EOF'
+[Unit]
+Description=AWG Pi Gateway OpenCCK source updater
+Wants=network-online.target
+After=network-online.target dnsmasq.service awg-pbr-setup.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/awg-opencck-update
+EOF
+
+cat >/etc/systemd/system/awg-opencck-update.timer <<'EOF'
+[Unit]
+Description=Periodic OpenCCK source update for AWG Pi Gateway
+
+[Timer]
+OnBootSec=10min
+OnUnitActiveSec=12h
+RandomizedDelaySec=30min
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+EOF
+
+cat >/etc/profile.d/awg-menu.sh <<'EOF'
+# AWG Pi Gateway: open TUI only for an interactive SSH login.
+# Set AWG_MENU_DISABLE=1 before login command execution to bypass it.
+if [ -n "${SSH_CONNECTION:-}" ] && [ -t 0 ] && [ -t 1 ] && [ "${AWG_MENU_DISABLE:-0}" != 1 ] && [ -x /usr/local/sbin/awg-menu ]; then
+  if [ "${AWG_MENU_ACTIVE:-0}" != 1 ]; then
+    export AWG_MENU_ACTIVE=1
+    sudo /usr/local/sbin/awg-menu
+  fi
+fi
+EOF
+chmod 644 /etc/profile.d/awg-menu.sh
+
 # -----------------------------------------------------------------------------
 # 9. Fail-open health monitor
 # -----------------------------------------------------------------------------
@@ -1177,7 +1243,7 @@ chmod 755 "$UPDATE_SCRIPT"
 STAGE="первый запуск и критические проверки"
 log "[11/12] Первый запуск"
 systemctl daemon-reload
-systemctl enable awg-pbr-setup.service dnsmasq.service "awg-quick@$VPN_IF.service" awg-pbr-health.service >/dev/null
+systemctl enable awg-pbr-setup.service dnsmasq.service "awg-quick@$VPN_IF.service" awg-pbr-health.service awg-opencck-update.timer >/dev/null
 
 systemctl restart awg-pbr-setup.service
 nft list table inet awg_pbr >/dev/null 2>&1 || die "Не создана nftables table inet awg_pbr"
@@ -1204,6 +1270,8 @@ ok "$VPN_IF поднят"
 
 systemctl restart awg-pbr-health.service
 systemctl is-active --quiet awg-pbr-health.service || die "health monitor не запустился"
+systemctl start awg-opencck-update.timer
+systemctl is-active --quiet awg-opencck-update.timer || warn "OpenCCK timer не активен; ручное обновление останется доступно"
 
 printf "Ожидание handshake/проверки VPN"
 VPN_HEALTH=0
@@ -1268,6 +1336,10 @@ printf "  sudo awg-route test youtube.com\n"
 printf "  sudo awg-route diagnostics\n"
 printf "  sudo awg-route logs\n"
 printf "  sudo awg-route reload\n"
+printf "  sudo awg-route vpn import FILE\n"
+printf "  sudo awg-route source add opencck youtube\n"
+printf "  sudo awg-route source list\n"
+printf "  sudo awg-menu\n"
 printf "  sudo awg-update\n"
 
 printf "\nДля первого тестового устройства (LG TV):\n"
