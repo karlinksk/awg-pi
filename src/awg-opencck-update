@@ -2,6 +2,9 @@
 set -Eeuo pipefail
 [[ ${EUID:-$(id -u)} -eq 0 ]] || exec sudo "$0" "$@"
 
+exec 9>/run/awg-maintenance.lock
+flock -sn 9 || { echo 'Идёт обслуживание gateway; повторите позже.' >&2; exit 1; }
+
 META_DIR="${AWG_OPENCCK_META_DIR:-/etc/awg-pbr/sources/opencck/metadata}"
 BASE_URL="${AWG_OPENCCK_BASE_URL:-https://iplist.opencck.org/}"
 AWG_ROUTE="${AWG_ROUTE_BIN:-/usr/local/sbin/awg-route}"
@@ -29,6 +32,10 @@ canonicalize(){
         raw="${raw%%#*}"
         [[ -n "${raw//[[:space:]]/}" ]] || continue
         d="$(awg_normalize_domain "$raw")"
+        if awg_service_domain "$d"; then
+          echo "OpenCCK: пропущено служебное DNS-имя: $d" >&2
+          continue
+        fi
         if ! awg_valid_domain "$d"; then
           echo "OpenCCK: некорректный домен: $raw" >&2
           bad=$((bad+1)); continue

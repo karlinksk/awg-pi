@@ -214,9 +214,9 @@ client_menu(){
 }
 
 vpn_menu(){
-  local choice
+  local choice path
   while true; do
-    choice="$(dialog --backtitle "$BACKTITLE" --title "VPN policy" --menu "Управление VPN" 16 80 7       1 "Включить VPN policy"       2 "Выключить VPN policy (всё DIRECT)"       3 "Перезапустить awg0 и health monitor"       0 "Назад" 3>&1 1>&2 2>&3)" || return 0
+    choice="$(dialog --backtitle "$BACKTITLE" --title "VPN policy" --menu "Управление VPN" 16 80 7       1 "Включить VPN policy"       2 "Выключить VPN policy (всё DIRECT)"       3 "Перезапустить awg0 и health monitor"       4 "Заменить конфигурацию AmneziaWG"       5 "Откатить предыдущую конфигурацию"       0 "Назад" 3>&1 1>&2 2>&3)" || return 0
     case "$choice" in
       1)
         title="VPN ON"
@@ -232,6 +232,11 @@ vpn_menu(){
         systemctl restart awg-quick@awg0.service awg-pbr-health.service
         msg "VPN" "Сервисы перезапущены."
         ;;
+      4)
+        path="$(input "AmneziaWG" "Полный путь к native .conf:")" || continue
+        run_interactive "Замена профиля" "$AWG_ROUTE" config replace "$path"
+        ;;
+      5) run_interactive "Откат профиля" "$AWG_ROUTE" config rollback ;;
       0) return 0 ;;
     esac
   done
@@ -274,7 +279,7 @@ update_menu(){
 system_menu(){
   local choice
   while true; do
-    choice="$(dialog --backtitle "$BACKTITLE" --title "Система" --menu "Системные функции" 17 82 8       1 "Перезагрузить конфигурацию AWG Gateway"       2 "Перезагрузить Raspberry Pi"       3 "Выключить Raspberry Pi"       0 "Назад" 3>&1 1>&2 2>&3)" || return 0
+    choice="$(dialog --backtitle "$BACKTITLE" --title "Система" --menu "Системные функции" 17 82 8       1 "Перезагрузить конфигурацию AWG Gateway"       2 "Перезагрузить Raspberry Pi"       3 "Выключить Raspberry Pi"       4 "Перенастроить LAN gateway"       0 "Назад" 3>&1 1>&2 2>&3)" || return 0
     case "$choice" in
       1)
         title="Reload"
@@ -286,6 +291,7 @@ system_menu(){
       3)
         confirm "Poweroff" "Выключить Raspberry Pi?" && systemctl poweroff
         ;;
+      4) run_interactive "Перенастройка сети" "$AWG_ROUTE" network reconfigure ;;
       0) return 0 ;;
     esac
   done

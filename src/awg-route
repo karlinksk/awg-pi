@@ -2,6 +2,13 @@
 set -Eeuo pipefail
 [[ ${EUID:-$(id -u)} -eq 0 ]] || exec sudo "$0" "$@"
 
+# Maintenance takes an exclusive lock; normal commands and source updates
+# share it (including a nested source -> updater -> reload).
+if [[ ${AWG_MAINTENANCE:-0} != 1 && ${1:-} != network && ${1:-} != config ]]; then
+  exec 9>/run/awg-maintenance.lock
+  flock -sn 9 || { echo 'Идёт обслуживание gateway; повторите позже.' >&2; exit 1; }
+fi
+
 # shellcheck disable=SC1091
 source /etc/awg-pbr/env
 # shellcheck disable=SC1091
@@ -59,6 +66,9 @@ VPN policy:
   awg-route vpn off
 
 Проверки/обслуживание:
+  awg-route network reconfigure [--yes] [--keep-clients]
+  awg-route config replace FILE [--yes]
+  awg-route config rollback [--yes]
   awg-route status
   awg-route test DOMAIN
   awg-route reload
@@ -420,6 +430,7 @@ show_status(){
   enabled="$(cat "$VE" 2>/dev/null || echo 1)"
   age="$(handshake_age)"
   read -r sc_total sc_enabled sc_entries < <(source_counts)
+  /usr/local/lib/awg-pi/manage.py network status || true
   echo "=== Gateway ==="
   printf 'LAN: %s  Pi: %s  Router: %s  Network: %s\n' "$LAN_IF" "$PI_IP" "$ROUTER_IP" "$LAN_CIDR"
   printf 'VPN policy requested: %s\n' "$([[ "$enabled" == 1 ]] && echo ON || echo OFF)"
@@ -548,7 +559,7 @@ run_diagnostics(){
       if ! ip -4 rule show | grep -Eq '(^| )90:.*fwmark (0x101|257).*lookup (101|awghealth)'; then
         ip -4 rule add priority 90 fwmark "$HEALTH_MARK" lookup "$HEALTH_TABLE" 2>/dev/null || true
       fi
-      if ping -4 -n -m "$HEALTH_MARK" -c1 -W3 1.1.1.1 >/dev/null 2>&1 || ping -4 -n -m "$HEALTH_MARK" -c1 -W3 9.9.9.9 >/dev/null 2>&1; then health_ok=yes; fi
+      if ping -4 -n -m "$((HEALTH_MARK))" -c1 -W3 1.1.1.1 >/dev/null 2>&1 || ping -4 -n -m "$((HEALTH_MARK))" -c1 -W3 9.9.9.9 >/dev/null 2>&1; then health_ok=yes; fi
     fi
     echo "VPN transport ping: $health_ok"
   } | tee "$report"
@@ -586,6 +597,7 @@ case "$cmd" in
       *) usage; exit 2 ;;
     esac
     ;;
+  network|config) exec /usr/local/lib/awg-pi/manage.py "$@" ;;
   source) shift; source_cmd "$@" ;;
   client) client_cmd "$action" "$val" ;;
   list)

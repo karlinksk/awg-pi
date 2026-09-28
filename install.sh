@@ -2,8 +2,8 @@
 set -Eeuo pipefail
 IFS=$'\n\t'
 
-VERSION="1.1.0"
-PROJECT_REF="${AWG_PI_REF:-v${VERSION}}"
+AWG_PI_VERSION="1.1.0"
+PROJECT_REF="${AWG_PI_REF:-v${AWG_PI_VERSION}}"
 PROJECT_RAW_BASE="https://raw.githubusercontent.com/karlinksk/awg-pi/${PROJECT_REF}"
 TTY=/dev/tty
 STAGE="preflight"
@@ -88,7 +88,8 @@ valid_ipv4(){
   ((a<=255 && b<=255 && c<=255 && d<=255))
 }
 valid_cidr4(){
-  local x="$1" ip="${x%/*}" p="${x#*/}"
+  local x="$1" ip p
+  ip="${x%/*}"; p="${x#*/}"
   [[ "$x" == */* ]] || return 1
   valid_ipv4 "$ip" && [[ "$p" =~ ^[0-9]+$ ]] && ((p>=0 && p<=32))
 }
@@ -109,7 +110,7 @@ first_working_url(){
   return 1
 }
 
-printf "%b=== AmneziaWG Raspberry Pi 4 Policy Gateway Installer v%s ===%b\n" "$B" "$VERSION" "$R"
+printf "%b=== AmneziaWG Raspberry Pi 4 Policy Gateway Installer v%s ===%b\n" "$B" "$AWG_PI_VERSION" "$R"
 printf "Архитектура: Archer C64 = основной DHCP/NAT; Raspberry Pi = выборочный PBR-шлюз.\n"
 printf "Default = DIRECT. Домены из VPN-list = AmneziaWG. VPN недоступен = FAIL-OPEN напрямую.\n"
 printf "IPv6 в этой версии не маршрутизируется.\n\n"
@@ -120,7 +121,7 @@ AUTO_UPGRADE="${AWG_PI_UPGRADE_AUTO:-0}"
 EXISTING_VERSION="$(cat /etc/awg-pbr/version 2>/dev/null || true)"
 if [[ -f "$ENV_FILE" && -f "$CONF_FILE" ]]; then
   printf "Обнаружена существующая AWG Pi Gateway: %s\n" "${EXISTING_VERSION:-версия до v1.1.0}"
-  if [[ "$AUTO_UPGRADE" == 1 ]] || confirm "Выполнить безопасное обновление существующей установки до v$VERSION с сохранением AWG-конфига, доменов и клиентов?" "Y"; then
+  if [[ "$AUTO_UPGRADE" == 1 ]] || confirm "Выполнить безопасное обновление существующей установки до v$AWG_PI_VERSION с сохранением AWG-конфига, доменов и клиентов?" "Y"; then
     UPGRADE_EXISTING=1
     ok "Режим обновления: пользовательские списки и $CONF_FILE будут сохранены"
   else
@@ -729,6 +730,11 @@ install_project_helper(){
 mkdir -p /usr/local/lib/awg-pi
 install_project_helper src/awg-common /usr/local/lib/awg-pi/common.sh
 chmod 644 /usr/local/lib/awg-pi/common.sh
+_manage_tmp="$(mktemp)"
+curl -4fLsS --retry 3 --connect-timeout 8 --max-time 45 "$PROJECT_RAW_BASE/src/awg-manage.py" -o "$_manage_tmp" || die "Не удалось загрузить awg-manage.py"
+python3 -c 'import ast,sys; ast.parse(open(sys.argv[1]).read())' "$_manage_tmp" || die "Ошибка синтаксиса awg-manage.py"
+install -m 755 "$_manage_tmp" /usr/local/lib/awg-pi/manage.py
+rm -f "$_manage_tmp"
 install_project_helper src/awg-route "$ROUTE_CLI"
 install_project_helper src/awg-opencck-update /usr/local/sbin/awg-opencck-update
 install_project_helper src/awg-core-update /usr/local/sbin/awg-core-update
@@ -826,8 +832,8 @@ handshake_fresh(){
 }
 transport_ok(){
   # Ping itself stimulates a handshake when needed.
-  ping -4 -n -m "$HEALTH_MARK" -c1 -W2 1.1.1.1 >/dev/null 2>&1 || \
-  ping -4 -n -m "$HEALTH_MARK" -c1 -W2 9.9.9.9 >/dev/null 2>&1
+  ping -4 -n -m "$((HEALTH_MARK))" -c1 -W2 1.1.1.1 >/dev/null 2>&1 || \
+  ping -4 -n -m "$((HEALTH_MARK))" -c1 -W2 9.9.9.9 >/dev/null 2>&1
 }
 
 trap 'rule_off' EXIT INT TERM
@@ -875,7 +881,7 @@ for f in "$ROUTE_CLI" /usr/local/sbin/awg-menu /usr/local/sbin/awg-opencck-updat
   [[ -x "$f" ]] || die "Не установлен исполняемый компонент: $f"
   bash -n "$f" || die "Синтаксическая проверка компонента не пройдена: $f"
 done
-ok "Компоненты управления v$VERSION установлены"
+ok "Компоненты управления v$AWG_PI_VERSION установлены"
 
 # -----------------------------------------------------------------------------
 # 11. Start services and critical tests
@@ -944,9 +950,9 @@ log "[12/12] Полная диагностика"
 "$ROUTE_CLI" reload
 "$ROUTE_CLI" diagnostics
 
-printf '%s\n' "$VERSION" >/etc/awg-pbr/version
+printf '%s\n' "$AWG_PI_VERSION" >/etc/awg-pbr/version
 chmod 600 /etc/awg-pbr/version
-ok "Версия AWG Pi Gateway зафиксирована: $VERSION"
+ok "Версия AWG Pi Gateway зафиксирована: $AWG_PI_VERSION"
 
 LATEST_DIAG="$(find "$LOG_DIR" -maxdepth 1 -type f -name 'diagnostics-*.txt' -printf '%T@ %p\n' | sort -nr | head -1 | cut -d' ' -f2-)"
 

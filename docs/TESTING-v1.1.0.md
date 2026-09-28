@@ -182,3 +182,98 @@ Do not merge/release v1.1.0 until all of the following are true:
 - SSH/TUI escape and noninteractive SSH pass;
 - reboot/persistence passes;
 - no secrets appear in diagnostics.
+
+## 13. RC2: existing Pi upgrade first
+
+CI does not replace testing the real Pi and LG. Do not reset or clean-install
+the current test Pi. Preserve Pi `192.168.112.33`, LG `192.168.112.28`, AWG
+profile, client allow-list, OpenCCK youtube, VPN/DIRECT lists, upstream DNS,
+requested policy state and watchdog settings.
+
+Resolve RC2 once to a commit and pin both the installer and helper downloads
+to that same commit. Run in an interactive SSH shell (exit the TUI first):
+
+```bash
+set -e
+RC2_SHA=$(git ls-remote https://github.com/karlinksk/awg-pi.git refs/heads/rc/v1.1.0-rc2 | awk '{print $1}')
+test "${#RC2_SHA}" -eq 40
+backup="/var/backups/awg-gateway/pre-rc2-$(date +%Y%m%d-%H%M%S).tgz"
+sudo install -d -m 700 /var/backups/awg-gateway
+sudo tar -C / -czf "$backup" etc/awg-pbr etc/amnezia/amneziawg etc/dnsmasq.d etc/nftables.d etc/sysctl.d etc/systemd/system usr/local/lib/awg-pi usr/local/sbin
+sudo chmod 600 "$backup"
+sudo tar -tzf "$backup" >/dev/null
+curl -fLsS "https://raw.githubusercontent.com/karlinksk/awg-pi/$RC2_SHA/install.sh" -o /tmp/awg-rc2-install.sh
+bash -n /tmp/awg-rc2-install.sh
+sudo env AWG_PI_REF="$RC2_SHA" AWG_PI_UPGRADE_AUTO=1 bash /tmp/awg-rc2-install.sh
+sudo awg-route status
+sudo awg-route source list
+sudo awg-route client list
+sudo awg-route diagnostics
+```
+
+Record backup path and SHA. Installer must select upgrade mode, preserve the
+AWG config byte-for-byte and not rebuild/update the AWG core. Compare env,
+clients, source metadata/cache and domain files against the archive. Confirm
+`/etc/awg-pbr/version` is `1.1.0`, never the Debian version, and marked ping
+has no invalid-argument errors with the original `HEALTH_MARK=0x101` env.
+Do not use `awg-update gateway` to select RC2: it follows stable releases.
+
+If the upgrade fails, keep the backup and logs. To restore on this same Pi:
+
+```bash
+sudo systemctl stop awg-pbr-health.service awg-opencck-update.timer awg-opencck-update.service
+sudo /usr/local/sbin/awg-pbr-failopen
+sudo systemctl stop awg-quick@awg0.service
+sudo tar -C / -xzf "$backup"
+sudo systemctl daemon-reload
+sudo systemctl restart awg-pbr-setup.service dnsmasq.service awg-quick@awg0.service
+sudo awg-route reload
+sudo systemctl start awg-opencck-update.timer
+```
+
+## 14. RC2: network transaction
+
+- Run `sudo awg-route network reconfigure` on unchanged LAN: no changes.
+- On a controlled test network, change Pi lease/subnet/interface/router first.
+  Confirm `status` warns and shows saved/actual values. Ensure SSH access to
+  the new Pi address before applying gateway changes.
+- Check the old/new preview and cancel: all files/services remain unchanged.
+- Accept and verify env, dnsmasq listen/interface, nftables LAN/NAT rules, DNS
+  query via Pi and DIRECT connectivity. Check sources/static sets are restored.
+- Old LG allow-list address must prompt a separate warning; `--yes` alone must
+  fail if out-of-subnet clients exist. No automatic deletion or remapping.
+- Add the new LG address before deleting the old one. Recheck selective PBR.
+- Inject a dnsmasq/nftables failure on a disposable Pi image. Verify rollback
+  restores files and attempts service restoration; a failed restoration leaves
+  health stopped and policy DIRECT. This cannot undo the external DHCP change.
+
+## 15. RC2: AWG profile transaction
+
+- Prepare a second valid native IPv4 profile. Test CLI and VPN TUI replacement.
+- Cancel confirmation and try invalid keys, missing AWG fields, hooks,
+  unsupported core fields: live config and services must remain untouched.
+- Set DNS and Table=auto in the input; installed result must remove DNS and
+  contain Table=off with permissions 600.
+- Confirm DIRECT during switching and a fresh handshake plus tunnel transport
+  before policy restoration. VPN-off must stay off.
+- Try an unreachable server: automatically restore the previous profile and
+  recheck its handshake/transport. If neither server works, retain DIRECT and
+  stop health. Confirm no keys appear in output/logs.
+- Run `sudo awg-route config rollback` and the equivalent TUI item. Confirm
+  previous config becomes active and the replaced one becomes previous.
+- Compare env, clients, OpenCCK metadata/cache and domain lists byte-for-byte.
+- Reboot and repeat LG playback, OpenCCK offline/timer, import/export,
+  noninteractive SSH/SCP and diagnostics checks above.
+
+## 16. Automated RC2 coverage
+
+CI runs the existing suites plus `tests/test-rc2.sh` (actual installer CIDR
+functions under nounset, version isolation and actual emitted transport
+function with decimal-only ping), OpenCCK service-record fixtures and
+`tests/test-maintenance.py` (discovery, sanitization, cancellation, transactional
+file preservation, injected apply failures, health gating and auto/manual
+rollback). Service/network calls are mocked in Python; real AWG core preflight
+and end-to-end packet routing must pass the hardware checklist above.
+
+Create `rc/v1.1.0-rc2` only at the exact successful `develop/v1.1.0` CI SHA.
+No release/tag or changes to main/RC1 are part of this gate.
