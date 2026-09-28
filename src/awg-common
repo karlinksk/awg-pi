@@ -57,3 +57,25 @@ if bad:
     sys.exit(1)
 PY
 }
+
+awg_ipv4_ranges_to_nft_commands(){
+  local path="$1" family="${2:-inet}" table="${3:-awg_pbr}" setname="${4:-source4}"
+  python3 - "$path" "$family" "$table" "$setname" <<'PY'
+import ipaddress, sys
+path, family, table, setname = sys.argv[1:5]
+items=[]
+with open(path, encoding="utf-8") as f:
+    for line in f:
+        s=line.split("#",1)[0].strip()
+        if not s:
+            continue
+        if "/" in s:
+            items.append(ipaddress.ip_network(s, strict=False))
+        else:
+            items.append(ipaddress.ip_network(s + "/32", strict=False))
+for net in ipaddress.collapse_addresses(items):
+    if net.version != 4:
+        raise SystemExit("IPv6 is not supported")
+    print(f"add element {family} {table} {setname} {{ {net} }}")
+PY
+}
