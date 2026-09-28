@@ -3,7 +3,7 @@ set -Eeuo pipefail
 IFS=$'\n\t'
 
 VERSION="1.1.0"
-PROJECT_REF="${AWG_PI_REF:-develop/v1.1.0}"
+PROJECT_REF="${AWG_PI_REF:-v${VERSION}}"
 PROJECT_RAW_BASE="https://raw.githubusercontent.com/karlinksk/awg-pi/${PROJECT_REF}"
 TTY=/dev/tty
 STAGE="preflight"
