@@ -2,7 +2,7 @@
 set -Eeuo pipefail
 IFS=$'\n\t'
 
-VERSION="0.9.0"
+VERSION="1.0.1"
 TTY=/dev/tty
 STAGE="preflight"
 
