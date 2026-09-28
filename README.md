@@ -15,31 +15,41 @@ Current stable release: **v1.0.1**
 curl -fsSL https://raw.githubusercontent.com/karlinksk/awg-pi/v1.0.1/install.sh -o /tmp/install.sh && sudo bash /tmp/install.sh
 ```
 
-## v1.1.0 development
+## v1.1.0 RC2
 
-The `develop/v1.1.0` branch adds:
+The stable `main`/release remains **v1.0.1** until the v1.1.0 hardware release
+gate is complete.
+
+The frozen RC2 candidate is:
+
+```text
+branch: rc/v1.1.0-rc2
+SHA:    43b5f01a97178ca6a5bfeb73e3839f0b2ca125d2
+```
+
+Use the frozen RC2, not the moving development branch, for hardware validation:
+
+```bash
+RC2_SHA=43b5f01a97178ca6a5bfeb73e3839f0b2ca125d2
+curl -fsSL "https://raw.githubusercontent.com/karlinksk/awg-pi/$RC2_SHA/install.sh" -o /tmp/awg-rc2-install.sh
+sudo env AWG_PI_REF="$RC2_SHA" AWG_PI_UPGRADE_AUTO=1 bash /tmp/awg-rc2-install.sh
+```
+
+RC2 includes:
 
 - SSH TUI control panel (`awg-menu`)
 - bulk VPN/DIRECT domain import and export
-- OpenCCK sources with last-known-good cache
-- automatic OpenCCK refresh via systemd timer
+- OpenCCK sources with last-known-good cache and automatic timer refresh
 - domain, IPv4 and IPv4 CIDR source modes
-- source/routing diagnostics
+- source/routing diagnostics and FAIL-OPEN health monitoring
 - separate AWG Pi Gateway and AmneziaWG core updates
-- transaction-oriented gateway backup/rollback
-- CI checks for Bash syntax, ShellCheck, OpenCCK validation and nftables syntax
+- transactional LAN reconfiguration with backup/rollback
+- transactional native AmneziaWG profile check/replace/rollback
+- AWG v3.1 native-profile compatibility and secret redaction
+- CI regression tests for the hardware-discovered RC1/RC2 issues
 
-**Do not use the development branch on the production Raspberry Pi unless you
-are intentionally performing an RC test.** The stable `main`/release remains
-v1.0.1 until v1.1.0 has passed Raspberry Pi hardware tests.
-
-For an explicit development-branch test, helper downloads must be pinned to the
-same branch:
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/karlinksk/awg-pi/develop/v1.1.0/install.sh -o /tmp/install.sh
-sudo env AWG_PI_REF=develop/v1.1.0 bash /tmp/install.sh
-```
+The `develop/v1.1.0` branch may move after RC2 is frozen. Do not use it as a
+substitute for the RC2 hardware-test snapshot.
 
 ## Main v1.1.0 commands
 
@@ -55,7 +65,8 @@ sudo awg-route source update
 
 sudo awg-route diagnostics
 sudo awg-route network reconfigure
-sudo awg-route config replace /home/pi/new.conf
+sudo awg-route config check /etc/amnezia/amneziawg/awg0.conf
+sudo awg-route config replace /path/to/new.conf
 sudo awg-route config rollback
 sudo awg-menu
 
