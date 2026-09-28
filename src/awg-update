@@ -1,0 +1,174 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+# Re-exec from a temporary copy so an installer may safely replace /usr/local/sbin/awg-update.
+if [[ "${AWG_UPDATE_REEXEC:-0}" != 1 ]]; then
+  _self_tmp="$(mktemp /tmp/awg-update.XXXXXX)"
+  cp "$0" "$_self_tmp"
+  chmod 700 "$_self_tmp"
+  export AWG_UPDATE_REEXEC=1
+  exec "$_self_tmp" "$@"
+fi
+trap 'rm -f "$0" 2>/dev/null || true' EXIT
+
+[[ ${EUID:-$(id -u)} -eq 0 ]] || exec sudo -E "$0" "$@"
+
+REPO=karlinksk/awg-pi
+API="https://api.github.com/repos/$REPO/releases/latest"
+RAW="https://raw.githubusercontent.com/$REPO"
+VERSION_FILE=/etc/awg-pbr/version
+BACKUP_ROOT=/var/backups/awg-gateway
+CORE_UPDATE=/usr/local/sbin/awg-core-update
+ASSUME_YES=0
+
+confirm(){
+  local p="$1" ans
+  if (( ASSUME_YES == 1 )); then return 0; fi
+  read -r -p "$p [Y/n]: " ans </dev/tty
+  ans="${ans:-Y}"
+  [[ "$ans" =~ ^[YyДд] ]]
+}
+current_version(){
+  cat "$VERSION_FILE" 2>/dev/null || echo "0.0.0"
+}
+latest_release(){
+  curl -4fsSL --retry 3 --connect-timeout 8 --max-time 20 "$API" |
+    jq -r '.tag_name // empty' | sed 's/^v//'
+}
+version_gt(){
+  local a="$1" b="$2" top
+  [[ "$a" != "$b" ]] || return 1
+  top="$(printf '%s\n%s\n' "$a" "$b" | sort -V | tail -1)"
+  [[ "$top" == "$a" ]]
+}
+backup_gateway(){
+  local dir="$1"
+  mkdir -p "$dir"
+  chmod 700 "$dir"
+  tar -C / -czf "$dir/gateway-state.tgz"     --ignore-failed-read     etc/awg-pbr     etc/amnezia/amneziawg     etc/dnsmasq.d/99-awg-pbr.conf     etc/dnsmasq.d/99-awg-pbr-domains.conf     etc/nftables.d/99-awg-pbr.nft     etc/sysctl.d/99-awg-pbr.conf     etc/profile.d/awg-menu.sh     etc/systemd/system/awg-pbr-setup.service     etc/systemd/system/awg-pbr-health.service     etc/systemd/system/awg-opencck-update.service     etc/systemd/system/awg-opencck-update.timer     usr/local/lib/awg-pi     usr/local/sbin/awg-route     usr/local/sbin/awg-menu     usr/local/sbin/awg-opencck-update     usr/local/sbin/awg-core-update     usr/local/sbin/awg-update     usr/local/sbin/awg-pbr-setup     usr/local/sbin/awg-pbr-health     usr/local/sbin/awg-pbr-failopen 2>/dev/null || true
+  chmod 600 "$dir/gateway-state.tgz"
+}
+restore_gateway(){
+  local dir="$1"
+  echo "Восстановление предыдущей версии AWG Pi Gateway..." >&2
+  systemctl stop awg-opencck-update.timer awg-pbr-health.service 2>/dev/null || true
+
+  rm -rf /etc/awg-pbr /usr/local/lib/awg-pi
+  rm -f /usr/local/sbin/awg-route /usr/local/sbin/awg-menu /usr/local/sbin/awg-opencck-update         /usr/local/sbin/awg-core-update /usr/local/sbin/awg-update         /usr/local/sbin/awg-pbr-setup /usr/local/sbin/awg-pbr-health /usr/local/sbin/awg-pbr-failopen
+  rm -f /etc/systemd/system/awg-pbr-setup.service /etc/systemd/system/awg-pbr-health.service         /etc/systemd/system/awg-opencck-update.service /etc/systemd/system/awg-opencck-update.timer         /etc/profile.d/awg-menu.sh
+
+  tar -C / -xzf "$dir/gateway-state.tgz"
+  systemctl daemon-reload
+  sysctl --system >/dev/null 2>&1 || true
+  systemctl restart awg-pbr-setup.service 2>/dev/null || true
+  systemctl restart dnsmasq.service 2>/dev/null || true
+  systemctl restart awg-quick@awg0.service 2>/dev/null || true
+  systemctl restart awg-pbr-health.service 2>/dev/null || true
+  systemctl start awg-opencck-update.timer 2>/dev/null || true
+  echo "Rollback завершён." >&2
+}
+
+gateway_update(){
+  local cur latest tag tmp internal bk
+  cur="$(current_version)"
+  latest="$(latest_release)"
+  [[ -n "$latest" ]] || { echo "Не удалось определить latest release AWG Pi Gateway" >&2; return 1; }
+
+  echo "AWG Pi Gateway: installed=$cur latest=$latest"
+  if [[ "$cur" == "$latest" ]] || version_gt "$cur" "$latest"; then
+    echo "Обновление AWG Pi Gateway не требуется."
+    return 0
+  fi
+  confirm "Обновить AWG Pi Gateway $cur -> $latest?" || return 0
+
+  tag="v$latest"
+  tmp="$(mktemp /tmp/awg-pi-install.XXXXXX.sh)"
+  curl -4fLsS --retry 3 --connect-timeout 8 --max-time 45 "$RAW/$tag/install.sh" -o "$tmp"
+  bash -n "$tmp"
+  internal="$(grep -m1 -E '^VERSION="[0-9]+\.[0-9]+\.[0-9]+"' "$tmp" | cut -d'"' -f2 || true)"
+  [[ "$internal" == "$latest" ]] || {
+    echo "Отказ: VERSION внутри installer ($internal) не совпадает с релизом $latest" >&2
+    rm -f "$tmp"
+    return 1
+  }
+
+  bk="$BACKUP_ROOT/gateway-update-$(date +%Y%m%d-%H%M%S)"
+  backup_gateway "$bk"
+  echo "Backup: $bk"
+
+  set +e
+  AWG_PI_REF="$tag" bash "$tmp"
+  rc=$?
+  set -e
+  rm -f "$tmp"
+
+  if (( rc != 0 )); then
+    echo "Gateway update failed (rc=$rc)." >&2
+    restore_gateway "$bk"
+    return "$rc"
+  fi
+
+  if [[ "$(current_version)" != "$latest" ]]; then
+    echo "После установки версия не изменилась на $latest; выполняется rollback." >&2
+    restore_gateway "$bk"
+    return 1
+  fi
+
+  echo "AWG Pi Gateway update: OK -> $latest"
+  /usr/local/sbin/awg-route status || true
+  find "$BACKUP_ROOT" -maxdepth 1 -mindepth 1 -type d -name 'gateway-update-*' -printf '%T@ %p\n' 2>/dev/null |
+    sort -nr | awk 'NR>5{sub(/^[^ ]+ /,""); print}' | xargs -r rm -rf
+}
+
+show_status(){
+  local cur latest
+  cur="$(current_version)"
+  latest="$(latest_release 2>/dev/null || true)"
+  echo "AWG Pi Gateway: installed=$cur latest=${latest:-unknown}"
+  if [[ -x "$CORE_UPDATE" ]]; then
+    echo "AmneziaWG core updater: available"
+  else
+    echo "AmneziaWG core updater: missing"
+  fi
+}
+
+cmd="${1:-}"
+[[ "$cmd" == "--yes" ]] && { ASSUME_YES=1; shift; cmd="${1:-}"; }
+case "$cmd" in
+  status)
+    show_status
+    ;;
+  gateway)
+    gateway_update
+    ;;
+  core)
+    shift || true
+    [[ -x "$CORE_UPDATE" ]] || { echo "$CORE_UPDATE не найден" >&2; exit 1; }
+    (( ASSUME_YES == 1 )) && exec "$CORE_UPDATE" --yes
+    exec "$CORE_UPDATE" "$@"
+    ;;
+  all)
+    gateway_update
+    if [[ -x "$CORE_UPDATE" ]]; then
+      (( ASSUME_YES == 1 )) && "$CORE_UPDATE" --yes || "$CORE_UPDATE"
+    fi
+    ;;
+  "")
+    echo "1) AWG Pi Gateway"
+    echo "2) AmneziaWG core"
+    echo "3) Всё"
+    echo "4) Только показать версии"
+    read -r -p "Выбор [4]: " choice </dev/tty
+    case "${choice:-4}" in
+      1) gateway_update ;;
+      2) exec "$CORE_UPDATE" ;;
+      3) gateway_update; "$CORE_UPDATE" ;;
+      4) show_status ;;
+      *) echo "Неверный выбор" >&2; exit 2 ;;
+    esac
+    ;;
+  *)
+    echo "Использование: awg-update [--yes] {status|gateway|core|all}" >&2
+    exit 2
+    ;;
+esac
