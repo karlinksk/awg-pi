@@ -1,0 +1,581 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+[[ ${EUID:-$(id -u)} -eq 0 ]] || exec sudo "$0" "$@"
+
+# shellcheck disable=SC1091
+source /etc/awg-pbr/env
+
+VD=/etc/awg-pbr/vpn-domains.txt
+DD=/etc/awg-pbr/direct-domains.txt
+CF=/etc/awg-pbr/clients.txt
+VE=/etc/awg-pbr/vpn-enabled
+DC=/etc/dnsmasq.d/99-awg-pbr-domains.conf
+SETUP=/usr/local/sbin/awg-pbr-setup
+FAILOPEN=/usr/local/sbin/awg-pbr-failopen
+HEALTH_SERVICE=awg-pbr-health.service
+OPENCCK_UPDATE=/usr/local/sbin/awg-opencck-update
+SOURCE_ROOT=/etc/awg-pbr/sources
+OPENCCK_DIR="$SOURCE_ROOT/opencck"
+OPENCCK_META="$OPENCCK_DIR/metadata"
+LOG_DIR="${LOG_DIR:-/var/log/awg-gateway}"
+mkdir -p "$LOG_DIR" "$OPENCCK_DIR" "$OPENCCK_META"
+chmod 700 "$LOG_DIR" "$SOURCE_ROOT" "$OPENCCK_DIR" "$OPENCCK_META" 2>/dev/null || true
+
+usage(){ cat <<'USAGE'
+Управление AWG Pi Gateway
+
+Доменные правила:
+  awg-route vpn add DOMAIN
+  awg-route vpn del DOMAIN
+  awg-route vpn import FILE
+  awg-route vpn import --replace FILE
+  awg-route vpn export FILE
+  awg-route direct add DOMAIN
+  awg-route direct del DOMAIN
+  awg-route direct import FILE
+  awg-route direct import --replace FILE
+  awg-route direct export FILE
+  awg-route list
+
+OpenCCK:
+  awg-route source add opencck NAME [--type domains|ip4|cidr4] [--kind group|site]
+  awg-route source list
+  awg-route source show opencck NAME
+  awg-route source update [NAME]
+  awg-route source disable opencck NAME
+  awg-route source enable opencck NAME
+  awg-route source del opencck NAME
+
+Клиенты:
+  awg-route client add IPv4
+  awg-route client del IPv4
+  awg-route client list
+  Пустой список = правила VPN применяются ко всем устройствам, использующим Pi как gateway.
+
+VPN policy:
+  awg-route vpn on
+  awg-route vpn off
+
+Проверки/обслуживание:
+  awg-route status
+  awg-route test DOMAIN
+  awg-route reload
+  awg-route diagnostics
+  awg-route logs [N]
+
+DOMAIN без wildcard включает его поддомены в dnsmasq.
+USAGE
+}
+
+valid_ipv4(){
+  local IFS=. a b c d
+  read -r a b c d <<<"$1" || return 1
+  [[ ${a:-} =~ ^[0-9]+$ && ${b:-} =~ ^[0-9]+$ && ${c:-} =~ ^[0-9]+$ && ${d:-} =~ ^[0-9]+$ ]] || return 1
+  ((a<=255 && b<=255 && c<=255 && d<=255))
+}
+normalize_domain(){
+  printf '%s' "$1" | tr '[:upper:]' '[:lower:]' |
+    sed -E 's#^[[:space:]]+##; s#[[:space:]]+$##; s#^https?://##; s#/.*$##; s/:[0-9]+$//; s/^\*\.//; s/^\.//; s/\.$//'
+}
+valid_domain(){
+  [[ "$1" =~ ^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$ ]]
+}
+prune_reports(){
+  find "$LOG_DIR" -maxdepth 1 -type f -name 'diagnostics-*.txt' -printf '%T@ %p\n' 2>/dev/null |
+    sort -nr | awk 'NR>10{sub(/^[^ ]+ /,""); print}' | xargs -r rm -f
+}
+handshake_age(){
+  local hs now
+  hs="$(awg show "$VPN_IF" latest-handshakes 2>/dev/null | awk '$2>m{m=$2}END{print m+0}')"
+  [[ "$hs" -gt 0 ]] || { echo -1; return; }
+  now="$(date +%s)"; echo $((now-hs))
+}
+policy_present(){ ip -4 rule show | grep -Eq '(^| )100:.*fwmark (0x100|256).*lookup (100|awgvpn)'; }
+health_state(){ cat /run/awg-pbr/health.state 2>/dev/null || echo unknown; }
+
+source_meta_files(){
+  find "$OPENCCK_META" -maxdepth 1 -type f -name '*.env' -print 2>/dev/null | sort
+}
+load_meta(){
+  unset PROVIDER SOURCE_ID SOURCE_KIND SOURCE_NAME SOURCE_TYPE ENABLED DATA_FILE LAST_SUCCESS ENTRY_COUNT
+  # shellcheck disable=SC1090
+  source "$1"
+}
+domain_matches_file(){
+  local d="$1" f="$2" r
+  [[ -r "$f" ]] || return 1
+  while IFS= read -r r || [[ -n "$r" ]]; do
+    r="${r%%#*}"; r="${r//[[:space:]]/}"
+    [[ -z "$r" ]] && continue
+    [[ "$d" == "$r" || "$d" == *."$r" ]] && return 0
+  done <"$f"
+  return 1
+}
+
+regen_domains(){
+  local m tmp_static entry
+  : >"$DC"
+
+  add_dns_file(){
+    local f="$1" setname="$2" d
+    [[ -r "$f" ]] || return 0
+    while IFS= read -r d || [[ -n "$d" ]]; do
+      d="${d%%#*}"; d="${d//[[:space:]]/}"
+      [[ -z "$d" ]] && continue
+      printf 'nftset=/%s/4#inet#awg_pbr#%s\n' "$d" "$setname" >>"$DC"
+    done <"$f"
+  }
+
+  add_dns_file "$VD" vpn4
+  add_dns_file "$DD" direct4
+
+  while IFS= read -r m; do
+    [[ -n "$m" ]] || continue
+    load_meta "$m"
+    [[ "${PROVIDER:-}" == opencck && "${ENABLED:-0}" == 1 ]] || continue
+    [[ "${SOURCE_TYPE:-}" == domains && -r "${DATA_FILE:-}" ]] || continue
+    add_dns_file "$DATA_FILE" vpn4
+  done < <(source_meta_files)
+
+  dnsmasq --test >/dev/null
+  systemctl restart dnsmasq
+  sleep 1
+
+  nft flush set inet awg_pbr vpn4 2>/dev/null || true
+  nft flush set inet awg_pbr direct4 2>/dev/null || true
+
+  tmp_static="$(mktemp)"
+  printf 'flush set inet awg_pbr source4\n' >"$tmp_static"
+  while IFS= read -r m; do
+    [[ -n "$m" ]] || continue
+    load_meta "$m"
+    [[ "${PROVIDER:-}" == opencck && "${ENABLED:-0}" == 1 ]] || continue
+    case "${SOURCE_TYPE:-}" in
+      ip4|cidr4)
+        [[ -r "${DATA_FILE:-}" ]] || continue
+        while IFS= read -r entry || [[ -n "$entry" ]]; do
+          entry="${entry%%#*}"; entry="${entry//[[:space:]]/}"
+          [[ -z "$entry" ]] && continue
+          printf 'add element inet awg_pbr source4 { %s }\n' "$entry" >>"$tmp_static"
+        done <"$DATA_FILE"
+        ;;
+    esac
+  done < <(source_meta_files)
+  if ! nft -f "$tmp_static"; then
+    rm -f "$tmp_static"
+    echo "Ошибка загрузки статических IP/CIDR OpenCCK в nftables" >&2
+    return 1
+  fi
+  rm -f "$tmp_static"
+
+  # Прогреваем только ручные списки. OpenCCK-домены попадут в nftset при реальных DNS-запросах клиентов.
+  for f in "$VD" "$DD"; do
+    while IFS= read -r d || [[ -n "$d" ]]; do
+      d="${d%%#*}"; d="${d//[[:space:]]/}"; [[ -z "$d" ]] && continue
+      dig +time=2 +tries=1 +short A "$d" @"$PI_IP" >/dev/null 2>&1 || true
+    done <"$f"
+  done
+}
+
+reload_all(){
+  "$SETUP"
+  regen_domains
+  systemctl restart "$HEALTH_SERVICE"
+}
+
+add_domain(){
+  local kind="$1" raw="$2" d file other
+  d="$(normalize_domain "$raw")"
+  valid_domain "$d" || { echo "Некорректный домен: $d" >&2; exit 2; }
+  if [[ "$kind" == vpn ]]; then file="$VD"; other="$DD"; else file="$DD"; other="$VD"; fi
+  grep -Fxq "$d" "$file" 2>/dev/null || echo "$d" >>"$file"
+  grep -Fxv "$d" "$other" >"$other.tmp" 2>/dev/null || true
+  mv "$other.tmp" "$other"
+  sort -u -o "$file" "$file"; sort -u -o "$other" "$other"
+  regen_domains
+  echo "OK: $kind add $d"
+}
+del_domain(){
+  local kind="$1" raw="$2" d file
+  d="$(normalize_domain "$raw")"
+  file="$VD"; [[ "$kind" == direct ]] && file="$DD"
+  grep -Fxv "$d" "$file" >"$file.tmp" 2>/dev/null || true
+  mv "$file.tmp" "$file"
+  regen_domains
+  echo "OK: $kind del $d"
+}
+import_domains(){
+  local kind="$1"; shift
+  local replace=0 in target other tmp merged raw d invalid=0 count=0
+  if [[ "${1:-}" == --replace ]]; then replace=1; shift; fi
+  in="${1:-}"
+  [[ -n "$in" && -r "$in" ]] || { echo "Файл не найден или недоступен: $in" >&2; exit 2; }
+  if [[ "$kind" == vpn ]]; then target="$VD"; other="$DD"; else target="$DD"; other="$VD"; fi
+  tmp="$(mktemp)"; merged="$(mktemp)"
+  trap 'rm -f "$tmp" "$merged"' RETURN
+  while IFS= read -r raw || [[ -n "$raw" ]]; do
+    raw="${raw%%#*}"
+    [[ -n "${raw//[[:space:]]/}" ]] || continue
+    d="$(normalize_domain "$raw")"
+    if ! valid_domain "$d"; then
+      echo "Некорректная строка: $raw" >&2
+      invalid=$((invalid+1))
+      continue
+    fi
+    echo "$d" >>"$tmp"; count=$((count+1))
+  done <"$in"
+  (( invalid == 0 )) || { echo "Импорт отменён: ошибок $invalid. Рабочий список не изменён." >&2; exit 1; }
+  (( count > 0 )) || { echo "Импорт отменён: файл не содержит доменов." >&2; exit 1; }
+  sort -u -o "$tmp" "$tmp"
+  if (( replace == 1 )); then
+    cp "$tmp" "$merged"
+  else
+    cat "$target" "$tmp" 2>/dev/null | sed '/^[[:space:]]*$/d' | sort -u >"$merged"
+  fi
+  install -m 600 "$merged" "$target"
+  if [[ -f "$other" ]]; then
+    grep -Fvx -f "$tmp" "$other" >"$other.tmp" || true
+    mv "$other.tmp" "$other"; chmod 600 "$other"
+  fi
+  regen_domains
+  echo "OK: импортировано уникальных доменов: $(wc -l <"$tmp")"
+}
+export_domains(){
+  local kind="$1" out="$2" src
+  [[ -n "$out" ]] || { echo "Укажите файл назначения" >&2; exit 2; }
+  src="$VD"; [[ "$kind" == direct ]] && src="$DD"
+  cp "$src" "$out"; chmod 600 "$out"
+  echo "OK: экспортировано в $out"
+}
+
+meta_id(){
+  printf '%s' "$1:$2:$3" | sha256sum | awk '{print substr($1,1,16)}'
+}
+validate_source_name(){
+  [[ "$1" =~ ^[A-Za-z0-9._-]+$ ]]
+}
+source_cmd(){
+  local action="${1:-}"
+  case "$action" in
+    list)
+      echo "=== OpenCCK sources ==="
+      local any=0 m
+      while IFS= read -r m; do
+        [[ -n "$m" ]] || continue; any=1; load_meta "$m"
+        printf '%-24s type=%-7s kind=%-5s enabled=%s entries=%s last=%s id=%s\n'           "${SOURCE_NAME:-?}" "${SOURCE_TYPE:-?}" "${SOURCE_KIND:-?}" "${ENABLED:-0}"           "${ENTRY_COUNT:-0}" "${LAST_SUCCESS:-never}" "${SOURCE_ID:-?}"
+      done < <(source_meta_files)
+      (( any == 1 )) || echo "(источники не настроены)"
+      ;;
+    add)
+      local provider="${2:-}" name="${3:-}" type=domains kind="" id meta data
+      [[ "$provider" == opencck ]] || { echo "Пока поддерживается только provider=opencck" >&2; exit 2; }
+      validate_source_name "$name" || { echo "Некорректное имя источника: $name" >&2; exit 2; }
+      shift 3 || true
+      while (($#)); do
+        case "$1" in
+          --type) type="${2:-}"; shift 2 ;;
+          --kind) kind="${2:-}"; shift 2 ;;
+          *) echo "Неизвестный параметр: $1" >&2; exit 2 ;;
+        esac
+      done
+      [[ "$type" =~ ^(domains|ip4|cidr4)$ ]] || { echo "Тип: domains, ip4 или cidr4" >&2; exit 2; }
+      if [[ -z "$kind" ]]; then [[ "$name" == *.* ]] && kind=site || kind=group; fi
+      [[ "$kind" =~ ^(group|site)$ ]] || { echo "kind: group или site" >&2; exit 2; }
+      id="$(meta_id "$kind" "$name" "$type")"
+      meta="$OPENCCK_META/$id.env"; data="$OPENCCK_DIR/$id.$type"
+      [[ ! -e "$meta" ]] || { echo "Источник уже существует: $name ($type)" >&2; exit 1; }
+      cat >"$meta" <<META
+PROVIDER=opencck
+SOURCE_ID=$id
+SOURCE_KIND=$kind
+SOURCE_NAME=$name
+SOURCE_TYPE=$type
+ENABLED=1
+DATA_FILE=$data
+LAST_SUCCESS=never
+ENTRY_COUNT=0
+META
+      chmod 600 "$meta"
+      if "$OPENCCK_UPDATE" "$id"; then
+        echo "OK: OpenCCK $name ($type) добавлен"
+      else
+        rm -f "$meta" "$data"
+        echo "Источник не добавлен: первая загрузка OpenCCK завершилась ошибкой" >&2
+        exit 1
+      fi
+      ;;
+    show)
+      local provider="${2:-}" name="${3:-}" found=0 m
+      [[ "$provider" == opencck && -n "$name" ]] || { usage; exit 2; }
+      while IFS= read -r m; do
+        [[ -n "$m" ]] || continue; load_meta "$m"
+        [[ "${PROVIDER:-}" == "$provider" && "${SOURCE_NAME:-}" == "$name" ]] || continue
+        found=1
+        echo "--- $SOURCE_NAME / $SOURCE_TYPE ---"
+        echo "kind=$SOURCE_KIND enabled=$ENABLED entries=${ENTRY_COUNT:-0} last=${LAST_SUCCESS:-never}"
+        [[ -r "$DATA_FILE" ]] && cat "$DATA_FILE"
+      done < <(source_meta_files)
+      (( found == 1 )) || { echo "Источник не найден: $name" >&2; exit 1; }
+      ;;
+    update)
+      local name="${2:-}"
+      "$OPENCCK_UPDATE" "$name"
+      ;;
+    enable|disable|del)
+      local provider="${2:-}" name="${3:-}" found=0 m new
+      [[ "$provider" == opencck && -n "$name" ]] || { usage; exit 2; }
+      while IFS= read -r m; do
+        [[ -n "$m" ]] || continue; load_meta "$m"
+        [[ "${PROVIDER:-}" == "$provider" && "${SOURCE_NAME:-}" == "$name" ]] || continue
+        found=1
+        if [[ "$action" == del ]]; then
+          rm -f "$DATA_FILE" "$m"
+        else
+          new=1; [[ "$action" == disable ]] && new=0
+          sed -i -E "s/^ENABLED=.*/ENABLED=$new/" "$m"
+        fi
+      done < <(source_meta_files)
+      (( found == 1 )) || { echo "Источник не найден: $name" >&2; exit 1; }
+      if [[ "$action" == enable ]]; then "$OPENCCK_UPDATE" "$name" || true; else reload_all; fi
+      echo "OK: source $action $name"
+      ;;
+    *) usage; exit 2 ;;
+  esac
+}
+
+client_cmd(){
+  local action="${1:-}" ip="${2:-}"
+  case "$action" in
+    list)
+      echo "=== PBR client allow-list ==="
+      if grep -Ev '^\s*(#|$)' "$CF" 2>/dev/null | grep -q .; then cat "$CF"; else echo "(пусто: все устройства с gateway=Pi участвуют в PBR)"; fi
+      ;;
+    add)
+      valid_ipv4 "$ip" || { echo "Некорректный IPv4: $ip" >&2; exit 2; }
+      grep -Fxq "$ip" "$CF" 2>/dev/null || echo "$ip" >>"$CF"; sort -u -o "$CF" "$CF"
+      reload_all; echo "OK: client add $ip"
+      ;;
+    del)
+      valid_ipv4 "$ip" || { echo "Некорректный IPv4: $ip" >&2; exit 2; }
+      grep -Fxv "$ip" "$CF" >"$CF.tmp" 2>/dev/null || true; mv "$CF.tmp" "$CF"
+      reload_all; echo "OK: client del $ip"
+      ;;
+    *) usage; exit 2 ;;
+  esac
+}
+
+vpn_switch(){
+  local state="$1"
+  case "$state" in
+    on)
+      echo 1 >"$VE"; systemctl restart "$HEALTH_SERVICE"; sleep 2
+      echo "VPN policy разрешён. Он включится только после успешного health-check."
+      ;;
+    off)
+      echo 0 >"$VE"; "$FAILOPEN"; systemctl restart "$HEALTH_SERVICE"
+      echo "VPN policy выключен; весь трафик DIRECT. Туннель awg0 не удалён."
+      ;;
+    *) usage; exit 2 ;;
+  esac
+}
+
+source_counts(){
+  local total=0 enabled=0 entries=0 m
+  while IFS= read -r m; do
+    [[ -n "$m" ]] || continue; load_meta "$m"; total=$((total+1))
+    [[ "${ENABLED:-0}" == 1 ]] && enabled=$((enabled+1))
+    entries=$((entries+${ENTRY_COUNT:-0}))
+  done < <(source_meta_files)
+  printf '%s %s %s\n' "$total" "$enabled" "$entries"
+}
+
+show_status(){
+  local age enabled sc_total sc_enabled sc_entries
+  enabled="$(cat "$VE" 2>/dev/null || echo 1)"
+  age="$(handshake_age)"
+  read -r sc_total sc_enabled sc_entries < <(source_counts)
+  echo "=== Gateway ==="
+  printf 'LAN: %s  Pi: %s  Router: %s  Network: %s\n' "$LAN_IF" "$PI_IP" "$ROUTER_IP" "$LAN_CIDR"
+  printf 'VPN policy requested: %s\n' "$([[ "$enabled" == 1 ]] && echo ON || echo OFF)"
+  printf 'Health state: %s\n' "$(health_state)"
+  printf 'Policy rule: %s\n' "$(policy_present && echo ACTIVE || echo FAIL-OPEN/DIRECT)"
+  if (( age >= 0 )); then printf 'Latest handshake age: %ss\n' "$age"; else echo 'Latest handshake: отсутствует'; fi
+  echo
+  echo "=== Services ==="
+  for s in awg-pbr-setup.service dnsmasq.service "awg-quick@$VPN_IF.service" awg-pbr-health.service awg-opencck-update.timer; do
+    printf '%-30s %s\n' "$s" "$(systemctl is-active "$s" 2>/dev/null || true)"
+  done
+  echo
+  echo "=== Rules ==="
+  printf 'VPN domains: %s\n' "$(grep -Evc '^\s*(#|$)' "$VD" 2>/dev/null || true)"
+  printf 'DIRECT exceptions: %s\n' "$(grep -Evc '^\s*(#|$)' "$DD" 2>/dev/null || true)"
+  printf 'Client allow-list: %s\n' "$(grep -Evc '^\s*(#|$)' "$CF" 2>/dev/null || true)"
+  printf 'OpenCCK sources: %s total / %s enabled / %s cached entries\n' "$sc_total" "$sc_enabled" "$sc_entries"
+  echo
+  echo "=== AWG ==="
+  awg show "$VPN_IF" 2>/dev/null || echo "awg0 недоступен"
+}
+
+domain_source(){
+  local d="$1" m
+  if domain_matches_file "$d" "$DD"; then echo "manual/DIRECT"; return; fi
+  if domain_matches_file "$d" "$VD"; then echo "manual/VPN"; return; fi
+  while IFS= read -r m; do
+    [[ -n "$m" ]] || continue; load_meta "$m"
+    [[ "${ENABLED:-0}" == 1 && "${SOURCE_TYPE:-}" == domains ]] || continue
+    if domain_matches_file "$d" "${DATA_FILE:-}"; then
+      echo "OpenCCK/${SOURCE_NAME:-unknown}"; return
+    fi
+  done < <(source_meta_files)
+  echo "none"
+}
+
+test_domain(){
+  local raw="$1" d ips ip in_vpn in_direct in_static mark route src
+  d="$(normalize_domain "$raw")"; valid_domain "$d" || { echo "Некорректный домен: $d" >&2; exit 2; }
+  src="$(domain_source "$d")"
+  echo "=== Test: $d ==="
+  echo "Rule source: $src"
+  ips="$(dig +time=4 +tries=1 +short A "$d" @"$PI_IP" | grep -E '^[0-9]+(\.[0-9]+){3}$' || true)"
+  [[ -n "$ips" ]] || { echo "DNS: A-записи не получены"; exit 1; }
+  echo "DNS via Pi:"; printf '%s\n' "$ips" | sed 's/^/  /'; echo
+  while IFS= read -r ip; do
+    in_vpn=no; in_direct=no; in_static=no
+    nft list set inet awg_pbr vpn4 2>/dev/null | grep -qw "$ip" && in_vpn=yes || true
+    nft list set inet awg_pbr direct4 2>/dev/null | grep -qw "$ip" && in_direct=yes || true
+    nft get element inet awg_pbr source4 "{ $ip }" >/dev/null 2>&1 && in_static=yes || true
+    if [[ "$in_direct" == yes ]]; then mark=0
+    elif [[ "$in_vpn" == yes || "$in_static" == yes ]]; then mark="$VPN_MARK"
+    else mark=0
+    fi
+    route="$(ip -4 route get "$ip" mark "$mark" 2>&1 | head -1 || true)"
+    printf '%s  vpn-set=%s static-set=%s direct-set=%s mark=%s\n  route: %s\n' "$ip" "$in_vpn" "$in_static" "$in_direct" "$mark" "$route"
+  done <<<"$ips"
+  echo
+  echo "Policy: $(policy_present && echo 'VPN rule active' || echo 'fail-open/direct')"
+}
+
+run_diagnostics(){
+  local report age direct_ip="" health_ok=no mark_test="" prev_health_active=no manual m
+  report="$LOG_DIR/diagnostics-$(date +%Y%m%d-%H%M%S).txt"
+  manual="$(cat "$VE" 2>/dev/null || echo 1)"
+  systemctl is-active --quiet "$HEALTH_SERVICE" && prev_health_active=yes || true
+
+  {
+    echo "=== AWG Gateway diagnostics ==="
+    echo "Date: $(date -Is)"
+    echo "Host: $(hostname)"
+    echo "Version: $(cat /etc/awg-pbr/version 2>/dev/null || echo unknown)"
+    echo "Model: $(tr -d '\0' </proc/device-tree/model 2>/dev/null || echo unknown)"
+    echo "OS: $(. /etc/os-release; echo "${PRETTY_NAME:-unknown}")"
+    echo "Kernel: $(uname -srmo)"
+    echo "awg: $(awg --version 2>/dev/null || echo unavailable)"
+    echo "amneziawg-go: $(amneziawg-go --version 2>/dev/null || echo unavailable)"
+    echo
+    echo "--- Network ---"; ip -br -4 addr show; ip -4 route show
+    echo "Router ping:"; ping -4 -c1 -W2 "$ROUTER_IP" >/dev/null 2>&1 && echo "OK $ROUTER_IP" || echo "FAIL $ROUTER_IP"
+    echo
+    echo "--- Direct internet/DNS ---"
+    IFS=',' read -ra _dns_diag <<<"${UPSTREAM_DNS:-1.1.1.1,9.9.9.9}"
+    direct_dns_ok=no
+    for _d in "${_dns_diag[@]}"; do
+      _d="${_d//[[:space:]]/}"
+      if dig +time=3 +tries=1 +short A example.com @"$_d" | grep -qE '^[0-9]+\.'; then direct_dns_ok=yes; break; fi
+    done
+    echo "Direct DNS: $direct_dns_ok"
+    for u in https://api.ipify.org https://icanhazip.com https://ifconfig.me/ip; do
+      direct_ip="$(curl -4fsS --interface "$LAN_IF" --max-time 6 "$u" 2>/dev/null | tr -d '\r\n ' || true)"
+      [[ "$direct_ip" =~ ^[0-9]+(\.[0-9]+){3}$ ]] && break
+    done
+    echo "Direct public IPv4: ${direct_ip:-unavailable}"
+    echo
+    echo "--- DNS via Pi ---"
+    dig +time=3 +tries=1 +short A example.com @"$PI_IP" | grep -qE '^[0-9]+\.' && echo "dnsmasq query: OK" || echo "dnsmasq query: FAIL"
+    echo
+    echo "--- Services ---"
+    for s in awg-pbr-setup.service dnsmasq.service "awg-quick@$VPN_IF.service" awg-pbr-health.service awg-opencck-update.timer; do
+      echo "$s: $(systemctl is-active "$s" 2>/dev/null || true) / enabled=$(systemctl is-enabled "$s" 2>/dev/null || true)"
+    done
+    echo
+    echo "--- AWG ---"; awg show "$VPN_IF" 2>/dev/null || true
+    age="$(handshake_age)"; echo "Handshake age: $age"; echo "Health state: $(health_state)"
+    echo "Policy present: $(policy_present && echo yes || echo no)"
+    echo
+    echo "--- Policy routing ---"; ip -4 rule show; ip -4 route show table "$VPN_TABLE" 2>/dev/null || true
+    mark_test="$(ip -4 route get 1.1.1.1 mark "$VPN_MARK" 2>&1 | head -1 || true)"; echo "Route with VPN mark: $mark_test"
+    echo
+    echo "--- nftables owned table ---"; nft list table inet awg_pbr 2>/dev/null || true
+    echo
+    echo "--- Domain lists ---"; echo "VPN domains:"; sed 's/^/  /' "$VD" 2>/dev/null || true
+    echo "DIRECT domains:"; sed 's/^/  /' "$DD" 2>/dev/null || true
+    echo "Clients:"; sed 's/^/  /' "$CF" 2>/dev/null || true
+    echo
+    echo "--- OpenCCK ---"
+    while IFS= read -r m; do
+      [[ -n "$m" ]] || continue; load_meta "$m"
+      printf '%s type=%s enabled=%s entries=%s last=%s\n' "$SOURCE_NAME" "$SOURCE_TYPE" "$ENABLED" "${ENTRY_COUNT:-0}" "${LAST_SUCCESS:-never}"
+    done < <(source_meta_files)
+    echo
+    echo "--- VPN transport health ---"
+    if ip link show "$VPN_IF" >/dev/null 2>&1; then
+      ip -4 route replace default dev "$VPN_IF" table "$HEALTH_TABLE" 2>/dev/null || true
+      if ! ip -4 rule show | grep -Eq '(^| )90:.*fwmark (0x101|257).*lookup (101|awghealth)'; then
+        ip -4 rule add priority 90 fwmark "$HEALTH_MARK" lookup "$HEALTH_TABLE" 2>/dev/null || true
+      fi
+      if ping -4 -n -m "$HEALTH_MARK" -c1 -W3 1.1.1.1 >/dev/null 2>&1 || ping -4 -n -m "$HEALTH_MARK" -c1 -W3 9.9.9.9 >/dev/null 2>&1; then health_ok=yes; fi
+    fi
+    echo "VPN transport ping: $health_ok"
+  } | tee "$report"
+
+  echo | tee -a "$report"
+  echo "--- FAIL-OPEN simulation ---" | tee -a "$report"
+  [[ "$prev_health_active" == yes ]] && systemctl stop "$HEALTH_SERVICE" >/dev/null 2>&1 || true
+  "$FAILOPEN" >/dev/null 2>&1 || true
+  failroute="$(ip -4 route get 1.1.1.1 mark "$VPN_MARK" 2>&1 | head -1 || true)"
+  echo "Route after policy removal: $failroute" | tee -a "$report"
+  grep -q "dev $LAN_IF" <<<"$failroute" && echo "FAIL-OPEN: OK" | tee -a "$report" || echo "FAIL-OPEN: FAIL" | tee -a "$report"
+  [[ "$prev_health_active" == yes ]] && systemctl start "$HEALTH_SERVICE" >/dev/null 2>&1 || true
+  [[ "$manual" == 0 ]] && "$FAILOPEN" >/dev/null 2>&1 || true
+
+  echo "Report: $report" | tee -a "$report"
+  chmod 600 "$report"; prune_reports
+}
+
+cmd="${1:-}"; action="${2:-}"; val="${3:-}"
+case "$cmd" in
+  vpn)
+    case "$action" in
+      add|del) [[ -n "$val" ]] || { usage; exit 2; }; "${action}_domain" vpn "$val" ;;
+      import) shift 2; import_domains vpn "$@" ;;
+      export) [[ -n "$val" ]] || { usage; exit 2; }; export_domains vpn "$val" ;;
+      on|off) vpn_switch "$action" ;;
+      *) usage; exit 2 ;;
+    esac
+    ;;
+  direct)
+    case "$action" in
+      add|del) [[ -n "$val" ]] || { usage; exit 2; }; "${action}_domain" direct "$val" ;;
+      import) shift 2; import_domains direct "$@" ;;
+      export) [[ -n "$val" ]] || { usage; exit 2; }; export_domains direct "$val" ;;
+      *) usage; exit 2 ;;
+    esac
+    ;;
+  source) shift; source_cmd "$@" ;;
+  client) client_cmd "$action" "$val" ;;
+  list)
+    echo "=== VPN domains ==="; cat "$VD" 2>/dev/null || true
+    echo; echo "=== DIRECT exceptions ==="; cat "$DD" 2>/dev/null || true
+    echo; source_cmd list
+    echo; echo "=== Client allow-list ==="
+    if grep -Ev '^\s*(#|$)' "$CF" 2>/dev/null | grep -q .; then cat "$CF"; else echo "(пусто = все Pi-gateway clients)"; fi
+    ;;
+  status) show_status ;;
+  test) [[ -n "$action" ]] || { usage; exit 2; }; test_domain "$action" ;;
+  reload) reload_all; echo "OK: configuration reloaded" ;;
+  diagnostics) run_diagnostics ;;
+  logs)
+    n="${action:-150}"; [[ "$n" =~ ^[0-9]+$ ]] || n=150
+    journalctl --no-pager -n "$n" -u "awg-quick@$VPN_IF.service" -u awg-pbr-health.service -u dnsmasq.service -u awg-pbr-setup.service -u awg-opencck-update.service
+    ;;
+  *) usage; exit 2 ;;
+esac
