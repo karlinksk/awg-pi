@@ -33,7 +33,7 @@ PublicKey = {KEY}
 Endpoint = 192.0.2.1:51820
 AllowedIPs = 0.0.0.0/0
 '''
-V3_PROFILE = PROFILE
+V3_PROFILE = PROFILE.replace('S1 = 0', 'S1 = 12').replace('S2 = 0', 'S2 = 12')
 for legacy in ('H1 = 1\n', 'H2 = 2\n', 'H3 = 3\n', 'H4 = 4\n'):
     V3_PROFILE = V3_PROFILE.replace(legacy, '')
 V3_PROFILE = V3_PROFILE.replace('[Peer]', f'''S3 = 12
