@@ -1,6 +1,3 @@
-# awg-pi
-Raspberry Pi 4 AmneziaWG policy-routing gateway installer
-
 # AWG Pi Gateway
 
 Raspberry Pi 4 AmneziaWG policy-routing gateway installer.
