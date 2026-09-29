@@ -1,0 +1,87 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+AWG_ENV_FILE="${AWG_ENV_FILE:-/etc/awg-pbr/env}"
+# shellcheck disable=SC1090
+source "$AWG_ENV_FILE"
+
+: "${LAN_IF:?LAN_IF is required}"
+: "${LAN_CIDR:?LAN_CIDR is required}"
+: "${VPN_IF:?VPN_IF is required}"
+: "${VPN_MARK:?VPN_MARK is required}"
+: "${ROUTER_MAC:?ROUTER_MAC is required}"
+
+if [[ ! "$ROUTER_MAC" =~ ^([[:xdigit:]]{2}:){5}[[:xdigit:]]{2}$ ]]; then
+  echo "Invalid ROUTER_MAC: $ROUTER_MAC" >&2
+  exit 2
+fi
+
+cat <<NFT
+# Transit-mode nftables candidate for AWG Pi Gateway v1.2.
+# This renderer does not apply rules by itself.
+table inet awg_pbr {
+  set vpn4 {
+    type ipv4_addr
+    flags timeout
+    timeout 15m
+  }
+  set direct4 {
+    type ipv4_addr
+    flags timeout
+    timeout 15m
+  }
+  set clients4 {
+    type ipv4_addr
+  }
+  set source4 {
+    type ipv4_addr
+    flags interval
+  }
+  set transit4 {
+    type ipv4_addr
+    flags interval
+    elements = { $LAN_CIDR }
+  }
+
+  chain input_guard {
+    type filter hook input priority filter; policy drop;
+    iifname "lo" accept
+    ct state established,related accept
+    iifname "$LAN_IF" tcp dport 22 accept
+    iifname "$LAN_IF" udp dport 53 accept
+    iifname "$LAN_IF" tcp dport 53 accept
+    iifname "$LAN_IF" ip protocol icmp accept
+    iifname "$LAN_IF" meta l4proto ipv6-icmp accept
+    iifname "$LAN_IF" udp sport 67 udp dport 68 accept
+  }
+
+  chain forward_guard {
+    type filter hook forward priority filter; policy drop;
+
+    # Return traffic may leave only from AWG back toward LAN.
+    iifname "$VPN_IF" oifname "$LAN_IF" ct state established,related accept
+
+    # Transit ingress must have arrived from the MikroTik Ethernet source MAC.
+    # Requiring oifname=awg0 makes fallback to the LAN/main route fail closed.
+    iifname "$LAN_IF" ether saddr $ROUTER_MAC ip saddr @transit4 oifname "$VPN_IF" accept
+  }
+
+  chain prerouting_mark {
+    type filter hook prerouting priority mangle; policy accept;
+
+    # MikroTik has already classified this traffic. Pi does no domain/IP-list
+    # classification in Transit mode; it marks trusted forwarded Internet
+    # traffic so the AWG policy table can select awg0.
+    iifname "$LAN_IF" ether saddr $ROUTER_MAC ip saddr @transit4 ip daddr != $LAN_CIDR meta mark set $VPN_MARK
+  }
+
+  chain dns_redirect {
+    type nat hook prerouting priority dstnat; policy accept;
+  }
+
+  chain postrouting_nat {
+    type nat hook postrouting priority srcnat; policy accept;
+    ip saddr @transit4 oifname "$VPN_IF" masquerade
+  }
+}
+NFT
