@@ -47,8 +47,13 @@ EOF
 
 cat >"$tmp/awg-route" <<'EOF'
 #!/usr/bin/env bash
+set -Eeuo pipefail
 echo "route:$*" >>"${MOCK_SWITCH_LOG}"
-[[ "${MOCK_SELECTIVE_RELOAD_FAIL:-0}" != 1 ]]
+if [[ "${MOCK_SELECTIVE_RELOAD_FAIL:-0}" == 1 && ! -e "${MOCK_RELOAD_FAILED_ONCE:?}" ]]; then
+  : >"${MOCK_RELOAD_FAILED_ONCE}"
+  exit 1
+fi
+exit 0
 EOF
 
 chmod +x "$tmp/bin/systemctl" "$tmp/transit-apply" "$tmp/transit-routing" "$tmp/awg-route"
@@ -60,6 +65,7 @@ run_switch(){
     AWG_TRANSIT_ROUTING="$tmp/transit-routing" SYSTEMCTL_BIN="$tmp/bin/systemctl" \
     AWG_HEALTH_SERVICE="awg-pbr-health.service" \
     MOCK_SYSTEMCTL_LOG="$tmp/systemctl.log" MOCK_SWITCH_LOG="$tmp/switch.log" \
+    MOCK_RELOAD_FAILED_ONCE="$tmp/reload-failed-once" \
     MOCK_TRANSIT_APPLY_FAIL="${MOCK_TRANSIT_APPLY_FAIL:-0}" \
     MOCK_ROUTING_FAIL="${MOCK_ROUTING_FAIL:-0}" \
     MOCK_SELECTIVE_RELOAD_FAIL="${MOCK_SELECTIVE_RELOAD_FAIL:-0}" \
@@ -94,6 +100,7 @@ grep -Fq 'ROLLBACK=OK' "$tmp/err"
 
 echo "=== failed selective activation restores transit ==="
 echo transit >"$tmp/mode"
+rm -f "$tmp/reload-failed-once"
 if MOCK_SELECTIVE_RELOAD_FAIL=1 run_switch selective >"$tmp/out" 2>"$tmp/err"; then
   echo 'FAIL: failed Selective activation returned success' >&2
   exit 1
