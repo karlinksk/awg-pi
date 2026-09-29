@@ -1,0 +1,138 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+[[ ${EUID:-$(id -u)} -eq 0 ]] || {
+  echo "Run awg-transit-routing as root." >&2
+  exit 1
+}
+
+AWG_ENV_FILE="${AWG_ENV_FILE:-/etc/awg-pbr/env}"
+IP_BIN="${IP_BIN:-ip}"
+NFT_BIN="${NFT_BIN:-nft}"
+
+# shellcheck disable=SC1090
+source "$AWG_ENV_FILE"
+
+: "${LAN_IF:?LAN_IF is required}"
+: "${VPN_IF:?VPN_IF is required}"
+: "${VPN_MARK:?VPN_MARK is required}"
+: "${VPN_TABLE:?VPN_TABLE is required}"
+
+RULE_PRIORITY="${TRANSIT_RULE_PRIORITY:-100}"
+
+fail(){
+  printf 'FAIL: %s\n' "$*" >&2
+  exit 1
+}
+
+rule_present(){
+  "$IP_BIN" -4 rule show |
+    grep -Eq "(^|[[:space:]])${RULE_PRIORITY}:.*fwmark[[:space:]]+(${VPN_MARK}|256).*lookup[[:space:]]+(${VPN_TABLE}|awgvpn)([[:space:]]|$)"
+}
+
+route_present(){
+  "$IP_BIN" -4 route show table "$VPN_TABLE" |
+    grep -Eq "^default[[:space:]]+dev[[:space:]]+${VPN_IF}([[:space:]]|$)"
+}
+
+guard_safe(){
+  local chain
+  chain="$("$NFT_BIN" list chain inet awg_pbr forward_guard 2>/dev/null)" || return 1
+
+  grep -Fq "oifname \"${VPN_IF}\"" <<<"$chain" || return 1
+  grep -Fq 'ether saddr' <<<"$chain" || return 1
+
+  if grep -E "iifname \"${LAN_IF}\".*oifname \"${LAN_IF}\".*accept" <<<"$chain" >/dev/null; then
+    return 1
+  fi
+}
+
+show_status(){
+  printf 'Transit guard: %s\n' "$(guard_safe && echo SAFE || echo UNSAFE)"
+  printf 'Transit policy rule: %s\n' "$(rule_present && echo ACTIVE || echo INACTIVE)"
+  printf 'Transit VPN table: %s\n' "$(route_present && echo READY || echo NOT_READY)"
+}
+
+apply_policy(){
+  local had_rule=0 old_default=""
+
+  guard_safe ||
+    fail "Transit nftables forward guard is not active/safe"
+
+  "$IP_BIN" link show dev "$VPN_IF" >/dev/null 2>&1 ||
+    fail "AWG interface is unavailable: $VPN_IF"
+
+  rule_present && had_rule=1 || true
+  old_default="$("$IP_BIN" -4 route show table "$VPN_TABLE" default 2>/dev/null | head -n1 || true)"
+
+  rollback(){
+    local rc=$?
+    trap - ERR
+
+    if (( had_rule == 0 )); then
+      while "$IP_BIN" -4 rule del priority "$RULE_PRIORITY" fwmark "$VPN_MARK" lookup "$VPN_TABLE" 2>/dev/null; do :; done
+    fi
+
+    "$IP_BIN" -4 route del default table "$VPN_TABLE" 2>/dev/null || true
+    if [[ -n "$old_default" ]]; then
+      # old_default came from iproute2 output, not user input.
+      # shellcheck disable=SC2086
+      "$IP_BIN" -4 route add table "$VPN_TABLE" $old_default 2>/dev/null || true
+    fi
+
+    printf 'ROLLBACK=OK\n' >&2
+    exit "$rc"
+  }
+  trap rollback ERR
+
+  "$IP_BIN" -4 route replace default dev "$VPN_IF" table "$VPN_TABLE"
+
+  if ! rule_present; then
+    "$IP_BIN" -4 rule add priority "$RULE_PRIORITY" fwmark "$VPN_MARK" lookup "$VPN_TABLE"
+  fi
+
+  route_present
+  rule_present
+  guard_safe
+
+  trap - ERR
+  printf 'TRANSIT_POLICY=ACTIVE\n'
+}
+
+disable_policy(){
+  guard_safe ||
+    fail "Transit nftables forward guard is not active/safe"
+
+  while "$IP_BIN" -4 rule del priority "$RULE_PRIORITY" fwmark "$VPN_MARK" lookup "$VPN_TABLE" 2>/dev/null; do :; done
+
+  if rule_present; then
+    fail "Transit policy rule is still active"
+  fi
+
+  # The main route may now point back to LAN, but the Transit forward guard
+  # accepts LAN ingress only when its actual egress is awg0. This is the
+  # fail-closed state used when AWG is unavailable.
+  guard_safe ||
+    fail "Transit fail-closed guard verification failed"
+
+  printf 'TRANSIT_POLICY=DISABLED_FAIL_CLOSED\n'
+}
+
+case "${1:-}" in
+  status) show_status ;;
+  apply) apply_policy ;;
+  disable) disable_policy ;;
+  *)
+    cat >&2 <<'USAGE'
+Usage:
+  awg-transit-routing status
+  awg-transit-routing apply
+  awg-transit-routing disable
+
+apply installs the fwmark policy rule and the VPN-table default route.
+disable removes only the policy rule; with the Transit nftables guard this is
+a fail-closed state, not Selective-mode fail-open.
+USAGE
+    exit 2
+    ;;
+esac
