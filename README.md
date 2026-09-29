@@ -89,7 +89,7 @@ sudo awg-route source update
 
 sudo awg-route diagnostics
 sudo awg-route dns status
-sudo awg-route dns set 1.1.1.1,9.9.9.9
+sudo awg-route dns set 9.9.9.9,149.112.112.112
 sudo awg-route network reconfigure
 sudo awg-route config check /etc/amnezia/amneziawg/awg0.conf
 sudo awg-route config replace /path/to/new.conf

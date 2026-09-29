@@ -339,7 +339,7 @@ class Discovery(unittest.TestCase):
                                                f'publickey {stamp}\n' if args[0] == 'awg' else '')
         with patch.object(m, 'run', side_effect=run), patch.object(m.time, 'sleep'), patch.object(m.time, 'time', return_value=101):
             self.assertTrue(m.tunnel_ok(env, 100))
-            self.assertIn(('ping', '-4', '-n', '-I', 'awg0', '-m', '257', '-c1', '-W2', '1.1.1.1'), calls)
+            self.assertIn(('ping', '-4', '-n', '-I', 'awg0', '-m', '257', '-c1', '-W2', '9.9.9.9'), calls)
             stamp = 99
             self.assertFalse(m.tunnel_ok(env, 100))
             stamp, ping_code = 100, 1
