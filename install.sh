@@ -2,7 +2,7 @@
 set -Eeuo pipefail
 IFS=$'\n\t'
 
-AWG_PI_VERSION="1.1.0"
+AWG_PI_VERSION="1.2.0"
 PROJECT_REF="${AWG_PI_REF:-v${AWG_PI_VERSION}}"
 PROJECT_RAW_BASE="https://raw.githubusercontent.com/karlinksk/awg-pi/${PROJECT_REF}"
 TTY=/dev/tty
@@ -112,19 +112,32 @@ first_working_url(){
 }
 
 printf "%b=== AmneziaWG Raspberry Pi 4 Policy Gateway Installer v%s ===%b\n" "$B" "$AWG_PI_VERSION" "$R"
-printf "Архитектура: LAN router = основной DHCP/NAT; Raspberry Pi = выборочный PBR-шлюз.\n"
-printf "Default = DIRECT. Домены из VPN-list = AmneziaWG. VPN недоступен = FAIL-OPEN напрямую.\n"
+printf "Архитектура: Selective Gateway + MikroTik Transit / Backup VPN.\n"
+printf "Fresh install = Selective. Selective: FAIL-OPEN; Transit: FAIL-CLOSED при недоступном AWG.\n"
 printf "IPv6 в этой версии не маршрутизируется.\n\n"
 printf "Журнал установки: %s\n\n" "$INSTALL_REPORT"
 
 UPGRADE_EXISTING=0
+UPGRADE_TO_TRANSIT=0
 AUTO_UPGRADE="${AWG_PI_UPGRADE_AUTO:-0}"
 EXISTING_VERSION="$(cat /etc/awg-pbr/version 2>/dev/null || true)"
+MODE_PREEXISTED=0
+[[ -f "$MODE_FILE" ]] && MODE_PREEXISTED=1
 if [[ -f "$ENV_FILE" && -f "$CONF_FILE" ]]; then
   printf "Обнаружена существующая AWG Pi Gateway: %s\n" "${EXISTING_VERSION:-версия до v1.1.0}"
   if [[ "$AUTO_UPGRADE" == 1 ]] || confirm "Выполнить безопасное обновление существующей установки до v$AWG_PI_VERSION с сохранением AWG-конфига, доменов и клиентов?" "Y"; then
     UPGRADE_EXISTING=1
     ok "Режим обновления: пользовательские списки и $CONF_FILE будут сохранены"
+    if [[ "$EXISTING_VERSION" == 1.1.0 && "$MODE_PREEXISTED" == 0 ]]; then
+      if [[ "$AUTO_UPGRADE" == 1 ]]; then
+        UPGRADE_TO_TRANSIT=1
+        warn "v1.1.0 -> v1.2.0: после установки будет выполнена попытка включить MikroTik Transit / Backup VPN."
+      elif confirm "После обновления включить новый режим MikroTik Transit / Backup VPN? Перед переключением будет выполнен preflight; при ошибке останется Selective Gateway." "Y"; then
+        UPGRADE_TO_TRANSIT=1
+      else
+        warn "Обновление продолжится в Selective Gateway."
+      fi
+    fi
   else
     die "Обновление отменено пользователем"
   fi
@@ -799,6 +812,17 @@ if ! ip -4 route get 1.1.1.1 mark "$VPN_MARK" | grep -q "dev $VPN_IF"; then
 fi
 ok "Policy routing работает"
 
+if (( UPGRADE_TO_TRANSIT == 1 )); then
+  STAGE="активация MikroTik Transit"
+  log "[11b/12] v1.1.0 -> v1.2.0: Transit preflight + transactional switch"
+  if "$ROUTE_CLI" mode transit; then
+    ok "MikroTik Transit / Backup VPN активирован"
+  else
+    warn "Transit preflight/activation не прошёл. Runtime восстановлен; обновление продолжится в Selective Gateway."
+    "$ROUTE_CLI" mode selective >/dev/null 2>&1 || true
+  fi
+fi
+
 # -----------------------------------------------------------------------------
 # 12. Deep diagnostics + summary
 # -----------------------------------------------------------------------------
@@ -823,15 +847,28 @@ printf "AWG tags:        go=%s tools=%s\n" "$GO_TAG" "$TOOLS_TAG"
 printf "Install report:  %s\n" "$INSTALL_REPORT"
 printf "Diagnostics:     %s\n" "${LATEST_DIAG:-см. $LOG_DIR}"
 
+FINAL_MODE="$(cat "$MODE_FILE" 2>/dev/null || echo selective)"
 printf "\nЛогика:\n"
-printf "  обычный трафик = DIRECT через LAN router\n"
-printf "  VPN-list = через AmneziaWG\n"
-printf "  VPN упал = автоматический FAIL-OPEN DIRECT\n"
+if [[ "$FINAL_MODE" == transit ]]; then
+  printf "  Operating mode = MikroTik Transit / Backup VPN\n"
+  printf "  MikroTik классифицирует и отправляет backup-трафик на Pi\n"
+  printf "  Pi forward/NAT = только через %s; AWG down = FAIL-CLOSED\n" "$VPN_IF"
+  printf "  management + AWG endpoint = DIRECT через LAN router\n"
+  printf "  OpenCCK/VPN/DIRECT/client state сохранён, но не классифицирует Transit\n"
+else
+  printf "  Operating mode = Selective Gateway\n"
+  printf "  обычный трафик = DIRECT через LAN router\n"
+  printf "  VPN-list = через AmneziaWG\n"
+  printf "  VPN упал = автоматический FAIL-OPEN DIRECT\n"
+  printf "  DNS клиентов PBR = %s (dnsmasq -> независимые upstream DNS)\n" "$PI_IP"
+fi
 printf "  DHCP остаётся на LAN router\n"
-printf "  DNS клиентов PBR = %s (dnsmasq -> независимые upstream DNS)\n" "$PI_IP"
 
 printf "\nОсновные команды:\n"
 printf "  sudo awg-route status\n"
+printf "  sudo awg-route mode status\n"
+printf "  sudo awg-route mode selective\n"
+printf "  sudo awg-route mode transit\n"
 printf "  sudo awg-route vpn add youtube.com\n"
 printf "  sudo awg-route vpn del youtube.com\n"
 printf "  sudo awg-route direct add example.com\n"
