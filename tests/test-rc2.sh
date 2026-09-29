@@ -28,12 +28,13 @@ ping(){
 }
 HEALTH_MARK=0x101
 transport_body="$(sed -n '/^transport_ok(){/,/^}/p' src/awg-pbr-health)"
-first_transport_ping="$(grep -m1 'ping -4 -n -m' <<<"$transport_body")"
+first_transport_ping="$(grep -m1 '\$PING_BIN.*-4 -n -m' <<<"$transport_body")"
 [[ "$first_transport_ping" == *'9.9.9.9'* ]]
+PING_BIN=ping
 eval "$transport_body"
 transport_ok
 # Every diagnostics ping uses the same decimal conversion.
 while IFS= read -r line; do
   [[ "$line" == *'-m "$((HEALTH_MARK))"'* ]]
-done < <(grep 'ping .* -m ' src/awg-route src/awg-pbr-health)
+done < <(grep -E 'ping .* -m |PING_BIN.* -m ' src/awg-route src/awg-pbr-health)
 echo 'RC2 installer/health regressions: OK'
