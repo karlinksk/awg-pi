@@ -460,7 +460,7 @@ ok "LAN router доступен: $ROUTER_IP"
 printf "\nНа LAN router должна быть DHCP Reservation:\n  MAC: %s\n  IP:  %s\n" "$LAN_MAC" "$PI_IP"
 confirm "Вы уже закрепили этот IP за MAC Raspberry Pi на LAN router?" "N" || die "Сначала настройте DHCP Reservation на LAN router, затем повторите установку"
 
-ask "Upstream DNS для Raspberry Pi через запятую" "1.1.1.1,9.9.9.9"
+ask "Upstream DNS для Raspberry Pi через запятую" "9.9.9.9,149.112.112.112"
 UPSTREAM_DNS="$REPLY"
 IFS=',' read -ra DNSA <<<"$UPSTREAM_DNS"
 DNS_OK=0
@@ -832,8 +832,8 @@ handshake_fresh(){
 }
 transport_ok(){
   # Ping itself stimulates a handshake when needed.
-  ping -4 -n -m "$((HEALTH_MARK))" -c1 -W2 1.1.1.1 >/dev/null 2>&1 || \
-  ping -4 -n -m "$((HEALTH_MARK))" -c1 -W2 9.9.9.9 >/dev/null 2>&1
+  ping -4 -n -m "$((HEALTH_MARK))" -c1 -W2 9.9.9.9 >/dev/null 2>&1 || \
+  ping -4 -n -m "$((HEALTH_MARK))" -c1 -W2 1.1.1.1 >/dev/null 2>&1
 }
 
 trap 'rule_off' EXIT INT TERM
