@@ -640,10 +640,10 @@ dnsmasq --test || die "dnsmasq не принимает подготовленн�
 
 # awg-route is installed from src/awg-route below.
 
-# v1.1.0 helpers are maintained as standalone repository files so the TUI and
-# source manager can be audited independently of this installer.
-STAGE="установка компонентов v1.1.0"
-log "[8b/12] CLI v1.1.0 + OpenCCK + SSH TUI"
+# Runtime helpers are maintained as standalone repository files so routing,
+# health, TUI and source-management behavior can be audited independently.
+STAGE="установка компонентов v1.2.0"
+log "[8b/12] CLI v1.2.0 + Transit + OpenCCK + SSH TUI"
 install_project_helper(){
   local remote="$1" target="$2" tmp
   tmp="$(mktemp)"
@@ -890,11 +890,18 @@ printf "  sudo awg-update status\n"
 printf "  sudo awg-update gateway\n"
 printf "  sudo awg-update core\n"
 
-printf "\nДля первого тестового оборудования:\n"
-printf "  IPv4:    свободный фиксированный адрес в %s\n" "$LAN_CIDR"
-printf "  Gateway: %s\n" "$PI_IP"
-printf "  DNS:     %s\n" "$PI_IP"
-printf "  IPv6:    не использовать\n"
+printf "\nПервичная проверка режима:\n"
+if [[ "$FINAL_MODE" == transit ]]; then
+  printf "  Клиентам НЕ назначать Pi как gateway/DNS для Transit.\n"
+  printf "  Сначала настройте один тестовый client/prefix на MikroTik по docs/MIKROTIK-TRANSIT-v1.2.0.md.\n"
+  printf "  Проверка Pi: sudo awg-route mode status && sudo awg-route status\n"
+  printf "  IPv6: не использовать в Transit v1.2.0.\n"
+else
+  printf "  IPv4:    свободный фиксированный адрес в %s\n" "$LAN_CIDR"
+  printf "  Gateway: %s\n" "$PI_IP"
+  printf "  DNS:     %s\n" "$PI_IP"
+  printf "  IPv6:    не использовать\n"
+  printf "  Сначала проверьте DIRECT, затем добавьте один тестовый домен в VPN-list.\n"
+fi
 
 printf "\n%bВАЖНО:%b IP оборудования выбирайте вне конфликтов с DHCP либо закрепите его на LAN router.\n" "$Y" "$R"
-printf "После настройки оборудования сначала проверьте DIRECT, затем добавьте один тестовый домен в VPN-list.\n"
