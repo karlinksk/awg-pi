@@ -749,3 +749,48 @@ After upgrade:
 This closes the v1.0.1 -> v1.1.0 hardware upgrade-path release-gate item. The
 historical v1.0.1 fresh-install compatibility fixes above are recorded as a
 baseline limitation, not as changes to the released v1.0.1 tag.
+
+
+## 26. Final-candidate smoke test
+
+Final candidate tested on real Raspberry Pi 4 hardware:
+
+```text
+b7703d17ce518c6a47579c42735ba110e4d49668
+```
+
+The candidate installer completed successfully on the dedicated upgrade-test
+microSD. Immediate post-install smoke checks returned:
+
+```text
+version:      1.1.0
+failed units: 0
+health:       up
+policy:       priority 100, fwmark 0x100 -> table 100
+```
+
+The pre-upgrade persistent test state was still present:
+
+```text
+VPN domain:    upgrade-vpn.example
+DIRECT domain: upgrade-direct.example
+Client:        192.168.112.250
+```
+
+The AmneziaWG binaries were still byte-for-byte unchanged from the v1.0.1
+baseline:
+
+```text
+ccdbf2a44f8b2ca5934c72a0609f91ea3d608e7119fcbadddbb855d6c78191e0  /usr/bin/awg
+f4bb0f5d63665ade87f0cb9f2185c43515cff09868637eb311f98f65a318722c  /usr/bin/awg-quick
+db18a6bfe12f7c284f36184adf10c830012db9722ad5a554befc6a78470532a6  /usr/bin/amneziawg-go
+```
+
+The immediately preceding candidate had also passed reboot/persistence checks
+with zero failed units, all gateway services active, health `up`, policy
+ACTIVE, DNS through the Pi working, preserved test state, and watchdog present.
+The only code-tree change between that reboot-tested snapshot and the final
+candidate was the final generic router wording cleanup in the installer.
+
+Result: **PASS**. The v1.1.0 hardware release gate is complete. Main, tags and
+GitHub releases remain unchanged pending explicit release authorization.
