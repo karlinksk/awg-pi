@@ -23,7 +23,7 @@ EOF
 
 cat >"$tmp/bin/ping" <<'EOF'
 #!/usr/bin/env bash
-exit 0
+[[ "${MOCK_ROUTER_UP:-1}" == 1 ]]
 EOF
 
 cat >"$tmp/bin/ip" <<'EOF'
@@ -64,7 +64,26 @@ EOF
 
 cat >"$tmp/transit-nft" <<'EOF'
 #!/usr/bin/env bash
-cat <<NFT
+set -Eeuo pipefail
+if [[ "${AWG_TRANSIT_LOCKDOWN:-0}" == 1 ]]; then
+  cat <<'NFT'
+table inet awg_pbr {
+  chain forward_guard {
+    type filter hook forward priority filter; policy drop;
+  }
+  chain prerouting_mark {
+    type filter hook prerouting priority mangle; policy accept;
+  }
+  chain dns_redirect {
+    type nat hook prerouting priority dstnat; policy accept;
+  }
+  chain postrouting_nat {
+    type nat hook postrouting priority srcnat; policy accept;
+  }
+}
+NFT
+else
+  cat <<NFT
 table inet awg_pbr {
   chain forward_guard {
     type filter hook forward priority filter; policy drop;
@@ -83,6 +102,7 @@ table inet awg_pbr {
   }
 }
 NFT
+fi
 EOF
 
 chmod +x "$tmp/bin/"* "$tmp/transit-nft"
@@ -92,7 +112,7 @@ run_setup(){
     AWG_ENV_FILE="$tmp/env" AWG_COMMON_FILE="$tmp/common" AWG_MODE_FILE="$tmp/mode" \
     AWG_CLIENTS_FILE="$tmp/clients" AWG_NFT_FILE="$tmp/active.nft" AWG_TRANSIT_NFT="$tmp/transit-nft" \
     NFT_BIN="$tmp/bin/nft" IP_BIN="$tmp/bin/ip" PING_BIN="$tmp/bin/ping" \
-    MOCK_IP_LOG="$tmp/ip.log" MOCK_NFT_LOG="$tmp/nft.log" \
+    MOCK_IP_LOG="$tmp/ip.log" MOCK_NFT_LOG="$tmp/nft.log" MOCK_ROUTER_UP="${MOCK_ROUTER_UP:-1}" \
     MOCK_LAST_CHECK="$tmp/last-check.nft" MOCK_LAST_APPLY="$tmp/last-apply.nft" \
     bash "$repo_root/src/awg-pbr-setup"
 }
@@ -119,5 +139,18 @@ if sudo grep -Fq 'redirect to :53' "$tmp/active.nft"; then
   exit 1
 fi
 grep -Fq -- '-4 route flush table 100' "$tmp/ip.log"
+
+echo "=== transit router failure leaves lockdown ==="
+echo transit >"$tmp/mode"
+if MOCK_ROUTER_UP=0 run_setup >"$tmp/out" 2>"$tmp/err"; then
+  echo 'FAIL: Transit setup accepted unreachable router' >&2
+  exit 1
+fi
+grep -Fq 'lockdown remains active' "$tmp/err"
+sudo grep -Fq 'policy drop;' "$tmp/active.nft"
+if sudo grep -Fq 'ether saddr' "$tmp/active.nft"; then
+  echo 'FAIL: router failure did not leave lockdown rules active' >&2
+  exit 1
+fi
 
 echo "mode-aware boot setup: OK"

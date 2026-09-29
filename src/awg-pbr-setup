@@ -153,17 +153,24 @@ setup_selective(){
 }
 
 setup_transit(){
-  local router_mac candidate
+  local router_mac candidate lockdown
+
+  # Establish a fail-closed forwarding baseline before any dependency that can
+  # fail (router reachability, ARP/neighbor resolution, full rule rendering).
+  lockdown="$(mktemp)"
+  AWG_TRANSIT_LOCKDOWN=1 "$TRANSIT_NFT" >"$lockdown"
+  replace_owned_table "$lockdown"
+  clear_policy
 
   "$PING_BIN" -4 -c1 -W2 "$ROUTER_IP" >/dev/null 2>&1 ||
-    fail "Transit setup: router $ROUTER_IP is unreachable"
+    fail "Transit setup: router $ROUTER_IP is unreachable; lockdown remains active"
 
   router_mac="$(
     "$IP_BIN" neigh show to "$ROUTER_IP" dev "$LAN_IF" 2>/dev/null |
       awk '{for(i=1;i<=NF;i++) if($i=="lladdr"){print $(i+1); exit}}'
   )"
   [[ "$router_mac" =~ ^([[:xdigit:]]{2}:){5}[[:xdigit:]]{2}$ ]] ||
-    fail "Transit setup: could not resolve router MAC"
+    fail "Transit setup: could not resolve router MAC; lockdown remains active"
   router_mac="${router_mac,,}"
 
   candidate="$(mktemp)"
