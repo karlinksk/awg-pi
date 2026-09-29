@@ -31,7 +31,6 @@ fail(){
 replace_owned_table(){
   local candidate="$1" txn
   txn="$(mktemp)"
-  trap 'rm -f "$candidate" "$txn"' RETURN
 
   if "$NFT_BIN" list table inet awg_pbr >/dev/null 2>&1; then
     {
@@ -42,12 +41,16 @@ replace_owned_table(){
     cat "$candidate" >"$txn"
   fi
 
-  "$NFT_BIN" -c -f "$txn"
-  "$NFT_BIN" -f "$txn"
+  if ! "$NFT_BIN" -c -f "$txn"; then
+    rm -f "$candidate" "$txn"
+    return 1
+  fi
+  if ! "$NFT_BIN" -f "$txn"; then
+    rm -f "$candidate" "$txn"
+    return 1
+  fi
   install -m 600 "$candidate" "$NFT_FILE"
-
-  rm -f "$txn"
-  trap - RETURN
+  rm -f "$candidate" "$txn"
 }
 
 clear_policy(){
