@@ -36,21 +36,39 @@ route_present(){
     grep -Eq "^default[[:space:]]+dev[[:space:]]+${VPN_IF}([[:space:]]|$)"
 }
 
-guard_safe(){
-  local chain
+guard_fail_closed(){
+  local chain line
   chain="$("$NFT_BIN" list chain inet awg_pbr forward_guard 2>/dev/null)" || return 1
 
   grep -Fq 'policy drop;' <<<"$chain" || return 1
-  grep -E "iifname \"${LAN_IF}\".*ether saddr ([[:xdigit:]]{2}:){5}[[:xdigit:]]{2}.*oifname \"${VPN_IF}\".*accept" <<<"$chain" >/dev/null ||
-    return 1
 
-  if grep -E "iifname \"${LAN_IF}\".*oifname \"${LAN_IF}\".*accept" <<<"$chain" >/dev/null; then
-    return 1
+  # Any accepted flow entering from LAN must explicitly leave through AWG.
+  # A lockdown chain has no such accept rule at all and is therefore safe.
+  while IFS= read -r line; do
+    [[ "$line" == *"iifname \"$LAN_IF\""* && "$line" == *" accept"* ]] || continue
+    [[ "$line" == *"oifname \"$VPN_IF\""* ]] || return 1
+  done <<<"$chain"
+}
+
+guard_ready(){
+  local chain
+  guard_fail_closed || return 1
+  chain="$("$NFT_BIN" list chain inet awg_pbr forward_guard 2>/dev/null)" || return 1
+  grep -E "iifname \"${LAN_IF}\".*ether saddr ([[:xdigit:]]{2}:){5}[[:xdigit:]]{2}.*oifname \"${VPN_IF}\".*accept" <<<"$chain" >/dev/null
+}
+
+guard_state(){
+  if guard_ready; then
+    echo SAFE
+  elif guard_fail_closed; then
+    echo LOCKDOWN
+  else
+    echo UNSAFE
   fi
 }
 
 show_status(){
-  printf 'Transit guard: %s\n' "$(guard_safe && echo SAFE || echo UNSAFE)"
+  printf 'Transit guard: %s\n' "$(guard_state)"
   printf 'Transit policy rule: %s\n' "$(rule_present && echo ACTIVE || echo INACTIVE)"
   printf 'Transit VPN table: %s\n' "$(route_present && echo READY || echo NOT_READY)"
 }
@@ -58,8 +76,8 @@ show_status(){
 apply_policy(){
   local had_rule=0 old_default=""
 
-  guard_safe ||
-    fail "Transit nftables forward guard is not active/safe"
+  guard_ready ||
+    fail "Transit nftables forward guard is not ready/safe"
 
   "$IP_BIN" link show dev "$VPN_IF" >/dev/null 2>&1 ||
     fail "AWG interface is unavailable: $VPN_IF"
@@ -95,15 +113,15 @@ apply_policy(){
 
   route_present
   rule_present
-  guard_safe
+  guard_ready
 
   trap - ERR
   printf 'TRANSIT_POLICY=ACTIVE\n'
 }
 
 disable_policy(){
-  guard_safe ||
-    fail "Transit nftables forward guard is not active/safe"
+  guard_fail_closed ||
+    fail "Transit nftables forward guard is not fail-closed"
 
   while "$IP_BIN" -4 rule del priority "$RULE_PRIORITY" fwmark "$VPN_MARK" lookup "$VPN_TABLE" 2>/dev/null; do :; done
 
@@ -114,7 +132,7 @@ disable_policy(){
   # The main route may now point back to LAN, but the Transit forward guard
   # accepts LAN ingress only when its actual egress is awg0. This is the
   # fail-closed state used when AWG is unavailable.
-  guard_safe ||
+  guard_fail_closed ||
     fail "Transit fail-closed guard verification failed"
 
   printf 'TRANSIT_POLICY=DISABLED_FAIL_CLOSED\n'

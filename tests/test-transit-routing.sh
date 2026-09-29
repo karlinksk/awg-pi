@@ -17,11 +17,17 @@ cat >"$tmp/bin/nft" <<'EOF'
 #!/usr/bin/env bash
 set -Eeuo pipefail
 if [[ "$*" == "list chain inet awg_pbr forward_guard" ]]; then
-  if [[ "${MOCK_GUARD_UNSAFE:-0}" == 1 ]]; then
-    echo 'chain forward_guard { iifname "eth0" oifname "eth0" accept }'
-  else
-    echo 'chain forward_guard { type filter hook forward priority filter; policy drop; iifname "eth0" ether saddr 02:11:22:33:44:55 oifname "awg0" accept }'
-  fi
+  case "${MOCK_GUARD_STATE:-safe}" in
+    unsafe)
+      echo 'chain forward_guard { type filter hook forward priority filter; policy drop; iifname "eth0" oifname "eth0" accept }'
+      ;;
+    lockdown)
+      echo 'chain forward_guard { type filter hook forward priority filter; policy drop; }'
+      ;;
+    safe)
+      echo 'chain forward_guard { type filter hook forward priority filter; policy drop; iifname "eth0" ether saddr 02:11:22:33:44:55 oifname "awg0" accept }'
+      ;;
+  esac
   exit 0
 fi
 exit 1
@@ -87,7 +93,7 @@ run_route(){
     IP_BIN="$tmp/bin/ip" \
     NFT_BIN="$tmp/bin/nft" \
     MOCK_IP_STATE="$tmp/ip-state" \
-    MOCK_GUARD_UNSAFE="${MOCK_GUARD_UNSAFE:-0}" \
+    MOCK_GUARD_STATE="${MOCK_GUARD_STATE:-safe}" \
     bash "$repo_root/src/awg-transit-routing" "$@"
 }
 
@@ -111,11 +117,22 @@ out="$(run_route status)"
 grep -Fqx 'Transit policy rule: INACTIVE' <<<"$out"
 grep -Fqx 'Transit guard: SAFE' <<<"$out"
 
+echo "=== lockdown is fail-closed but not ready ==="
+out="$(MOCK_GUARD_STATE=lockdown run_route status)"
+grep -Fqx 'Transit guard: LOCKDOWN' <<<"$out"
+if MOCK_GUARD_STATE=lockdown run_route apply >"$tmp/out" 2>"$tmp/err"; then
+  echo 'FAIL: lockdown guard was accepted for active Transit routing' >&2
+  exit 1
+fi
+grep -Fq 'Transit nftables forward guard is not ready/safe' "$tmp/err"
+out="$(MOCK_GUARD_STATE=lockdown run_route disable)"
+grep -Fqx 'TRANSIT_POLICY=DISABLED_FAIL_CLOSED' <<<"$out"
+
 echo "=== unsafe forward guard is rejected ==="
-if MOCK_GUARD_UNSAFE=1 run_route apply >"$tmp/out" 2>"$tmp/err"; then
+if MOCK_GUARD_STATE=unsafe run_route apply >"$tmp/out" 2>"$tmp/err"; then
   echo 'FAIL: unsafe Transit guard was accepted' >&2
   exit 1
 fi
-grep -Fq 'Transit nftables forward guard is not active/safe' "$tmp/err"
+grep -Fq 'Transit nftables forward guard is not ready/safe' "$tmp/err"
 
 echo "transit policy routing: OK"
