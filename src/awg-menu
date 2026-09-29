@@ -242,6 +242,27 @@ vpn_menu(){
   done
 }
 
+dns_menu(){
+  local choice current servers
+  while true; do
+    # shellcheck disable=SC1091
+    source /etc/awg-pbr/env
+    current="${UPSTREAM_DNS:-}"
+    choice="$(dialog --backtitle "$BACKTITLE" --title "DNS upstream" --menu "Текущие: $current" 16 82 6       1 "Показать текущую конфигурацию"       2 "Изменить upstream DNS"       0 "Назад" 3>&1 1>&2 2>&3)" || return 0
+    case "$choice" in
+      1)
+        title="DNS upstream"
+        capture "$AWG_ROUTE" dns status || true
+        ;;
+      2)
+        servers="$(input "DNS upstream" "IPv4 DNS через запятую:" "$current")" || continue
+        run_interactive "Изменение DNS" "$AWG_ROUTE" dns set "$servers"
+        ;;
+      0) return 0 ;;
+    esac
+  done
+}
+
 update_menu(){
   local choice
   while true; do
@@ -279,7 +300,7 @@ update_menu(){
 system_menu(){
   local choice
   while true; do
-    choice="$(dialog --backtitle "$BACKTITLE" --title "Система" --menu "Системные функции" 17 82 8       1 "Перезагрузить конфигурацию AWG Gateway"       2 "Перезагрузить Raspberry Pi"       3 "Выключить Raspberry Pi"       4 "Перенастроить LAN gateway"       0 "Назад" 3>&1 1>&2 2>&3)" || return 0
+    choice="$(dialog --backtitle "$BACKTITLE" --title "Система" --menu "Системные функции" 19 82 9       1 "Перезагрузить конфигурацию AWG Gateway"       2 "Перезагрузить Raspberry Pi"       3 "Выключить Raspberry Pi"       4 "Перенастроить LAN gateway"       5 "DNS upstream"       0 "Назад" 3>&1 1>&2 2>&3)" || return 0
     case "$choice" in
       1)
         title="Reload"
@@ -292,6 +313,7 @@ system_menu(){
         confirm "Poweroff" "Выключить Raspberry Pi?" && systemctl poweroff
         ;;
       4) run_interactive "Перенастройка сети" "$AWG_ROUTE" network reconfigure ;;
+      5) dns_menu ;;
       0) return 0 ;;
     esac
   done
