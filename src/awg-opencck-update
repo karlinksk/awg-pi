@@ -150,8 +150,14 @@ if (( matches == 0 )); then
   exit 1
 fi
 
-# Применяем только если хотя бы один источник был обработан. При частичной ошибке
-# действующие кэши не повреждаются, поэтому reload безопасен.
-"$AWG_ROUTE" reload >/dev/null
+# In Selective mode, apply refreshed caches to dnsmasq/nftables immediately.
+# In Transit mode classification is intentionally inactive; keep only the
+# persistent cache fresh and defer the live reload until Selective is restored.
+mode="$(awg_mode_get 2>/dev/null || echo selective)"
+if [[ "$mode" == selective ]]; then
+  "$AWG_ROUTE" reload >/dev/null
+else
+  echo "OpenCCK: cache обновлён; live reload отложен (Transit mode)"
+fi
 echo "OpenCCK: обработано=$matches, ошибок=$fail"
 (( fail == 0 ))

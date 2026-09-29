@@ -29,8 +29,10 @@ EOF
 
 run_update(){
   local fixture="$1"
-  sudo env     PATH="$tmp/bin:/usr/bin:/bin"     MOCK_FIXTURE="$PWD/$fixture"     AWG_OPENCCK_META_DIR="$tmp/meta"     AWG_ROUTE_BIN="$tmp/bin/awg-route"     AWG_COMMON_LIB="$PWD/src/awg-common"     bash "$PWD/src/awg-opencck-update" yttest
+  sudo env     PATH="$tmp/bin:/usr/bin:/bin"     MOCK_FIXTURE="$PWD/$fixture"     AWG_OPENCCK_META_DIR="$tmp/meta"     AWG_ROUTE_BIN="$tmp/bin/awg-route"     AWG_COMMON_LIB="$PWD/src/awg-common"     AWG_MODE_FILE="$tmp/mode"     bash "$PWD/src/awg-opencck-update" yttest
 }
+
+echo selective >"$tmp/mode"
 
 run_update tests/fixtures/opencck-good.txt
 sudo test -s "$tmp/data/youtube.domains"
@@ -41,6 +43,13 @@ sudo grep -Fxq www.youtube.com "$tmp/data/youtube.domains"
 [[ "$(sudo wc -l "$tmp/data/youtube.domains" | awk '{print $1}')" == 4 ]]
 sudo grep -Eq '^ENTRY_COUNT=4$' "$tmp/meta/yttest.env"
 grep -Fxq reload "$tmp/route.log"
+
+echo transit >"$tmp/mode"
+: >"$tmp/route.log"
+run_update tests/fixtures/opencck-good.txt >"$tmp/transit-update.log"
+[[ ! -s "$tmp/route.log" ]] || { echo "FAIL: Transit OpenCCK update reloaded live datapath" >&2; exit 1; }
+grep -Fq 'live reload отложен (Transit mode)' "$tmp/transit-update.log"
+echo selective >"$tmp/mode"
 
 before="$(sudo sha256sum "$tmp/data/youtube.domains" | awk '{print $1}')"
 set +e
