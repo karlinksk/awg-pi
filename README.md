@@ -35,17 +35,18 @@ after RC2. The routing/profile transaction hardware tests were completed on:
 187bb100701a8a17655cfe0fa1ca62a97db66408
 ```
 
-PR #5 then fixed the TUI-only cancellation status message. The current
-post-test executable code snapshot is:
+PR #5 then fixed the TUI-only cancellation status message; that fix passed on
+real Raspberry Pi hardware. PR #6 adds transactional upstream DNS management.
+The current executable code snapshot for the focused DNS hardware check is:
 
 ```text
-2606a8560eaca05862400ae64e718cc6ded0a574
+5c26398c52fa39066547e84b8429146c846d0016
 ```
 
-Install that exact snapshot for the final cancellation-UX hardware check:
+Install that exact snapshot:
 
 ```bash
-TEST_SHA=2606a8560eaca05862400ae64e718cc6ded0a574
+TEST_SHA=5c26398c52fa39066547e84b8429146c846d0016
 curl -fsSL "https://raw.githubusercontent.com/karlinksk/awg-pi/$TEST_SHA/install.sh" -o /tmp/awg-hw-test-install.sh
 sudo env AWG_PI_REF="$TEST_SHA" AWG_PI_UPGRADE_AUTO=1 bash /tmp/awg-hw-test-install.sh
 ```
