@@ -4,15 +4,19 @@ set -Eeuo pipefail
 
 # Maintenance takes an exclusive lock; normal commands and source updates
 # share it (including a nested source -> updater -> reload).
+AWG_LOCK_FILE="${AWG_LOCK_FILE:-/run/awg-maintenance.lock}"
 if [[ ${AWG_MAINTENANCE:-0} != 1 && ${1:-} != network && ${1:-} != config && ${1:-} != dns ]]; then
-  exec 9>/run/awg-maintenance.lock
+  exec 9>"$AWG_LOCK_FILE"
   flock -sn 9 || { echo 'Идёт обслуживание gateway; повторите позже.' >&2; exit 1; }
 fi
 
-# shellcheck disable=SC1091
-source /etc/awg-pbr/env
-# shellcheck disable=SC1091
-source /usr/local/lib/awg-pi/common.sh
+AWG_ENV_FILE="${AWG_ENV_FILE:-/etc/awg-pbr/env}"
+AWG_COMMON_FILE="${AWG_COMMON_FILE:-/usr/local/lib/awg-pi/common.sh}"
+
+# shellcheck disable=SC1090
+source "$AWG_ENV_FILE"
+# shellcheck disable=SC1090
+source "$AWG_COMMON_FILE"
 
 VD=/etc/awg-pbr/vpn-domains.txt
 DD=/etc/awg-pbr/direct-domains.txt
@@ -23,7 +27,7 @@ SETUP=/usr/local/sbin/awg-pbr-setup
 FAILOPEN=/usr/local/sbin/awg-pbr-failopen
 HEALTH_SERVICE=awg-pbr-health.service
 OPENCCK_UPDATE=/usr/local/sbin/awg-opencck-update
-SOURCE_ROOT=/etc/awg-pbr/sources
+SOURCE_ROOT="${SOURCE_ROOT:-/etc/awg-pbr/sources}"
 OPENCCK_DIR="$SOURCE_ROOT/opencck"
 OPENCCK_META="$OPENCCK_DIR/metadata"
 LOG_DIR="${LOG_DIR:-/var/log/awg-gateway}"
