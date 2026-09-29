@@ -30,6 +30,7 @@ jobs:
           bash -n src/awg-menu
           bash -n tests/test-common.sh
           bash -n tests/test-mode.sh
+          bash -n tests/test-route-mode.sh
           bash -n tests/test-opencck-updater.sh
           bash -n tests/mock-curl.sh
           bash -n tests/test-nft-template.sh
@@ -37,11 +38,12 @@ jobs:
           bash -n tests/test-redaction.sh
       - name: ShellCheck errors
         run: |
-          shellcheck -S error install.sh src/awg-common src/awg-route src/awg-opencck-update src/awg-core-update src/awg-update src/awg-menu tests/test-common.sh tests/test-mode.sh tests/test-opencck-updater.sh tests/mock-curl.sh tests/test-nft-template.sh
+          shellcheck -S error install.sh src/awg-common src/awg-route src/awg-opencck-update src/awg-core-update src/awg-update src/awg-menu tests/test-common.sh tests/test-mode.sh tests/test-route-mode.sh tests/test-opencck-updater.sh tests/mock-curl.sh tests/test-nft-template.sh
       - name: Unit tests
         run: |
           bash tests/test-common.sh
           bash tests/test-mode.sh
+          bash tests/test-route-mode.sh
           bash tests/test-opencck-updater.sh
           bash tests/test-nft-template.sh
           bash tests/test-rc2.sh
