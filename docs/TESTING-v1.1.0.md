@@ -347,3 +347,21 @@ sudo awg-route config check /etc/amnezia/amneziawg/awg0.conf
 Check that key values are hidden and profile validation succeeds with LG still
 playing. Do not attempt profile replacement/network migration until that passes.
 CI does not establish real-server replacement/rollback transport behavior.
+
+## 18. Interactive confirmation regression (after frozen RC2)
+
+The frozen RC2 snapshot uses buffered `open('/dev/tty', 'r+')`, which
+fails on a non-seekable Linux terminal. No-op network detection and
+`config check` bypass confirmation, so their hardware results do not cover it.
+The follow-up uses separate UTF-8 input/output terminal streams.
+
+CI runs `python3 tests/test-confirm.py` on Linux without root. Real controlling
+PTYs reproduce the old failure and verify affirmative answers (including
+Russian), repeated prompts, rejection, empty input and EOF. Standard streams
+are redirected to ensure confirmation still uses the controlling terminal.
+Without a terminal, piped "yes" is rejected; explicit `--yes` remains supported.
+
+Before the pending LAN/server hardware tests, use a build containing this fix.
+Cancel an actual changed-network/profile proposal and verify no configuration
+or services changed; then perform the approved switch and rollback checklist.
+This follow-up does not move the frozen RC2 branch or establish hardware success.

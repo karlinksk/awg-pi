@@ -116,10 +116,13 @@ def confirm(args, prompt):
     if args.yes:
         return
     try:
-        with open('/dev/tty', 'r+') as tty:
-            tty.write(prompt + ' [y/N]: ')
-            tty.flush()
-            answer = tty.readline().strip().lower()
+        # Buffered r+ requires seeking; a Linux terminal cannot seek.
+        # Separate streams also keep confirmation independent of redirected stdin.
+        with open('/dev/tty', 'r', encoding='utf-8') as reader, \
+                open('/dev/tty', 'w', encoding='utf-8') as writer:
+            writer.write(prompt + ' [y/N]: ')
+            writer.flush()
+            answer = reader.readline().strip().lower()
     except OSError:
         raise ValueError('Нужен терминал для подтверждения; для автоматизации используйте --yes') from None
     if answer not in ('y', 'yes', 'д', 'да'):
