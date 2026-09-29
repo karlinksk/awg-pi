@@ -34,10 +34,13 @@ internal numeric IDs:
 
 ```routeros
 /ip/route/add dst-address=0.0.0.0/0 gateway=<SSTP_IF> routing-table=vpn_backup distance=1 comment="AWG-Pi primary SSTP"
-/ip/route/add dst-address=0.0.0.0/0 gateway=<PI_IP> routing-table=vpn_backup distance=2 comment="AWG-Pi backup Pi"
+/ip/route/add dst-address=0.0.0.0/0 gateway=<PI_IP>@main routing-table=vpn_backup distance=2 comment="AWG-Pi backup Pi"
 ```
 
-The Pi address itself must remain reachable through the normal LAN/main table.
+The `@main` suffix is intentional: it resolves the directly reachable Pi next
+hop through the normal LAN/main table instead of recursively trying to resolve
+the Pi through `vpn_backup`. The Pi address itself must remain reachable
+through the normal LAN/main table.
 
 ## Initial single-client classifier
 
