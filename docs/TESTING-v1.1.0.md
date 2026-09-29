@@ -858,3 +858,73 @@ Result: **PASS**.
 This closes the clean-install and reboot/persistence release-gate item on the
 exact frozen RC3 candidate. The install path was exercised on a fully clean
 microSD using the unmodified RC3 installer.
+
+
+## 28. Clean microSD install and reboot: RC4 DNS-default candidate
+
+A dedicated microSD was completely re-imaged again with a clean Debian 13
+(trixie) ARM64 system. Before installation, `/etc/awg-pbr`,
+`/etc/amnezia/amneziawg/awg0.conf`, `awg`, and `amneziawg-go` were all
+confirmed absent.
+
+The clean installation used the frozen RC4 candidate directly:
+
+```text
+rc/v1.1.0-rc4
+85fbd6a93361635051a2a5569cb8c1bec697ee69
+```
+
+The downloaded installer reported `AWG_PI_VERSION="1.1.0"`, offered the new
+default upstream DNS pair without manual editing:
+
+```text
+9.9.9.9,149.112.112.112
+```
+
+and had SHA-256:
+
+```text
+6e0d96312966430f2e913e935a7364b2bf12ff47e8de0aa5fd7c6c03c61067cd  /tmp/install.sh
+```
+
+No local installer patches or compatibility workarounds were applied.
+
+### Immediate post-install result
+
+Result: **PASS**.
+
+- version file: `1.1.0`;
+- zero failed systemd units;
+- `awg-pbr-setup.service`: active;
+- `dnsmasq.service`: active;
+- `awg-quick@awg0.service`: active;
+- `awg-pbr-health.service`: active;
+- `awg-opencck-update.timer`: active;
+- health state: `up`;
+- policy rule: priority 100, `fwmark 0x100 -> table 100`;
+- managed upstream DNS: `9.9.9.9,149.112.112.112`;
+- dnsmasq servers: `9.9.9.9,149.112.112.112`;
+- DNS through the Pi answered successfully;
+- transport health-check tried `9.9.9.9` first and retained `1.1.1.1` as
+  the fallback target;
+- watchdog drop-in was present.
+
+### Post-reboot result
+
+After a normal reboot, the same checks were repeated.
+
+Result: **PASS**.
+
+- version remained `1.1.0`;
+- zero failed systemd units;
+- all five gateway services/timer remained active;
+- health returned to `up`;
+- policy rule priority 100 returned automatically;
+- managed upstream DNS remained `9.9.9.9,149.112.112.112`;
+- DNS through the Pi answered successfully;
+- the transport health-check order remained `9.9.9.9` first,
+  `1.1.1.1` fallback;
+- watchdog drop-in remained present.
+
+This validates the exact frozen RC4 candidate on a fully clean microSD and
+closes the DNS-default / health-target-order release-gate follow-up.
