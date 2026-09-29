@@ -28,17 +28,24 @@ SHA:    43b5f01a97178ca6a5bfeb73e3839f0b2ca125d2
 ```
 
 RC2 exposed a real Linux terminal confirmation bug in interactive
-`network reconfigure` / `config replace`. PR #4 fixed it after RC2.
-The exact code snapshot currently used for the remaining hardware validation is:
+`network reconfigure` / `config replace`. PR #4 fixed the terminal handling
+after RC2. The routing/profile transaction hardware tests were completed on:
 
 ```text
 187bb100701a8a17655cfe0fa1ca62a97db66408
 ```
 
-Install that tested code snapshot explicitly:
+PR #5 then fixed the TUI-only cancellation status message. The current
+post-test executable code snapshot is:
+
+```text
+2606a8560eaca05862400ae64e718cc6ded0a574
+```
+
+Install that exact snapshot for the final cancellation-UX hardware check:
 
 ```bash
-TEST_SHA=187bb100701a8a17655cfe0fa1ca62a97db66408
+TEST_SHA=2606a8560eaca05862400ae64e718cc6ded0a574
 curl -fsSL "https://raw.githubusercontent.com/karlinksk/awg-pi/$TEST_SHA/install.sh" -o /tmp/awg-hw-test-install.sh
 sudo env AWG_PI_REF="$TEST_SHA" AWG_PI_UPGRADE_AUTO=1 bash /tmp/awg-hw-test-install.sh
 ```
