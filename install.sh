@@ -573,8 +573,56 @@ cat >"$SETUP_SCRIPT" <<'EOF'
 set -Eeuo pipefail
 # shellcheck disable=SC1091
 source /etc/awg-pbr/env
+# shellcheck disable=SC1091
+source /usr/local/lib/awg-pi/common.sh
 CLIENTS=/etc/awg-pbr/clients.txt
 NFT=/etc/nftables.d/99-awg-pbr.nft
+TRANSIT_NFT=/usr/local/sbin/awg-transit-nft
+
+MODE="$(awg_mode_get 2>/dev/null || echo invalid)"
+if [[ "$MODE" == transit ]]; then
+  ping -4 -c1 -W2 "$ROUTER_IP" >/dev/null 2>&1 || {
+    echo "Transit setup: router $ROUTER_IP is unreachable" >&2
+    exit 1
+  }
+  ROUTER_MAC="$(
+    ip neigh show to "$ROUTER_IP" dev "$LAN_IF" 2>/dev/null |
+      awk '{for(i=1;i<=NF;i++) if($i=="lladdr"){print $(i+1); exit}}'
+  )"
+  [[ "$ROUTER_MAC" =~ ^([[:xdigit:]]{2}:){5}[[:xdigit:]]{2}$ ]] || {
+    echo "Transit setup: could not resolve router MAC" >&2
+    exit 1
+  }
+  ROUTER_MAC="${ROUTER_MAC,,}"
+
+  CANDIDATE="$(mktemp)"
+  TXN="$(mktemp)"
+  trap 'rm -f "$CANDIDATE" "$TXN"' EXIT
+
+  ROUTER_MAC="$ROUTER_MAC" "$TRANSIT_NFT" >"$CANDIDATE"
+
+  if nft list table inet awg_pbr >/dev/null 2>&1; then
+    {
+      printf 'delete table inet awg_pbr\n'
+      cat "$CANDIDATE"
+    } >"$TXN"
+  else
+    cat "$CANDIDATE" >"$TXN"
+  fi
+
+  nft -c -f "$TXN"
+  nft -f "$TXN"
+  install -m 600 "$CANDIDATE" "$NFT"
+
+  while ip -4 rule del priority 100 fwmark "$VPN_MARK" lookup "$VPN_TABLE" 2>/dev/null; do :; done
+  ip -4 route flush table "$VPN_TABLE" 2>/dev/null || true
+  exit 0
+fi
+
+[[ "$MODE" == selective ]] || {
+  echo "Invalid operating mode: $MODE" >&2
+  exit 1
+}
 
 nft delete table inet awg_pbr 2>/dev/null || true
 CLIENT_FILTER=""
@@ -743,6 +791,12 @@ python3 -c 'import ast,sys; ast.parse(open(sys.argv[1]).read())' "$_manage_tmp" 
 install -m 755 "$_manage_tmp" /usr/local/lib/awg-pi/manage.py
 rm -f "$_manage_tmp"
 install_project_helper src/awg-route "$ROUTE_CLI"
+install_project_helper src/awg-transit-nft /usr/local/sbin/awg-transit-nft
+install_project_helper src/awg-transit-preflight /usr/local/sbin/awg-transit-preflight
+install_project_helper src/awg-transit-apply /usr/local/sbin/awg-transit-apply
+install_project_helper src/awg-transit-routing /usr/local/sbin/awg-transit-routing
+install_project_helper src/awg-mode-switch /usr/local/sbin/awg-mode-switch
+install_project_helper src/awg-pbr-health "$HEALTH_SCRIPT"
 install_project_helper src/awg-opencck-update /usr/local/sbin/awg-opencck-update
 install_project_helper src/awg-core-update /usr/local/sbin/awg-core-update
 install_project_helper src/awg-update "$UPDATE_SCRIPT"
@@ -793,78 +847,13 @@ EOF
 chmod 644 /etc/profile.d/awg-menu.sh
 
 # -----------------------------------------------------------------------------
-# 9. Fail-open health monitor
+# 9. Mode-aware health monitor
 # -----------------------------------------------------------------------------
-STAGE="настройка health-check и fail-open"
-log "[9/12] Health monitor + FAIL-OPEN"
-cat >"$HEALTH_SCRIPT" <<'EOF'
-#!/usr/bin/env bash
-set -Eeuo pipefail
-# shellcheck disable=SC1091
-source /etc/awg-pbr/env
-VE=/etc/awg-pbr/vpn-enabled
-STATE_DIR=/run/awg-pbr
-STATE="$STATE_DIR/health.state"
-mkdir -p "$STATE_DIR"
-
-rule_on(){
-  ip -4 route replace default dev "$VPN_IF" table "$VPN_TABLE"
-  if ! ip -4 rule show | grep -Eq '(^| )100:.*fwmark (0x100|256).*lookup (100|awgvpn)'; then
-    ip -4 rule add priority 100 fwmark "$VPN_MARK" lookup "$VPN_TABLE"
-  fi
-  if [[ "$(cat "$STATE" 2>/dev/null || true)" != up ]]; then
-    echo up >"$STATE"
-    logger -t awg-pbr "VPN healthy: policy route enabled"
-  fi
-}
-rule_off(){
-  while ip -4 rule del priority 100 fwmark "$VPN_MARK" lookup "$VPN_TABLE" 2>/dev/null; do :; done
-  if [[ "$(cat "$STATE" 2>/dev/null || true)" != down ]]; then
-    echo down >"$STATE"
-    logger -t awg-pbr "VPN unavailable/disabled: FAIL-OPEN to normal Internet"
-  fi
-}
-health_prepare(){
-  ip -4 route replace default dev "$VPN_IF" table "$HEALTH_TABLE" 2>/dev/null || true
-  if ! ip -4 rule show | grep -Eq '(^| )90:.*fwmark (0x101|257).*lookup (101|awghealth)'; then
-    ip -4 rule add priority 90 fwmark "$HEALTH_MARK" lookup "$HEALTH_TABLE" 2>/dev/null || true
-  fi
-}
-handshake_fresh(){
-  local hs now
-  hs="$(awg show "$VPN_IF" latest-handshakes 2>/dev/null | awk '$2>m{m=$2}END{print m+0}')"
-  [[ "$hs" -gt 0 ]] || return 1
-  now="$(date +%s)"
-  (( now - hs <= HANDSHAKE_MAX_AGE ))
-}
-transport_ok(){
-  # Ping itself stimulates a handshake when needed.
-  ping -4 -n -m "$((HEALTH_MARK))" -c1 -W2 9.9.9.9 >/dev/null 2>&1 || \
-  ping -4 -n -m "$((HEALTH_MARK))" -c1 -W2 1.1.1.1 >/dev/null 2>&1
-}
-
-trap 'rule_off' EXIT INT TERM
-rule_off
-while true; do
-  if [[ "$(cat "$VE" 2>/dev/null || echo 1)" != 1 ]]; then
-    rule_off
-    sleep "$HEALTH_INTERVAL"
-    continue
-  fi
-  if ip link show "$VPN_IF" >/dev/null 2>&1; then
-    health_prepare
-    if transport_ok && handshake_fresh; then rule_on; else rule_off; fi
-  else
-    rule_off
-  fi
-  sleep "$HEALTH_INTERVAL"
-done
-EOF
-chmod 755 "$HEALTH_SCRIPT"
-
+STAGE="настройка health-check"
+log "[9/12] Health monitor: Selective FAIL-OPEN / Transit FAIL-CLOSED"
 cat >"$HEALTH_SERVICE" <<'EOF'
 [Unit]
-Description=AmneziaWG fail-open health monitor
+Description=AWG Pi Gateway mode-aware health monitor
 After=network-online.target awg-quick@awg0.service awg-pbr-setup.service
 Wants=network-online.target
 
@@ -884,7 +873,7 @@ EOF
 # -----------------------------------------------------------------------------
 STAGE="проверка компонентов управления"
 log "[10/12] Проверка awg-route / awg-menu / awg-update"
-for f in "$ROUTE_CLI" /usr/local/sbin/awg-menu /usr/local/sbin/awg-opencck-update /usr/local/sbin/awg-core-update "$UPDATE_SCRIPT"; do
+for f in "$ROUTE_CLI" /usr/local/sbin/awg-menu /usr/local/sbin/awg-transit-nft /usr/local/sbin/awg-transit-preflight /usr/local/sbin/awg-transit-apply /usr/local/sbin/awg-transit-routing /usr/local/sbin/awg-mode-switch "$HEALTH_SCRIPT" /usr/local/sbin/awg-opencck-update /usr/local/sbin/awg-core-update "$UPDATE_SCRIPT"; do
   [[ -x "$f" ]] || die "Не установлен исполняемый компонент: $f"
   bash -n "$f" || die "Синтаксическая проверка компонента не пройдена: $f"
 done
