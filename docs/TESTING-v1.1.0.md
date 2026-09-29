@@ -388,3 +388,61 @@ Raspberry Pi hardware. The affirmative apply path is still pending the controlle
 LAN migration and second-server profile tests below. Hardware testing should
 continue against code SHA `187bb100701a8a17655cfe0fa1ca62a97db66408`; later
 documentation-only commits do not redefine that tested code snapshot.
+
+
+## 19. Hardware result: Pi IP change inside existing LAN
+
+Tested on real Raspberry Pi hardware using code snapshot:
+
+```text
+187bb100701a8a17655cfe0fa1ca62a97db66408
+```
+
+The physical router had already been replaced with a MikroTik ax2 while keeping
+the same IPv4 LAN and router address. The Raspberry Pi DHCP reservation was then
+changed from `192.168.112.33` to `192.168.112.34` while keeping:
+
+```text
+LAN_CIDR=192.168.112.0/24
+ROUTER_IP=192.168.112.1
+LG client=192.168.112.28
+```
+
+Result: **PASS for an in-subnet Pi IP change**.
+
+Observed and verified:
+
+- after reboot, the Pi acquired `192.168.112.34/24` and the saved gateway
+  configuration still contained `192.168.112.33`;
+- `awg-route status` detected the saved/actual mismatch and did not alter
+  configuration automatically;
+- interactive `awg-route network reconfigure` displayed the old/new network
+  values and the `n` answer cancelled cleanly;
+- SHA-256 values of `/etc/awg-pbr/env`,
+  `/etc/dnsmasq.d/99-awg-pbr.conf`, and
+  `/etc/nftables.d/99-awg-pbr.nft` were unchanged after cancellation;
+- a second run with answer `y` created backup
+  `/var/backups/awg-gateway/network-20260929-103527-u8g6_ygj` and applied the
+  discovered Pi address;
+- after apply, `/etc/awg-pbr/env` contained `PI_IP=192.168.112.34`,
+  `LAN_CIDR=192.168.112.0/24`, and `ROUTER_IP=192.168.112.1`;
+- dnsmasq listened on both UDP/TCP `192.168.112.34:53`;
+- the dnsmasq configuration hash changed as expected; the nftables template hash
+  did not change because the LAN CIDR/router/interface did not change;
+- `awg-route status` returned health `up`, policy ACTIVE, all services active,
+  fresh AWG handshake, one retained client, and the enabled OpenCCK source with
+  15318 cached entries;
+- LG `192.168.112.28` remained in the client allow-list;
+- during LG/YouTube playback, `awg0` RX increased from 135267579 to 168786873
+  bytes (about 33.5 MB), confirming substantial real tunnel traffic after the
+  Pi address change;
+- `awg-route diagnostics` passed: router ping, direct DNS/Internet, DNS via Pi,
+  services, marked route through `awg0`, VPN transport ping and FAIL-OPEN were
+  all OK; FAIL-OPEN routed via `192.168.112.1`;
+- private, preshared and header-protection keys remained redacted.
+
+This closes the real-hardware **Pi IP change within the same subnet** case. It
+does **not** close the full LAN migration gate because `LAN_CIDR` and
+`ROUTER_IP` were unchanged. A later controlled test must still exercise a
+different subnet/router address, including the out-of-subnet client warning and
+rollback behavior.
