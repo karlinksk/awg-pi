@@ -45,7 +45,7 @@ sudo grep -Eq '^ENTRY_COUNT=4$' "$tmp/meta/yttest.env"
 grep -Fxq reload "$tmp/route.log"
 
 echo transit >"$tmp/mode"
-: >"$tmp/route.log"
+sudo truncate -s 0 "$tmp/route.log"
 run_update tests/fixtures/opencck-good.txt >"$tmp/transit-update.log"
 [[ ! -s "$tmp/route.log" ]] || { echo "FAIL: Transit OpenCCK update reloaded live datapath" >&2; exit 1; }
 grep -Fq 'live reload отложен (Transit mode)' "$tmp/transit-update.log"
