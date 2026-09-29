@@ -44,6 +44,7 @@ jobs:
           bash tests/test-rc2.sh
           bash tests/test-redaction.sh
           python3 tests/test-maintenance.py
+          python3 tests/test-confirm.py
 
   awg-v31:
     runs-on: ubuntu-latest
