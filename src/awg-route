@@ -23,10 +23,12 @@ DD=/etc/awg-pbr/direct-domains.txt
 CF=/etc/awg-pbr/clients.txt
 VE=/etc/awg-pbr/vpn-enabled
 DC=/etc/dnsmasq.d/99-awg-pbr-domains.conf
-SETUP=/usr/local/sbin/awg-pbr-setup
-FAILOPEN=/usr/local/sbin/awg-pbr-failopen
-HEALTH_SERVICE=awg-pbr-health.service
-OPENCCK_UPDATE=/usr/local/sbin/awg-opencck-update
+SETUP="${AWG_SETUP:-/usr/local/sbin/awg-pbr-setup}"
+FAILOPEN="${AWG_FAILOPEN:-/usr/local/sbin/awg-pbr-failopen}"
+HEALTH_SERVICE="${AWG_HEALTH_SERVICE:-awg-pbr-health.service}"
+MODE_SWITCH="${AWG_MODE_SWITCH:-/usr/local/sbin/awg-mode-switch}"
+TRANSIT_ROUTING="${AWG_TRANSIT_ROUTING:-/usr/local/sbin/awg-transit-routing}"
+OPENCCK_UPDATE="${AWG_OPENCCK_UPDATE:-/usr/local/sbin/awg-opencck-update}"
 SOURCE_ROOT="${SOURCE_ROOT:-/etc/awg-pbr/sources}"
 OPENCCK_DIR="$SOURCE_ROOT/opencck"
 OPENCCK_META="$OPENCCK_DIR/metadata"
@@ -415,7 +417,12 @@ client_cmd(){
 }
 
 vpn_switch(){
-  local state="$1"
+  local state="$1" mode
+  mode="$(awg_mode_get)" || return
+  if [[ "$mode" == transit ]]; then
+    echo "vpn on/off относится только к Selective Gateway. В Transit доступностью backup-пути управляет health monitor с FAIL-CLOSED." >&2
+    return 2
+  fi
   case "$state" in
     on)
       echo 1 >"$VE"; systemctl restart "$HEALTH_SERVICE"; sleep 2
@@ -437,13 +444,12 @@ mode_cmd(){
       label="$(awg_mode_label "$mode")" || return
       printf 'Operating mode: %s\n' "$label"
       printf 'Mode ID: %s\n' "$mode"
+      if [[ "$mode" == transit && -x "$TRANSIT_ROUTING" ]]; then
+        "$TRANSIT_ROUTING" status || true
+      fi
       ;;
     selective|transit)
-      awg_mode_set "$action" || return
-      label="$(awg_mode_label "$action")" || return
-      printf 'Operating mode state saved: %s\n' "$label"
-      printf 'Mode ID: %s\n' "$action"
-      printf 'NOTE: network datapath is unchanged in the current framework stage.\n'
+      "$MODE_SWITCH" "$action"
       ;;
     *) usage; return 2 ;;
   esac
@@ -475,9 +481,15 @@ show_status(){
   printf 'Operating mode: %s\n' "$mode_label"
   printf 'Mode ID: %s\n' "$mode"
   printf 'LAN: %s  Pi: %s  Router: %s  Network: %s\n' "$LAN_IF" "$PI_IP" "$ROUTER_IP" "$LAN_CIDR"
-  printf 'VPN policy requested: %s\n' "$([[ "$enabled" == 1 ]] && echo ON || echo OFF)"
   printf 'Health state: %s\n' "$(health_state)"
-  printf 'Policy rule: %s\n' "$(policy_present && echo ACTIVE || echo FAIL-OPEN/DIRECT)"
+  if [[ "$mode" == transit ]]; then
+    printf 'Selective classification: INACTIVE (state preserved)\n'
+    printf 'Transit policy: %s\n' "$(policy_present && echo ACTIVE || echo FAIL-CLOSED)"
+    [[ -x "$TRANSIT_ROUTING" ]] && "$TRANSIT_ROUTING" status || true
+  else
+    printf 'VPN policy requested: %s\n' "$([[ "$enabled" == 1 ]] && echo ON || echo OFF)"
+    printf 'Policy rule: %s\n' "$(policy_present && echo ACTIVE || echo FAIL-OPEN/DIRECT)"
+  fi
   if (( age >= 0 )); then printf 'Latest handshake age: %ss\n' "$age"; else echo 'Latest handshake: отсутствует'; fi
   echo
   echo "=== Services ==="
@@ -510,7 +522,14 @@ domain_source(){
 }
 
 test_domain(){
-  local raw="$1" d ips ip in_vpn in_direct in_static mark route src
+  local raw="$1" d ips ip in_vpn in_direct in_static mark route src mode
+  mode="$(awg_mode_get)" || return
+  if [[ "$mode" == transit ]]; then
+    echo "Operating mode: MikroTik Transit / Backup VPN"
+    echo "Domain/OpenCCK classification on the Pi is inactive in Transit mode."
+    echo "Traffic selection is controlled by MikroTik."
+    return 0
+  fi
   d="$(awg_normalize_domain "$raw")"; awg_valid_domain "$d" || { echo "Некорректный домен: $d" >&2; exit 2; }
   src="$(domain_source "$d")"
   echo "=== Test: $d ==="
@@ -615,14 +634,27 @@ run_diagnostics(){
   } | tee "$report"
 
   echo | tee -a "$report"
-  echo "--- FAIL-OPEN simulation ---" | tee -a "$report"
-  [[ "$prev_health_active" == yes ]] && systemctl stop "$HEALTH_SERVICE" >/dev/null 2>&1 || true
-  "$FAILOPEN" >/dev/null 2>&1 || true
-  failroute="$(ip -4 route get 1.1.1.1 mark "$VPN_MARK" 2>&1 | head -1 || true)"
-  echo "Route after policy removal: $failroute" | tee -a "$report"
-  grep -q "dev $LAN_IF" <<<"$failroute" && echo "FAIL-OPEN: OK" | tee -a "$report" || echo "FAIL-OPEN: FAIL" | tee -a "$report"
-  [[ "$prev_health_active" == yes ]] && systemctl start "$HEALTH_SERVICE" >/dev/null 2>&1 || true
-  [[ "$manual" == 0 ]] && "$FAILOPEN" >/dev/null 2>&1 || true
+  if [[ "$diag_mode" == transit ]]; then
+    echo "--- FAIL-CLOSED verification ---" | tee -a "$report"
+    [[ "$prev_health_active" == yes ]] && systemctl stop "$HEALTH_SERVICE" >/dev/null 2>&1 || true
+    "$TRANSIT_ROUTING" disable >/dev/null 2>&1 || true
+    "$TRANSIT_ROUTING" status 2>&1 | tee -a "$report"
+    if ! policy_present && "$TRANSIT_ROUTING" status 2>/dev/null | grep -Fqx 'Transit guard: SAFE'; then
+      echo "FAIL-CLOSED: OK" | tee -a "$report"
+    else
+      echo "FAIL-CLOSED: FAIL" | tee -a "$report"
+    fi
+    [[ "$prev_health_active" == yes ]] && systemctl start "$HEALTH_SERVICE" >/dev/null 2>&1 || true
+  else
+    echo "--- FAIL-OPEN simulation ---" | tee -a "$report"
+    [[ "$prev_health_active" == yes ]] && systemctl stop "$HEALTH_SERVICE" >/dev/null 2>&1 || true
+    "$FAILOPEN" >/dev/null 2>&1 || true
+    failroute="$(ip -4 route get 1.1.1.1 mark "$VPN_MARK" 2>&1 | head -1 || true)"
+    echo "Route after policy removal: $failroute" | tee -a "$report"
+    grep -q "dev $LAN_IF" <<<"$failroute" && echo "FAIL-OPEN: OK" | tee -a "$report" || echo "FAIL-OPEN: FAIL" | tee -a "$report"
+    [[ "$prev_health_active" == yes ]] && systemctl start "$HEALTH_SERVICE" >/dev/null 2>&1 || true
+    [[ "$manual" == 0 ]] && "$FAILOPEN" >/dev/null 2>&1 || true
+  fi
 
   echo "Report: $report" | tee -a "$report"
   chmod 600 "$report"; prune_reports
