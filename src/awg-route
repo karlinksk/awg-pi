@@ -531,7 +531,7 @@ test_domain(){
 }
 
 run_diagnostics(){
-  local report age direct_ip="" health_ok=no mark_test="" prev_health_active=no manual m
+  local report age direct_ip="" health_ok=no mark_test="" prev_health_active=no manual m diag_mode diag_mode_label
   report="$LOG_DIR/diagnostics-$(date +%Y%m%d-%H%M%S).txt"
   manual="$(cat "$VE" 2>/dev/null || echo 1)"
   systemctl is-active --quiet "$HEALTH_SERVICE" && prev_health_active=yes || true
@@ -541,6 +541,14 @@ run_diagnostics(){
     echo "Date: $(date -Is)"
     echo "Host: $(hostname)"
     echo "Version: $(cat /etc/awg-pbr/version 2>/dev/null || echo unknown)"
+    if diag_mode="$(awg_mode_get 2>/dev/null)"; then
+      diag_mode_label="$(awg_mode_label "$diag_mode" 2>/dev/null || echo unknown)"
+    else
+      diag_mode=invalid
+      diag_mode_label="INVALID / corrupt state"
+    fi
+    echo "Operating mode: $diag_mode_label"
+    echo "Mode ID: $diag_mode"
     echo "Model: $(tr -d '\0' </proc/device-tree/model 2>/dev/null || echo unknown)"
     echo "OS: $(. /etc/os-release; echo "${PRETTY_NAME:-unknown}")"
     echo "Kernel: $(uname -srmo)"
