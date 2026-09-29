@@ -5,6 +5,9 @@ grep -Fq 'AWG_PI_VERSION="1.2.0"' install.sh
 grep -Fq 'UPGRADE_TO_TRANSIT=0' install.sh
 grep -Fq '[[ "$EXISTING_VERSION" == 1.1.0 && "$MODE_PREEXISTED" == 0 ]]' install.sh
 grep -Fq 'UPGRADE_TO_TRANSIT=1' install.sh
+grep -Fq 'AUTO_TRANSIT="${AWG_PI_UPGRADE_TRANSIT:-}"' install.sh
+grep -Fq 'AWG_PI_UPGRADE_TRANSIT=0|1' install.sh
+grep -Fq 'AWG_PI_UPGRADE_TRANSIT="$transit_choice"' src/awg-update
 grep -Fq '"$ROUTE_CLI" mode transit' install.sh
 grep -Fq '"$ROUTE_CLI" mode selective' install.sh
 
