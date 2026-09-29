@@ -4,7 +4,7 @@ set -Eeuo pipefail
 
 # Maintenance takes an exclusive lock; normal commands and source updates
 # share it (including a nested source -> updater -> reload).
-if [[ ${AWG_MAINTENANCE:-0} != 1 && ${1:-} != network && ${1:-} != config ]]; then
+if [[ ${AWG_MAINTENANCE:-0} != 1 && ${1:-} != network && ${1:-} != config && ${1:-} != dns ]]; then
   exec 9>/run/awg-maintenance.lock
   flock -sn 9 || { echo 'Идёт обслуживание gateway; повторите позже.' >&2; exit 1; }
 fi
@@ -60,6 +60,10 @@ OpenCCK:
   awg-route client del IPv4
   awg-route client list
   Пустой список = правила VPN применяются ко всем устройствам, использующим Pi как gateway.
+
+DNS:
+  awg-route dns status
+  awg-route dns set IPv4[,IPv4...] [--yes]
 
 VPN policy:
   awg-route vpn on
@@ -598,7 +602,7 @@ case "$cmd" in
       *) usage; exit 2 ;;
     esac
     ;;
-  network|config) exec /usr/local/lib/awg-pi/manage.py "$@" ;;
+  network|config|dns) exec /usr/local/lib/awg-pi/manage.py "$@" ;;
   source) shift; source_cmd "$@" ;;
   client) client_cmd "$action" "$val" ;;
   list)
