@@ -30,12 +30,15 @@ Validated on the existing Raspberry Pi 4 test gateway:
 
 Still required before the stable v1.1.0 release:
 
-- controlled real-LAN `network reconfigure` test, including rollback behavior;
-- real second-server `config replace`, manual rollback and automatic rollback
-  from an unreachable/failed profile;
+- install and hardware-check the final post-RC2 cancellation-UX fix;
 - complete remaining release-gate checklist items that have not yet been
   exercised on the frozen RC2 snapshot, including `--replace` bulk import where
   applicable and final release audit.
+
+The real second-server transaction is now hardware-validated. A full migration
+to a different LAN subnet/router address is intentionally deferred; the
+in-subnet Pi-address migration remains the real-hardware coverage for
+`network reconfigure` in v1.1.0.
 
 Do not move the frozen RC2 branch to include later documentation-only commits.
 
@@ -361,10 +364,10 @@ Russian), repeated prompts, rejection, empty input and EOF. Standard streams
 are redirected to ensure confirmation still uses the controlling terminal.
 Without a terminal, piped "yes" is rejected; explicit `--yes` remains supported.
 
-Before the pending LAN/server hardware tests, use a build containing this fix.
+Before hardware maintenance tests, use a build containing this fix.
 Cancel an actual changed-network/profile proposal and verify no configuration
 or services changed; then perform the approved switch and rollback checklist.
-This follow-up does not move the frozen RC2 branch or establish hardware success.
+This follow-up does not move the frozen RC2 branch.
 
 Hardware confirmation on the existing Raspberry Pi:
 
@@ -384,10 +387,9 @@ client allow-list retained, OpenCCK source/cache retained, fresh AWG handshake,
 and private/preshared/header-protection keys remained redacted.
 
 This validates the cancellation path for the post-RC2 confirmation fix on real
-Raspberry Pi hardware. The affirmative apply path is still pending the controlled
-LAN migration and second-server profile tests below. Hardware testing should
-continue against code SHA `187bb100701a8a17655cfe0fa1ca62a97db66408`; later
-documentation-only commits do not redefine that tested code snapshot.
+Raspberry Pi hardware. The in-subnet LAN apply path and the second-server profile
+transaction were subsequently completed on the same executable code snapshot.
+Later documentation-only commits do not redefine that tested code snapshot.
 
 
 ## 19. Hardware result: Pi IP change inside existing LAN
@@ -441,8 +443,74 @@ Observed and verified:
   all OK; FAIL-OPEN routed via `192.168.112.1`;
 - private, preshared and header-protection keys remained redacted.
 
-This closes the real-hardware **Pi IP change within the same subnet** case. It
-does **not** close the full LAN migration gate because `LAN_CIDR` and
-`ROUTER_IP` were unchanged. A later controlled test must still exercise a
-different subnet/router address, including the out-of-subnet client warning and
-rollback behavior.
+This closes the real-hardware **Pi IP change within the same subnet** case.
+A full migration where `LAN_CIDR` and/or `ROUTER_IP` changes remains
+untested on real hardware. That scenario is intentionally deferred and is not a
+remaining v1.1.0 release-gate requirement; the automated transaction tests still
+cover rollback/error paths.
+
+
+## 20. Hardware result: second AmneziaWG server
+
+Tested on the existing Raspberry Pi using the post-RC2 executable code snapshot:
+
+```text
+187bb100701a8a17655cfe0fa1ca62a97db66408
+```
+
+Primary server A endpoint:
+
+```text
+89.125.68.188:43302
+```
+
+Second real server B endpoint:
+
+```text
+81.31.244.136:35104
+```
+
+Result: **PASS** for the real profile transaction path.
+
+Observed and verified:
+
+- the new B profile passed `awg-route config check` without changing the live
+  tunnel;
+- interactive TUI replacement displayed old/new endpoints and answer `n`
+  cancelled without changing the active A endpoint or service health;
+- replacing A -> B created a transaction backup and reported fresh handshake
+  and transport success;
+- after A -> B, health was `up`, policy ACTIVE, all gateway services active,
+  one client retained and the OpenCCK source/cache retained;
+- real LG/YouTube playback over server B increased `awg0` RX from 2520 to
+  80171870 bytes (about 80 MB), confirming real client traffic through B;
+- manual `config rollback` returned B -> A with fresh handshake and transport
+  success;
+- manual rollback normalizes the saved native profile through the strict parser,
+  so the restored A file need not be byte-identical to the original input even
+  though it is functionally the same profile;
+- a syntactically valid test profile using unreachable endpoint
+  `203.0.113.1:35104` passed non-switching core validation;
+- applying that unreachable profile failed the fresh handshake/transport gate,
+  triggered automatic rollback, restored A, returned health to `up` and policy
+  to ACTIVE;
+- the active A config SHA-256 immediately before and after automatic rollback
+  matched exactly:
+  `041c7ec50985bcb3bd7585845bb07f99eed0279eb19f8debc7d274effe6bb719`;
+- private, preshared and header-protection keys remained redacted.
+
+The test also exposed a TUI-only UX issue: a deliberate `n` cancellation was
+reported as `Операция завершилась с ошибкой (код 1)` even though the operation
+was safely cancelled. The post-test fix gives user cancellation a distinct exit
+status and renders it as a normal `Операция отменена пользователем.` result,
+while preserving error reporting for genuine failures.
+
+## 21. Deferred full-LAN migration
+
+The user explicitly chose not to perform a real migration to a different
+`LAN_CIDR`/`ROUTER_IP` before v1.1.0. The tested real-hardware network case
+therefore remains the Pi address change inside `192.168.112.0/24`.
+
+This is recorded as a known untested hardware scenario, not as a blocker for the
+remaining v1.1.0 release work. A future disposable/controlled environment may
+exercise the out-of-subnet client warning and a real different-subnet apply.
