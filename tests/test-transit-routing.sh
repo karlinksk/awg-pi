@@ -20,7 +20,7 @@ if [[ "$*" == "list chain inet awg_pbr forward_guard" ]]; then
   if [[ "${MOCK_GUARD_UNSAFE:-0}" == 1 ]]; then
     echo 'chain forward_guard { iifname "eth0" oifname "eth0" accept }'
   else
-    echo 'chain forward_guard { iifname "eth0" ether saddr 02:11:22:33:44:55 oifname "awg0" accept }'
+    echo 'chain forward_guard { type filter hook forward priority filter; policy drop; iifname "eth0" ether saddr 02:11:22:33:44:55 oifname "awg0" accept }'
   fi
   exit 0
 fi
