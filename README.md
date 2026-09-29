@@ -15,27 +15,41 @@ Current stable release: **v1.0.1**
 curl -fsSL https://raw.githubusercontent.com/karlinksk/awg-pi/v1.0.1/install.sh -o /tmp/install.sh && sudo bash /tmp/install.sh
 ```
 
-## v1.1.0 RC2
+## v1.1.0 hardware candidate
 
 The stable `main`/release remains **v1.0.1** until the v1.1.0 hardware release
 gate is complete.
 
-The frozen RC2 candidate is:
+The frozen RC2 snapshot is retained unchanged for traceability:
 
 ```text
 branch: rc/v1.1.0-rc2
 SHA:    43b5f01a97178ca6a5bfeb73e3839f0b2ca125d2
 ```
 
-Use the frozen RC2, not the moving development branch, for hardware validation:
+RC2 exposed a real Linux terminal confirmation bug in interactive
+`network reconfigure` / `config replace`. PR #4 fixed it after RC2.
+The exact code snapshot currently used for the remaining hardware validation is:
 
-```bash
-RC2_SHA=43b5f01a97178ca6a5bfeb73e3839f0b2ca125d2
-curl -fsSL "https://raw.githubusercontent.com/karlinksk/awg-pi/$RC2_SHA/install.sh" -o /tmp/awg-rc2-install.sh
-sudo env AWG_PI_REF="$RC2_SHA" AWG_PI_UPGRADE_AUTO=1 bash /tmp/awg-rc2-install.sh
+```text
+187bb100701a8a17655cfe0fa1ca62a97db66408
 ```
 
-RC2 includes:
+Install that tested code snapshot explicitly:
+
+```bash
+TEST_SHA=187bb100701a8a17655cfe0fa1ca62a97db66408
+curl -fsSL "https://raw.githubusercontent.com/karlinksk/awg-pi/$TEST_SHA/install.sh" -o /tmp/awg-hw-test-install.sh
+sudo env AWG_PI_REF="$TEST_SHA" AWG_PI_UPGRADE_AUTO=1 bash /tmp/awg-hw-test-install.sh
+```
+
+The existing Raspberry Pi has already confirmed the post-RC2 interactive
+confirmation cancellation path on this exact code SHA. The affirmative LAN
+migration and second-server profile replacement/rollback tests are still
+pending. Later documentation-only commits on `develop/v1.1.0` do not redefine
+the hardware-test code snapshot.
+
+v1.1.0 includes:
 
 - SSH TUI control panel (`awg-menu`)
 - bulk VPN/DIRECT domain import and export
@@ -47,9 +61,7 @@ RC2 includes:
 - transactional native AmneziaWG profile check/replace/rollback
 - AWG v3.1 native-profile compatibility and secret redaction
 - CI regression tests for the hardware-discovered RC1/RC2 issues
-
-The `develop/v1.1.0` branch may move after RC2 is frozen. Do not use it as a
-substitute for the RC2 hardware-test snapshot.
+- post-RC2 real Linux `/dev/tty` confirmation fix
 
 ## Main v1.1.0 commands
 
@@ -79,12 +91,13 @@ Interactive SSH logins open the TUI automatically after v1.1.0 installation.
 Create `~/.no-awg-menu` to disable automatic TUI launch for that account while
 keeping normal SSH access.
 
-## RC2 maintenance and upgrade
+## Maintenance and upgrade
 
-RC2 fixes CIDR validation under `set -u`, decimal ping marks (including old
-hexadecimal values in saved env), installer version isolation from Debian
-`/etc/os-release`, and skips underscore DNS service names in OpenCCK domain
-sources. Malformed hostnames still reject the update and preserve its cache.
+The RC2 line fixed CIDR validation under `set -u`, decimal ping marks
+(including old hexadecimal values in saved env), installer version isolation
+from Debian `/etc/os-release`, and skips underscore DNS service names in
+OpenCCK domain sources. Malformed hostnames still reject the update and preserve
+its cache.
 
 `network reconfigure` discovers the current IPv4 LAN/default router, displays
 old/new values, asks for confirmation, and backs up env, dnsmasq, nftables and
@@ -101,18 +114,20 @@ Native gateway profiles need one peer, an IPv4 interface address and IPv4
 default AllowedIPs (`0.0.0.0/0`). Additional IPv6 Address/AllowedIPs entries
 are preserved; Table=off does not enable IPv6 policy routing. AWG v3.1
 HeaderProtectionKey, timing ranges, padding and security options are supported;
-legacy H1-H4 are not mandatory. DNS is stripped, Table is forced off, and executable hooks/SaveConfig
-are rejected. Preflight uses `awg-quick strip` and the installed AWG core on a
-temporary userspace interface in an isolated network namespace (`unshare`,
-`amneziawg-go`, `awg`). Unsupported AWG parameters fail before live changes.
-The kernel-only peer option `AdvancedSecurity` is rejected by this userspace
-gateway, matching the upstream tools' userspace transport restriction.
+legacy H1-H4 are not mandatory. DNS is stripped, Table is forced off, and
+executable hooks/SaveConfig are rejected. Preflight uses `awg-quick strip` and
+the installed AWG core on a temporary userspace interface in an isolated
+network namespace (`unshare`, `amneziawg-go`, `awg`). Unsupported AWG
+parameters fail before live changes. The kernel-only peer option
+`AdvancedSecurity` is rejected by this userspace gateway, matching the
+upstream tools' userspace transport restriction.
+
 Keys are never printed. During switching the health monitor is stopped and
-policy is DIRECT. A fresh handshake and marked, interface-bound transport
-probe must pass before health monitoring resumes. Failure restores the old
-profile; failure of that tunnel leaves DIRECT with health stopped. Restore
-connectivity, then start `awg-pbr-health.service` manually. Manual rollback
-validates the saved `.conf.previous` through the same transaction.
+policy is DIRECT. A fresh handshake and marked, interface-bound transport probe
+must pass before health monitoring resumes. Failure restores the old profile;
+failure of that tunnel leaves DIRECT with health stopped. Restore connectivity,
+then start `awg-pbr-health.service` manually. Manual rollback validates the
+saved `.conf.previous` through the same transaction.
 
 Use `sudo awg-route config check /etc/amnezia/amneziawg/awg0.conf` to validate
 the current native profile with the installed core without switching the live
