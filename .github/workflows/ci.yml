@@ -25,6 +25,7 @@ jobs:
           bash -n src/awg-common
           bash -n src/awg-route
           bash -n src/awg-transit-nft
+          bash -n src/awg-transit-preflight
           bash -n src/awg-opencck-update
           bash -n src/awg-core-update
           bash -n src/awg-update
@@ -33,6 +34,7 @@ jobs:
           bash -n tests/test-mode.sh
           bash -n tests/test-route-mode.sh
           bash -n tests/test-transit-nft.sh
+          bash -n tests/test-transit-preflight.sh
           bash -n tests/test-opencck-updater.sh
           bash -n tests/mock-curl.sh
           bash -n tests/test-nft-template.sh
@@ -40,13 +42,14 @@ jobs:
           bash -n tests/test-redaction.sh
       - name: ShellCheck errors
         run: |
-          shellcheck -S error install.sh src/awg-common src/awg-route src/awg-transit-nft src/awg-opencck-update src/awg-core-update src/awg-update src/awg-menu tests/test-common.sh tests/test-mode.sh tests/test-route-mode.sh tests/test-transit-nft.sh tests/test-opencck-updater.sh tests/mock-curl.sh tests/test-nft-template.sh
+          shellcheck -S error install.sh src/awg-common src/awg-route src/awg-transit-nft src/awg-transit-preflight src/awg-opencck-update src/awg-core-update src/awg-update src/awg-menu tests/test-common.sh tests/test-mode.sh tests/test-route-mode.sh tests/test-transit-nft.sh tests/test-transit-preflight.sh tests/test-opencck-updater.sh tests/mock-curl.sh tests/test-nft-template.sh
       - name: Unit tests
         run: |
           bash tests/test-common.sh
           bash tests/test-mode.sh
           bash tests/test-route-mode.sh
           bash tests/test-transit-nft.sh
+          bash tests/test-transit-preflight.sh
           bash tests/test-opencck-updater.sh
           bash tests/test-nft-template.sh
           bash tests/test-rc2.sh
