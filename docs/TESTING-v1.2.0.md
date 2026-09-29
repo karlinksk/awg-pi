@@ -100,10 +100,14 @@ Required:
 - mode is `transit`;
 - Transit guard is SAFE;
 - healthy AWG gives ACTIVE policy + READY VPN table;
+- if router/MAC discovery is deliberately made unavailable during Transit
+  setup, the live guard reports LOCKDOWN rather than exposing LAN forwarding;
 - forward ingress contains the MikroTik Ethernet source MAC restriction;
 - no LAN->LAN accept fallback exists in the Transit forward chain;
 - no DNS redirect rules exist in Transit;
-- Pi management/default traffic remains DIRECT.
+- Pi management/default traffic remains DIRECT;
+- an OpenCCK timer refresh in Transit updates cache files without rebuilding the
+  live Transit nftables datapath.
 
 ## 6. MikroTik -> Pi -> AWG datapath
 

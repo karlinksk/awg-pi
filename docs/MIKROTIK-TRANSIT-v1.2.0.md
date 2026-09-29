@@ -20,6 +20,13 @@ vpn_backup         dedicated routing table
 Start with one test client. Do not move the full production policy until the
 failover test passes.
 
+The current Pi Transit rules accept source addresses from its configured
+`LAN_CIDR` and require the Ethernet source MAC to be the MikroTik. For the
+first RC test, use a client from that subnet. Routed client subnets outside that
+CIDR require an explicit source-range extension in a later revision (or a
+carefully designed MikroTik source-NAT policy); do not silently broaden the Pi
+firewall.
+
 ## Routing table
 
 Create a FIB table if it does not already exist:

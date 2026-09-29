@@ -213,3 +213,18 @@ The implementation must preserve these invariants:
 - Selective state remains stored and is restored when switching back;
 - boot/reload setup is mode-aware;
 - the health monitor is FAIL-OPEN in Selective and FAIL-CLOSED in Transit.
+
+### Boot/setup lockdown
+
+Transit boot/reload first installs a minimal **LOCKDOWN** nftables state with a
+drop-policy forward chain and no Transit mark/NAT rule. Only after the normal
+router is reachable and its Ethernet MAC has been resolved is the full
+MAC-restricted Transit ruleset installed. If router-dependent setup fails, the
+lockdown remains active, preventing a LAN/main-route forwarding loop while Pi
+management input stays reachable.
+
+### Inactive Selective data in Transit
+
+OpenCCK may continue refreshing its persistent cached lists while Transit is
+active, but those cache updates do not reload the live Transit datapath. The
+latest cache is applied when Selective mode is restored.

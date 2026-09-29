@@ -156,10 +156,12 @@ The current implementation branch adds:
   DIRECT through the normal LAN router;
 - MikroTik-MAC-restricted Transit forwarding and NAT to `awg0`;
 - Selective FAIL-OPEN and Transit FAIL-CLOSED health behavior;
+- a Transit lockdown ruleset that is installed before router/MAC-dependent boot setup;
 - mode-aware boot/reload setup;
 - CLI and SSH-TUI mode selection;
 - preservation of VPN/DIRECT/OpenCCK/client state while Transit classification
-  is active.
+  is active; OpenCCK continues refreshing its persistent cache without
+  reloading the live Transit datapath.
 
 Core mode commands are:
 
