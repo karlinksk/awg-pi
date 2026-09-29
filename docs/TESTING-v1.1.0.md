@@ -30,7 +30,8 @@ Validated on the existing Raspberry Pi 4 test gateway:
 
 Still required before the stable v1.1.0 release:
 
-- install and hardware-check the final post-RC2 cancellation-UX fix;
+- install and hardware-check code snapshot
+  `2606a8560eaca05862400ae64e718cc6ded0a574` for the final cancellation-UX fix;
 - complete remaining release-gate checklist items that have not yet been
   exercised on the frozen RC2 snapshot, including `--replace` bulk import where
   applicable and final release audit.
@@ -514,3 +515,26 @@ therefore remains the Pi address change inside `192.168.112.0/24`.
 This is recorded as a known untested hardware scenario, not as a blocker for the
 remaining v1.1.0 release work. A future disposable/controlled environment may
 exercise the out-of-subnet client warning and a real different-subnet apply.
+
+
+## 22. Cancellation UX fix after second-server hardware test
+
+PR #5 changed only the user-facing classification of an explicit interactive
+cancellation. The maintenance layer now uses a distinct cancellation exit status
+and the TUI maps that status to:
+
+```text
+Операция отменена пользователем.
+```
+
+A genuine failed operation still prints the error status/code. CI regression
+coverage verifies both paths and passed on the merged executable code snapshot:
+
+```text
+2606a8560eaca05862400ae64e718cc6ded0a574
+```
+
+The remaining hardware check is intentionally small: install this snapshot,
+start a real `config replace` from the TUI, answer `n`, verify the normal
+cancellation message, then confirm the active endpoint/health/policy are
+unchanged. No full LAN migration is required.
