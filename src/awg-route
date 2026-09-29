@@ -456,12 +456,20 @@ source_counts(){
 }
 
 show_status(){
-  local age enabled sc_total sc_enabled sc_entries
+  local age enabled sc_total sc_enabled sc_entries mode mode_label
   enabled="$(cat "$VE" 2>/dev/null || echo 1)"
   age="$(handshake_age)"
   read -r sc_total sc_enabled sc_entries < <(source_counts)
+  if mode="$(awg_mode_get 2>/dev/null)"; then
+    mode_label="$(awg_mode_label "$mode")"
+  else
+    mode=invalid
+    mode_label="INVALID / corrupt state"
+  fi
   /usr/local/lib/awg-pi/manage.py network status || true
   echo "=== Gateway ==="
+  printf 'Operating mode: %s\n' "$mode_label"
+  printf 'Mode ID: %s\n' "$mode"
   printf 'LAN: %s  Pi: %s  Router: %s  Network: %s\n' "$LAN_IF" "$PI_IP" "$ROUTER_IP" "$LAN_CIDR"
   printf 'VPN policy requested: %s\n' "$([[ "$enabled" == 1 ]] && echo ON || echo OFF)"
   printf 'Health state: %s\n' "$(health_state)"
