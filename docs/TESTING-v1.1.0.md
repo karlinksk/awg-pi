@@ -365,3 +365,26 @@ Before the pending LAN/server hardware tests, use a build containing this fix.
 Cancel an actual changed-network/profile proposal and verify no configuration
 or services changed; then perform the approved switch and rollback checklist.
 This follow-up does not move the frozen RC2 branch or establish hardware success.
+
+Hardware confirmation on the existing Raspberry Pi:
+
+```text
+tested code SHA: 187bb100701a8a17655cfe0fa1ca62a97db66408
+result: PASS
+```
+
+The existing Pi was upgraded to that exact tested code SHA with its current
+gateway configuration preserved. The installed `manage.py` contained separate
+UTF-8 read/write handles for `/dev/tty`. A real interactive
+`awg-route config replace` using the current native profile reached the
+confirmation prompt, answer `n` cancelled cleanly, and no traceback/OSError
+occurred. A subsequent `awg-route status` remained healthy: VPN policy
+requested ON, health `up`, policy rule ACTIVE, all gateway services active,
+client allow-list retained, OpenCCK source/cache retained, fresh AWG handshake,
+and private/preshared/header-protection keys remained redacted.
+
+This validates the cancellation path for the post-RC2 confirmation fix on real
+Raspberry Pi hardware. The affirmative apply path is still pending the controlled
+LAN migration and second-server profile tests below. Hardware testing should
+continue against code SHA `187bb100701a8a17655cfe0fa1ca62a97db66408`; later
+documentation-only commits do not redefine that tested code snapshot.
