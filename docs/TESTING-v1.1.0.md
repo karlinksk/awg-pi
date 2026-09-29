@@ -30,12 +30,11 @@ Validated on the existing Raspberry Pi 4 test gateway:
 
 Still required before the stable v1.1.0 release:
 
-- hardware-check executable snapshot
-  `5c26398c52fa39066547e84b8429146c846d0016` for the new transactional
-  upstream DNS CLI/TUI path;
 - complete remaining release-gate checklist items that have not yet been
-  exercised on the frozen RC2 snapshot, including `--replace` bulk import where
-  applicable and final release audit.
+  exercised on hardware, including `--replace` bulk import;
+- complete the clean v1.0.1 -> v1.1.0 upgrade-path check in a backed-up or
+  disposable environment;
+- run the final release audit and final-candidate smoke check.
 
 The real second-server transaction is now hardware-validated. A full migration
 to a different LAN subnet/router address is intentionally deferred; the
@@ -355,44 +354,37 @@ CI does not establish real-server replacement/rollback transport behavior.
 
 ## 18. Interactive confirmation regression (after frozen RC2)
 
-The frozen RC2 snapshot uses buffered `open('/dev/tty', 'r+')`, which
-fails on a non-seekable Linux terminal. No-op network detection and
-`config check` bypass confirmation, so their hardware results do not cover it.
-The follow-up uses separate UTF-8 input/output terminal streams.
-
-CI runs `python3 tests/test-confirm.py` on Linux without root. Real controlling
-PTYs reproduce the old failure and verify affirmative answers (including
-Russian), repeated prompts, rejection, empty input and EOF. Standard streams
-are redirected to ensure confirmation still uses the controlling terminal.
-Without a terminal, piped "yes" is rejected; explicit `--yes` remains supported.
-
-Before hardware maintenance tests, use a build containing this fix.
-Cancel an actual changed-network/profile proposal and verify no configuration
-or services changed; then perform the approved switch and rollback checklist.
-This follow-up does not move the frozen RC2 branch.
-
-Hardware confirmation on the existing Raspberry Pi:
+The frozen RC2 snapshot used buffered `open('/dev/tty', 'r+')`, which failed
+on a non-seekable Linux terminal. The first post-RC2 fix changed confirmation
+to separate UTF-8 input/output terminal streams and passed the real profile and
+network maintenance tests on:
 
 ```text
-tested code SHA: 187bb100701a8a17655cfe0fa1ca62a97db66408
+187bb100701a8a17655cfe0fa1ca62a97db66408
+```
+
+A later DNS TUI hardware test exposed a second terminal edge case: after a
+`dialog` screen returned to the maintenance prompt, an intermittent malformed
+or orphaned byte could make the UTF-8 text reader raise `UnicodeDecodeError`.
+A minimal real-terminal reproducer confirmed the failure at the
+`dialog -> /dev/tty` transition while ordinary raw input remained `b'y\n'`.
+
+PR #7 hardened confirmation by opening the controlling TTY in binary mode,
+flushing pending input before the prompt, reading the completed answer as bytes,
+and decoding it safely. Existing affirmative answers (`y`, `yes`, `д`,
+`да`) and the distinct cancellation status remain unchanged. CI includes a
+Linux PTY regression with an orphan `0xd0` byte before `y\n`.
+
+Hardware confirmation for the hardened path:
+
+```text
+tested code SHA: 865097deb9cb5b4f25b0cddcf80dbe285ce00384
 result: PASS
 ```
 
-The existing Pi was upgraded to that exact tested code SHA with its current
-gateway configuration preserved. The installed `manage.py` contained separate
-UTF-8 read/write handles for `/dev/tty`. A real interactive
-`awg-route config replace` using the current native profile reached the
-confirmation prompt, answer `n` cancelled cleanly, and no traceback/OSError
-occurred. A subsequent `awg-route status` remained healthy: VPN policy
-requested ON, health `up`, policy rule ACTIVE, all gateway services active,
-client allow-list retained, OpenCCK source/cache retained, fresh AWG handshake,
-and private/preshared/header-protection keys remained redacted.
-
-This validates the cancellation path for the post-RC2 confirmation fix on real
-Raspberry Pi hardware. The in-subnet LAN apply path and the second-server profile
-transaction were subsequently completed on the same executable code snapshot.
-Later documentation-only commits do not redefine that tested code snapshot.
-
+On the real Raspberry Pi, the previously failing DNS TUI confirmation completed
+without `UnicodeDecodeError`; an explicit `n` cancellation was also reported
+as `Операция отменена пользователем.` and left the managed files unchanged.
 
 ## 19. Hardware result: Pi IP change inside existing LAN
 
@@ -543,13 +535,13 @@ that settings were unchanged. No full LAN migration is required.
 
 ## 23. Upstream DNS transaction
 
-Executable snapshot under hardware test:
+The upstream-DNS feature first landed in executable snapshot:
 
 ```text
 5c26398c52fa39066547e84b8429146c846d0016
 ```
 
-The post-cancellation follow-up adds:
+It adds:
 
 ```text
 awg-route dns status
@@ -557,27 +549,62 @@ awg-route dns set IPv4[,IPv4...] [--yes]
 System -> DNS upstream
 ```
 
-The change is transactional across `/etc/awg-pbr/env` and
-`/etc/dnsmasq.d/99-awg-pbr.conf`. It accepts one to four unique IPv4 upstream
-servers, rejects invalid/self/loopback/multicast values, checks direct DNS
-reachability before confirmation, validates `dnsmasq`, restarts it, and
-requires a successful DNS query through the Pi. An apply failure restores both
-files and attempts to restart the previous dnsmasq configuration.
+The transaction updates both `/etc/awg-pbr/env` and
+`/etc/dnsmasq.d/99-awg-pbr.conf`, validates one to four unique IPv4 upstream
+servers, rejects invalid/self/loopback/multicast values, probes proposed
+upstreams directly, validates and restarts dnsmasq, and requires a successful
+DNS query through the Pi. Apply failure restores both managed files and attempts
+to restore the previous dnsmasq service state.
 
-CI must cover successful replacement, invalid input, explicit cancellation,
-rollback after an injected apply failure, and status reporting.
+CI covers successful replacement, invalid input, explicit cancellation,
+rollback after an injected apply failure, status reporting, and the TTY
+regression described in section 18.
 
-Real Raspberry Pi hardware test:
+### Real Raspberry Pi result
 
-1. Confirm the current state reports `1.1.1.1,9.9.9.9`.
-2. In the TUI open `System -> DNS upstream`, enter a temporary valid pair
-   different from the current pair and accept.
-3. Confirm the operation reports direct upstream checks, creates a `dns-*`
-   backup, reports dnsmasq/query success, and `dns status` plus the managed
-   file show the new values.
-4. Confirm ordinary client DNS and LG/OpenCCK routing still work.
-5. Change back to `1.1.1.1,9.9.9.9` through the TUI and verify status again.
-6. Exercise one `n` cancellation and confirm no DNS files change.
+Result: **PASS** after the PR #7 TTY hardening on exact code snapshot:
 
-This is a focused DNS maintenance test; it does not reopen the deferred
-different-subnet LAN migration gate.
+```text
+865097deb9cb5b4f25b0cddcf80dbe285ce00384
+```
+
+Observed on the existing Raspberry Pi gateway:
+
+- the original state was `1.1.1.1,9.9.9.9`;
+- direct DNS to `1.1.1.1` timed out on the current network path, while
+  `9.9.9.9`, `149.112.112.112`, `8.8.8.8`, and `8.8.4.4` answered;
+  no cause for the Cloudflare-specific failure was assumed;
+- CLI replacement to `9.9.9.9,149.112.112.112` passed, created a transaction
+  backup, restarted dnsmasq, and passed the DNS-through-Pi validation;
+- the first TUI apply on the pre-PR #7 build exposed the terminal
+  `UnicodeDecodeError`, which was reproduced independently and fixed as
+  documented in section 18;
+- after installing SHA `865097deb9cb5b4f25b0cddcf80dbe285ce00384`, the TUI
+  successfully changed upstream DNS to `8.8.8.8,8.8.4.4` and created backup
+  `/var/backups/awg-gateway/dns-20260929-135802-931b0m1p`;
+- with the Google pair active, real LG/YouTube playback increased
+  `awg0` RX from `29207482` to `52339977` bytes, a gain of
+  `23132495` bytes (~23.1 MB), confirming client DNS, OpenCCK/PBR and tunnel
+  traffic remained operational;
+- the TUI then restored the selected working pair
+  `9.9.9.9,149.112.112.112`, creating backup
+  `/var/backups/awg-gateway/dns-20260929-140410-e1wp4g1j` and again passing
+  dnsmasq plus DNS-through-Pi validation;
+- an explicit TUI cancellation with `n` reported normal user cancellation;
+  SHA-256 values of both managed files were identical before and after:
+  `aaba67a708a2ea6574af60f8bda425f1fd1884377621e2a043a6220d1177cdb3`
+  for `/etc/awg-pbr/env` and
+  `fee5feeafce101fbecdf0ad2b71215178dcd1be3c359ebf0f9c2dc571700f08d`
+  for `/etc/dnsmasq.d/99-awg-pbr.conf`.
+
+The active hardware-tested upstream pair at completion is:
+
+```text
+9.9.9.9,149.112.112.112
+```
+
+The subsequent PR #8 changes only installer/test-document wording from the old
+router/TV-specific labels to generic `LAN router` / equipment wording and adds
+the DNS commands to the installer summary; it does not change routing, DNS,
+firewall or AWG behavior.
+
