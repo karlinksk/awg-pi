@@ -518,7 +518,7 @@ run_diagnostics(){
     echo "Router ping:"; ping -4 -c1 -W2 "$ROUTER_IP" >/dev/null 2>&1 && echo "OK $ROUTER_IP" || echo "FAIL $ROUTER_IP"
     echo
     echo "--- Direct internet/DNS ---"
-    IFS=',' read -ra _dns_diag <<<"${UPSTREAM_DNS:-1.1.1.1,9.9.9.9}"
+    IFS=',' read -ra _dns_diag <<<"${UPSTREAM_DNS:-9.9.9.9,149.112.112.112}"
     direct_dns_ok=no
     for _d in "${_dns_diag[@]}"; do
       _d="${_d//[[:space:]]/}"
@@ -564,7 +564,7 @@ run_diagnostics(){
       if ! ip -4 rule show | grep -Eq '(^| )90:.*fwmark (0x101|257).*lookup (101|awghealth)'; then
         ip -4 rule add priority 90 fwmark "$HEALTH_MARK" lookup "$HEALTH_TABLE" 2>/dev/null || true
       fi
-      if ping -4 -n -m "$((HEALTH_MARK))" -c1 -W3 1.1.1.1 >/dev/null 2>&1 || ping -4 -n -m "$((HEALTH_MARK))" -c1 -W3 9.9.9.9 >/dev/null 2>&1; then health_ok=yes; fi
+      if ping -4 -n -m "$((HEALTH_MARK))" -c1 -W3 9.9.9.9 >/dev/null 2>&1 || ping -4 -n -m "$((HEALTH_MARK))" -c1 -W3 1.1.1.1 >/dev/null 2>&1; then health_ok=yes; fi
     fi
     echo "VPN transport ping: $health_ok"
   } | tee "$report"
