@@ -13,7 +13,7 @@ done
 # Debian os-release must not change the project's version or download ref.
 eval "$(sed -n '/^AWG_PI_VERSION=/p; /^PROJECT_REF=/p' install.sh)"
 VERSION='13 (trixie)'
-[[ "$AWG_PI_VERSION" == 1.1.0 && "$PROJECT_REF" == v1.1.0 ]]
+[[ "$AWG_PI_VERSION" == 1.2.0 && "$PROJECT_REF" == v1.2.0 ]]
 
 # Clean installs must offer the hardware-validated DNS pair by default.
 grep -Fq 'ask "Upstream DNS для Raspberry Pi через запятую" "9.9.9.9,149.112.112.112"' install.sh
