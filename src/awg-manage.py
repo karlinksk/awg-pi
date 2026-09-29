@@ -448,7 +448,7 @@ def tunnel_ok(env, since):
         for _ in range(10):
             transport = any(run('ping', '-4', '-n', '-I', env['VPN_IF'], '-m', mark,
                                 '-c1', '-W2', target, check=False).returncode == 0
-                            for target in ('1.1.1.1', '9.9.9.9'))
+                            for target in ('9.9.9.9', '1.1.1.1'))
             output = run('awg', 'show', env['VPN_IF'], 'latest-handshakes').stdout
             stamps = [int(line.split()[1]) for line in output.splitlines() if len(line.split()) == 2]
             now = int(time.time())
