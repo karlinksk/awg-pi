@@ -91,16 +91,27 @@ Exact command/UI wording may be adjusted during implementation.
 
 The last explicitly selected operating mode should persist across reboot.
 
-For safety and backward compatibility:
+Agreed default for an upgrade from v1.1.0 to v1.2.0:
 
-- an upgrade from v1.1.0 to v1.2.0 must initially remain in
-  **Selective Gateway** mode;
-- v1.2.0 must not silently switch existing installations to Transit mode;
-- after the user manually selects Transit once, Transit may remain the persistent
-  startup mode until changed again.
+- after a successful v1.1.0 -> v1.2.0 upgrade, the initial operating mode is
+  **MikroTik Transit / Backup VPN**;
+- all existing Selective Gateway state (OpenCCK, VPN/DIRECT lists, client
+  allow-list and DNS/LAN settings) is preserved but inactive for Transit
+  classification;
+- the user can switch back to **Selective Gateway** at any time from
+  `System -> Operating mode`;
+- once the user changes the mode manually, that selected mode persists across
+  reboot until changed again.
 
-Thus "leave the Pi permanently in Transit" means the user's persistent selected
-mode, not a universal default for all installations.
+The upgrade must make this mode change explicit in its summary/confirmation.
+Before activating Transit it should run the normal mode-switch preflight. If
+Transit cannot be applied safely, the upgrade must not leave a partial Transit
+configuration; it should retain/restore the previous Selective Gateway runtime
+state and report the failure.
+
+This Transit-by-default rule is specifically agreed for the v1.1.0 -> v1.2.0
+upgrade path. Fresh-install defaults can be finalized during v1.2.0
+implementation.
 
 ## Transactional switching
 
