@@ -24,16 +24,23 @@ EOF
 
 cat >"$tmp/bin/ping" <<'EOF'
 #!/usr/bin/env bash
+if [[ "$*" == *"-I awg0"* && "${MOCK_TUNNEL_HEALTH:-up}" != up ]]; then
+  exit 1
+fi
 exit 0
 EOF
 
 cat >"$tmp/bin/awg" <<'EOF'
 #!/usr/bin/env bash
-if [[ "$*" == "show awg0 endpoints" ]]; then
-  printf 'peerkey\t203.0.113.7:51820\n'
-  exit 0
-fi
-exit 1
+case "$*" in
+  "show awg0 endpoints")
+    printf 'peerkey\t203.0.113.7:51820\n'
+    ;;
+  "show awg0 latest-handshakes")
+    printf 'peerkey\t%s\n' "$(date +%s)"
+    ;;
+  *) exit 1 ;;
+esac
 EOF
 
 cat >"$tmp/bin/ip" <<'EOF'
@@ -78,6 +85,8 @@ grep -Fqx 'OK: IPv4 forwarding is enabled' <<<"$out"
 grep -Fqx 'OK: src_valid_mark is enabled' <<<"$out"
 grep -Fqx 'OK: main IPv4 route is DIRECT via 192.168.88.1 on eth0' <<<"$out"
 grep -Fqx 'OK: MikroTik/router MAC resolved: 02:11:22:33:44:55' <<<"$out"
+grep -Fqx 'OK: AWG tunnel transport is usable' <<<"$out"
+grep -Fq 'OK: AWG handshake is fresh:' <<<"$out"
 grep -Fqx 'OK: AWG endpoint stays DIRECT: 203.0.113.7 via 192.168.88.1 on eth0' <<<"$out"
 grep -Fqx 'ROUTER_MAC=02:11:22:33:44:55' <<<"$out"
 grep -Fqx 'TRANSIT_PREFLIGHT=OK' <<<"$out"
@@ -90,3 +99,10 @@ fi
 grep -Fq 'AWG endpoint 203.0.113.7 is not DIRECT' "$tmp/err"
 
 echo "transit preflight: OK"
+
+echo "=== transit preflight rejects unhealthy tunnel ==="
+if MOCK_TUNNEL_HEALTH=down run_preflight >"$tmp/out" 2>"$tmp/err"; then
+  echo 'FAIL: unhealthy AWG tunnel was accepted' >&2
+  exit 1
+fi
+grep -Fq 'AWG tunnel transport test failed' "$tmp/err"

@@ -9,6 +9,7 @@ source "$AWG_ENV_FILE"
 : "${PI_IP:?PI_IP is required}"
 : "${ROUTER_IP:?ROUTER_IP is required}"
 : "${VPN_IF:?VPN_IF is required}"
+HANDSHAKE_MAX_AGE="${HANDSHAKE_MAX_AGE:-180}"
 
 fail(){
   printf 'FAIL: %s\n' "$*" >&2
@@ -60,6 +61,20 @@ ok "MikroTik/router MAC resolved: $router_mac"
 ip link show dev "$VPN_IF" >/dev/null 2>&1 ||
   fail "AWG interface is unavailable: $VPN_IF"
 ok "AWG interface is present: $VPN_IF"
+
+if ! ping -4 -I "$VPN_IF" -c1 -W3 9.9.9.9 >/dev/null 2>&1 &&
+   ! ping -4 -I "$VPN_IF" -c1 -W3 1.1.1.1 >/dev/null 2>&1; then
+  fail "AWG tunnel transport test failed via $VPN_IF"
+fi
+ok "AWG tunnel transport is usable"
+
+latest_hs="$(awg show "$VPN_IF" latest-handshakes 2>/dev/null |
+  awk '$2>m{m=$2}END{print m+0}')"
+[[ "$latest_hs" -gt 0 ]] || fail "AWG has no successful handshake"
+handshake_age=$(( $(date +%s) - latest_hs ))
+(( handshake_age <= HANDSHAKE_MAX_AGE )) ||
+  fail "AWG handshake is stale: ${handshake_age}s"
+ok "AWG handshake is fresh: ${handshake_age}s"
 
 mapfile -t endpoints < <(
   awg show "$VPN_IF" endpoints 2>/dev/null |
