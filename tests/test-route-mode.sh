@@ -3,7 +3,7 @@ set -Eeuo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 tmp="$(mktemp -d)"
-trap 'rm -rf "$tmp"' EXIT
+trap 'sudo rm -rf "$tmp"' EXIT
 
 : >"$tmp/env"
 
@@ -44,7 +44,7 @@ grep -Fqx 'Mode ID: transit' <<<"$out" ||
   fail "transit mode id missing"
 grep -Fqx 'NOTE: network datapath is unchanged in the current framework stage.' <<<"$out" ||
   fail "framework-stage warning missing"
-eq "$(cat "$tmp/mode")" "transit"
+eq "$(sudo cat "$tmp/mode")" "transit"
 
 out="$(route mode status)"
 grep -Fqx 'Operating mode: MikroTik Transit / Backup VPN' <<<"$out" ||
@@ -58,7 +58,7 @@ grep -Fqx 'Operating mode state saved: Selective Gateway' <<<"$out" ||
   fail "selective save confirmation missing"
 grep -Fqx 'Mode ID: selective' <<<"$out" ||
   fail "selective mode id missing"
-eq "$(cat "$tmp/mode")" "selective"
+eq "$(sudo cat "$tmp/mode")" "selective"
 
 echo "=== route mode invalid command ==="
 if route mode garbage >"$tmp/out" 2>"$tmp/err"; then
