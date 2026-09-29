@@ -42,11 +42,21 @@ guard_fail_closed(){
 
   grep -Fq 'policy drop;' <<<"$chain" || return 1
 
-  # Any accepted flow entering from LAN must explicitly leave through AWG.
-  # A lockdown chain has no such accept rule at all and is therefore safe.
+  # Every accept rule must be one of the two Transit-safe shapes:
+  # AWG return traffic to LAN, or LAN ingress explicitly leaving through AWG.
+  # A lockdown chain has no accept rules at all and is therefore safe.
   while IFS= read -r line; do
-    [[ "$line" == *"iifname \"$LAN_IF\""* && "$line" == *" accept"* ]] || continue
-    [[ "$line" == *"oifname \"$VPN_IF\""* ]] || return 1
+    [[ "$line" == *" accept"* ]] || continue
+    if [[ "$line" == *"iifname \"$VPN_IF\""* &&
+          "$line" == *"oifname \"$LAN_IF\""* &&
+          "$line" == *"ct state established,related"* ]]; then
+      continue
+    fi
+    if [[ "$line" == *"iifname \"$LAN_IF\""* &&
+          "$line" == *"oifname \"$VPN_IF\""* ]]; then
+      continue
+    fi
+    return 1
   done <<<"$chain"
 }
 
