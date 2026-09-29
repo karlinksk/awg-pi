@@ -223,9 +223,39 @@ client_menu(){
 }
 
 vpn_menu(){
-  local choice path
+  local choice path mode
   while true; do
-    choice="$(dialog --backtitle "$BACKTITLE" --title "VPN policy" --menu "Управление VPN" 16 80 7       1 "Включить VPN policy"       2 "Выключить VPN policy (всё DIRECT)"       3 "Перезапустить awg0 и health monitor"       4 "Заменить конфигурацию AmneziaWG"       5 "Откатить предыдущую конфигурацию"       0 "Назад" 3>&1 1>&2 2>&3)" || return 0
+    mode="$(cat /etc/awg-pbr/mode 2>/dev/null || echo selective)"
+    if [[ "$mode" == transit ]]; then
+      choice="$(dialog --backtitle "$BACKTITLE" --title "AWG / Transit" --menu \
+        "Transit mode: vpn on/off не применяется. Health monitor автоматически включает AWG при health=up и FAIL-CLOSED при health=down." \
+        18 92 7 \
+        1 "Показать состояние режима" \
+        2 "Перезапустить awg0 и health monitor" \
+        3 "Заменить конфигурацию AmneziaWG" \
+        4 "Откатить предыдущую конфигурацию" \
+        0 "Назад" 3>&1 1>&2 2>&3)" || return 0
+      case "$choice" in
+        1)
+          title="Transit"
+          capture "$AWG_ROUTE" mode status || true
+          ;;
+        2)
+          confirm "Перезапуск" "Перезапустить awg0 и health monitor?" || continue
+          systemctl restart awg-quick@awg0.service awg-pbr-health.service
+          msg "VPN" "Сервисы перезапущены."
+          ;;
+        3)
+          path="$(input "AmneziaWG" "Полный путь к native .conf:")" || continue
+          run_interactive "Замена профиля" "$AWG_ROUTE" config replace "$path"
+          ;;
+        4) run_interactive "Откат профиля" "$AWG_ROUTE" config rollback ;;
+        0) return 0 ;;
+      esac
+      continue
+    fi
+
+    choice="$(dialog --backtitle "$BACKTITLE" --title "VPN policy" --menu "Управление Selective Gateway" 16 80 7       1 "Включить VPN policy"       2 "Выключить VPN policy (всё DIRECT)"       3 "Перезапустить awg0 и health monitor"       4 "Заменить конфигурацию AmneziaWG"       5 "Откатить предыдущую конфигурацию"       0 "Назад" 3>&1 1>&2 2>&3)" || return 0
     case "$choice" in
       1)
         title="VPN ON"
