@@ -10,6 +10,10 @@ grep -Fq 'AWG_PI_UPGRADE_TRANSIT=0|1' install.sh
 grep -Fq 'AWG_PI_UPGRADE_TRANSIT="$transit_choice"' src/awg-update
 grep -Fq '"$ROUTE_CLI" mode transit' install.sh
 grep -Fq '"$ROUTE_CLI" mode selective' install.sh
+grep -Fq 'RESTORE_VPN_OFF=0' install.sh
+grep -Fq 'echo 1 >"$VPN_ENABLED_FILE"' install.sh
+grep -Fq 'if (( RESTORE_VPN_OFF == 1 )); then' install.sh
+grep -Fq 'echo 0 >"$VPN_ENABLED_FILE"' install.sh
 
 # Fresh installs and legacy systems without a mode file are initialized safely.
 grep -Fq "printf '%s\\n' selective >\"\$MODE_FILE\"" install.sh
