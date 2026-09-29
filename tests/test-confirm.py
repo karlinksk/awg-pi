@@ -15,6 +15,7 @@ if sys.platform == 'linux':
     import pty
 
 SOURCE = Path(__file__).resolve().parents[1] / 'src' / 'awg-manage.py'
+MENU = Path(__file__).resolve().parents[1] / 'src' / 'awg-menu'
 spec = importlib.util.spec_from_file_location('manage', SOURCE)
 m = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(m)
@@ -41,8 +42,10 @@ class Confirmation(unittest.TestCase):
                     os._exit(4)
                 for _ in answers:
                     m.confirm(argparse.Namespace(yes=False), 'Подтвердить?')
-            except ValueError as exc:
-                code = 2 if 'Операция отменена' in str(exc) else 3
+            except m.UserCancelled:
+                code = 2
+            except ValueError:
+                code = 3
             except BaseException:
                 code = 4
             os._exit(code)
@@ -85,6 +88,30 @@ class Confirmation(unittest.TestCase):
         for answer in (b'n\n', b'\n', b'maybe\n', b'\x04'):
             with self.subTest(answer=answer):
                 self.interact([answer], expected=2)
+
+    def test_cancel_has_distinct_process_status_and_tui_message(self):
+        self.assertEqual(m.CANCEL_EXIT, 20)
+        menu_text = MENU.read_text(encoding='utf-8')
+        start = menu_text.index('run_interactive(){')
+        end = menu_text.index('\n}\n', start) + 3
+        function = menu_text[start:end]
+        script = function + r'''
+clear(){ :; }
+fake(){ return "$1"; }
+run_interactive "Test" fake "$2"
+'''
+        cancelled = subprocess.run(['bash', '-c', script, 'bash', '20'],
+                                   input='\n', capture_output=True, text=True,
+                                   encoding='utf-8', timeout=10)
+        self.assertEqual(cancelled.returncode, 0, cancelled.stderr)
+        self.assertIn('Операция отменена пользователем.', cancelled.stdout)
+        self.assertNotIn('завершилась с ошибкой', cancelled.stdout)
+
+        failed = subprocess.run(['bash', '-c', script, 'bash', '7'],
+                                input='\n', capture_output=True, text=True,
+                                encoding='utf-8', timeout=10)
+        self.assertEqual(failed.returncode, 0, failed.stderr)
+        self.assertIn('Операция завершилась с ошибкой (код 7).', failed.stdout)
 
     def test_no_terminal_rejects_piped_yes_but_allows_explicit_flag(self):
         script = '''import argparse, importlib.util, sys
