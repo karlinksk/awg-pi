@@ -113,12 +113,14 @@ first_working_url(){
 
 printf "%b=== AmneziaWG Raspberry Pi 4 Policy Gateway Installer v%s ===%b\n" "$B" "$AWG_PI_VERSION" "$R"
 printf "Архитектура: Selective Gateway + MikroTik Transit / Backup VPN.\n"
-printf "Fresh install = Selective. Selective: FAIL-OPEN; Transit: FAIL-CLOSED при недоступном AWG.\n"
+printf "Fresh install = Transit после безопасного preflight. Selective: FAIL-OPEN; Transit: FAIL-CLOSED при недоступном AWG.\n"
 printf "IPv6 в этой версии не маршрутизируется.\n\n"
 printf "Журнал установки: %s\n\n" "$INSTALL_REPORT"
 
 UPGRADE_EXISTING=0
-UPGRADE_TO_TRANSIT=0
+# Fresh v1.2 installs stage safely in Selective during installation, then
+# transactionally activate Transit after AWG health/preflight checks pass.
+ACTIVATE_TRANSIT_AFTER_INSTALL=1
 AUTO_UPGRADE="${AWG_PI_UPGRADE_AUTO:-0}"
 AUTO_TRANSIT="${AWG_PI_UPGRADE_TRANSIT:-}"
 EXISTING_VERSION="$(cat /etc/awg-pbr/version 2>/dev/null || true)"
@@ -128,12 +130,13 @@ if [[ -f "$ENV_FILE" && -f "$CONF_FILE" ]]; then
   printf "Обнаружена существующая AWG Pi Gateway: %s\n" "${EXISTING_VERSION:-версия до v1.1.0}"
   if [[ "$AUTO_UPGRADE" == 1 ]] || confirm "Выполнить безопасное обновление существующей установки до v$AWG_PI_VERSION с сохранением AWG-конфига, доменов и клиентов?" "Y"; then
     UPGRADE_EXISTING=1
+    ACTIVATE_TRANSIT_AFTER_INSTALL=0
     ok "Режим обновления: пользовательские списки и $CONF_FILE будут сохранены"
     if [[ "$EXISTING_VERSION" == 1.1.0 && "$MODE_PREEXISTED" == 0 ]]; then
       if [[ "$AUTO_UPGRADE" == 1 ]]; then
         case "$AUTO_TRANSIT" in
           1)
-            UPGRADE_TO_TRANSIT=1
+            ACTIVATE_TRANSIT_AFTER_INSTALL=1
             warn "v1.1.0 -> v1.2.0: подтверждена попытка включить MikroTik Transit / Backup VPN."
             ;;
           0)
@@ -144,7 +147,7 @@ if [[ -f "$ENV_FILE" && -f "$CONF_FILE" ]]; then
             ;;
         esac
       elif confirm "После обновления включить новый режим MikroTik Transit / Backup VPN? Перед переключением будет выполнен preflight; при ошибке останется Selective Gateway." "Y"; then
-        UPGRADE_TO_TRANSIT=1
+        ACTIVATE_TRANSIT_AFTER_INSTALL=1
       else
         warn "Обновление продолжится в Selective Gateway."
       fi
@@ -844,13 +847,13 @@ if (( RESTORE_VPN_OFF == 1 )); then
   ok "Исходное состояние Selective VPN policy=OFF восстановлено"
 fi
 
-if (( UPGRADE_TO_TRANSIT == 1 )); then
+if (( ACTIVATE_TRANSIT_AFTER_INSTALL == 1 )); then
   STAGE="активация MikroTik Transit"
-  log "[11b/12] v1.1.0 -> v1.2.0: Transit preflight + transactional switch"
+  log "[11b/12] Transit preflight + transactional switch"
   if "$ROUTE_CLI" mode transit; then
     ok "MikroTik Transit / Backup VPN активирован"
   else
-    warn "Transit preflight/activation не прошёл. Runtime восстановлен; обновление продолжится в Selective Gateway."
+    warn "Transit preflight/activation не прошёл. Runtime восстановлен; установка продолжится в Selective Gateway."
     "$ROUTE_CLI" mode selective >/dev/null 2>&1 || true
   fi
 fi
