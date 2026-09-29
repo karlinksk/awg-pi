@@ -555,6 +555,7 @@ test_domain(){
 
 run_diagnostics(){
   local report age direct_ip="" health_ok=no mark_test="" prev_health_active=no manual m diag_mode diag_mode_label
+  local endpoint endpoint_host router_mac
   report="$LOG_DIR/diagnostics-$(date +%Y%m%d-%H%M%S).txt"
   manual="$(cat "$VE" 2>/dev/null || echo 1)"
   systemctl is-active --quiet "$HEALTH_SERVICE" && prev_health_active=yes || true
@@ -607,6 +608,25 @@ run_diagnostics(){
     age="$(handshake_age)"; echo "Handshake age: $age"; echo "Health state: $(health_state)"
     echo "Policy present: $(policy_present && echo yes || echo no)"
     echo
+    if [[ "$diag_mode" == transit ]]; then
+      echo "--- Transit safety ---"
+      "$TRANSIT_ROUTING" status 2>&1 || true
+      router_mac="$(ip neigh show to "$ROUTER_IP" dev "$LAN_IF" 2>/dev/null |
+        awk '{for(i=1;i<=NF;i++) if($i=="lladdr"){print $(i+1); exit}}')"
+      echo "Router MAC: ${router_mac:-unresolved}"
+      echo "Selective classification: INACTIVE (state preserved)"
+      while IFS= read -r endpoint; do
+        [[ -n "$endpoint" && "$endpoint" != "(none)" ]] || continue
+        if [[ "$endpoint" == \[* ]]; then
+          echo "AWG endpoint: $endpoint (IPv6 not supported by Transit v1.2)"
+          continue
+        fi
+        endpoint_host="${endpoint%:*}"
+        echo "AWG endpoint: $endpoint"
+        echo "Endpoint route: $(ip -4 route get "$endpoint_host" 2>&1 | head -1 || true)"
+      done < <(awg show "$VPN_IF" endpoints 2>/dev/null | awk 'NF>=2{print $2}')
+      echo
+    fi
     echo "--- Policy routing ---"; ip -4 rule show; ip -4 route show table "$VPN_TABLE" 2>/dev/null || true
     mark_test="$(ip -4 route get 1.1.1.1 mark "$VPN_MARK" 2>&1 | head -1 || true)"; echo "Route with VPN mark: $mark_test"
     echo
