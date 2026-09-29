@@ -18,7 +18,7 @@ VERSION='13 (trixie)'
 # Clean installs must offer the hardware-validated DNS pair by default.
 grep -Fq 'ask "Upstream DNS для Raspberry Pi через запятую" "9.9.9.9,149.112.112.112"' install.sh
 
-# Exercise the emitted health monitor function with a ping mock that rejects hex.
+# Exercise the installed mode-aware health monitor function with a ping mock that rejects hex.
 ping(){
   local previous='' arg
   for arg in "$@"; do
@@ -27,7 +27,7 @@ ping(){
   done
 }
 HEALTH_MARK=0x101
-transport_body="$(sed -n '/^transport_ok(){/,/^}/p' install.sh)"
+transport_body="$(sed -n '/^transport_ok(){/,/^}/p' src/awg-pbr-health)"
 first_transport_ping="$(grep -m1 'ping -4 -n -m' <<<"$transport_body")"
 [[ "$first_transport_ping" == *'9.9.9.9'* ]]
 eval "$transport_body"
@@ -35,5 +35,5 @@ transport_ok
 # Every diagnostics ping uses the same decimal conversion.
 while IFS= read -r line; do
   [[ "$line" == *'-m "$((HEALTH_MARK))"'* ]]
-done < <(grep 'ping .* -m ' src/awg-route install.sh)
+done < <(grep 'ping .* -m ' src/awg-route src/awg-pbr-health)
 echo 'RC2 installer/health regressions: OK'
