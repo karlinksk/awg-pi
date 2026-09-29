@@ -30,8 +30,6 @@ Validated on the existing Raspberry Pi 4 test gateway:
 
 Still required before the stable v1.1.0 release:
 
-- complete the clean v1.0.1 -> v1.1.0 upgrade-path check in a backed-up or
-  disposable environment;
 - run the final release audit and final-candidate smoke check.
 
 The real second-server transaction is now hardware-validated. A full migration
@@ -651,3 +649,103 @@ Observed:
   original empty-file hash shown above.
 
 This closes the v1.1.0 real-hardware `vpn import --replace` release-gate item.
+
+
+## 25. Hardware result: v1.0.1 -> v1.1.0 upgrade
+
+A separate microSD was used on the same Raspberry Pi 4 so the primary working
+installation remained untouched. The test OS was Debian 13.7 (trixie), ARM64,
+kernel `6.18.50+rpt-rpi-v8`, using `eth0` at `192.168.112.34/24`.
+
+The stable v1.0.1 tag resolved to:
+
+```text
+cf1b8838c5fa204c84d5081594493e23883177a5
+```
+
+### v1.0.1 baseline compatibility note
+
+The historical v1.0.1 installer itself required two local compatibility fixes
+to complete a fresh install on the current Debian/iputils environment:
+
+1. `valid_cidr4()` declared `x`, `ip`, and `p` in one `local` statement,
+   causing `set -u` to report `x: unbound variable`;
+2. health/diagnostic probes passed hexadecimal `HEALTH_MARK=0x101` directly to
+   `ping -m`, while the current iputils build requires the mark as a decimal
+   value. Evaluating the shell arithmetic expression yields `257`.
+
+These patches were applied only to the temporary local v1.0.1 installer used to
+create the baseline. The v1.0.1 tag/release was not modified. Once installed,
+the baseline runtime was healthy: AWG handshake fresh, health `up`, policy
+ACTIVE, and all core services active.
+
+The historical v1.0.1 installer also does not create
+`/etc/awg-pbr/version`; this was confirmed from the tagged installer and on the
+fresh baseline.
+
+### Preserved test state
+
+Before upgrade, the baseline was given explicit persistent state:
+
+```text
+VPN domain:    upgrade-vpn.example
+DIRECT domain: upgrade-direct.example
+Client:        192.168.112.250
+VPN policy:    ON
+Watchdog:      PRESENT
+```
+
+The pre-upgrade state hashes were:
+
+```text
+f9f8fd734e992eb7268cabeb4bffb67499abbb87144ed1c4039c68162b6eda96  /etc/amnezia/amneziawg/awg0.conf
+cc1d76b83145d2b6b51e45bfeed2ea71788cb912713a8168915771c34eb64038  /etc/awg-pbr/env
+4380c3c1b8f62d9ab86df707d442dce142fcc86310f6f2ea6fbfbdfc476068d3  /etc/awg-pbr/vpn-domains.txt
+01e3cbad100a543405235ba02a7d40ca3aa7c158dea8638631a6f90bc3c2fcd8  /etc/awg-pbr/direct-domains.txt
+07ba6e5aea2d34452d86dd3d920049d2742ecbd878a51195b2be8dc493cbb92d  /etc/awg-pbr/clients.txt
+4355a46b19d348dc2f57c046f8ef63d4538ebb936000f3c9ee954a27460dd865  /etc/awg-pbr/vpn-enabled
+```
+
+The AWG binaries before upgrade were:
+
+```text
+ccdbf2a44f8b2ca5934c72a0609f91ea3d608e7119fcbadddbb855d6c78191e0  /usr/bin/awg
+f4bb0f5d63665ade87f0cb9f2185c43515cff09868637eb311f98f65a318722c  /usr/bin/awg-quick
+db18a6bfe12f7c284f36184adf10c830012db9722ad5a554befc6a78470532a6  /usr/bin/amneziawg-go
+```
+
+A verified backup was created at:
+
+```text
+/var/backups/awg-gateway/pre-v110-upgrade-20260929-154718.tgz
+```
+
+### Upgrade result
+
+The actual upgrade used the unmodified v1.1.0 development installer pinned to:
+
+```text
+4666018dc4ab4c17062c0f9068f986416430f25e
+```
+
+Result: **PASS**.
+
+After upgrade:
+
+- `/etc/awg-pbr/version` contains `1.1.0`;
+- all six state/config hashes listed above are byte-for-byte identical;
+- the AWG config is unchanged;
+- the VPN and DIRECT test domains remain present;
+- client `192.168.112.250` remains present;
+- requested VPN policy remains ON;
+- watchdog remains PRESENT;
+- runtime health is `up`;
+- policy rule priority 100 is ACTIVE with `fwmark 0x100 lookup 100`;
+- all three AWG binary hashes are unchanged, confirming Gateway upgrade did not
+  rebuild or replace AmneziaWG core/tools;
+- installer output uses the final generic `LAN router` / equipment wording and
+  includes the upstream-DNS commands in its command summary.
+
+This closes the v1.0.1 -> v1.1.0 hardware upgrade-path release-gate item. The
+historical v1.0.1 fresh-install compatibility fixes above are recorded as a
+baseline limitation, not as changes to the released v1.0.1 tag.
