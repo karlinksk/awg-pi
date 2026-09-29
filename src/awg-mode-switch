@@ -30,7 +30,7 @@ selective_reload(){
   AWG_MAINTENANCE=1 "$AWG_ROUTE_BIN" reload
 }
 
-verify_transit(){
+verify_transit_active(){
   local status
   status="$("$AWG_TRANSIT_ROUTING" status)"
   grep -Fqx 'Transit guard: SAFE' <<<"$status" &&
@@ -38,19 +38,17 @@ verify_transit(){
     grep -Fqx 'Transit VPN table: READY' <<<"$status"
 }
 
+verify_transit_guard(){
+  "$AWG_TRANSIT_ROUTING" status | grep -Fqx 'Transit guard: SAFE'
+}
+
 restore_mode(){
   local mode="$1"
   awg_mode_set "$mode"
-  case "$mode" in
-    selective)
-      selective_reload
-      ;;
-    transit)
-      "$AWG_TRANSIT_APPLY" apply
-      "$AWG_TRANSIT_ROUTING" apply
-      health_start
-      ;;
-  esac
+  # awg-route reload is mode-aware and restores a safe boot/runtime ruleset
+  # without requiring a healthy tunnel. The health monitor decides whether the
+  # policy rule should be active afterwards.
+  selective_reload
 }
 
 switch_transit(){
@@ -58,8 +56,9 @@ switch_transit(){
   previous="$(awg_mode_get)"
 
   if [[ "$previous" == transit ]]; then
-    verify_transit || fail "Transit mode is selected but datapath verification failed"
-    printf 'Operating mode already active: MikroTik Transit / Backup VPN\n'
+    verify_transit_guard || fail "Transit mode is selected but the fail-closed guard is not active"
+    printf 'Operating mode already selected: MikroTik Transit / Backup VPN\n'
+    "$AWG_TRANSIT_ROUTING" status || true
     return 0
   fi
 
@@ -69,18 +68,21 @@ switch_transit(){
     local rc=$?
     trap - ERR
     printf 'Transit activation failed; restoring %s.\n' "$previous" >&2
-    restore_mode "$previous" || printf 'ROLLBACK=FAILED\n' >&2
-    printf 'ROLLBACK=OK\n' >&2
+    if restore_mode "$previous"; then
+      printf 'ROLLBACK=OK\n' >&2
+    else
+      printf 'ROLLBACK=FAILED\n' >&2
+    fi
     exit "$rc"
   }
   trap rollback ERR
 
   "$AWG_TRANSIT_APPLY" apply
   "$AWG_TRANSIT_ROUTING" apply
-  verify_transit
+  verify_transit_active
   awg_mode_set transit
   health_start
-  verify_transit
+  verify_transit_active
 
   trap - ERR
   printf 'Operating mode activated: MikroTik Transit / Backup VPN\n'

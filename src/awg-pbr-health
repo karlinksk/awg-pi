@@ -7,6 +7,7 @@ VE="${AWG_VPN_ENABLED_FILE:-/etc/awg-pbr/vpn-enabled}"
 STATE_DIR="${AWG_STATE_DIR:-/run/awg-pbr}"
 STATE="$STATE_DIR/health.state"
 TRANSIT_ROUTING="${AWG_TRANSIT_ROUTING:-/usr/local/sbin/awg-transit-routing}"
+SETUP="${AWG_SETUP:-/usr/local/sbin/awg-pbr-setup}"
 
 # shellcheck disable=SC1090
 source "$AWG_ENV_FILE"
@@ -42,12 +43,22 @@ selective_rule_off(){
 }
 
 transit_rule_on(){
-  "$TRANSIT_ROUTING" apply >/dev/null
+  if ! "$TRANSIT_ROUTING" apply >/dev/null 2>&1; then
+    "$SETUP" >/dev/null
+    "$TRANSIT_ROUTING" apply >/dev/null
+  fi
   set_state up "VPN healthy: Transit policy route enabled"
 }
 
 transit_rule_off(){
-  "$TRANSIT_ROUTING" disable >/dev/null 2>&1 || true
+  if ! "$TRANSIT_ROUTING" disable >/dev/null 2>&1; then
+    # Rebuild the mode-aware base ruleset first. In Transit this restores the
+    # MAC-restricted fail-closed guard and clears the policy rule.
+    "$SETUP" >/dev/null 2>&1 || true
+    "$TRANSIT_ROUTING" disable >/dev/null 2>&1 || {
+      while "$IP_BIN" -4 rule del priority 100 fwmark "$VPN_MARK" lookup "$VPN_TABLE" 2>/dev/null; do :; done
+    }
+  fi
   set_state down "VPN unavailable: Transit FAIL-CLOSED"
 }
 
