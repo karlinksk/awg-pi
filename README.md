@@ -142,17 +142,42 @@ For the existing Pi upgrade procedure and hardware validation, see
 [TESTING-v1.1.0.md](docs/TESTING-v1.1.0.md#13-rc2-existing-pi-upgrade-first).
 
 
-## Future v1.2.0
+## v1.2.0 development
 
-After the v1.1.0 release gate is complete, the planned next feature is an
-independent **MikroTik Transit / Backup VPN** operating mode. MikroTik will keep
-traffic classification and SSTP failover responsibility; the Pi will act as an
-AmneziaWG transit gateway when MikroTik selects it as the backup next hop.
+v1.2.0 is being developed on `develop/v1.2.0` with an independent
+**MikroTik Transit / Backup VPN** mode in addition to the v1.1.0 Selective
+Gateway.
 
-The existing Selective Gateway mode will remain available and mode selection
-will be persistent and transactional. For the planned v1.1.0 -> v1.2.0 upgrade,
-the default operating mode is **MikroTik Transit / Backup VPN**; the preserved
-Selective Gateway configuration can be restored at any time from
-`System -> Operating mode`.
+The current implementation branch adds:
 
-Design note: [ROADMAP-v1.2.0-TRANSIT.md](docs/ROADMAP-v1.2.0-TRANSIT.md)
+- persistent `selective` / `transit` operating mode;
+- transactional mode switching with rollback;
+- Transit preflight that verifies a healthy AWG path and keeps the AWG endpoint
+  DIRECT through the normal LAN router;
+- MikroTik-MAC-restricted Transit forwarding and NAT to `awg0`;
+- Selective FAIL-OPEN and Transit FAIL-CLOSED health behavior;
+- mode-aware boot/reload setup;
+- CLI and SSH-TUI mode selection;
+- preservation of VPN/DIRECT/OpenCCK/client state while Transit classification
+  is active.
+
+Core mode commands are:
+
+```bash
+sudo awg-route mode status
+sudo awg-route mode selective
+sudo awg-route mode transit
+```
+
+A fresh v1.2 install defaults to Selective. A v1.1.0 -> v1.2.0 upgrade offers
+Transit as the default post-upgrade mode; if Transit preflight/activation fails,
+the runtime is restored to Selective instead of leaving a partial Transit state.
+
+v1.2.0 is **not yet the stable release**. Hardware validation must pass before
+the stable tag is moved from v1.1.0.
+
+Design: [ROADMAP-v1.2.0-TRANSIT.md](docs/ROADMAP-v1.2.0-TRANSIT.md)
+
+Hardware release gate: [TESTING-v1.2.0.md](docs/TESTING-v1.2.0.md)
+
+RouterOS template: [MIKROTIK-TRANSIT-v1.2.0.md](docs/MIKROTIK-TRANSIT-v1.2.0.md)
