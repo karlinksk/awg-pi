@@ -794,3 +794,67 @@ candidate was the final generic router wording cleanup in the installer.
 
 Result: **PASS**. The v1.1.0 hardware release gate is complete. Main, tags and
 GitHub releases remain unchanged pending explicit release authorization.
+
+
+## 27. Clean microSD install and reboot: RC3
+
+A dedicated microSD was completely re-imaged with a clean Debian 13 (trixie)
+ARM64 system. Before installation, the following were confirmed absent:
+
+```text
+/etc/awg-pbr
+/etc/amnezia/amneziawg/awg0.conf
+awg
+amneziawg-go
+```
+
+The clean installation used the frozen RC3 commit directly:
+
+```text
+rc/v1.1.0-rc3
+3fd6630db28c8ea316fc2dc8bef3ae99edbe78ae
+```
+
+The downloaded installer reported `AWG_PI_VERSION="1.1.0"` and SHA-256:
+
+```text
+ec9ddbd307203f580b28d979204e050da7dab3eda0a3b52f1904f4cc556273c8  /tmp/install.sh
+```
+
+No local installer patches or compatibility workarounds were applied.
+
+### Immediate post-install result
+
+Result: **PASS**.
+
+- version file: `1.1.0`;
+- zero failed systemd units;
+- `awg-pbr-setup.service`: active;
+- `dnsmasq.service`: active;
+- `awg-quick@awg0.service`: active;
+- `awg-pbr-health.service`: active;
+- `awg-opencck-update.timer`: active;
+- health state: `up`;
+- policy rule: priority 100, `fwmark 0x100 -> table 100`;
+- DNS through the Pi answered successfully;
+- fresh VPN, DIRECT and client lists were empty;
+- watchdog drop-in was present.
+
+### Post-reboot result
+
+After a normal reboot of the clean installation, the same checks were repeated.
+
+Result: **PASS**.
+
+- version remained `1.1.0`;
+- zero failed systemd units;
+- all five gateway services/timer remained active;
+- health returned to `up`;
+- policy rule priority 100 returned automatically;
+- DNS through the Pi answered successfully;
+- fresh VPN, DIRECT and client lists remained empty;
+- watchdog drop-in remained present.
+
+This closes the clean-install and reboot/persistence release-gate item on the
+exact frozen RC3 candidate. The install path was exercised on a fully clean
+microSD using the unmodified RC3 installer.
