@@ -98,7 +98,7 @@ class Confirmation(unittest.TestCase):
         script = function + r'''
 clear(){ :; }
 fake(){ return "$1"; }
-run_interactive "Test" fake "$2"
+run_interactive "Test" fake "$1"
 '''
         cancelled = subprocess.run(['bash', '-c', script, 'bash', '20'],
                                    input='\n', capture_output=True, text=True,
