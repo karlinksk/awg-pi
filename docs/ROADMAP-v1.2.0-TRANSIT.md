@@ -1,7 +1,7 @@
 # v1.2.0 design note: MikroTik Transit / Backup VPN mode
 
-This document records the agreed post-v1.1.0 direction. It is **not**
-implemented in v1.1.0 and must not change the current release gate.
+This document records the v1.2.0 Transit design and implementation contract.
+v1.1.0 remains the frozen Selective-only release line.
 
 ## Goal
 
@@ -110,8 +110,8 @@ configuration; it should retain/restore the previous Selective Gateway runtime
 state and report the failure.
 
 This Transit-by-default rule is specifically agreed for the v1.1.0 -> v1.2.0
-upgrade path. Fresh-install defaults can be finalized during v1.2.0
-implementation.
+upgrade path. Fresh installs default to **Selective Gateway**. Transit is activated only by an
+explicit mode switch after its preflight succeeds.
 
 ## Transactional switching
 
@@ -168,15 +168,20 @@ The Pi should be deliberately simple:
 The existing v1.1.0 domain-marking pipeline must not accidentally mark or
 reclassify Transit traffic.
 
-## Failure behavior to decide before implementation
+## Failure behavior
 
-One policy question remains intentionally open for v1.2.0 design:
+The Transit failure policy is **FAIL-CLOSED**.
 
-- if MikroTik has already failed over from SSTP to the Pi and AWG is also
-  unavailable, should Transit traffic fail closed, or fall back DIRECT?
+If MikroTik has already selected the Raspberry Pi as the backup next hop and AWG
+is unavailable, the Pi must not leak that selected traffic back to the normal LAN
+default route. The Transit firewall therefore accepts trusted MikroTik ingress
+only when the actual egress is `awg0`. The health monitor removes the Transit
+policy rule when AWG is unhealthy; the remaining forward guard then drops the
+traffic instead of forwarding it DIRECT.
 
-This must be chosen explicitly before coding because it affects leakage,
-availability, health monitoring and MikroTik route design.
+The Pi's own management traffic and the AWG endpoint remain DIRECT through the
+normal MikroTik/main route. Selective Gateway keeps its existing v1.1.x
+FAIL-OPEN behavior.
 
 ## Project sequencing
 
@@ -190,3 +195,21 @@ availability, health monitoring and MikroTik route design.
 
 The current v1.1.0 tested executable snapshot remains separate from this future
 design.
+
+## v1.2.0 implementation invariants
+
+The implementation must preserve these invariants:
+
+- `/etc/awg-pbr/mode` contains only `selective` or `transit`;
+- a missing mode file is interpreted as `selective` for v1.1.x compatibility;
+- mode switching is transactional and restores the previous runtime mode on
+  failure;
+- Transit activation requires a healthy AWG transport and a DIRECT route to the
+  runtime AWG endpoint;
+- Transit ingress is restricted to frames arriving from the MikroTik router MAC
+  and source addresses inside the configured LAN;
+- Transit does not redirect client DNS and does not use OpenCCK/domain/client
+  classification;
+- Selective state remains stored and is restored when switching back;
+- boot/reload setup is mode-aware;
+- the health monitor is FAIL-OPEN in Selective and FAIL-CLOSED in Transit.
