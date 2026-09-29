@@ -101,9 +101,9 @@ echo "=== selective boot setup ==="
 echo selective >"$tmp/mode"
 out="$(run_setup)"
 grep -Fqx 'AWG_SETUP_MODE=selective' <<<"$out"
-grep -Fq 'redirect to :53' "$tmp/active.nft"
-grep -Fq 'oifname "eth0" accept' "$tmp/active.nft"
-if grep -Fq 'ether saddr' "$tmp/active.nft"; then
+sudo grep -Fq 'redirect to :53' "$tmp/active.nft"
+sudo grep -Fq 'oifname "eth0" accept' "$tmp/active.nft"
+if sudo grep -Fq 'ether saddr' "$tmp/active.nft"; then
   echo 'FAIL: selective setup contains Transit MAC guard' >&2
   exit 1
 fi
@@ -113,8 +113,8 @@ echo transit >"$tmp/mode"
 out="$(run_setup)"
 grep -Fqx 'AWG_SETUP_MODE=transit' <<<"$out"
 grep -Fqx 'ROUTER_MAC=02:11:22:33:44:55' <<<"$out"
-grep -Fq 'ether saddr 02:11:22:33:44:55' "$tmp/active.nft"
-if grep -Fq 'redirect to :53' "$tmp/active.nft"; then
+sudo grep -Fq 'ether saddr 02:11:22:33:44:55' "$tmp/active.nft"
+if sudo grep -Fq 'redirect to :53' "$tmp/active.nft"; then
   echo 'FAIL: transit setup redirects DNS' >&2
   exit 1
 fi
