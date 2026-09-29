@@ -793,6 +793,19 @@ systemctl is-active --quiet "awg-quick@$VPN_IF.service" || {
 ip link show "$VPN_IF" >/dev/null 2>&1 || die "Сервис AWG активен, но интерфейс $VPN_IF отсутствует"
 ok "$VPN_IF поднят"
 
+# An existing Selective installation may intentionally have vpn off.
+# Preserve that requested state, but temporarily enable Selective policy so the
+# installer can still prove handshake + marked transport before accepting the
+# upgrade. The requested OFF state is restored immediately after validation.
+RESTORE_VPN_OFF=0
+CURRENT_INSTALL_MODE="$(cat "$MODE_FILE" 2>/dev/null || echo selective)"
+if [[ "$CURRENT_INSTALL_MODE" == selective && "$(cat "$VPN_ENABLED_FILE" 2>/dev/null || echo 1)" != 1 ]]; then
+  RESTORE_VPN_OFF=1
+  echo 1 >"$VPN_ENABLED_FILE"
+  chmod 600 "$VPN_ENABLED_FILE"
+  warn "Selective VPN policy была выключена; временно включаем её только для upgrade health-check."
+fi
+
 systemctl restart awg-pbr-health.service
 systemctl is-active --quiet awg-pbr-health.service || die "health monitor не запустился"
 systemctl start awg-opencck-update.timer
@@ -822,6 +835,14 @@ if ! ip -4 route get 1.1.1.1 mark "$VPN_MARK" | grep -q "dev $VPN_IF"; then
   die "Маркированный трафик не маршрутизируется в $VPN_IF"
 fi
 ok "Policy routing работает"
+
+if (( RESTORE_VPN_OFF == 1 )); then
+  echo 0 >"$VPN_ENABLED_FILE"
+  chmod 600 "$VPN_ENABLED_FILE"
+  "$FAILOPEN_SCRIPT"
+  systemctl restart awg-pbr-health.service
+  ok "Исходное состояние Selective VPN policy=OFF восстановлено"
+fi
 
 if (( UPGRADE_TO_TRANSIT == 1 )); then
   STAGE="активация MikroTik Transit"
