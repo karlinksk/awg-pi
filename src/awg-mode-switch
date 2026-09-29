@@ -104,8 +104,11 @@ switch_selective(){
     local rc=$?
     trap - ERR
     printf 'Selective activation failed; restoring %s.\n' "$previous" >&2
-    restore_mode "$previous" || printf 'ROLLBACK=FAILED\n' >&2
-    printf 'ROLLBACK=OK\n' >&2
+    if restore_mode "$previous"; then
+      printf 'ROLLBACK=OK\n' >&2
+    else
+      printf 'ROLLBACK=FAILED\n' >&2
+    fi
     exit "$rc"
   }
   trap rollback ERR

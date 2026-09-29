@@ -19,6 +19,7 @@ source "$AWG_ENV_FILE"
 : "${VPN_TABLE:?VPN_TABLE is required}"
 
 RULE_PRIORITY="${TRANSIT_RULE_PRIORITY:-100}"
+VPN_MARK_DECIMAL="$((VPN_MARK))"
 
 fail(){
   printf 'FAIL: %s\n' "$*" >&2
@@ -27,7 +28,7 @@ fail(){
 
 rule_present(){
   "$IP_BIN" -4 rule show |
-    grep -Eq "(^|[[:space:]])${RULE_PRIORITY}:.*fwmark[[:space:]]+(${VPN_MARK}|256).*lookup[[:space:]]+(${VPN_TABLE}|awgvpn)([[:space:]]|$)"
+    grep -Eq "(^|[[:space:]])${RULE_PRIORITY}:.*fwmark[[:space:]]+(${VPN_MARK}|${VPN_MARK_DECIMAL})(/0xffffffff)?([[:space:]]|$).*lookup[[:space:]]+(${VPN_TABLE}|awgvpn)([[:space:]]|$)"
 }
 
 route_present(){
@@ -39,8 +40,9 @@ guard_safe(){
   local chain
   chain="$("$NFT_BIN" list chain inet awg_pbr forward_guard 2>/dev/null)" || return 1
 
-  grep -Fq "oifname \"${VPN_IF}\"" <<<"$chain" || return 1
-  grep -Fq 'ether saddr' <<<"$chain" || return 1
+  grep -Fq 'policy drop;' <<<"$chain" || return 1
+  grep -E "iifname \"${LAN_IF}\".*ether saddr ([[:xdigit:]]{2}:){5}[[:xdigit:]]{2}.*oifname \"${VPN_IF}\".*accept" <<<"$chain" >/dev/null ||
+    return 1
 
   if grep -E "iifname \"${LAN_IF}\".*oifname \"${LAN_IF}\".*accept" <<<"$chain" >/dev/null; then
     return 1
