@@ -568,149 +568,7 @@ EOF
   [[ -n "$WD" && "$WD" != "0" ]] && ok "Watchdog включён: $WD" || warn "systemd не подтвердил RuntimeWatchdog; система продолжит работу без гарантии hardware watchdog"
 fi
 
-cat >"$SETUP_SCRIPT" <<'EOF'
-#!/usr/bin/env bash
-set -Eeuo pipefail
-# shellcheck disable=SC1091
-source /etc/awg-pbr/env
-# shellcheck disable=SC1091
-source /usr/local/lib/awg-pi/common.sh
-CLIENTS=/etc/awg-pbr/clients.txt
-NFT=/etc/nftables.d/99-awg-pbr.nft
-TRANSIT_NFT=/usr/local/sbin/awg-transit-nft
-
-MODE="$(awg_mode_get 2>/dev/null || echo invalid)"
-if [[ "$MODE" == transit ]]; then
-  ping -4 -c1 -W2 "$ROUTER_IP" >/dev/null 2>&1 || {
-    echo "Transit setup: router $ROUTER_IP is unreachable" >&2
-    exit 1
-  }
-  ROUTER_MAC="$(
-    ip neigh show to "$ROUTER_IP" dev "$LAN_IF" 2>/dev/null |
-      awk '{for(i=1;i<=NF;i++) if($i=="lladdr"){print $(i+1); exit}}'
-  )"
-  [[ "$ROUTER_MAC" =~ ^([[:xdigit:]]{2}:){5}[[:xdigit:]]{2}$ ]] || {
-    echo "Transit setup: could not resolve router MAC" >&2
-    exit 1
-  }
-  ROUTER_MAC="${ROUTER_MAC,,}"
-
-  CANDIDATE="$(mktemp)"
-  TXN="$(mktemp)"
-  trap 'rm -f "$CANDIDATE" "$TXN"' EXIT
-
-  ROUTER_MAC="$ROUTER_MAC" "$TRANSIT_NFT" >"$CANDIDATE"
-
-  if nft list table inet awg_pbr >/dev/null 2>&1; then
-    {
-      printf 'delete table inet awg_pbr\n'
-      cat "$CANDIDATE"
-    } >"$TXN"
-  else
-    cat "$CANDIDATE" >"$TXN"
-  fi
-
-  nft -c -f "$TXN"
-  nft -f "$TXN"
-  install -m 600 "$CANDIDATE" "$NFT"
-
-  while ip -4 rule del priority 100 fwmark "$VPN_MARK" lookup "$VPN_TABLE" 2>/dev/null; do :; done
-  ip -4 route flush table "$VPN_TABLE" 2>/dev/null || true
-  exit 0
-fi
-
-[[ "$MODE" == selective ]] || {
-  echo "Invalid operating mode: $MODE" >&2
-  exit 1
-}
-
-nft delete table inet awg_pbr 2>/dev/null || true
-CLIENT_FILTER=""
-if grep -Ev '^\s*(#|$)' "$CLIENTS" 2>/dev/null | grep -q .; then
-  CLIENT_FILTER='ip saddr @clients4 '
-fi
-
-{
-cat <<NFT
-# Managed by awg-pbr-setup. This script owns only table inet awg_pbr.
-table inet awg_pbr {
-  set vpn4 {
-    type ipv4_addr
-    flags timeout
-    timeout 15m
-  }
-  set direct4 {
-    type ipv4_addr
-    flags timeout
-    timeout 15m
-  }
-  set clients4 {
-    type ipv4_addr
-  }
-  set source4 {
-    type ipv4_addr
-    flags interval
-  }
-
-  chain input_guard {
-    type filter hook input priority filter; policy drop;
-    iifname "lo" accept
-    ct state established,related accept
-    iifname "$LAN_IF" tcp dport 22 accept
-    iifname "$LAN_IF" udp dport 53 accept
-    iifname "$LAN_IF" tcp dport 53 accept
-    iifname "$LAN_IF" ip protocol icmp accept
-    iifname "$LAN_IF" meta l4proto ipv6-icmp accept
-    iifname "$LAN_IF" udp sport 67 udp dport 68 accept
-  }
-
-  chain forward_guard {
-    type filter hook forward priority filter; policy drop;
-    ct state established,related accept
-    iifname "$LAN_IF" ip saddr $LAN_CIDR oifname "$LAN_IF" accept
-    iifname "$LAN_IF" ip saddr $LAN_CIDR oifname "$VPN_IF" accept
-  }
-
-  chain prerouting_mark {
-    type filter hook prerouting priority mangle; policy accept;
-    iifname "$LAN_IF" ${CLIENT_FILTER}ip daddr @source4 meta mark set $VPN_MARK
-    iifname "$LAN_IF" ${CLIENT_FILTER}ip daddr @vpn4 meta mark set $VPN_MARK
-    iifname "$LAN_IF" ip daddr @direct4 meta mark set 0x0
-  }
-
-  chain dns_redirect {
-    type nat hook prerouting priority dstnat; policy accept;
-NFT
-if [[ "$DNS_REDIRECT" == 1 ]]; then
-  printf '    iifname "%s" udp dport 53 redirect to :53\n' "$LAN_IF"
-  printf '    iifname "%s" tcp dport 53 redirect to :53\n' "$LAN_IF"
-fi
-cat <<NFT
-  }
-
-  chain postrouting_nat {
-    type nat hook postrouting priority srcnat; policy accept;
-    ip saddr $LAN_CIDR oifname "$VPN_IF" masquerade
-    ip saddr $LAN_CIDR oifname "$LAN_IF" masquerade
-  }
-}
-NFT
-} >"$NFT"
-
-nft -c -f "$NFT"
-nft -f "$NFT"
-
-while IFS= read -r ip; do
-  ip="${ip%%#*}"; ip="${ip//[[:space:]]/}"
-  [[ -z "$ip" ]] && continue
-  nft add element inet awg_pbr clients4 "{ $ip }"
-done <"$CLIENTS"
-
-# Policy rule itself is controlled by health monitor for fail-open behavior.
-while ip -4 rule del priority 100 fwmark "$VPN_MARK" lookup "$VPN_TABLE" 2>/dev/null; do :; done
-ip -4 route flush table "$VPN_TABLE" 2>/dev/null || true
-EOF
-chmod 755 "$SETUP_SCRIPT"
+# awg-pbr-setup is installed from src/awg-pbr-setup in section 8b.
 
 cat >"$FAILOPEN_SCRIPT" <<'EOF'
 #!/usr/bin/env bash
@@ -791,6 +649,7 @@ python3 -c 'import ast,sys; ast.parse(open(sys.argv[1]).read())' "$_manage_tmp" 
 install -m 755 "$_manage_tmp" /usr/local/lib/awg-pi/manage.py
 rm -f "$_manage_tmp"
 install_project_helper src/awg-route "$ROUTE_CLI"
+install_project_helper src/awg-pbr-setup "$SETUP_SCRIPT"
 install_project_helper src/awg-transit-nft /usr/local/sbin/awg-transit-nft
 install_project_helper src/awg-transit-preflight /usr/local/sbin/awg-transit-preflight
 install_project_helper src/awg-transit-apply /usr/local/sbin/awg-transit-apply
@@ -873,7 +732,7 @@ EOF
 # -----------------------------------------------------------------------------
 STAGE="проверка компонентов управления"
 log "[10/12] Проверка awg-route / awg-menu / awg-update"
-for f in "$ROUTE_CLI" /usr/local/sbin/awg-menu /usr/local/sbin/awg-transit-nft /usr/local/sbin/awg-transit-preflight /usr/local/sbin/awg-transit-apply /usr/local/sbin/awg-transit-routing /usr/local/sbin/awg-mode-switch "$HEALTH_SCRIPT" /usr/local/sbin/awg-opencck-update /usr/local/sbin/awg-core-update "$UPDATE_SCRIPT"; do
+for f in "$ROUTE_CLI" "$SETUP_SCRIPT" /usr/local/sbin/awg-menu /usr/local/sbin/awg-transit-nft /usr/local/sbin/awg-transit-preflight /usr/local/sbin/awg-transit-apply /usr/local/sbin/awg-transit-routing /usr/local/sbin/awg-mode-switch "$HEALTH_SCRIPT" /usr/local/sbin/awg-opencck-update /usr/local/sbin/awg-core-update "$UPDATE_SCRIPT"; do
   [[ -x "$f" ]] || die "Не установлен исполняемый компонент: $f"
   bash -n "$f" || die "Синтаксическая проверка компонента не пройдена: $f"
 done
