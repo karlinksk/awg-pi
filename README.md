@@ -9,56 +9,31 @@ the policy rule is removed and traffic falls back to the normal Internet route
 
 ## Stable release
 
-Current stable release: **v1.0.1**
+Current stable release: **v1.1.0**
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/karlinksk/awg-pi/v1.0.1/install.sh -o /tmp/install.sh && sudo bash /tmp/install.sh
+curl -fsSL https://raw.githubusercontent.com/karlinksk/awg-pi/v1.1.0/install.sh -o /tmp/install.sh && sudo bash /tmp/install.sh
 ```
 
-## v1.1.0 hardware candidate
+## v1.1.0 release validation
 
-The stable `main`/release remains **v1.0.1** until the v1.1.0 hardware release
-gate is complete.
+v1.1.0 completed the hardware release gate on Raspberry Pi 4 using a clean
+Debian 13 (trixie) ARM64 microSD install and a reboot/persistence check.
 
-The frozen RC2 snapshot is retained unchanged for traceability:
+The final frozen release candidate was:
 
 ```text
-branch: rc/v1.1.0-rc2
-SHA:    43b5f01a97178ca6a5bfeb73e3839f0b2ca125d2
+branch: rc/v1.1.0-rc4
+SHA:    85fbd6a93361635051a2a5569cb8c1bec697ee69
 ```
 
-RC2 exposed a real Linux terminal confirmation bug in interactive
-`network reconfigure` / `config replace`. PR #4 fixed the terminal handling
-after RC2. The routing/profile transaction hardware tests were completed on:
+The clean-install test used the unmodified RC4 installer, confirmed the default
+upstream DNS pair `9.9.9.9,149.112.112.112`, verified `9.9.9.9` as the
+first transport-health probe with `1.1.1.1` retained as fallback, and passed
+post-reboot service, health, policy-routing, DNS, and watchdog checks.
 
-```text
-187bb100701a8a17655cfe0fa1ca62a97db66408
-```
-
-PR #5 then fixed the TUI-only cancellation status message; that fix passed on
-real Raspberry Pi hardware. PR #6 adds transactional upstream DNS management.
-The current executable code snapshot for the focused DNS hardware check is:
-
-```text
-5c26398c52fa39066547e84b8429146c846d0016
-```
-
-Install that exact snapshot:
-
-```bash
-TEST_SHA=5c26398c52fa39066547e84b8429146c846d0016
-curl -fsSL "https://raw.githubusercontent.com/karlinksk/awg-pi/$TEST_SHA/install.sh" -o /tmp/awg-hw-test-install.sh
-sudo env AWG_PI_REF="$TEST_SHA" AWG_PI_UPGRADE_AUTO=1 bash /tmp/awg-hw-test-install.sh
-```
-
-The existing Raspberry Pi has confirmed the post-RC2 interactive confirmation
-path, an in-subnet Pi address migration, and the full second-server profile
-transaction (replace, real traffic, manual rollback and automatic rollback).
-A full migration to a different LAN subnet/router address is intentionally
-deferred and is not part of the remaining v1.1.0 release gate. Later
-documentation-only commits do not redefine the hardware-tested executable
-snapshots.
-
+Earlier RC snapshots remain in the repository for traceability. Detailed
+hardware evidence is recorded in `docs/TESTING-v1.1.0.md`.
 v1.1.0 includes:
 
 - SSH TUI control panel (`awg-menu`)
