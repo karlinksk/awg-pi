@@ -18,6 +18,7 @@ VPN_DOMAINS="$PBR_DIR/vpn-domains.txt"
 DIRECT_DOMAINS="$PBR_DIR/direct-domains.txt"
 CLIENTS_FILE="$PBR_DIR/clients.txt"
 VPN_ENABLED_FILE="$PBR_DIR/vpn-enabled"
+MODE_FILE="$PBR_DIR/mode"
 DNS_CONF="/etc/dnsmasq.d/99-awg-pbr.conf"
 DNS_DOMAINS_CONF="/etc/dnsmasq.d/99-awg-pbr-domains.conf"
 NFT_FILE="/etc/nftables.d/99-awg-pbr.nft"
@@ -410,6 +411,10 @@ if (( UPGRADE_EXISTING == 1 )); then
   chmod 600 "$VPN_DOMAINS" "$DIRECT_DOMAINS" "$CLIENTS_FILE"
   [[ -f "$VPN_ENABLED_FILE" ]] || echo 1 >"$VPN_ENABLED_FILE"
   chmod 600 "$VPN_ENABLED_FILE"
+  # Mode framework stage: preserve any explicit mode; v1.1.x systems without
+  # a mode file remain Selective until Transit datapath + preflight are implemented.
+  [[ -f "$MODE_FILE" ]] || printf '%s\n' selective >"$MODE_FILE"
+  chmod 600 "$MODE_FILE"
   ok "Сетевая конфигурация сохранена: Pi=$PI_IP, Router=$ROUTER_IP, LAN=$LAN_CIDR"
 else
 printf "\nIPv4 интерфейсы:\n"
@@ -503,6 +508,8 @@ touch "$VPN_DOMAINS" "$DIRECT_DOMAINS" "$CLIENTS_FILE"
 chmod 600 "$VPN_DOMAINS" "$DIRECT_DOMAINS" "$CLIENTS_FILE"
 echo 1 >"$VPN_ENABLED_FILE"
 chmod 600 "$VPN_ENABLED_FILE"
+printf '%s\n' selective >"$MODE_FILE"
+chmod 600 "$MODE_FILE"
 fi
 
 # Duplicate-address detection. In DAD mode arping returns success when no peer
