@@ -66,15 +66,15 @@ ok "AWG interface is present: $VPN_IF"
 
 # Use the isolated health mark/table rather than the main client policy table.
 # Preparing this path cannot reroute unmarked client/management traffic.
+health_mark_decimal="$((HEALTH_MARK))"
 ip -4 route replace default dev "$VPN_IF" table "$HEALTH_TABLE" ||
   fail "could not prepare AWG health route table"
 if ! ip -4 rule show |
-     grep -Eq '(^| )90:.*fwmark (0x101|257).*lookup (101|awghealth)'; then
+     grep -Eq "(^| )90:.*fwmark (${HEALTH_MARK}|${health_mark_decimal})(/0xffffffff)?.*lookup (${HEALTH_TABLE}|awghealth)( |$)"; then
   ip -4 rule add priority 90 fwmark "$HEALTH_MARK" lookup "$HEALTH_TABLE" ||
     fail "could not prepare AWG health policy rule"
 fi
 
-health_mark_decimal="$((HEALTH_MARK))"
 if ! ping -4 -n -I "$VPN_IF" -m "$health_mark_decimal" -c1 -W3 9.9.9.9 >/dev/null 2>&1 &&
    ! ping -4 -n -I "$VPN_IF" -m "$health_mark_decimal" -c1 -W3 1.1.1.1 >/dev/null 2>&1; then
   fail "AWG tunnel transport test failed via $VPN_IF"
@@ -85,8 +85,8 @@ latest_hs="$(awg show "$VPN_IF" latest-handshakes 2>/dev/null |
   awk '$2>m{m=$2}END{print m+0}')"
 [[ "$latest_hs" -gt 0 ]] || fail "AWG has no successful handshake"
 handshake_age=$(( $(date +%s) - latest_hs ))
-(( handshake_age <= HANDSHAKE_MAX_AGE )) ||
-  fail "AWG handshake is stale: ${handshake_age}s"
+(( handshake_age >= 0 && handshake_age <= HANDSHAKE_MAX_AGE )) ||
+  fail "AWG handshake is stale/invalid: ${handshake_age}s"
 ok "AWG handshake is fresh: ${handshake_age}s"
 
 mapfile -t endpoints < <(
