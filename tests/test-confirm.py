@@ -84,6 +84,9 @@ class Confirmation(unittest.TestCase):
     def test_accepts_answers_and_repeated_prompts(self):
         self.interact([x.encode('utf-8') for x in ('y\n', 'YES\n', 'д\n', 'да\n')])
 
+    def test_accepts_valid_answer_after_malformed_stale_utf8_byte(self):
+        self.interact([b'\xd0y\n'])
+
     def test_decline_empty_invalid_and_eof_cancel(self):
         for answer in (b'n\n', b'\n', b'maybe\n', b'\x04'):
             with self.subTest(answer=answer):
