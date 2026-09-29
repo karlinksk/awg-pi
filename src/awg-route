@@ -71,6 +71,8 @@ VPN policy:
 
 Режим работы:
   awg-route mode status
+  awg-route mode selective
+  awg-route mode transit
 
 Проверки/обслуживание:
   awg-route network reconfigure [--yes] [--keep-clients]
@@ -431,6 +433,13 @@ mode_cmd(){
       label="$(awg_mode_label "$mode")" || return
       printf 'Operating mode: %s\n' "$label"
       printf 'Mode ID: %s\n' "$mode"
+      ;;
+    selective|transit)
+      awg_mode_set "$action" || return
+      label="$(awg_mode_label "$action")" || return
+      printf 'Operating mode state saved: %s\n' "$label"
+      printf 'Mode ID: %s\n' "$action"
+      printf 'NOTE: network datapath is unchanged in the current framework stage.\n'
       ;;
     *) usage; return 2 ;;
   esac
