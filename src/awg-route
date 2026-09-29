@@ -69,6 +69,9 @@ VPN policy:
   awg-route vpn on
   awg-route vpn off
 
+Режим работы:
+  awg-route mode status
+
 Проверки/обслуживание:
   awg-route network reconfigure [--yes] [--keep-clients]
   awg-route config replace FILE [--yes]
@@ -420,6 +423,19 @@ vpn_switch(){
   esac
 }
 
+mode_cmd(){
+  local action="${1:-}" mode label
+  case "$action" in
+    status)
+      mode="$(awg_mode_get)" || return
+      label="$(awg_mode_label "$mode")" || return
+      printf 'Operating mode: %s\n' "$label"
+      printf 'Mode ID: %s\n' "$mode"
+      ;;
+    *) usage; return 2 ;;
+  esac
+}
+
 source_counts(){
   local total=0 enabled=0 entries=0 m
   while IFS= read -r m; do
@@ -605,6 +621,7 @@ case "$cmd" in
   network|config|dns) exec /usr/local/lib/awg-pi/manage.py "$@" ;;
   source) shift; source_cmd "$@" ;;
   client) client_cmd "$action" "$val" ;;
+  mode) mode_cmd "$action" ;;
   list)
     echo "=== VPN domains ==="; cat "$VD" 2>/dev/null || true
     echo; echo "=== DIRECT exceptions ==="; cat "$DD" 2>/dev/null || true
