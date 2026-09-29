@@ -111,7 +111,7 @@ first_working_url(){
 }
 
 printf "%b=== AmneziaWG Raspberry Pi 4 Policy Gateway Installer v%s ===%b\n" "$B" "$AWG_PI_VERSION" "$R"
-printf "Архитектура: Archer C64 = основной DHCP/NAT; Raspberry Pi = выборочный PBR-шлюз.\n"
+printf "Архитектура: LAN router = основной DHCP/NAT; Raspberry Pi = выборочный PBR-шлюз.\n"
 printf "Default = DIRECT. Домены из VPN-list = AmneziaWG. VPN недоступен = FAIL-OPEN напрямую.\n"
 printf "IPv6 в этой версии не маршрутизируется.\n\n"
 printf "Журнал установки: %s\n\n" "$INSTALL_REPORT"
@@ -165,7 +165,7 @@ ok "Свободное место: $((FREE_KB/1024)) MB"
 if ip -6 route show default | grep -q '^default'; then
   err "Обнаружен IPv6 default route. Текущая архитектура рассчитана только на IPv4."
   ip -6 route show default
-  die "Отключите IPv6/RA на Archer C64 для этой схемы либо вернитесь к установке после отключения IPv6"
+  die "Отключите IPv6/RA на LAN router для этой схемы либо вернитесь к установке после отключения IPv6"
 else
   ok "IPv6 default route отсутствует"
 fi
@@ -379,7 +379,7 @@ ok "Конфиг валиден для awg-quick; Table=off включён; DNS 
 # 6. LAN/Archer parameters
 # -----------------------------------------------------------------------------
 STAGE="проверка локальной сети"
-log "[6/12] Archer C64 и локальная сеть"
+log "[6/12] LAN router и локальная сеть"
 if (( UPGRADE_EXISTING == 1 )); then
   # shellcheck disable=SC1090
   source "$ENV_FILE"
@@ -419,7 +419,7 @@ ip -4 route show default | sed 's/^/  /'
 
 UPLINK_IF="$(ip -4 route show default | awk 'NR==1{for(i=1;i<=NF;i++)if($i=="dev"){print $(i+1);exit}}')"
 UPLINK_GW="$(ip -4 route show default | awk 'NR==1{for(i=1;i<=NF;i++)if($i=="via"){print $(i+1);exit}}')"
-[[ -n "$UPLINK_IF" && -n "$UPLINK_GW" ]] || die "Не найден обычный IPv4 default route через Archer C64"
+[[ -n "$UPLINK_IF" && -n "$UPLINK_GW" ]] || die "Не найден обычный IPv4 default route через LAN router"
 
 ask "LAN/uplink интерфейс Raspberry Pi" "$UPLINK_IF"
 LAN_IF="$REPLY"
@@ -437,28 +437,28 @@ printf "\nMAC Raspberry Pi (%s): %s\n" "$LAN_IF" "$LAN_MAC"
 printf "Текущий адрес: %s\n" "$PI_CIDR"
 printf "Текущий роутер: %s\n" "$UPLINK_GW"
 
-ask "Постоянный IPv4 Raspberry Pi (должен быть зарезервирован на Archer C64)" "$PI_IP"
+ask "Постоянный IPv4 Raspberry Pi (должен быть зарезервирован на LAN router)" "$PI_IP"
 PI_IP="$REPLY"
 valid_ipv4 "$PI_IP" || die "Неверный IPv4 Raspberry Pi"
-ip -o -4 addr show dev "$LAN_IF" | grep -qE "[[:space:]]${PI_IP}/" || die "$PI_IP сейчас не назначен $LAN_IF. Сначала создайте DHCP reservation на Archer C64 и обновите lease/перезагрузите Pi"
+ip -o -4 addr show dev "$LAN_IF" | grep -qE "[[:space:]]${PI_IP}/" || die "$PI_IP сейчас не назначен $LAN_IF. Сначала создайте DHCP reservation на LAN router и обновите lease/перезагрузите Pi"
 
 ask "Домашняя IPv4 подсеть" "$LAN_CIDR"
 LAN_CIDR="$REPLY"
 valid_cidr4 "$LAN_CIDR" || die "Неверная подсеть: $LAN_CIDR"
 [[ "$(in_cidr "$PI_IP" "$LAN_CIDR")" == "yes" ]] || die "IP Raspberry Pi $PI_IP не принадлежит $LAN_CIDR"
 
-ask "IP Archer C64" "$UPLINK_GW"
+ask "IP LAN router" "$UPLINK_GW"
 ROUTER_IP="$REPLY"
 valid_ipv4 "$ROUTER_IP" || die "Неверный IP роутера"
 [[ "$(in_cidr "$ROUTER_IP" "$LAN_CIDR")" == "yes" ]] || die "IP Archer $ROUTER_IP не принадлежит $LAN_CIDR"
 
 if ! ping -4 -c 2 -W 2 "$ROUTER_IP" >/dev/null 2>&1; then
-  die "Archer C64 ($ROUTER_IP) не отвечает с Raspberry Pi"
+  die "LAN router ($ROUTER_IP) не отвечает с Raspberry Pi"
 fi
-ok "Archer C64 доступен: $ROUTER_IP"
+ok "LAN router доступен: $ROUTER_IP"
 
-printf "\nНа Archer C64 должна быть DHCP Reservation:\n  MAC: %s\n  IP:  %s\n" "$LAN_MAC" "$PI_IP"
-confirm "Вы уже закрепили этот IP за MAC Raspberry Pi на Archer C64?" "N" || die "Сначала настройте DHCP Reservation на Archer C64, затем повторите установку"
+printf "\nНа LAN router должна быть DHCP Reservation:\n  MAC: %s\n  IP:  %s\n" "$LAN_MAC" "$PI_IP"
+confirm "Вы уже закрепили этот IP за MAC Raspberry Pi на LAN router?" "N" || die "Сначала настройте DHCP Reservation на LAN router, затем повторите установку"
 
 ask "Upstream DNS для Raspberry Pi через запятую" "1.1.1.1,9.9.9.9"
 UPSTREAM_DNS="$REPLY"
@@ -961,7 +961,7 @@ LATEST_DIAG="$(find "$LOG_DIR" -maxdepth 1 -type f -name 'diagnostics-*.txt' -pr
 printf "\n%b=== УСТАНОВКА ЗАВЕРШЕНА ===%b\n" "$G$B" "$R"
 printf "Raspberry Pi:    %s\n" "$PI_IP"
 printf "MAC (%s):       %s\n" "$LAN_IF" "$LAN_MAC"
-printf "Archer C64:      %s\n" "$ROUTER_IP"
+printf "LAN router:      %s\n" "$ROUTER_IP"
 printf "LAN:             %s\n" "$LAN_CIDR"
 printf "VPN interface:   %s\n" "$VPN_IF"
 printf "AWG tags:        go=%s tools=%s\n" "$GO_TAG" "$TOOLS_TAG"
@@ -969,10 +969,10 @@ printf "Install report:  %s\n" "$INSTALL_REPORT"
 printf "Diagnostics:     %s\n" "${LATEST_DIAG:-см. $LOG_DIR}"
 
 printf "\nЛогика:\n"
-printf "  обычный трафик = DIRECT через Archer C64\n"
+printf "  обычный трафик = DIRECT через LAN router\n"
 printf "  VPN-list = через AmneziaWG\n"
 printf "  VPN упал = автоматический FAIL-OPEN DIRECT\n"
-printf "  DHCP остаётся на Archer C64\n"
+printf "  DHCP остаётся на LAN router\n"
 printf "  DNS клиентов PBR = %s (dnsmasq -> независимые upstream DNS)\n" "$PI_IP"
 
 printf "\nОсновные команды:\n"
@@ -988,6 +988,8 @@ printf "  sudo awg-route test youtube.com\n"
 printf "  sudo awg-route diagnostics\n"
 printf "  sudo awg-route logs\n"
 printf "  sudo awg-route reload\n"
+printf "  sudo awg-route dns status\n"
+printf "  sudo awg-route dns set 9.9.9.9,149.112.112.112\n"
 printf "  sudo awg-route vpn import FILE\n"
 printf "  sudo awg-route source add opencck youtube\n"
 printf "  sudo awg-route source list\n"
@@ -996,11 +998,11 @@ printf "  sudo awg-update status\n"
 printf "  sudo awg-update gateway\n"
 printf "  sudo awg-update core\n"
 
-printf "\nДля первого тестового устройства (LG TV):\n"
+printf "\nДля первого тестового оборудования:\n"
 printf "  IPv4:    свободный фиксированный адрес в %s\n" "$LAN_CIDR"
 printf "  Gateway: %s\n" "$PI_IP"
 printf "  DNS:     %s\n" "$PI_IP"
 printf "  IPv6:    не использовать\n"
 
-printf "\n%bВАЖНО:%b IP телевизора выбирайте вне конфликтов с DHCP либо закрепите его на Archer C64.\n" "$Y" "$R"
-printf "После настройки LG сначала проверьте DIRECT, затем добавьте один тестовый домен в VPN-list.\n"
+printf "\n%bВАЖНО:%b IP оборудования выбирайте вне конфликтов с DHCP либо закрепите его на LAN router.\n" "$Y" "$R"
+printf "После настройки оборудования сначала проверьте DIRECT, затем добавьте один тестовый домен в VPN-list.\n"

@@ -47,7 +47,7 @@ Do not move the frozen RC2 branch to include later documentation-only commits.
 ## 1. Clean installation
 
 - Raspberry Pi 4 Model B, Raspberry Pi OS Lite 64-bit, Ethernet only.
-- Pi IPv4 is reserved on the Archer C64 before installation.
+- Pi IPv4 is reserved on the LAN router before installation.
 - IPv6 default route is disabled for this v1 architecture.
 - Use a dedicated AmneziaWG native `.conf` profile for the Pi.
 - Install from `develop/v1.1.0` with `AWG_PI_REF=develop/v1.1.0`.
