@@ -73,7 +73,7 @@ restore_gateway(){
 }
 
 gateway_update(){
-  local cur latest tag tmp internal bk
+  local cur latest tag tmp internal bk transit_choice=""
   cur="$(current_version)"
   latest="$(latest_release)"
   [[ -n "$latest" ]] || { echo "Не удалось определить latest release AWG Pi Gateway" >&2; return 1; }
@@ -84,6 +84,18 @@ gateway_update(){
     return 0
   fi
   confirm "Обновить AWG Pi Gateway $cur -> $latest?" || return 0
+
+  if [[ "$cur" == 1.1.0 && "$latest" == 1.2.0 ]]; then
+    if (( ASSUME_YES == 1 )); then
+      transit_choice=1
+      echo "v1.1.0 -> v1.2.0: --yes подтверждает post-upgrade Transit preflight/switch."
+    elif confirm "После обновления попытаться включить MikroTik Transit / Backup VPN? При ошибке останется Selective Gateway."; then
+      transit_choice=1
+    else
+      transit_choice=0
+      echo "После обновления будет сохранён Selective Gateway."
+    fi
+  fi
 
   tag="v$latest"
   tmp="$(mktemp /tmp/awg-pi-install.XXXXXX.sh)"
@@ -101,7 +113,11 @@ gateway_update(){
   echo "Backup: $bk"
 
   set +e
-  AWG_PI_REF="$tag" AWG_PI_UPGRADE_AUTO=1 bash "$tmp"
+  if [[ -n "$transit_choice" ]]; then
+    AWG_PI_REF="$tag" AWG_PI_UPGRADE_AUTO=1 AWG_PI_UPGRADE_TRANSIT="$transit_choice" bash "$tmp"
+  else
+    AWG_PI_REF="$tag" AWG_PI_UPGRADE_AUTO=1 bash "$tmp"
+  fi
   rc=$?
   set -e
   rm -f "$tmp"

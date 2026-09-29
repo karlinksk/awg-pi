@@ -120,6 +120,7 @@ printf "Журнал установки: %s\n\n" "$INSTALL_REPORT"
 UPGRADE_EXISTING=0
 UPGRADE_TO_TRANSIT=0
 AUTO_UPGRADE="${AWG_PI_UPGRADE_AUTO:-0}"
+AUTO_TRANSIT="${AWG_PI_UPGRADE_TRANSIT:-}"
 EXISTING_VERSION="$(cat /etc/awg-pbr/version 2>/dev/null || true)"
 MODE_PREEXISTED=0
 [[ -f "$MODE_FILE" ]] && MODE_PREEXISTED=1
@@ -130,8 +131,18 @@ if [[ -f "$ENV_FILE" && -f "$CONF_FILE" ]]; then
     ok "Режим обновления: пользовательские списки и $CONF_FILE будут сохранены"
     if [[ "$EXISTING_VERSION" == 1.1.0 && "$MODE_PREEXISTED" == 0 ]]; then
       if [[ "$AUTO_UPGRADE" == 1 ]]; then
-        UPGRADE_TO_TRANSIT=1
-        warn "v1.1.0 -> v1.2.0: после установки будет выполнена попытка включить MikroTik Transit / Backup VPN."
+        case "$AUTO_TRANSIT" in
+          1)
+            UPGRADE_TO_TRANSIT=1
+            warn "v1.1.0 -> v1.2.0: подтверждена попытка включить MikroTik Transit / Backup VPN."
+            ;;
+          0)
+            warn "v1.1.0 -> v1.2.0: подтверждено сохранение Selective Gateway."
+            ;;
+          *)
+            warn "Unattended upgrade не получил явного AWG_PI_UPGRADE_TRANSIT=0|1; безопасно остаёмся в Selective Gateway."
+            ;;
+        esac
       elif confirm "После обновления включить новый режим MikroTik Transit / Backup VPN? Перед переключением будет выполнен preflight; при ошибке останется Selective Gateway." "Y"; then
         UPGRADE_TO_TRANSIT=1
       else
