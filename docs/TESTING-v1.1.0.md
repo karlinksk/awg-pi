@@ -30,8 +30,6 @@ Validated on the existing Raspberry Pi 4 test gateway:
 
 Still required before the stable v1.1.0 release:
 
-- complete remaining release-gate checklist items that have not yet been
-  exercised on hardware, including `--replace` bulk import;
 - complete the clean v1.0.1 -> v1.1.0 upgrade-path check in a backed-up or
   disposable environment;
 - run the final release audit and final-candidate smoke check.
@@ -608,3 +606,48 @@ router/TV-specific labels to generic `LAN router` / equipment wording and adds
 the DNS commands to the installer summary; it does not change routing, DNS,
 firewall or AWG behavior.
 
+
+
+## 24. Hardware result: VPN bulk import --replace
+
+The remaining real-hardware bulk replacement path was exercised on the existing
+Raspberry Pi gateway.
+
+Initial manual VPN list state was empty. Export and live file had the same
+SHA-256:
+
+```text
+e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+```
+
+A replacement input containing:
+
+```text
+replace-one.example
+replace-two.example
+replace-one.example
+```
+
+was applied with:
+
+```text
+sudo awg-route vpn import --replace /tmp/vpn-replace-test.txt
+```
+
+Result: **PASS**.
+
+Observed:
+
+- dnsmasq syntax validation returned OK;
+- import reported exactly two unique domains;
+- the active manual VPN list contained only
+  `replace-one.example` and `replace-two.example`;
+- duplicate input was collapsed as expected;
+- both temporary domains were removed through normal `awg-route vpn del`
+  commands;
+- dnsmasq validation passed after each removal;
+- the restored manual VPN list was empty again;
+- the final SHA-256 of `/etc/awg-pbr/vpn-domains.txt` returned exactly to the
+  original empty-file hash shown above.
+
+This closes the v1.1.0 real-hardware `vpn import --replace` release-gate item.
