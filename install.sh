@@ -376,7 +376,7 @@ fi
 ok "Конфиг валиден для awg-quick; Table=off включён; DNS управляется отдельно"
 
 # -----------------------------------------------------------------------------
-# 6. LAN/Archer parameters
+# 6. LAN/router parameters
 # -----------------------------------------------------------------------------
 STAGE="проверка локальной сети"
 log "[6/12] LAN router и локальная сеть"
@@ -450,7 +450,7 @@ valid_cidr4 "$LAN_CIDR" || die "Неверная подсеть: $LAN_CIDR"
 ask "IP LAN router" "$UPLINK_GW"
 ROUTER_IP="$REPLY"
 valid_ipv4 "$ROUTER_IP" || die "Неверный IP роутера"
-[[ "$(in_cidr "$ROUTER_IP" "$LAN_CIDR")" == "yes" ]] || die "IP Archer $ROUTER_IP не принадлежит $LAN_CIDR"
+[[ "$(in_cidr "$ROUTER_IP" "$LAN_CIDR")" == "yes" ]] || die "IP LAN router $ROUTER_IP не принадлежит $LAN_CIDR"
 
 if ! ping -4 -c 2 -W 2 "$ROUTER_IP" >/dev/null 2>&1; then
   die "LAN router ($ROUTER_IP) не отвечает с Raspberry Pi"
