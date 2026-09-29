@@ -86,6 +86,15 @@ grep -Fqx 'Operating mode: MikroTik Transit / Backup VPN' <<<"$out" ||
 grep -Fqx 'Mode ID: transit' <<<"$out" ||
   fail "transit status id missing"
 
+echo "=== transit rejects Selective vpn on/off controls ==="
+for vpn_action in on off; do
+  if route vpn "$vpn_action" >"$tmp/out" 2>"$tmp/err"; then
+    fail "vpn $vpn_action was accepted in Transit mode"
+  fi
+  grep -Fq 'относится только к Selective Gateway' "$tmp/err" ||
+    fail "vpn $vpn_action did not explain Transit behavior"
+done
+
 echo "=== route mode selective ==="
 out="$(route mode selective)"
 grep -Fqx 'Operating mode activated: Selective Gateway' <<<"$out" ||
