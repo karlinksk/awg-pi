@@ -9,6 +9,8 @@ source "$AWG_ENV_FILE"
 : "${PI_IP:?PI_IP is required}"
 : "${ROUTER_IP:?ROUTER_IP is required}"
 : "${VPN_IF:?VPN_IF is required}"
+: "${HEALTH_MARK:?HEALTH_MARK is required}"
+: "${HEALTH_TABLE:?HEALTH_TABLE is required}"
 HANDSHAKE_MAX_AGE="${HANDSHAKE_MAX_AGE:-180}"
 
 fail(){
@@ -62,8 +64,19 @@ ip link show dev "$VPN_IF" >/dev/null 2>&1 ||
   fail "AWG interface is unavailable: $VPN_IF"
 ok "AWG interface is present: $VPN_IF"
 
-if ! ping -4 -I "$VPN_IF" -c1 -W3 9.9.9.9 >/dev/null 2>&1 &&
-   ! ping -4 -I "$VPN_IF" -c1 -W3 1.1.1.1 >/dev/null 2>&1; then
+# Use the isolated health mark/table rather than the main client policy table.
+# Preparing this path cannot reroute unmarked client/management traffic.
+ip -4 route replace default dev "$VPN_IF" table "$HEALTH_TABLE" ||
+  fail "could not prepare AWG health route table"
+if ! ip -4 rule show |
+     grep -Eq '(^| )90:.*fwmark (0x101|257).*lookup (101|awghealth)'; then
+  ip -4 rule add priority 90 fwmark "$HEALTH_MARK" lookup "$HEALTH_TABLE" ||
+    fail "could not prepare AWG health policy rule"
+fi
+
+health_mark_decimal="$((HEALTH_MARK))"
+if ! ping -4 -n -I "$VPN_IF" -m "$health_mark_decimal" -c1 -W3 9.9.9.9 >/dev/null 2>&1 &&
+   ! ping -4 -n -I "$VPN_IF" -m "$health_mark_decimal" -c1 -W3 1.1.1.1 >/dev/null 2>&1; then
   fail "AWG tunnel transport test failed via $VPN_IF"
 fi
 ok "AWG tunnel transport is usable"

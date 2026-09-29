@@ -11,6 +11,8 @@ LAN_IF='eth0'
 PI_IP='192.168.88.2'
 ROUTER_IP='192.168.88.1'
 VPN_IF='awg0'
+HEALTH_MARK='0x101'
+HEALTH_TABLE='101'
 EOF
 
 cat >"$tmp/bin/sysctl" <<'EOF'
@@ -24,7 +26,7 @@ EOF
 
 cat >"$tmp/bin/ping" <<'EOF'
 #!/usr/bin/env bash
-if [[ "$*" == *"-I awg0"* && "${MOCK_TUNNEL_HEALTH:-up}" != up ]]; then
+if [[ "$*" == *"-I awg0"* && "$*" == *"-m 257"* && "${MOCK_TUNNEL_HEALTH:-up}" != up ]]; then
   exit 1
 fi
 exit 0
@@ -45,6 +47,7 @@ EOF
 
 cat >"$tmp/bin/ip" <<'EOF'
 #!/usr/bin/env bash
+printf '%s\n' "$*" >>"${MOCK_IP_LOG:?}"
 case "$*" in
   "link show dev eth0")
     echo '2: eth0: <BROADCAST,MULTICAST,UP,LOWER_UP>'
@@ -57,6 +60,15 @@ case "$*" in
     ;;
   "neigh show to 192.168.88.1 dev eth0")
     echo '192.168.88.1 lladdr 02:11:22:33:44:55 REACHABLE'
+    ;;
+  "-4 route replace default dev awg0 table 101")
+    ;;
+  "-4 rule show")
+    if [[ "${MOCK_HEALTH_RULE:-missing}" == present ]]; then
+      echo '90: from all fwmark 0x101 lookup 101'
+    fi
+    ;;
+  "-4 rule add priority 90 fwmark 0x101 lookup 101")
     ;;
   "-4 route get 203.0.113.7")
     if [[ "${MOCK_ENDPOINT_ROUTE:-direct}" == awg0 ]]; then
@@ -75,11 +87,12 @@ EOF
 chmod +x "$tmp/bin/"*
 
 run_preflight(){
-  PATH="$tmp/bin:$PATH" AWG_ENV_FILE="$tmp/env" \
+  PATH="$tmp/bin:$PATH" AWG_ENV_FILE="$tmp/env" MOCK_IP_LOG="$tmp/ip.log" \
     bash "$repo_root/src/awg-transit-preflight"
 }
 
 echo "=== transit preflight success ==="
+: >"$tmp/ip.log"
 out="$(run_preflight)"
 grep -Fqx 'OK: IPv4 forwarding is enabled' <<<"$out"
 grep -Fqx 'OK: src_valid_mark is enabled' <<<"$out"
@@ -90,6 +103,8 @@ grep -Fq 'OK: AWG handshake is fresh:' <<<"$out"
 grep -Fqx 'OK: AWG endpoint stays DIRECT: 203.0.113.7 via 192.168.88.1 on eth0' <<<"$out"
 grep -Fqx 'ROUTER_MAC=02:11:22:33:44:55' <<<"$out"
 grep -Fqx 'TRANSIT_PREFLIGHT=OK' <<<"$out"
+grep -Fqx -- '-4 route replace default dev awg0 table 101' "$tmp/ip.log"
+grep -Fqx -- '-4 rule add priority 90 fwmark 0x101 lookup 101' "$tmp/ip.log"
 
 echo "=== transit preflight rejects recursive endpoint route ==="
 if MOCK_ENDPOINT_ROUTE=awg0 run_preflight >"$tmp/out" 2>"$tmp/err"; then
