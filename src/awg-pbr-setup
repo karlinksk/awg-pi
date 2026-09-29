@@ -1,0 +1,178 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+AWG_ENV_FILE="${AWG_ENV_FILE:-/etc/awg-pbr/env}"
+AWG_COMMON_FILE="${AWG_COMMON_FILE:-/usr/local/lib/awg-pi/common.sh}"
+CLIENTS="${AWG_CLIENTS_FILE:-/etc/awg-pbr/clients.txt}"
+NFT_FILE="${AWG_NFT_FILE:-/etc/nftables.d/99-awg-pbr.nft}"
+TRANSIT_NFT="${AWG_TRANSIT_NFT:-/usr/local/sbin/awg-transit-nft}"
+NFT_BIN="${NFT_BIN:-nft}"
+IP_BIN="${IP_BIN:-ip}"
+PING_BIN="${PING_BIN:-ping}"
+
+# shellcheck disable=SC1090
+source "$AWG_ENV_FILE"
+# shellcheck disable=SC1090
+source "$AWG_COMMON_FILE"
+
+: "${LAN_IF:?LAN_IF is required}"
+: "${LAN_CIDR:?LAN_CIDR is required}"
+: "${ROUTER_IP:?ROUTER_IP is required}"
+: "${VPN_IF:?VPN_IF is required}"
+: "${VPN_MARK:?VPN_MARK is required}"
+: "${VPN_TABLE:?VPN_TABLE is required}"
+: "${DNS_REDIRECT:?DNS_REDIRECT is required}"
+
+fail(){
+  printf 'FAIL: %s\n' "$*" >&2
+  exit 1
+}
+
+replace_owned_table(){
+  local candidate="$1" txn
+  txn="$(mktemp)"
+  trap 'rm -f "$candidate" "$txn"' RETURN
+
+  if "$NFT_BIN" list table inet awg_pbr >/dev/null 2>&1; then
+    {
+      printf 'delete table inet awg_pbr\n'
+      cat "$candidate"
+    } >"$txn"
+  else
+    cat "$candidate" >"$txn"
+  fi
+
+  "$NFT_BIN" -c -f "$txn"
+  "$NFT_BIN" -f "$txn"
+  install -m 600 "$candidate" "$NFT_FILE"
+
+  rm -f "$txn"
+  trap - RETURN
+}
+
+clear_policy(){
+  while "$IP_BIN" -4 rule del priority 100 fwmark "$VPN_MARK" lookup "$VPN_TABLE" 2>/dev/null; do :; done
+  "$IP_BIN" -4 route flush table "$VPN_TABLE" 2>/dev/null || true
+}
+
+render_selective(){
+  local candidate="$1" client_filter=""
+  if grep -Ev '^\s*(#|$)' "$CLIENTS" 2>/dev/null | grep -q .; then
+    client_filter='ip saddr @clients4 '
+  fi
+
+  {
+    cat <<NFT
+# Managed by awg-pbr-setup. This script owns only table inet awg_pbr.
+table inet awg_pbr {
+  set vpn4 {
+    type ipv4_addr
+    flags timeout
+    timeout 15m
+  }
+  set direct4 {
+    type ipv4_addr
+    flags timeout
+    timeout 15m
+  }
+  set clients4 {
+    type ipv4_addr
+  }
+  set source4 {
+    type ipv4_addr
+    flags interval
+  }
+
+  chain input_guard {
+    type filter hook input priority filter; policy drop;
+    iifname "lo" accept
+    ct state established,related accept
+    iifname "$LAN_IF" tcp dport 22 accept
+    iifname "$LAN_IF" udp dport 53 accept
+    iifname "$LAN_IF" tcp dport 53 accept
+    iifname "$LAN_IF" ip protocol icmp accept
+    iifname "$LAN_IF" meta l4proto ipv6-icmp accept
+    iifname "$LAN_IF" udp sport 67 udp dport 68 accept
+  }
+
+  chain forward_guard {
+    type filter hook forward priority filter; policy drop;
+    ct state established,related accept
+    iifname "$LAN_IF" ip saddr $LAN_CIDR oifname "$LAN_IF" accept
+    iifname "$LAN_IF" ip saddr $LAN_CIDR oifname "$VPN_IF" accept
+  }
+
+  chain prerouting_mark {
+    type filter hook prerouting priority mangle; policy accept;
+    iifname "$LAN_IF" ${client_filter}ip daddr @source4 meta mark set $VPN_MARK
+    iifname "$LAN_IF" ${client_filter}ip daddr @vpn4 meta mark set $VPN_MARK
+    iifname "$LAN_IF" ip daddr @direct4 meta mark set 0x0
+  }
+
+  chain dns_redirect {
+    type nat hook prerouting priority dstnat; policy accept;
+NFT
+    if [[ "$DNS_REDIRECT" == 1 ]]; then
+      printf '    iifname "%s" udp dport 53 redirect to :53\n' "$LAN_IF"
+      printf '    iifname "%s" tcp dport 53 redirect to :53\n' "$LAN_IF"
+    fi
+    cat <<NFT
+  }
+
+  chain postrouting_nat {
+    type nat hook postrouting priority srcnat; policy accept;
+    ip saddr $LAN_CIDR oifname "$VPN_IF" masquerade
+    ip saddr $LAN_CIDR oifname "$LAN_IF" masquerade
+  }
+}
+NFT
+  } >"$candidate"
+}
+
+populate_clients(){
+  local ip
+  while IFS= read -r ip || [[ -n "$ip" ]]; do
+    ip="${ip%%#*}"
+    ip="${ip//[[:space:]]/}"
+    [[ -z "$ip" ]] && continue
+    "$NFT_BIN" add element inet awg_pbr clients4 "{ $ip }"
+  done <"$CLIENTS"
+}
+
+setup_selective(){
+  local candidate
+  candidate="$(mktemp)"
+  render_selective "$candidate"
+  replace_owned_table "$candidate"
+  populate_clients
+  clear_policy
+  printf 'AWG_SETUP_MODE=selective\n'
+}
+
+setup_transit(){
+  local router_mac candidate
+
+  "$PING_BIN" -4 -c1 -W2 "$ROUTER_IP" >/dev/null 2>&1 ||
+    fail "Transit setup: router $ROUTER_IP is unreachable"
+
+  router_mac="$(
+    "$IP_BIN" neigh show to "$ROUTER_IP" dev "$LAN_IF" 2>/dev/null |
+      awk '{for(i=1;i<=NF;i++) if($i=="lladdr"){print $(i+1); exit}}'
+  )"
+  [[ "$router_mac" =~ ^([[:xdigit:]]{2}:){5}[[:xdigit:]]{2}$ ]] ||
+    fail "Transit setup: could not resolve router MAC"
+  router_mac="${router_mac,,}"
+
+  candidate="$(mktemp)"
+  ROUTER_MAC="$router_mac" "$TRANSIT_NFT" >"$candidate"
+  replace_owned_table "$candidate"
+  clear_policy
+  printf 'AWG_SETUP_MODE=transit\n'
+  printf 'ROUTER_MAC=%s\n' "$router_mac"
+}
+
+case "$(awg_mode_get 2>/dev/null || echo invalid)" in
+  selective) setup_selective ;;
+  transit) setup_transit ;;
+  *) fail "invalid operating mode" ;;
+esac
