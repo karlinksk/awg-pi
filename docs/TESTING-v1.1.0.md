@@ -30,7 +30,9 @@ Validated on the existing Raspberry Pi 4 test gateway:
 
 Still required before the stable v1.1.0 release:
 
-- hardware-check the new transactional upstream DNS CLI/TUI path;
+- hardware-check executable snapshot
+  `5c26398c52fa39066547e84b8429146c846d0016` for the new transactional
+  upstream DNS CLI/TUI path;
 - complete remaining release-gate checklist items that have not yet been
   exercised on the frozen RC2 snapshot, including `--replace` bulk import where
   applicable and final release audit.
@@ -540,6 +542,12 @@ that settings were unchanged. No full LAN migration is required.
 
 
 ## 23. Upstream DNS transaction
+
+Executable snapshot under hardware test:
+
+```text
+5c26398c52fa39066547e84b8429146c846d0016
+```
 
 The post-cancellation follow-up adds:
 
