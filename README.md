@@ -152,8 +152,10 @@ independent **MikroTik Transit / Backup VPN** operating mode. MikroTik will keep
 traffic classification and SSTP failover responsibility; the Pi will act as an
 AmneziaWG transit gateway when MikroTik selects it as the backup next hop.
 
-The existing Selective Gateway mode will remain available, mode selection will
-be persistent and transactional, and upgrading from v1.1.0 will stay in
-Selective Gateway until the user explicitly changes modes.
+The existing Selective Gateway mode will remain available and mode selection
+will be persistent and transactional. For the planned v1.1.0 -> v1.2.0 upgrade,
+the default operating mode is **MikroTik Transit / Backup VPN**; the preserved
+Selective Gateway configuration can be restored at any time from
+`System -> Operating mode`.
 
 Design note: [ROADMAP-v1.2.0-TRANSIT.md](docs/ROADMAP-v1.2.0-TRANSIT.md)
