@@ -145,6 +145,56 @@ class Maintenance(unittest.TestCase):
         clean, _ = m.profile(V3_PROFILE)
         self.assertEqual(self.active.read_text(), clean)
 
+    def test_dns_change_updates_env_and_dnsmasq_transactionally(self):
+        args = self.args(action='set', servers='1.1.1.1, 9.9.9.9')
+        m.dns_reconfigure(args, self.env)
+        self.assertEqual(m.read_env()['UPSTREAM_DNS'], '1.1.1.1,9.9.9.9')
+        dns = Path(m.DNS).read_text()
+        self.assertIn('server=1.1.1.1\n', dns)
+        self.assertIn('server=9.9.9.9\n', dns)
+        self.assertEqual(dns.count('server='), 2)
+        self.assertIn(('dnsmasq', '--test'), self.calls)
+        self.assertIn(('systemctl', 'restart', 'dnsmasq.service'), self.calls)
+        self.assertIn(('dig', '+time=3', '+tries=1', '+short', 'A',
+                       'example.com', '@192.168.1.2'), self.calls)
+
+    def test_dns_invalid_or_cancelled_has_no_side_effects(self):
+        before = {m.ENV: Path(m.ENV).read_bytes(), m.DNS: Path(m.DNS).read_bytes()}
+        with self.assertRaises(ValueError):
+            m.dns_reconfigure(self.args(action='set', servers='bad,1.1.1.1'), self.env)
+        self.assertEqual(self.calls, [])
+        with patch.object(m, 'confirm', side_effect=m.UserCancelled('cancelled')):
+            with self.assertRaises(m.UserCancelled):
+                m.dns_reconfigure(self.args(action='set', servers='1.1.1.1'), self.env)
+        for path, value in before.items():
+            self.assertEqual(Path(path).read_bytes(), value)
+        self.assertFalse(Path(m.BACKUPS).exists())
+
+    def test_dns_apply_failure_restores_files_and_dnsmasq(self):
+        before = {m.ENV: Path(m.ENV).read_bytes(), m.DNS: Path(m.DNS).read_bytes()}
+        self.fail_once = ('dnsmasq', '--test')
+        with self.assertRaises(RuntimeError):
+            m.dns_reconfigure(self.args(action='set', servers='1.1.1.1'), self.env)
+        for path, value in before.items():
+            self.assertEqual(Path(path).read_bytes(), value)
+        restarts = [call for call in self.calls if call == ('systemctl', 'restart', 'dnsmasq.service')]
+        self.assertEqual(len(restarts), 1)
+
+    def test_dns_status_reports_env_and_dnsmasq(self):
+        with contextlib.redirect_stdout(io.StringIO()) as out:
+            m.dns_status(self.env)
+        text = out.getvalue()
+        self.assertIn('Upstream DNS: 9.9.9.9', text)
+        self.assertIn('dnsmasq servers: 9.9.9.9', text)
+
+    def test_dns_parser_deduplicates_and_rejects_self_or_too_many(self):
+        self.assertEqual(m.parse_dns_servers('1.1.1.1,1.1.1.1,9.9.9.9', self.env),
+                         ['1.1.1.1', '9.9.9.9'])
+        for value in ('127.0.0.1', '192.168.1.2', '224.0.0.1',
+                      '1.1.1.1,2.2.2.2,3.3.3.3,4.4.4.4,5.5.5.5'):
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                m.parse_dns_servers(value, self.env)
+
     def test_network_success_preserves_settings_and_clients(self):
         m.reconfigure(self.args(), self.env)
         self.assertEqual(m.read_env()['PI_IP'], '192.168.2.33')
