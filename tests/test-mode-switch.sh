@@ -99,8 +99,7 @@ if MOCK_SELECTIVE_RELOAD_FAIL=1 run_switch selective >"$tmp/out" 2>"$tmp/err"; t
   exit 1
 fi
 grep -Fqx transit "$tmp/mode"
-grep -Fq 'apply:apply' "$tmp/switch.log"
-grep -Fq 'routing:apply' "$tmp/switch.log"
+grep -Fq 'route:reload' "$tmp/switch.log"
 grep -Fq 'ROLLBACK=OK' "$tmp/err"
 
 echo "transactional mode switch: OK"
