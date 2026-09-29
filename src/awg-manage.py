@@ -210,16 +210,30 @@ def dns_reconfigure(args, env):
 def confirm(args, prompt):
     if args.yes:
         return
+    fd = None
     try:
-        # Buffered r+ requires seeking; a Linux terminal cannot seek.
-        # Separate streams also keep confirmation independent of redirected stdin.
-        with open('/dev/tty', 'r', encoding='utf-8') as reader, \
-                open('/dev/tty', 'w', encoding='utf-8') as writer:
-            writer.write(prompt + ' [y/N]: ')
-            writer.flush()
-            answer = reader.readline().strip().lower()
+        # dialog/TTY transitions may leave a partial multibyte byte in the input
+        # stream on real terminals. Read bytes from the controlling TTY and
+        # decode only the completed answer, ignoring malformed stale bytes.
+        fd = os.open('/dev/tty', os.O_RDWR)
+        try:
+            import termios
+            termios.tcflush(fd, termios.TCIFLUSH)
+        except (ImportError, OSError):
+            pass
+        os.write(fd, (prompt + ' [y/N]: ').encode('utf-8'))
+        data = bytearray()
+        while len(data) < 256:
+            chunk = os.read(fd, 1)
+            if not chunk or chunk in (b'\n', b'\r'):
+                break
+            data.extend(chunk)
+        answer = bytes(data).decode('utf-8', errors='ignore').strip().lower()
     except OSError:
         raise ValueError('Нужен терминал для подтверждения; для автоматизации используйте --yes') from None
+    finally:
+        if fd is not None:
+            os.close(fd)
     if answer not in ('y', 'yes', 'д', 'да'):
         raise UserCancelled('Операция отменена; настройки не изменены')
 
