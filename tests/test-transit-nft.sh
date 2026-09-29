@@ -41,4 +41,22 @@ fi
 
 sudo nft -c -f "$tmp/transit.nft"
 
+echo "=== transit lockdown candidate ==="
+AWG_ENV_FILE="$tmp/env" AWG_TRANSIT_LOCKDOWN=1 \
+  bash "$repo_root/src/awg-transit-nft" >"$tmp/lockdown.nft"
+grep -Fq 'policy drop;' "$tmp/lockdown.nft"
+if grep -Fq 'ether saddr' "$tmp/lockdown.nft"; then
+  echo 'FAIL: lockdown contains a Transit ingress allow rule' >&2
+  exit 1
+fi
+if grep -Fq 'meta mark set' "$tmp/lockdown.nft"; then
+  echo 'FAIL: lockdown marks forwarded traffic' >&2
+  exit 1
+fi
+if grep -Fq 'masquerade' "$tmp/lockdown.nft"; then
+  echo 'FAIL: lockdown contains Transit NAT' >&2
+  exit 1
+fi
+sudo nft -c -f "$tmp/lockdown.nft"
+
 echo "transit nft candidate: OK"
