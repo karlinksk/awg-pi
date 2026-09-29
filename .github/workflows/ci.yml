@@ -5,6 +5,7 @@ on:
     branches:
       - 'develop/v1.2.0'
       - 'feature/v1.2-*'
+      - 'rc/v1.2.0-*'
   pull_request:
     branches:
       - main
