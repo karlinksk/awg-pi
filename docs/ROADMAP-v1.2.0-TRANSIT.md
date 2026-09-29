@@ -109,9 +109,12 @@ Transit cannot be applied safely, the upgrade must not leave a partial Transit
 configuration; it should retain/restore the previous Selective Gateway runtime
 state and report the failure.
 
-This Transit-by-default rule is specifically agreed for the v1.1.0 -> v1.2.0
-upgrade path. Fresh installs default to **Selective Gateway**. Transit is activated only by an
-explicit mode switch after its preflight succeeds.
+Transit is the default target mode for both fresh v1.2.0 installs and the
+v1.1.0 -> v1.2.0 upgrade path. A fresh install stages **Selective Gateway**
+during installation so AWG can be brought up and validated safely, then performs
+the normal transactional Transit preflight/switch before installation completes.
+If that activation fails, the installation remains in Selective Gateway rather
+than leaving a partial Transit datapath.
 
 ## Transactional switching
 

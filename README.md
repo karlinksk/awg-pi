@@ -171,8 +171,10 @@ sudo awg-route mode selective
 sudo awg-route mode transit
 ```
 
-A fresh v1.2 install defaults to Selective. A v1.1.0 -> v1.2.0 upgrade offers
-Transit as the default post-upgrade mode; if Transit preflight/activation fails,
+A fresh v1.2 install defaults to **Transit**. During installation the Pi stages
+the safe Selective ruleset while AWG is validated, then transactionally switches
+to Transit after preflight succeeds. A v1.1.0 -> v1.2.0 upgrade also offers
+Transit as the default post-upgrade mode. If Transit preflight/activation fails,
 the runtime is restored to Selective instead of leaving a partial Transit state.
 
 v1.2.0 is **not yet the stable release**. Hardware validation must pass before

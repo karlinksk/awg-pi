@@ -46,7 +46,10 @@ sudo ip -4 route show table 100
 sudo nft list table inet awg_pbr
 ```
 
-Expected on a fresh install: `Mode ID: selective`.
+Expected after a successful fresh install: `Mode ID: transit`. The installer
+temporarily stages Selective while AWG is validated, then switches to Transit
+transactionally. If Transit preflight fails, the safe fallback is
+`Mode ID: selective`.
 
 ## 3. Selective regression
 
