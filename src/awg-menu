@@ -1,0 +1,342 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+[[ ${EUID:-$(id -u)} -eq 0 ]] || exec sudo "$0" "$@"
+
+# Run from a temporary copy so a gateway update can safely replace awg-menu.
+if [[ "${AWG_MENU_REEXEC:-0}" != 1 ]]; then
+  _menu_tmp="$(mktemp /tmp/awg-menu.XXXXXX)"
+  cp "$0" "$_menu_tmp"
+  chmod 700 "$_menu_tmp"
+  export AWG_MENU_REEXEC=1
+  exec "$_menu_tmp" "$@"
+fi
+trap 'rm -f "$0" 2>/dev/null || true' EXIT
+
+command -v dialog >/dev/null 2>&1 || { echo "Не найден dialog" >&2; exit 1; }
+
+AWG_ROUTE=/usr/local/sbin/awg-route
+AWG_UPDATE=/usr/local/sbin/awg-update
+VERSION="$(cat /etc/awg-pbr/version 2>/dev/null || echo unknown)"
+BACKTITLE="AWG Pi Gateway v$VERSION"
+TMP="$(mktemp)"
+trap 'rm -f "$TMP"' EXIT
+
+# shellcheck disable=SC1091
+[[ -r /etc/awg-pbr/env ]] && source /etc/awg-pbr/env
+
+msg(){
+  dialog --backtitle "$BACKTITLE" --title "$1" --msgbox "$2" 20 90
+}
+
+confirm(){
+  dialog --backtitle "$BACKTITLE" --title "$1" --yesno "$2" 10 75
+}
+
+input(){
+  local title="$1" prompt="$2" initial="${3:-}"
+  dialog --backtitle "$BACKTITLE" --title "$title" --inputbox "$prompt" 10 80 "$initial" 3>&1 1>&2 2>&3
+}
+
+capture(){
+  local rc
+  set +e
+  "$@" >"$TMP" 2>&1
+  rc=$?
+  set -e
+  dialog --backtitle "$BACKTITLE" --title "${title:-Результат}" --textbox "$TMP" 30 110
+  return "$rc"
+}
+
+run_interactive(){
+  local heading="$1"
+  shift
+  clear
+  printf '=== %s ===\n\n' "$heading"
+  set +e
+  "$@"
+  local rc=$?
+  set -e
+  echo
+  case "$rc" in
+    0) echo "Операция завершена." ;;
+    20) echo "Операция отменена пользователем." ;;
+    *) echo "Операция завершилась с ошибкой (код $rc)." ;;
+  esac
+  read -r -p "Нажмите Enter для возврата в меню..." _
+  return 0
+}
+
+quick_summary(){
+  local health policy dns awg_state hs oc pi router
+  health="$(cat /run/awg-pbr/health.state 2>/dev/null || echo unknown)"
+  if ip -4 rule show 2>/dev/null | grep -Eq '(^| )100:.*fwmark (0x100|256).*lookup (100|awgvpn)'; then
+    policy=ACTIVE
+  else
+    policy=DIRECT
+  fi
+  systemctl is-active --quiet dnsmasq.service && dns=OK || dns=FAIL
+  systemctl is-active --quiet awg-quick@awg0.service && awg_state=UP || awg_state=DOWN
+  hs="$(awg show awg0 latest-handshakes 2>/dev/null | awk '$2>m{m=$2}END{print m+0}')"
+  if [[ "$hs" -gt 0 ]]; then
+    hs="$(( $(date +%s) - hs ))s"
+  else
+    hs=none
+  fi
+  systemctl is-active --quiet awg-opencck-update.timer && oc=OK || oc=OFF
+  pi="${PI_IP:-?}"
+  router="${ROUTER_IP:-?}"
+  printf 'VPN health: %-7s   Policy: %-7s   DNS: %-4s\nawg0:       %-7s   Handshake: %-8s OpenCCK: %s\nPi: %-15s Router: %s'     "$health" "$policy" "$dns" "$awg_state" "$hs" "$oc" "$pi" "$router"
+}
+
+status_screen(){
+  title="Состояние системы"
+  capture "$AWG_ROUTE" status || true
+}
+
+diagnostics_screen(){
+  title="Диагностика"
+  capture "$AWG_ROUTE" diagnostics || true
+}
+
+logs_screen(){
+  title="Журналы"
+  capture "$AWG_ROUTE" logs 200 || true
+}
+
+domain_menu(){
+  local kind="$1" label="$2" choice d path
+  while true; do
+    choice="$(dialog --backtitle "$BACKTITLE" --title "$label" --menu "Выберите действие" 20 88 10       1 "Показать списки"       2 "Добавить домен"       3 "Удалить домен"       4 "Импортировать файл (добавить)"       5 "Импортировать файл (полностью заменить)"       6 "Экспортировать файл"       0 "Назад" 3>&1 1>&2 2>&3)" || return 0
+    case "$choice" in
+      1)
+        title="$label"
+        capture "$AWG_ROUTE" list || true
+        ;;
+      2)
+        d="$(input "$label" "Введите домен:")" || continue
+        title="Добавление"
+        capture "$AWG_ROUTE" "$kind" add "$d" || true
+        ;;
+      3)
+        d="$(input "$label" "Введите домен для удаления:")" || continue
+        title="Удаление"
+        capture "$AWG_ROUTE" "$kind" del "$d" || true
+        ;;
+      4)
+        path="$(input "$label" "Полный путь к файлу:")" || continue
+        title="Импорт"
+        capture "$AWG_ROUTE" "$kind" import "$path" || true
+        ;;
+      5)
+        path="$(input "$label" "Полный путь к файлу:")" || continue
+        confirm "Подтверждение" "Текущий список $label будет полностью заменён. Продолжить?" || continue
+        title="Импорт --replace"
+        capture "$AWG_ROUTE" "$kind" import --replace "$path" || true
+        ;;
+      6)
+        path="$(input "$label" "Полный путь для сохранения файла:")" || continue
+        title="Экспорт"
+        capture "$AWG_ROUTE" "$kind" export "$path" || true
+        ;;
+      0) return 0 ;;
+    esac
+  done
+}
+
+opencck_menu(){
+  local choice name type kind action
+  while true; do
+    choice="$(dialog --backtitle "$BACKTITLE" --title "OpenCCK" --menu "Управление источниками" 23 92 13       1 "Показать источники"       2 "Добавить источник"       3 "Показать содержимое источника"       4 "Обновить все источники"       5 "Обновить один источник"       6 "Включить источник"       7 "Отключить источник"       8 "Удалить источник"       0 "Назад" 3>&1 1>&2 2>&3)" || return 0
+    case "$choice" in
+      1)
+        title="OpenCCK sources"
+        capture "$AWG_ROUTE" source list || true
+        ;;
+      2)
+        name="$(input "OpenCCK" "Имя группы или сайта (например youtube или youtube.com):")" || continue
+        type="$(dialog --backtitle "$BACKTITLE" --title "Тип данных" --menu "Выберите тип" 14 74 4           domains "Домены (рекомендуется)"           ip4 "IPv4-адреса"           cidr4 "IPv4-подсети CIDR" 3>&1 1>&2 2>&3)" || continue
+        kind="$(dialog --backtitle "$BACKTITLE" --title "Тип источника" --menu "Как трактовать имя?" 13 74 3           group "Группа OpenCCK"           site "Конкретный сайт/портал" 3>&1 1>&2 2>&3)" || continue
+        title="Добавление OpenCCK"
+        capture "$AWG_ROUTE" source add opencck "$name" --type "$type" --kind "$kind" || true
+        ;;
+      3)
+        name="$(input "OpenCCK" "Имя источника:")" || continue
+        title="OpenCCK: $name"
+        capture "$AWG_ROUTE" source show opencck "$name" || true
+        ;;
+      4)
+        title="OpenCCK update"
+        capture "$AWG_ROUTE" source update || true
+        ;;
+      5)
+        name="$(input "OpenCCK" "Имя источника:")" || continue
+        title="OpenCCK update"
+        capture "$AWG_ROUTE" source update "$name" || true
+        ;;
+      6|7|8)
+        name="$(input "OpenCCK" "Имя источника:")" || continue
+        action=enable
+        [[ "$choice" == 7 ]] && action=disable
+        [[ "$choice" == 8 ]] && action=del
+        if [[ "$action" == del ]]; then
+          confirm "Удаление" "Удалить источник $name?" || continue
+        fi
+        title="OpenCCK $action"
+        capture "$AWG_ROUTE" source "$action" opencck "$name" || true
+        ;;
+      0) return 0 ;;
+    esac
+  done
+}
+
+client_menu(){
+  local choice ip
+  while true; do
+    choice="$(dialog --backtitle "$BACKTITLE" --title "Клиенты" --menu "PBR allow-list" 17 78 7       1 "Показать клиентов"       2 "Добавить IPv4"       3 "Удалить IPv4"       0 "Назад" 3>&1 1>&2 2>&3)" || return 0
+    case "$choice" in
+      1)
+        title="Клиенты"
+        capture "$AWG_ROUTE" client list || true
+        ;;
+      2)
+        ip="$(input "Клиенты" "IPv4 клиента:")" || continue
+        title="Добавление клиента"
+        capture "$AWG_ROUTE" client add "$ip" || true
+        ;;
+      3)
+        ip="$(input "Клиенты" "IPv4 клиента:")" || continue
+        title="Удаление клиента"
+        capture "$AWG_ROUTE" client del "$ip" || true
+        ;;
+      0) return 0 ;;
+    esac
+  done
+}
+
+vpn_menu(){
+  local choice path
+  while true; do
+    choice="$(dialog --backtitle "$BACKTITLE" --title "VPN policy" --menu "Управление VPN" 16 80 7       1 "Включить VPN policy"       2 "Выключить VPN policy (всё DIRECT)"       3 "Перезапустить awg0 и health monitor"       4 "Заменить конфигурацию AmneziaWG"       5 "Откатить предыдущую конфигурацию"       0 "Назад" 3>&1 1>&2 2>&3)" || return 0
+    case "$choice" in
+      1)
+        title="VPN ON"
+        capture "$AWG_ROUTE" vpn on || true
+        ;;
+      2)
+        confirm "VPN OFF" "Перевести весь маршрутизируемый трафик в DIRECT?" || continue
+        title="VPN OFF"
+        capture "$AWG_ROUTE" vpn off || true
+        ;;
+      3)
+        confirm "Перезапуск" "Перезапустить awg0 и health monitor?" || continue
+        systemctl restart awg-quick@awg0.service awg-pbr-health.service
+        msg "VPN" "Сервисы перезапущены."
+        ;;
+      4)
+        path="$(input "AmneziaWG" "Полный путь к native .conf:")" || continue
+        run_interactive "Замена профиля" "$AWG_ROUTE" config replace "$path"
+        ;;
+      5) run_interactive "Откат профиля" "$AWG_ROUTE" config rollback ;;
+      0) return 0 ;;
+    esac
+  done
+}
+
+dns_menu(){
+  local choice current servers
+  while true; do
+    # shellcheck disable=SC1091
+    source /etc/awg-pbr/env
+    current="${UPSTREAM_DNS:-}"
+    choice="$(dialog --backtitle "$BACKTITLE" --title "DNS upstream" --menu "Текущие: $current" 16 82 6       1 "Показать текущую конфигурацию"       2 "Изменить upstream DNS"       0 "Назад" 3>&1 1>&2 2>&3)" || return 0
+    case "$choice" in
+      1)
+        title="DNS upstream"
+        capture "$AWG_ROUTE" dns status || true
+        ;;
+      2)
+        servers="$(input "DNS upstream" "IPv4 DNS через запятую:" "$current")" || continue
+        run_interactive "Изменение DNS" "$AWG_ROUTE" dns set "$servers"
+        ;;
+      0) return 0 ;;
+    esac
+  done
+}
+
+update_menu(){
+  local choice
+  while true; do
+    choice="$(dialog --backtitle "$BACKTITLE" --title "Обновления" --menu "Выберите компонент" 18 84 8       1 "Показать версии"       2 "Обновить AWG Pi Gateway"       3 "Обновить AmneziaWG core"       4 "Проверить/обновить всё"       0 "Назад" 3>&1 1>&2 2>&3)" || return 0
+    case "$choice" in
+      1)
+        title="Версии"
+        capture "$AWG_UPDATE" status || true
+        ;;
+      2)
+        confirm "Gateway update" "Проверить новый релиз AWG Pi Gateway и установить его при наличии?" || continue
+        run_interactive "AWG Pi Gateway update" "$AWG_UPDATE" --yes gateway
+        _old_menu_self="$0"
+        unset AWG_MENU_REEXEC
+        rm -f "$_old_menu_self" 2>/dev/null || true
+        exec /usr/local/sbin/awg-menu
+        ;;
+      3)
+        confirm "Core update" "Проверить и обновить AmneziaWG core при наличии новой стабильной версии?" || continue
+        run_interactive "AmneziaWG core update" "$AWG_UPDATE" --yes core
+        ;;
+      4)
+        confirm "Полное обновление" "Проверить обновления AWG Pi Gateway и AmneziaWG core?" || continue
+        run_interactive "Полное обновление" "$AWG_UPDATE" --yes all
+        _old_menu_self="$0"
+        unset AWG_MENU_REEXEC
+        rm -f "$_old_menu_self" 2>/dev/null || true
+        exec /usr/local/sbin/awg-menu
+        ;;
+      0) return 0 ;;
+    esac
+  done
+}
+
+system_menu(){
+  local choice
+  while true; do
+    choice="$(dialog --backtitle "$BACKTITLE" --title "Система" --menu "Системные функции" 19 82 9       1 "Перезагрузить конфигурацию AWG Gateway"       2 "Перезагрузить Raspberry Pi"       3 "Выключить Raspberry Pi"       4 "Перенастроить LAN gateway"       5 "DNS upstream"       0 "Назад" 3>&1 1>&2 2>&3)" || return 0
+    case "$choice" in
+      1)
+        title="Reload"
+        capture "$AWG_ROUTE" reload || true
+        ;;
+      2)
+        confirm "Reboot" "Перезагрузить Raspberry Pi?" && systemctl reboot
+        ;;
+      3)
+        confirm "Poweroff" "Выключить Raspberry Pi?" && systemctl poweroff
+        ;;
+      4) run_interactive "Перенастройка сети" "$AWG_ROUTE" network reconfigure ;;
+      5) dns_menu ;;
+      0) return 0 ;;
+    esac
+  done
+}
+
+while true; do
+  summary="$(quick_summary)"
+  choice="$(dialog --clear --backtitle "$BACKTITLE" --title "Главное меню" --menu     "$summary
+
+Стрелки — выбор, Enter — открыть." 29 96 15     1 "Состояние системы"     2 "VPN-маршрутизация"     3 "Домены VPN"     4 "DIRECT-исключения"     5 "OpenCCK"     6 "Клиенты"     7 "Диагностика"     8 "Обновления"     9 "Журналы"     10 "Системные функции"     11 "Выйти в обычный Shell"     0 "Завершить SSH-сессию" 3>&1 1>&2 2>&3)" || exit 20
+
+  case "$choice" in
+    1) status_screen ;;
+    2) vpn_menu ;;
+    3) domain_menu vpn "Домены VPN" ;;
+    4) domain_menu direct "DIRECT-исключения" ;;
+    5) opencck_menu ;;
+    6) client_menu ;;
+    7) diagnostics_screen ;;
+    8) update_menu ;;
+    9) logs_screen ;;
+    10) system_menu ;;
+    11) clear; exit 10 ;;
+    0) clear; exit 20 ;;
+  esac
+done

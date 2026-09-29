@@ -1,0 +1,95 @@
+#!/usr/bin/env bash
+# Shared validation helpers for AWG Pi Gateway.
+# This file is sourced by management tools; it does not execute actions itself.
+
+# AWG v3 prints HeaderProtectionKey even when WG_HIDE_KEYS is enabled.
+# Redact before output reaches either the terminal or a diagnostics tee/log.
+awg_safe_show(){
+  WG_COLOR_MODE=never WG_HIDE_KEYS=always awg show "$1" 2>/dev/null |
+    sed -E 's/^([[:space:]]*(private key|preshared key|header protection key):).*/\1 (hidden)/I'
+}
+
+awg_valid_ipv4(){
+  local IFS=. a b c d
+  read -r a b c d <<<"$1" || return 1
+  [[ ${a:-} =~ ^[0-9]+$ && ${b:-} =~ ^[0-9]+$ && ${c:-} =~ ^[0-9]+$ && ${d:-} =~ ^[0-9]+$ ]] || return 1
+  ((a<=255 && b<=255 && c<=255 && d<=255))
+}
+
+awg_normalize_domain(){
+  printf '%s' "$1" | tr '[:upper:]' '[:lower:]' |
+    sed -E 's#^[[:space:]]+##; s#[[:space:]]+$##; s#^https?://##; s#/.*$##; s/:[0-9]+$//; s/^\*\.//; s/^\.//; s/\.$//'
+}
+
+awg_valid_domain(){
+  local d="$1" label
+  [[ ${#d} -le 253 ]] || return 1
+  [[ "$d" == *.* ]] || return 1
+  [[ "$d" =~ ^[a-z0-9.-]+$ ]] || return 1
+  [[ "$d" != .* && "$d" != *. && "$d" != *..* ]] || return 1
+  IFS='.' read -ra _awg_labels <<<"$d"
+  for label in "${_awg_labels[@]}"; do
+    [[ -n "$label" && ${#label} -le 63 ]] || return 1
+    [[ "$label" =~ ^[a-z0-9]([a-z0-9-]*[a-z0-9])?$ ]] || return 1
+  done
+}
+
+awg_validate_ipv4_list_file(){
+  local path="$1" kind="$2"
+  python3 - "$path" "$kind" <<'PY'
+import ipaddress, sys
+path, kind = sys.argv[1], sys.argv[2]
+bad=[]
+with open(path, encoding="utf-8", errors="strict") as f:
+    for n,line in enumerate(f,1):
+        s=line.split("#",1)[0].strip()
+        if not s:
+            continue
+        try:
+            if kind == "ip4":
+                x=ipaddress.ip_address(s)
+                if x.version != 4:
+                    raise ValueError("not IPv4")
+            elif kind == "cidr4":
+                x=ipaddress.ip_network(s, strict=False)
+                if x.version != 4:
+                    raise ValueError("not IPv4 CIDR")
+            else:
+                raise ValueError("unsupported kind")
+        except Exception:
+            bad.append((n,s))
+if bad:
+    for n,s in bad[:20]:
+        print(f"invalid line {n}: {s}", file=sys.stderr)
+    sys.exit(1)
+PY
+}
+
+awg_ipv4_ranges_to_nft_commands(){
+  local path="$1" family="${2:-inet}" table="${3:-awg_pbr}" setname="${4:-source4}"
+  python3 - "$path" "$family" "$table" "$setname" <<'PY'
+import ipaddress, sys
+path, family, table, setname = sys.argv[1:5]
+items=[]
+with open(path, encoding="utf-8") as f:
+    for line in f:
+        s=line.split("#",1)[0].strip()
+        if not s:
+            continue
+        if "/" in s:
+            items.append(ipaddress.ip_network(s, strict=False))
+        else:
+            items.append(ipaddress.ip_network(s + "/32", strict=False))
+for net in ipaddress.collapse_addresses(items):
+    if net.version != 4:
+        raise SystemExit("IPv6 is not supported")
+    print(f"add element {family} {table} {setname} {{ {net} }}")
+PY
+}
+
+# DNS service records are not host routing rules. Other malformed names still fail.
+awg_service_domain(){
+  local d="$1"
+  [[ "$d" == *_* && "$d" =~ ^[a-z0-9_.-]+$ ]] || return 1
+  awg_valid_domain "${d//_/a}"
+}

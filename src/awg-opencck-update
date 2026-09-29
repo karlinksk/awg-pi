@@ -1,0 +1,157 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+[[ ${EUID:-$(id -u)} -eq 0 ]] || exec sudo "$0" "$@"
+
+exec 9>/run/awg-maintenance.lock
+flock -sn 9 || { echo 'Идёт обслуживание gateway; повторите позже.' >&2; exit 1; }
+
+META_DIR="${AWG_OPENCCK_META_DIR:-/etc/awg-pbr/sources/opencck/metadata}"
+BASE_URL="${AWG_OPENCCK_BASE_URL:-https://iplist.opencck.org/}"
+AWG_ROUTE="${AWG_ROUTE_BIN:-/usr/local/sbin/awg-route}"
+COMMON_LIB="${AWG_COMMON_LIB:-/usr/local/lib/awg-pi/common.sh}"
+LOG_TAG=awg-opencck
+# shellcheck disable=SC1090
+source "$COMMON_LIB"
+mkdir -p "$META_DIR"
+
+force=0
+selector=""
+for arg in "$@"; do
+  case "$arg" in
+    --force) force=1 ;;
+    *) [[ -z "$selector" ]] && selector="$arg" || { echo "Лишний аргумент: $arg" >&2; exit 2; } ;;
+  esac
+done
+
+canonicalize(){
+  local kind="$1" input="$2" output="$3" raw d bad=0
+  : >"$output"
+  case "$kind" in
+    domains)
+      while IFS= read -r raw || [[ -n "$raw" ]]; do
+        raw="${raw%%#*}"
+        [[ -n "${raw//[[:space:]]/}" ]] || continue
+        d="$(awg_normalize_domain "$raw")"
+        if awg_service_domain "$d"; then
+          echo "OpenCCK: пропущено служебное DNS-имя: $d" >&2
+          continue
+        fi
+        if ! awg_valid_domain "$d"; then
+          echo "OpenCCK: некорректный домен: $raw" >&2
+          bad=$((bad+1)); continue
+        fi
+        echo "$d" >>"$output"
+      done <"$input"
+      (( bad == 0 )) || return 1
+      ;;
+    ip4|cidr4)
+      sed -E 's/[[:space:]]*#.*$//; /^[[:space:]]*$/d; s/^[[:space:]]+//; s/[[:space:]]+$//' "$input" >"$output"
+      awg_validate_ipv4_list_file "$output" "$kind"
+      ;;
+    *) echo "Неизвестный тип: $kind" >&2; return 2 ;;
+  esac
+  sort -u -o "$output" "$output"
+  [[ -s "$output" ]]
+}
+meta_files(){
+  find "$META_DIR" -maxdepth 1 -type f -name '*.env' -print 2>/dev/null | sort
+}
+update_one(){
+  local meta="$1" raw clean old_count new_count url tmpmeta now
+  unset PROVIDER SOURCE_ID SOURCE_KIND SOURCE_NAME SOURCE_TYPE ENABLED DATA_FILE LAST_SUCCESS ENTRY_COUNT
+  # shellcheck disable=SC1090
+  source "$meta"
+  [[ "${PROVIDER:-}" == opencck ]] || return 0
+  [[ "${ENABLED:-0}" == 1 ]] || { echo "SKIP disabled: ${SOURCE_NAME:-?}"; return 0; }
+
+  raw="$(mktemp)"; clean="$(mktemp)"
+
+  url="$BASE_URL?format=text&data=$SOURCE_TYPE&$SOURCE_KIND=$SOURCE_NAME"
+  echo "OpenCCK: $SOURCE_NAME ($SOURCE_TYPE/$SOURCE_KIND)"
+  if ! curl -4fLsS --retry 3 --connect-timeout 8 --max-time 45 "$url" -o "$raw"; then
+    logger -t "$LOG_TAG" "download failed: $SOURCE_NAME $SOURCE_TYPE"
+    echo "  ERROR: загрузка не удалась; сохранён предыдущий кэш" >&2
+    rm -f "$raw" "$clean"
+    return 1
+  fi
+  if ! canonicalize "$SOURCE_TYPE" "$raw" "$clean"; then
+    logger -t "$LOG_TAG" "validation failed: $SOURCE_NAME $SOURCE_TYPE"
+    echo "  ERROR: проверка списка не пройдена; сохранён предыдущий кэш" >&2
+    rm -f "$raw" "$clean"
+    return 1
+  fi
+
+  new_count="$(wc -l <"$clean" | tr -d ' ')"
+  if (( new_count == 0 )); then
+    echo "  ERROR: пустой список" >&2
+    rm -f "$raw" "$clean"
+    return 1
+  fi
+  old_count=0
+  [[ -r "$DATA_FILE" ]] && old_count="$(wc -l <"$DATA_FILE" | tr -d ' ')"
+
+  if (( force == 0 && old_count >= 10 )); then
+    if (( new_count * 5 < old_count || new_count > old_count * 5 )); then
+      logger -t "$LOG_TAG" "anomalous size rejected: $SOURCE_NAME old=$old_count new=$new_count"
+      echo "  ERROR: аномальное изменение размера: $old_count -> $new_count. Используйте --force после ручной проверки." >&2
+      rm -f "$raw" "$clean"
+      return 1
+    fi
+  fi
+
+  if [[ -r "$DATA_FILE" ]] && cmp -s "$clean" "$DATA_FILE"; then
+    echo "  без изменений: $new_count записей"
+  else
+    [[ -r "$DATA_FILE" ]] && cp -a "$DATA_FILE" "$DATA_FILE.bak" || true
+    install -m 600 "$clean" "$DATA_FILE"
+    echo "  обновлено: $old_count -> $new_count"
+  fi
+
+  now="$(date -Is)"
+  tmpmeta="$(mktemp)"
+  cat >"$tmpmeta" <<META
+PROVIDER=opencck
+SOURCE_ID=$SOURCE_ID
+SOURCE_KIND=$SOURCE_KIND
+SOURCE_NAME=$SOURCE_NAME
+SOURCE_TYPE=$SOURCE_TYPE
+ENABLED=$ENABLED
+DATA_FILE=$DATA_FILE
+LAST_SUCCESS=$now
+ENTRY_COUNT=$new_count
+META
+  install -m 600 "$tmpmeta" "$meta"
+  rm -f "$tmpmeta"
+  logger -t "$LOG_TAG" "updated: $SOURCE_NAME type=$SOURCE_TYPE entries=$new_count"
+  rm -f "$raw" "$clean"
+  return 0
+}
+
+matches=0
+fail=0
+while IFS= read -r meta; do
+  [[ -n "$meta" ]] || continue
+  unset SOURCE_ID SOURCE_NAME
+  # shellcheck disable=SC1090
+  source "$meta"
+  if [[ -n "$selector" && "$selector" != "${SOURCE_ID:-}" && "$selector" != "${SOURCE_NAME:-}" ]]; then
+    continue
+  fi
+  matches=$((matches+1))
+  update_one "$meta" || fail=$((fail+1))
+done < <(meta_files)
+
+if (( matches == 0 )); then
+  if [[ -z "$selector" ]]; then
+    echo "OpenCCK: источники не настроены"
+    exit 0
+  fi
+  echo "OpenCCK source не найден: $selector" >&2
+  exit 1
+fi
+
+# Применяем только если хотя бы один источник был обработан. При частичной ошибке
+# действующие кэши не повреждаются, поэтому reload безопасен.
+"$AWG_ROUTE" reload >/dev/null
+echo "OpenCCK: обработано=$matches, ошибок=$fail"
+(( fail == 0 ))

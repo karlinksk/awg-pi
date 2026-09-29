@@ -1,0 +1,74 @@
+name: v1.1.0 CI
+
+on:
+  push:
+    branches:
+      - 'develop/v1.1.0'
+  pull_request:
+    branches:
+      - main
+      - 'develop/v1.1.0'
+
+jobs:
+  shell:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Test dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y nftables
+      - name: Bash syntax
+        run: |
+          bash -n install.sh
+          bash -n src/awg-common
+          bash -n src/awg-route
+          bash -n src/awg-opencck-update
+          bash -n src/awg-core-update
+          bash -n src/awg-update
+          bash -n src/awg-menu
+          bash -n tests/test-common.sh
+          bash -n tests/test-opencck-updater.sh
+          bash -n tests/mock-curl.sh
+          bash -n tests/test-nft-template.sh
+          bash -n tests/test-rc2.sh
+          bash -n tests/test-redaction.sh
+      - name: ShellCheck errors
+        run: |
+          shellcheck -S error install.sh src/awg-common src/awg-route src/awg-opencck-update src/awg-core-update src/awg-update src/awg-menu tests/test-common.sh tests/test-opencck-updater.sh tests/mock-curl.sh tests/test-nft-template.sh
+      - name: Unit tests
+        run: |
+          bash tests/test-common.sh
+          bash tests/test-opencck-updater.sh
+          bash tests/test-nft-template.sh
+          bash tests/test-rc2.sh
+          bash tests/test-redaction.sh
+          python3 tests/test-maintenance.py
+          python3 tests/test-confirm.py
+
+  awg-v31:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: amnezia-vpn/amneziawg-tools
+          ref: ee0f0a9aa34ff0a0da4b3433b9512781cfe02843
+          path: work/tools
+      - uses: actions/checkout@v4
+        with:
+          repository: amnezia-vpn/amneziawg-go
+          ref: b5928efb6ca19f0153958460c3d141f04abc5c2e
+          path: work/core
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: work/core/go.mod
+          cache-dependency-path: work/core/go.sum
+      - name: Build pinned AWG v3.1 tools and core
+        run: |
+          make -C work/tools/src
+          sudo make -C work/tools/src install PREFIX=/usr WITH_WGQUICK=yes WITH_SYSTEMDUNITS=no
+          make -C work/core
+          sudo make -C work/core PREFIX=/usr install
+      - name: Real isolated profile preflight
+        run: sudo python3 tests/test-core-v31.py

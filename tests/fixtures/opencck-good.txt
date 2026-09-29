@@ -1,0 +1,10 @@
+# OpenCCK-like domain list
+youtube.com
+*.googlevideo.com
+YTIMG.COM
+www.youtube.com
+youtube.com
+# Service records must be skipped without rejecting valid hostnames.
+_domainkey.youtube.com
+_acme-challenge.youtube.com
+_sip._tcp.youtube.com
