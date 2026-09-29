@@ -9,12 +9,32 @@ source "$AWG_ENV_FILE"
 : "${LAN_CIDR:?LAN_CIDR is required}"
 : "${VPN_IF:?VPN_IF is required}"
 : "${VPN_MARK:?VPN_MARK is required}"
-: "${ROUTER_MAC:?ROUTER_MAC is required}"
+LOCKDOWN="${AWG_TRANSIT_LOCKDOWN:-0}"
 
-if [[ ! "$ROUTER_MAC" =~ ^([[:xdigit:]]{2}:){5}[[:xdigit:]]{2}$ ]]; then
-  echo "Invalid ROUTER_MAC: $ROUTER_MAC" >&2
-  exit 2
-fi
+forward_rule=""
+mark_rule=""
+nat_rule=""
+
+case "$LOCKDOWN" in
+  0)
+    : "${ROUTER_MAC:?ROUTER_MAC is required}"
+    if [[ ! "$ROUTER_MAC" =~ ^([[:xdigit:]]{2}:){5}[[:xdigit:]]{2}$ ]]; then
+      echo "Invalid ROUTER_MAC: $ROUTER_MAC" >&2
+      exit 2
+    fi
+    forward_rule="    iifname \"$LAN_IF\" ether saddr $ROUTER_MAC ip saddr @transit4 oifname \"$VPN_IF\" accept"
+    mark_rule="    iifname \"$LAN_IF\" ether saddr $ROUTER_MAC ip saddr @transit4 ip daddr != $LAN_CIDR meta mark set $VPN_MARK"
+    nat_rule="    ip saddr @transit4 oifname \"$VPN_IF\" masquerade"
+    ;;
+  1)
+    # Emergency/boot-safe state: no new forwarded flow is accepted or marked.
+    # Input management remains available, but client forwarding is fail-closed.
+    ;;
+  *)
+    echo "Invalid AWG_TRANSIT_LOCKDOWN: $LOCKDOWN" >&2
+    exit 2
+    ;;
+esac
 
 cat <<NFT
 # Transit-mode nftables candidate for AWG Pi Gateway v1.2.
@@ -61,18 +81,17 @@ table inet awg_pbr {
     # Return traffic may leave only from AWG back toward LAN.
     iifname "$VPN_IF" oifname "$LAN_IF" ct state established,related accept
 
-    # Transit ingress must have arrived from the MikroTik Ethernet source MAC.
-    # Requiring oifname=awg0 makes fallback to the LAN/main route fail closed.
-    iifname "$LAN_IF" ether saddr $ROUTER_MAC ip saddr @transit4 oifname "$VPN_IF" accept
+    # Normal Transit accepts only MikroTik-MAC ingress with actual AWG egress.
+    # Lockdown emits no new-flow accept rule.
+$forward_rule
   }
 
   chain prerouting_mark {
     type filter hook prerouting priority mangle; policy accept;
 
-    # MikroTik has already classified this traffic. Pi does no domain/IP-list
-    # classification in Transit mode; it marks trusted forwarded Internet
-    # traffic so the AWG policy table can select awg0.
-    iifname "$LAN_IF" ether saddr $ROUTER_MAC ip saddr @transit4 ip daddr != $LAN_CIDR meta mark set $VPN_MARK
+    # Normal Transit marks trusted MikroTik-forwarded Internet traffic.
+    # Lockdown emits no mark rule, so no new client flow can enter AWG policy.
+$mark_rule
   }
 
   chain dns_redirect {
@@ -81,7 +100,7 @@ table inet awg_pbr {
 
   chain postrouting_nat {
     type nat hook postrouting priority srcnat; policy accept;
-    ip saddr @transit4 oifname "$VPN_IF" masquerade
+$nat_rule
   }
 }
 NFT
