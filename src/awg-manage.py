@@ -117,6 +117,96 @@ def network_status(env):
         print(f'WARNING: сеть не проверена: {exc}')
 
 
+def parse_dns_servers(value, env):
+    servers = []
+    for raw in value.split(','):
+        raw = raw.strip()
+        if not raw:
+            raise ValueError('Список DNS содержит пустое значение')
+        try:
+            address = ipaddress.IPv4Address(raw)
+        except ipaddress.AddressValueError:
+            raise ValueError(f'Некорректный IPv4 DNS: {raw}') from None
+        if address.is_unspecified or address.is_loopback or address.is_multicast:
+            raise ValueError(f'Недопустимый IPv4 DNS: {raw}')
+        if str(address) == env.get('PI_IP'):
+            raise ValueError('IP Raspberry Pi нельзя использовать как собственный upstream DNS')
+        normalized = str(address)
+        if normalized not in servers:
+            servers.append(normalized)
+    if not servers:
+        raise ValueError('Укажите хотя бы один upstream DNS')
+    if len(servers) > 4:
+        raise ValueError('Поддерживается не более 4 upstream DNS')
+    return servers
+
+
+def dns_status(env):
+    print('Upstream DNS: ' + env.get('UPSTREAM_DNS', '(не задан)'))
+    configured = []
+    for line in Path(DNS).read_text().splitlines():
+        if line.startswith('server='):
+            configured.append(line.split('=', 1)[1].strip())
+    print('dnsmasq servers: ' + (','.join(configured) if configured else '(не заданы)'))
+
+
+def dns_reconfigure(args, env):
+    servers = parse_dns_servers(args.servers, env)
+    requested = ','.join(servers)
+    current = ','.join(parse_dns_servers(env.get('UPSTREAM_DNS', ''), env))
+    print('Старые upstream DNS: ' + current)
+    print('Новые upstream DNS: ' + requested)
+    if requested == current:
+        print('DNS не изменились.')
+        return
+
+    reachable = 0
+    for server in servers:
+        result = run('dig', '+time=3', '+tries=1', '+short', 'A',
+                     'example.com', '@' + server, check=False)
+        ok = result.returncode == 0 and any(
+            re.fullmatch(r'\d+(\.\d+){3}', x) for x in result.stdout.splitlines())
+        print(f'Upstream DNS {server}: ' + ('OK' if ok else 'FAIL'))
+        reachable += int(ok)
+    if not reachable:
+        raise RuntimeError('Ни один новый upstream DNS не отвечает напрямую')
+
+    confirm(args, 'Применить новые upstream DNS?')
+    new_env, count = re.subn(r'^UPSTREAM_DNS=.*$', 'UPSTREAM_DNS=' + shlex.quote(requested),
+                             Path(ENV).read_text(), flags=re.M)
+    if count != 1:
+        raise ValueError('Ожидалась одна запись UPSTREAM_DNS в env')
+
+    dns = Path(DNS).read_text()
+    dns, count = re.subn(r'^server=.*(?:\n|$)', '', dns, flags=re.M)
+    if count < 1:
+        raise ValueError('В dnsmasq конфигурации не найдены upstream server=')
+    dns = dns.rstrip('\n') + '\n' + ''.join(f'server={server}\n' for server in servers)
+
+    tx = Transaction('dns', [ENV, DNS])
+    try:
+        atomic(ENV, new_env)
+        atomic(DNS, dns)
+        run('dnsmasq', '--test')
+        run('systemctl', 'restart', 'dnsmasq.service')
+        answer = run('dig', '+time=3', '+tries=1', '+short', 'A',
+                     'example.com', '@' + env['PI_IP']).stdout
+        if not any(re.fullmatch(r'\d+(\.\d+){3}', x) for x in answer.splitlines()):
+            raise RuntimeError('DNS через Raspberry Pi не отвечает после изменения upstream')
+    except BaseException:
+        print('Ошибка DNS; автоматический rollback.', file=sys.stderr)
+        tx.restore()
+        try:
+            run('dnsmasq', '--test')
+            run('systemctl', 'restart', 'dnsmasq.service')
+        except Exception:
+            print('Старые DNS-файлы возвращены, но dnsmasq не восстановился автоматически.',
+                  file=sys.stderr)
+        raise
+
+    print('Upstream DNS обновлены. dnsmasq: OK. DNS через Raspberry Pi: OK.')
+
+
 def confirm(args, prompt):
     if args.yes:
         return
@@ -421,14 +511,23 @@ def main():
     config.add_argument('action', choices=['check', 'replace', 'rollback'])
     config.add_argument('file', nargs='?')
     config.add_argument('--yes', action='store_true')
+    dns = sub.add_parser('dns')
+    dns.add_argument('action', choices=['status', 'set'])
+    dns.add_argument('servers', nargs='?')
+    dns.add_argument('--yes', action='store_true')
     args = parser.parse_args()
     if os.geteuid() != 0:
         parser.error('Требуются права root')
     if args.command == 'config' and ((args.action in ('replace', 'check')) != bool(args.file)):
         parser.error('config check FILE | config replace FILE | config rollback')
+    if args.command == 'dns' and ((args.action == 'set') != bool(args.servers)):
+        parser.error('dns status | dns set IPv4[,IPv4...] [--yes]')
     env = read_env()
     if args.command == 'network' and args.action == 'status':
         network_status(env)
+        return
+    if args.command == 'dns' and args.action == 'status':
+        dns_status(env)
         return
     import fcntl
     with open('/run/awg-maintenance.lock', 'a') as lock:
@@ -439,6 +538,8 @@ def main():
             signal.signal(sig, interrupted)
         if args.command == 'network':
             reconfigure(args, env)
+        elif args.command == 'dns':
+            dns_reconfigure(args, env)
         else:
             replace_config(args, env)
 

@@ -30,8 +30,7 @@ Validated on the existing Raspberry Pi 4 test gateway:
 
 Still required before the stable v1.1.0 release:
 
-- install and hardware-check code snapshot
-  `2606a8560eaca05862400ae64e718cc6ded0a574` for the final cancellation-UX fix;
+- hardware-check the new transactional upstream DNS CLI/TUI path;
 - complete remaining release-gate checklist items that have not yet been
   exercised on the frozen RC2 snapshot, including `--replace` bulk import where
   applicable and final release audit.
@@ -534,7 +533,43 @@ coverage verifies both paths and passed on the merged executable code snapshot:
 2606a8560eaca05862400ae64e718cc6ded0a574
 ```
 
-The remaining hardware check is intentionally small: install this snapshot,
-start a real `config replace` from the TUI, answer `n`, verify the normal
-cancellation message, then confirm the active endpoint/health/policy are
-unchanged. No full LAN migration is required.
+Hardware result on the existing Raspberry Pi: **PASS**. After installing this
+snapshot, a real TUI `config replace` was cancelled with `n`. The UI displayed
+`Операция отменена пользователем.` rather than an error. The operation reported
+that settings were unchanged. No full LAN migration is required.
+
+
+## 23. Upstream DNS transaction
+
+The post-cancellation follow-up adds:
+
+```text
+awg-route dns status
+awg-route dns set IPv4[,IPv4...] [--yes]
+System -> DNS upstream
+```
+
+The change is transactional across `/etc/awg-pbr/env` and
+`/etc/dnsmasq.d/99-awg-pbr.conf`. It accepts one to four unique IPv4 upstream
+servers, rejects invalid/self/loopback/multicast values, checks direct DNS
+reachability before confirmation, validates `dnsmasq`, restarts it, and
+requires a successful DNS query through the Pi. An apply failure restores both
+files and attempts to restart the previous dnsmasq configuration.
+
+CI must cover successful replacement, invalid input, explicit cancellation,
+rollback after an injected apply failure, and status reporting.
+
+Real Raspberry Pi hardware test:
+
+1. Confirm the current state reports `1.1.1.1,9.9.9.9`.
+2. In the TUI open `System -> DNS upstream`, enter a temporary valid pair
+   different from the current pair and accept.
+3. Confirm the operation reports direct upstream checks, creates a `dns-*`
+   backup, reports dnsmasq/query success, and `dns status` plus the managed
+   file show the new values.
+4. Confirm ordinary client DNS and LG/OpenCCK routing still work.
+5. Change back to `1.1.1.1,9.9.9.9` through the TUI and verify status again.
+6. Exercise one `n` cancellation and confirm no DNS files change.
+
+This is a focused DNS maintenance test; it does not reopen the deferred
+different-subnet LAN migration gate.

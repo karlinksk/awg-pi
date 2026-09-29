@@ -68,6 +68,7 @@ v1.1.0 includes:
 - separate AWG Pi Gateway and AmneziaWG core updates
 - transactional LAN reconfiguration with backup/rollback
 - transactional native AmneziaWG profile check/replace/rollback
+- transactional upstream DNS change from CLI/TUI with validation and rollback
 - AWG v3.1 native-profile compatibility and secret redaction
 - CI regression tests for the hardware-discovered RC1/RC2 issues
 - post-RC2 real Linux `/dev/tty` confirmation fix
@@ -86,6 +87,8 @@ sudo awg-route source list
 sudo awg-route source update
 
 sudo awg-route diagnostics
+sudo awg-route dns status
+sudo awg-route dns set 1.1.1.1,9.9.9.9
 sudo awg-route network reconfigure
 sudo awg-route config check /etc/amnezia/amneziawg/awg0.conf
 sudo awg-route config replace /path/to/new.conf
@@ -145,7 +148,15 @@ tunnel or restarting services. Status, diagnostics reports and installer AWG
 failure output redact private, preshared and header-protection keys before
 printing or saving them. Reports from older builds are not rewritten.
 
-Backups are under `/var/backups/awg-gateway/{network,config}-*`, directories
+`dns status` displays the saved upstream list and the active `dnsmasq`
+`server=` entries. `dns set IPv4[,IPv4...]` validates one to four IPv4
+servers, checks that at least one answers directly, asks for confirmation,
+updates both `UPSTREAM_DNS` and the managed `dnsmasq` config, validates
+`dnsmasq`, restarts it and requires a successful query through the Pi. Failure
+restores both files and attempts to restart the previous DNS configuration. The
+same operation is available in `System -> DNS upstream` in the TUI.
+
+Backups are under `/var/backups/awg-gateway/{network,config,dns}-*`, directories
 mode 700/files 600. Operations handle command failures and catchable signals;
 power loss/SIGKILL require recovery from the backup. They preserve VPN/DIRECT
 lists, OpenCCK sources, requested VPN on/off state and DNS upstream settings.
