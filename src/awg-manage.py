@@ -29,6 +29,11 @@ FAILOPEN = '/usr/local/sbin/awg-pbr-failopen'
 SETUP = '/usr/local/sbin/awg-pbr-setup'
 ROUTE = '/usr/local/sbin/awg-route'
 CONF_DIR = '/etc/amnezia/amneziawg'
+CANCEL_EXIT = 20
+
+
+class UserCancelled(ValueError):
+    """User declined an interactive maintenance operation."""
 
 
 def run(*args, check=True):
@@ -126,7 +131,7 @@ def confirm(args, prompt):
     except OSError:
         raise ValueError('Нужен терминал для подтверждения; для автоматизации используйте --yes') from None
     if answer not in ('y', 'yes', 'д', 'да'):
-        raise ValueError('Операция отменена; настройки не изменены')
+        raise UserCancelled('Операция отменена; настройки не изменены')
 
 
 class Transaction:
@@ -447,4 +452,4 @@ if __name__ == '__main__':
             print(str(error), file=sys.stderr)
         else:
             print(f'Операция не выполнена ({type(error).__name__}); проверьте доступность файлов и команд.', file=sys.stderr)
-        sys.exit(1)
+        sys.exit(CANCEL_EXIT if isinstance(error, UserCancelled) else 1)

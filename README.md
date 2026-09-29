@@ -43,11 +43,13 @@ curl -fsSL "https://raw.githubusercontent.com/karlinksk/awg-pi/$TEST_SHA/install
 sudo env AWG_PI_REF="$TEST_SHA" AWG_PI_UPGRADE_AUTO=1 bash /tmp/awg-hw-test-install.sh
 ```
 
-The existing Raspberry Pi has already confirmed the post-RC2 interactive
-confirmation cancellation path on this exact code SHA. The affirmative LAN
-migration and second-server profile replacement/rollback tests are still
-pending. Later documentation-only commits on `develop/v1.1.0` do not redefine
-the hardware-test code snapshot.
+The existing Raspberry Pi has confirmed the post-RC2 interactive confirmation
+path, an in-subnet Pi address migration, and the full second-server profile
+transaction (replace, real traffic, manual rollback and automatic rollback).
+A full migration to a different LAN subnet/router address is intentionally
+deferred and is not part of the remaining v1.1.0 release gate. Later
+documentation-only commits do not redefine the hardware-tested executable
+snapshots.
 
 v1.1.0 includes:
 
@@ -62,6 +64,7 @@ v1.1.0 includes:
 - AWG v3.1 native-profile compatibility and secret redaction
 - CI regression tests for the hardware-discovered RC1/RC2 issues
 - post-RC2 real Linux `/dev/tty` confirmation fix
+- distinct TUI status for a user-cancelled maintenance operation
 
 ## Main v1.1.0 commands
 
