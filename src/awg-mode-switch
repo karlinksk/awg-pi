@@ -1,0 +1,127 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+[[ ${EUID:-$(id -u)} -eq 0 ]] || exec sudo "$0" "$@"
+
+AWG_COMMON_FILE="${AWG_COMMON_FILE:-/usr/local/lib/awg-pi/common.sh}"
+AWG_ROUTE_BIN="${AWG_ROUTE_BIN:-/usr/local/sbin/awg-route}"
+AWG_TRANSIT_APPLY="${AWG_TRANSIT_APPLY:-/usr/local/sbin/awg-transit-apply}"
+AWG_TRANSIT_ROUTING="${AWG_TRANSIT_ROUTING:-/usr/local/sbin/awg-transit-routing}"
+SYSTEMCTL_BIN="${SYSTEMCTL_BIN:-systemctl}"
+HEALTH_SERVICE="${AWG_HEALTH_SERVICE:-awg-pbr-health.service}"
+
+# shellcheck disable=SC1090
+source "$AWG_COMMON_FILE"
+
+fail(){
+  printf 'FAIL: %s\n' "$*" >&2
+  exit 1
+}
+
+health_stop(){
+  "$SYSTEMCTL_BIN" stop "$HEALTH_SERVICE"
+}
+
+health_start(){
+  "$SYSTEMCTL_BIN" restart "$HEALTH_SERVICE"
+}
+
+selective_reload(){
+  AWG_MAINTENANCE=1 "$AWG_ROUTE_BIN" reload
+}
+
+verify_transit(){
+  local status
+  status="$("$AWG_TRANSIT_ROUTING" status)"
+  grep -Fqx 'Transit guard: SAFE' <<<"$status" &&
+    grep -Fqx 'Transit policy rule: ACTIVE' <<<"$status" &&
+    grep -Fqx 'Transit VPN table: READY' <<<"$status"
+}
+
+restore_mode(){
+  local mode="$1"
+  awg_mode_set "$mode"
+  case "$mode" in
+    selective)
+      selective_reload
+      ;;
+    transit)
+      "$AWG_TRANSIT_APPLY" apply
+      "$AWG_TRANSIT_ROUTING" apply
+      health_start
+      ;;
+  esac
+}
+
+switch_transit(){
+  local previous
+  previous="$(awg_mode_get)"
+
+  if [[ "$previous" == transit ]]; then
+    verify_transit || fail "Transit mode is selected but datapath verification failed"
+    printf 'Operating mode already active: MikroTik Transit / Backup VPN\n'
+    return 0
+  fi
+
+  health_stop
+
+  rollback(){
+    local rc=$?
+    trap - ERR
+    printf 'Transit activation failed; restoring %s.\n' "$previous" >&2
+    restore_mode "$previous" || printf 'ROLLBACK=FAILED\n' >&2
+    printf 'ROLLBACK=OK\n' >&2
+    exit "$rc"
+  }
+  trap rollback ERR
+
+  "$AWG_TRANSIT_APPLY" apply
+  "$AWG_TRANSIT_ROUTING" apply
+  verify_transit
+  awg_mode_set transit
+  health_start
+  verify_transit
+
+  trap - ERR
+  printf 'Operating mode activated: MikroTik Transit / Backup VPN\n'
+  printf 'Mode ID: transit\n'
+}
+
+switch_selective(){
+  local previous
+  previous="$(awg_mode_get)"
+
+  if [[ "$previous" == selective ]]; then
+    printf 'Operating mode already active: Selective Gateway\n'
+    return 0
+  fi
+
+  health_stop
+
+  rollback(){
+    local rc=$?
+    trap - ERR
+    printf 'Selective activation failed; restoring %s.\n' "$previous" >&2
+    restore_mode "$previous" || printf 'ROLLBACK=FAILED\n' >&2
+    printf 'ROLLBACK=OK\n' >&2
+    exit "$rc"
+  }
+  trap rollback ERR
+
+  awg_mode_set selective
+  selective_reload
+
+  [[ "$(awg_mode_get)" == selective ]]
+  trap - ERR
+  printf 'Operating mode activated: Selective Gateway\n'
+  printf 'Mode ID: selective\n'
+}
+
+case "${1:-}" in
+  transit) switch_transit ;;
+  selective) switch_selective ;;
+  *)
+    echo "Usage: awg-mode-switch selective|transit" >&2
+    exit 2
+    ;;
+esac
