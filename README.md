@@ -143,3 +143,17 @@ Maintenance is exclusive; concurrent CLI/OpenCCK changes are refused.
 
 For the existing Pi upgrade procedure and hardware validation, see
 [TESTING-v1.1.0.md](docs/TESTING-v1.1.0.md#13-rc2-existing-pi-upgrade-first).
+
+
+## Future v1.2.0
+
+After the v1.1.0 release gate is complete, the planned next feature is an
+independent **MikroTik Transit / Backup VPN** operating mode. MikroTik will keep
+traffic classification and SSTP failover responsibility; the Pi will act as an
+AmneziaWG transit gateway when MikroTik selects it as the backup next hop.
+
+The existing Selective Gateway mode will remain available, mode selection will
+be persistent and transactional, and upgrading from v1.1.0 will stay in
+Selective Gateway until the user explicitly changes modes.
+
+Design note: [ROADMAP-v1.2.0-TRANSIT.md](docs/ROADMAP-v1.2.0-TRANSIT.md)
