@@ -1,19 +1,40 @@
 # AWG Pi Gateway
 
-Raspberry Pi 4 gateway for selective AmneziaWG policy routing.
+Raspberry Pi 4 AmneziaWG gateway with **Selective Gateway** and
+**MikroTik Transit / Backup VPN** operating modes.
 
-The normal Internet route stays **DIRECT** through the home router. Only selected
-domains or address lists are marked for AmneziaWG. If the VPN health check fails,
-the policy rule is removed and traffic falls back to the normal Internet route
-(**FAIL-OPEN**).
+In Selective mode, the normal Internet route stays **DIRECT** through the home
+router and only selected domains/address lists are marked for AmneziaWG. If VPN
+health fails, Selective removes the policy rule and falls back to the normal
+Internet route (**FAIL-OPEN**).
+
+In Transit mode, MikroTik selects traffic for the Pi and the Pi forwards that
+traffic through AmneziaWG. Transit keeps the Pi management path and AWG endpoint
+DIRECT, while selected transit traffic is **FAIL-CLOSED** if AWG becomes
+unavailable.
 
 ## Stable release
 
-Current stable release: **v1.1.0**
+Current stable release: **v1.2.0**
+
+## Install / upgrade
+
+Use the stable tag for both a fresh install and an upgrade from an existing
+AWG Pi Gateway installation:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/karlinksk/awg-pi/v1.1.0/install.sh -o /tmp/install.sh && sudo bash /tmp/install.sh
+curl -fsSL https://raw.githubusercontent.com/karlinksk/awg-pi/v1.2.0/install.sh -o /tmp/install.sh && sudo bash /tmp/install.sh
 ```
+
+A fresh v1.2.0 install stages Selective safely while AWG is validated, then
+defaults to **MikroTik Transit / Backup VPN** after a successful Transit
+preflight.
+
+When v1.1.0 is already installed, the same installer detects the existing
+gateway, preserves the AWG profile, VPN/DIRECT lists, clients, requested VPN
+state and OpenCCK state, and offers the v1.2.0 operating-mode choice. If Transit
+preflight or activation fails, the installer keeps/restores Selective instead of
+leaving a partial Transit state.
 
 ## v1.1.0 release validation
 
@@ -50,7 +71,7 @@ v1.1.0 includes:
 - post-RC2 real Linux `/dev/tty` confirmation fix
 - distinct TUI status for a user-cancelled maintenance operation
 
-## Main v1.1.0 commands
+## Main commands
 
 ```bash
 sudo awg-route status
@@ -76,7 +97,7 @@ sudo awg-update gateway
 sudo awg-update core
 ```
 
-Interactive SSH logins open the TUI automatically after v1.1.0 installation.
+Interactive SSH logins open the TUI automatically after installation.
 Create `~/.no-awg-menu` to disable automatic TUI launch for that account while
 keeping normal SSH access.
 
@@ -142,13 +163,12 @@ For the existing Pi upgrade procedure and hardware validation, see
 [TESTING-v1.1.0.md](docs/TESTING-v1.1.0.md#13-rc2-existing-pi-upgrade-first).
 
 
-## v1.2.0 development
+## v1.2.0
 
-v1.2.0 is being developed on `develop/v1.2.0` with an independent
-**MikroTik Transit / Backup VPN** mode in addition to the v1.1.0 Selective
-Gateway.
+v1.2.0 adds an independent **MikroTik Transit / Backup VPN** mode alongside
+the existing Selective Gateway.
 
-The current implementation branch adds:
+v1.2.0 includes:
 
 - persistent `selective` / `transit` operating mode;
 - transactional mode switching with rollback;
@@ -184,14 +204,14 @@ sudo awg-route mode selective
 sudo awg-route mode transit
 ```
 
-A fresh v1.2 install defaults to **Transit**. During installation the Pi stages
+A fresh v1.2.0 install defaults to **Transit**. During installation the Pi stages
 the safe Selective ruleset while AWG is validated, then transactionally switches
 to Transit after preflight succeeds. A v1.1.0 -> v1.2.0 upgrade also offers
 Transit as the default post-upgrade mode. If Transit preflight/activation fails,
 the runtime is restored to Selective instead of leaving a partial Transit state.
 
-v1.2.0 is **not yet the stable release**. Hardware validation must pass before
-the stable tag is moved from v1.1.0.
+v1.2.0 is the current stable release. The final frozen release candidate was
+`rc/v1.2.0-rc10`; hardware and CI evidence is recorded in the testing guide.
 
 Design: [ROADMAP-v1.2.0-TRANSIT.md](docs/ROADMAP-v1.2.0-TRANSIT.md)
 
