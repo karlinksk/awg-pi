@@ -21,19 +21,20 @@ feature/v1.2-transit-datapath
 Current hardware release candidate:
 
 ```text
-rc/v1.2.0-rc4
+rc/v1.2.0-rc5
 ```
 
-RC4 is a documentation/checklist refresh over the hardware-tested RC3 Pi code.
-The Pi implementation is unchanged from RC3; RC4 records the validated MikroTik
-health-check/failover procedure and the 2026-09-30 hardware results.
+RC5 keeps the hardware-tested Transit datapath from RC3/RC4 and adds the final
+TUI usability work: native AmneziaWG profiles can be pasted directly into the
+menu through a root-only temporary file in `/run`, every menu item has contextual
+help, and higher-risk routing/network/power actions have expanded warnings.
 
 For hardware testing, use the frozen RC ref explicitly so the installer does
 not expect an unreleased v1.2.0 tag:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/karlinksk/awg-pi/rc/v1.2.0-rc4/install.sh -o /tmp/install-v1.2-rc4.sh
-sudo AWG_PI_REF=rc/v1.2.0-rc4 bash /tmp/install-v1.2-rc4.sh
+curl -fsSL https://raw.githubusercontent.com/karlinksk/awg-pi/rc/v1.2.0-rc5/install.sh -o /tmp/install-v1.2-rc5.sh
+sudo AWG_PI_REF=rc/v1.2.0-rc5 bash /tmp/install-v1.2-rc5.sh
 ```
 
 ## 2. Baseline status
@@ -190,7 +191,30 @@ A RouterOS reboot-persistence test for the optional MikroTik Netwatch automation
 is recommended after an external RouterOS backup/export has been saved. It may
 be deferred when the only administrative path depends on the same remote router.
 
-## 10. v1.1.0 -> v1.2.0 upgrade
+## 10. TUI usability and profile paste
+
+Run `sudo awg-menu` on a real SSH terminal and verify:
+
+- every main-menu and submenu choice shows a contextual explanation for the
+  currently highlighted item;
+- Selective/Transit, VPN OFF, LAN reconfigure, reboot and poweroff descriptions
+  explain the operational consequence before the action is taken;
+- `VPN-mаршрутизация -> Конфигурация AmneziaWG -> Вставить конфигурацию текстом`
+  opens a multiline editor suitable for terminal clipboard paste;
+- cancelling the editor leaves the live profile unchanged;
+- an empty or invalid pasted profile is rejected before any live service change;
+- CRLF text pasted from Windows is accepted after line-ending normalization;
+- a valid profile passes `config check` before the final install confirmation;
+- the temporary pasted file is mode 0600 under `/run/awg-pbr` and is removed
+  after completion/cancellation;
+- successful replacement still uses the existing transactional
+  handshake/transport validation and previous-profile rollback path.
+
+CI includes `tests/test-menu.py` to enforce the secure paste path and require
+`--item-help` on every dialog menu. Hardware validation is still required for
+the actual terminal rendering and clipboard interaction.
+
+## 11. v1.1.0 -> v1.2.0 upgrade
 
 On a validated v1.1.0 machine, preserve copies of:
 
@@ -205,7 +229,7 @@ to Transit. The installer must preserve all Selective state.
 If Transit preflight cannot succeed, v1.2 must remain/restored in Selective
 rather than leave a partial Transit datapath.
 
-## 11. Hardware run: 2026-09-30
+## 12. Hardware run: 2026-09-30
 
 Hardware used:
 
@@ -255,6 +279,7 @@ Results:
 
 Still pending or intentionally deferred:
 
+- PENDING — RC5 TUI rendering/profile-paste smoke test on the real SSH terminal.
 - PENDING — clean v1.2.0 fresh install on clean media with default Transit;
   requires physical access to the test microSD/Raspberry Pi.
 - PENDING — full Selective regression with non-empty manual/OpenCCK/client lists
@@ -262,7 +287,7 @@ Still pending or intentionally deferred:
 - DEFERRED — RouterOS reboot persistence of the Netwatch automation while the
   test operator is remote and depends on the router for connectivity.
 
-## 12. Release gate
+## 13. Release gate
 
 Before tagging v1.2.0:
 
@@ -276,6 +301,7 @@ Before tagging v1.2.0:
 - [x] Selective -> Transit -> Selective/Transit round-trip PASS.
 - [x] Raspberry Pi reboot in Selective and Transit PASS.
 - [x] diagnostics/status redact private, preshared and header-protection keys.
+- [ ] RC5 TUI contextual-help and pasted-profile workflow PASS on real SSH.
 - [ ] clean fresh install defaults to Transit on clean media.
 - [ ] non-empty Selective state preservation/regression on real hardware.
 - [ ] CI green at the exact final release SHA after all release documentation is
