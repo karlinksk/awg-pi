@@ -198,6 +198,9 @@ be deferred when the only administrative path depends on the same remote router.
 
 Run `sudo awg-menu` on a real SSH terminal and verify:
 
+- the active operating mode is always obvious: the dialog backtitle and main
+  menu show `SELECTIVE` or `TRANSIT`, the System screen repeats the badge,
+  and the Operating mode screen marks the current choice with `[ТЕКУЩИЙ]`;
 - every main-menu and submenu choice shows a contextual explanation for the
   currently highlighted item;
 - Selective/Transit, VPN OFF, LAN reconfigure, reboot and poweroff descriptions
@@ -213,8 +216,12 @@ Run `sudo awg-menu` on a real SSH terminal and verify:
 - successful replacement still uses the existing transactional
   handshake/transport validation and previous-profile rollback path.
 
-CI includes `tests/test-menu.py` to enforce the secure paste path and require
-`--item-help` on every dialog menu. Hardware validation on a real SSH terminal: PASS for menu rendering, contextual help, multiline paste entry, rejection of an invalid test profile before any live change, and cleanup of the temporary paste file.
+CI includes `tests/test-menu.py` to enforce the secure paste path, require
+`--item-help` on every dialog menu, and require the visible operating-mode
+indicator. Hardware validation on a real SSH terminal is already PASS for the
+RC5 menu rendering/context-help/profile-paste workflow. The new persistent
+SELECTIVE/TRANSIT indicator added after RC6 still needs one visual SSH-terminal
+smoke test before it is frozen into the next RC.
 
 ## 11. v1.1.0 -> v1.2.0 upgrade
 
@@ -281,6 +288,8 @@ Results:
 
 Still pending or intentionally deferred:
 
+- PENDING — visual hardware smoke test for the post-RC6 persistent TUI
+  SELECTIVE/TRANSIT indicator before freezing the next RC.
 - PASS — RC5 TUI rendering/profile-paste negative-path smoke test on the real SSH terminal.
 - FOUND/FIXED IN RC6 — RC5 clean install reached healthy Transit
   SAFE/ACTIVE/READY, then final `awg-route reload` hit a concurrent
