@@ -21,20 +21,23 @@ feature/v1.2-transit-datapath
 Current hardware release candidate:
 
 ```text
-rc/v1.2.0-rc5
+rc/v1.2.0-rc6
 ```
 
-RC5 keeps the hardware-tested Transit datapath from RC3/RC4 and adds the final
-TUI usability work: native AmneziaWG profiles can be pasted directly into the
-menu through a root-only temporary file in `/run`, every menu item has contextual
-help, and higher-risk routing/network/power actions have expanded warnings.
+RC6 keeps the RC5 TUI/profile-paste work and fixes a clean-install race found
+during final diagnostics. With Transit already active, the health monitor could
+request a base-ruleset rebuild at the same time as an explicit `awg-route reload`.
+Two concurrent `awg-pbr-setup` processes could then race while replacing
+`/etc/nftables.d/99-awg-pbr.nft`, causing GNU `install` to fail with
+`File exists`. RC6 serializes the complete setup transaction with a dedicated
+runtime lock and adds a concurrent-setup regression test.
 
 For hardware testing, use the frozen RC ref explicitly so the installer does
 not expect an unreleased v1.2.0 tag:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/karlinksk/awg-pi/rc/v1.2.0-rc5/install.sh -o /tmp/install-v1.2-rc5.sh
-sudo AWG_PI_REF=rc/v1.2.0-rc5 bash /tmp/install-v1.2-rc5.sh
+curl -fsSL https://raw.githubusercontent.com/karlinksk/awg-pi/rc/v1.2.0-rc6/install.sh -o /tmp/install-v1.2-rc6.sh
+sudo AWG_PI_REF=rc/v1.2.0-rc6 bash /tmp/install-v1.2-rc6.sh
 ```
 
 ## 2. Baseline status
@@ -279,8 +282,14 @@ Results:
 Still pending or intentionally deferred:
 
 - PASS — RC5 TUI rendering/profile-paste negative-path smoke test on the real SSH terminal.
-- PENDING — clean v1.2.0 fresh install on clean media with default Transit;
-  requires physical access to the test microSD/Raspberry Pi.
+- FOUND/FIXED IN RC6 — RC5 clean install reached healthy Transit
+  SAFE/ACTIVE/READY, then final `awg-route reload` hit a concurrent
+  `awg-pbr-setup` file-replacement race (`install: ... File exists`).
+  Direct overwrite of the same target with GNU install 9.7 succeeds when run
+  alone, confirming the filesystem/target itself is normal. RC6 serializes
+  setup and has a concurrent regression test.
+- PENDING — repeat the clean v1.2.0 fresh install on clean media with RC6 and
+  confirm the final reload/diagnostics complete in default Transit.
 - PENDING — full Selective regression with non-empty manual/OpenCCK/client lists
   preserved across the v1.1 -> v1.2 upgrade; the hardware run used empty lists.
 - DEFERRED — RouterOS reboot persistence of the Netwatch automation while the
@@ -301,7 +310,8 @@ Before tagging v1.2.0:
 - [x] Raspberry Pi reboot in Selective and Transit PASS.
 - [x] diagnostics/status redact private, preshared and header-protection keys.
 - [x] RC5 TUI contextual-help and invalid pasted-profile rejection PASS on real SSH.
-- [ ] clean fresh install defaults to Transit on clean media.
+- [ ] RC6 clean fresh install completes final reload/diagnostics and defaults
+  to Transit on clean media.
 - [ ] non-empty Selective state preservation/regression on real hardware.
 - [ ] CI green at the exact final release SHA after all release documentation is
   frozen.
