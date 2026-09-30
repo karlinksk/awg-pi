@@ -21,23 +21,28 @@ feature/v1.2-transit-datapath
 Current hardware release candidate:
 
 ```text
-rc/v1.2.0-rc6
+rc/v1.2.0-rc7
 ```
 
-RC6 keeps the RC5 TUI/profile-paste work and fixes a clean-install race found
-during final diagnostics. With Transit already active, the health monitor could
-request a base-ruleset rebuild at the same time as an explicit `awg-route reload`.
-Two concurrent `awg-pbr-setup` processes could then race while replacing
+RC7 keeps the RC6 clean-install race fix and adds persistent operating-mode
+identification in the SSH TUI. The dialog backtitle, main-menu title, System
+screen and Operating mode screen now make SELECTIVE/TRANSIT visible at a glance;
+the currently active mode is explicitly marked in the mode selector.
+
+RC6 fixed the clean-install race found during final diagnostics. With Transit
+already active, the health monitor could request a base-ruleset rebuild at the
+same time as an explicit `awg-route reload`. Two concurrent
+`awg-pbr-setup` processes could then race while replacing
 `/etc/nftables.d/99-awg-pbr.nft`, causing GNU `install` to fail with
-`File exists`. RC6 serializes the complete setup transaction with a dedicated
-runtime lock and adds a concurrent-setup regression test.
+`File exists`. The setup transaction is serialized with a dedicated runtime
+lock and covered by a concurrent-setup regression test.
 
 For hardware testing, use the frozen RC ref explicitly so the installer does
 not expect an unreleased v1.2.0 tag:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/karlinksk/awg-pi/rc/v1.2.0-rc6/install.sh -o /tmp/install-v1.2-rc6.sh
-sudo AWG_PI_REF=rc/v1.2.0-rc6 bash /tmp/install-v1.2-rc6.sh
+curl -fsSL https://raw.githubusercontent.com/karlinksk/awg-pi/rc/v1.2.0-rc7/install.sh -o /tmp/install-v1.2-rc7.sh
+sudo AWG_PI_REF=rc/v1.2.0-rc7 bash /tmp/install-v1.2-rc7.sh
 ```
 
 ## 2. Baseline status
@@ -218,10 +223,10 @@ Run `sudo awg-menu` on a real SSH terminal and verify:
 
 CI includes `tests/test-menu.py` to enforce the secure paste path, require
 `--item-help` on every dialog menu, and require the visible operating-mode
-indicator. Hardware validation on a real SSH terminal is already PASS for the
-RC5 menu rendering/context-help/profile-paste workflow. The new persistent
-SELECTIVE/TRANSIT indicator added after RC6 still needs one visual SSH-terminal
-smoke test before it is frozen into the next RC.
+indicator. Hardware validation on a real SSH terminal is PASS for the RC5 menu
+rendering/context-help/profile-paste workflow and for the post-RC6 persistent
+SELECTIVE/TRANSIT indicator. The mode badge was visually accepted on the real
+terminal before freezing RC7.
 
 ## 11. v1.1.0 -> v1.2.0 upgrade
 
@@ -288,8 +293,8 @@ Results:
 
 Still pending or intentionally deferred:
 
-- PENDING — visual hardware smoke test for the post-RC6 persistent TUI
-  SELECTIVE/TRANSIT indicator before freezing the next RC.
+- PASS — visual hardware smoke test for the persistent TUI
+  SELECTIVE/TRANSIT indicator; accepted on the real SSH terminal before RC7.
 - PASS — RC5 TUI rendering/profile-paste negative-path smoke test on the real SSH terminal.
 - FOUND/FIXED IN RC6 — RC5 clean install reached healthy Transit
   SAFE/ACTIVE/READY, then final `awg-route reload` hit a concurrent
@@ -324,6 +329,7 @@ Before tagging v1.2.0:
 - [x] RC5 TUI contextual-help and invalid pasted-profile rejection PASS on real SSH.
 - [x] RC6 clean fresh install completes final reload/diagnostics and defaults
   to Transit on clean media.
+- [x] RC7 persistent TUI operating-mode indicator accepted on real SSH.
 - [ ] non-empty Selective state preservation/regression on real hardware.
 - [ ] CI green at the exact final release SHA after all release documentation is
   frozen.
