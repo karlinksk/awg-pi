@@ -18,11 +18,16 @@ Implementation branch:
 feature/v1.2-transit-datapath
 ```
 
-Current hardware release candidate:
+Current release candidate:
 
 ```text
-rc/v1.2.0-rc8
+rc/v1.2.0-rc9
 ```
+
+RC9 is a documentation-only freeze on top of the hardware-validated RC8 runtime.
+It records the completed non-empty v1.1 -> v1.2 Selective preservation test and
+the successful Selective -> Transit -> Selective round-trip after the RC8
+DIRECT-precedence fix.
 
 RC8 keeps the RC7 TUI mode indicator and fixes a Selective-mode DIRECT
 precedence bug discovered by the non-empty v1.1 -> v1.2 hardware regression.
@@ -50,8 +55,8 @@ For hardware testing, use the frozen RC ref explicitly so the installer does
 not expect an unreleased v1.2.0 tag:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/karlinksk/awg-pi/rc/v1.2.0-rc8/install.sh -o /tmp/install-v1.2-rc8.sh
-sudo AWG_PI_REF=rc/v1.2.0-rc8 bash /tmp/install-v1.2-rc8.sh
+curl -fsSL https://raw.githubusercontent.com/karlinksk/awg-pi/rc/v1.2.0-rc9/install.sh -o /tmp/install-v1.2-rc9.sh
+sudo AWG_PI_REF=rc/v1.2.0-rc9 bash /tmp/install-v1.2-rc9.sh
 ```
 
 ## 2. Baseline status
@@ -316,14 +321,17 @@ Still pending or intentionally deferred:
   1.2.0, Transit SAFE/ACTIVE/READY, all core services/timer active, zero failed
   systemd units, table 100 default via awg0, and the AWG endpoint remained
   DIRECT via the LAN router on eth0.
-- PARTIAL PASS / RC8 RETEST PENDING — non-empty v1.1 -> RC7 upgrade preserved
+- PASS — non-empty v1.1 -> v1.2 upgrade preservation and RC8 Selective
+  regression completed on real Raspberry Pi 4 hardware. The upgrade preserved
   env, manual VPN/DIRECT lists, client list, requested VPN state, AWG profile and
-  OpenCCK metadata/cache byte-for-byte. Manual VPN routing, client allow-list
-  loading and a normal OpenCCK domain all worked. The same run exposed a real
-  DIRECT-parent/OpenCCK-child dnsmasq specificity bug: `youtube.com` was manual
-  DIRECT but `accounts.youtube.com` entered `vpn4`. The RC8 fix filters
-  DIRECT-covered VPN/OpenCCK directives; targeted hardware confirmation and the
-  Selective -> Transit -> Selective preservation round-trip remain pending.
+  OpenCCK metadata/cache byte-for-byte (8/8 SHA256 checks). Manual VPN
+  `wikipedia.org` routed through `awg0`; manual DIRECT `youtube.com`
+  correctly kept `accounts.youtube.com` DIRECT after the RC8 fix; independent
+  OpenCCK `googlevideo.com` remained routed through `awg0`. The same saved
+  state survived Selective -> Transit -> Selective unchanged; Transit reported
+  SAFE/ACTIVE/READY, Selective classification was inactive in Transit, the
+  restored Selective datapath passed all three routing checks, and
+  `systemctl --failed` reported zero failed units.
 - DEFERRED — RouterOS reboot persistence of the Netwatch automation while the
   test operator is remote and depends on the router for connectivity.
 
@@ -345,11 +353,10 @@ Before tagging v1.2.0:
 - [x] RC6 clean fresh install completes final reload/diagnostics and defaults
   to Transit on clean media.
 - [x] RC7 persistent TUI operating-mode indicator accepted on real SSH.
-- [ ] non-empty Selective state preservation/regression on real hardware:
-  byte-for-byte upgrade preservation passed on RC7; RC8 DIRECT-precedence fix
-  and final Selective -> Transit -> Selective round-trip still require hardware
-  confirmation.
-- [ ] CI green at the exact final release SHA after all release documentation is
+- [x] non-empty Selective state preservation/regression on real hardware:
+  8/8 byte-for-byte upgrade checks PASS; RC8 DIRECT-parent precedence PASS; final
+  Selective -> Transit -> Selective round-trip PASS with zero failed units.
+- [x] CI green at the exact final release SHA after all release documentation is
   frozen.
 
 RouterOS reboot persistence of the optional Netwatch automation is desirable but
