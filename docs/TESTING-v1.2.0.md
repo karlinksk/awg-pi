@@ -21,15 +21,19 @@ feature/v1.2-transit-datapath
 Current hardware release candidate:
 
 ```text
-rc/v1.2.0-rc3
+rc/v1.2.0-rc4
 ```
+
+RC4 is a documentation/checklist refresh over the hardware-tested RC3 Pi code.
+The Pi implementation is unchanged from RC3; RC4 records the validated MikroTik
+health-check/failover procedure and the 2026-09-30 hardware results.
 
 For hardware testing, use the frozen RC ref explicitly so the installer does
 not expect an unreleased v1.2.0 tag:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/karlinksk/awg-pi/rc/v1.2.0-rc3/install.sh -o /tmp/install-v1.2-rc3.sh
-sudo AWG_PI_REF=rc/v1.2.0-rc3 bash /tmp/install-v1.2-rc3.sh
+curl -fsSL https://raw.githubusercontent.com/karlinksk/awg-pi/rc/v1.2.0-rc4/install.sh -o /tmp/install-v1.2-rc4.sh
+sudo AWG_PI_REF=rc/v1.2.0-rc4 bash /tmp/install-v1.2-rc4.sh
 ```
 
 ## 2. Baseline status
@@ -126,12 +130,24 @@ Verify:
 - non-selected clients remain on their normal routing policy;
 - Pi SSH remains reachable.
 
-Capture counters on MikroTik and:
+For production-style health testing, do not rely only on SSTP
+`running=yes`. The documented two-probe Netwatch design must also pass:
+
+- one probe DOWN: no failover;
+- both probes DOWN: disable only the SSTP policy default route and activate Pi;
+- SSTP interface can remain RUNNING while its policy route is withdrawn;
+- both probes UP: restore the SSTP policy default and return Pi to standby;
+- probe blackholes prevent health checks from escaping through Pi or normal WAN.
+
+Capture relevant MikroTik route/Netwatch state and:
 
 ```bash
 sudo nft list table inet awg_pbr
-sudo awg show awg0
+sudo awg-route status
 ```
+
+Avoid publishing raw tunnel secrets. `awg-route status` must redact private,
+preshared and header-protection keys.
 
 ## 7. Transit FAIL-CLOSED
 
@@ -160,12 +176,19 @@ sudo awg-route status
 Verify all pre-existing VPN/DIRECT/OpenCCK/client state is still present and
 classification works again without recreation.
 
+Return to Transit and verify the preflight succeeds again, Transit reports
+SAFE/ACTIVE/READY, and the AWG endpoint remains DIRECT in both modes.
+
 ## 9. Reboot persistence
 
-Test one reboot in each mode.
+Test one Raspberry Pi reboot in each mode.
 
 After each reboot verify mode, services, nftables table, policy state, DIRECT
 AWG endpoint path and connectivity.
+
+A RouterOS reboot-persistence test for the optional MikroTik Netwatch automation
+is recommended after an external RouterOS backup/export has been saved. It may
+be deferred when the only administrative path depends on the same remote router.
 
 ## 10. v1.1.0 -> v1.2.0 upgrade
 
@@ -182,16 +205,83 @@ to Transit. The installer must preserve all Selective state.
 If Transit preflight cannot succeed, v1.2 must remain/restored in Selective
 rather than leave a partial Transit datapath.
 
-## 11. Release gate
+## 11. Hardware run: 2026-09-30
+
+Hardware used:
+
+```text
+Raspberry Pi 4 Model B Rev 1.2
+Debian GNU/Linux 13 (trixie), arm64
+MikroTik hAP ax2
+RouterOS 7.24.2
+LAN 192.168.112.0/24
+Pi 192.168.112.34
+Router 192.168.112.1
+```
+
+The Pi code under test was RC3 SHA
+`35b1e723bc497f3faef4839318d7db25e4d49e2e`. RC4 keeps the same Pi code and
+adds the validated RouterOS procedure/checklist.
+
+Results:
+
+- PASS — v1.1.0 -> v1.2.0 remote upgrade with explicit Selective staging.
+- PASS — RC3 post-upgrade diagnostics; no `diag_mode` unbound-variable
+  regression.
+- PASS — Selective reboot persistence.
+- PASS — Selective FAIL-OPEN when the policy rule is removed by diagnostics.
+- PASS — Transit preflight, including DIRECT AWG endpoint route.
+- PASS — Selective -> Transit transactional switch.
+- PASS — Transit guard SAFE, MikroTik source-MAC restriction, no Transit DNS
+  redirect, marked route via `awg0`, normal Pi route DIRECT.
+- PASS — actual MikroTik -> Pi -> AWG -> Internet datapath.
+- PASS — actual selected-client traffic through Pi/AWG with SSTP policy route
+  unavailable.
+- PASS — Transit AWG failure produces health down, policy FAIL-CLOSED, no policy
+  rule/table, and 100% loss for selected test traffic rather than WAN leakage.
+- PASS — AWG recovery restores ACTIVE/READY Transit state.
+- PASS — MikroTik two-probe health logic: one DOWN does not fail over; both DOWN
+  withdraw the SSTP policy default while the SSTP interface remains RUNNING;
+  both UP restore the primary route.
+- PASS — automatic MikroTik failover/failback route selection between SSTP and
+  Pi/AWG by distance.
+- PASS — Transit Raspberry Pi reboot persistence; zero failed systemd units
+  after reboot.
+- PASS — AWG endpoint remains DIRECT via the LAN router after Transit reboot.
+- PASS — Transit -> Selective -> Transit round-trip; endpoint remains DIRECT in
+  both modes and Transit returns SAFE/ACTIVE/READY.
+- PASS — saved RouterOS binary backup and text export before and after the
+  failover changes.
+
+Still pending or intentionally deferred:
+
+- PENDING — clean v1.2.0 fresh install on clean media with default Transit;
+  requires physical access to the test microSD/Raspberry Pi.
+- PENDING — full Selective regression with non-empty manual/OpenCCK/client lists
+  preserved across the v1.1 -> v1.2 upgrade; the hardware run used empty lists.
+- DEFERRED — RouterOS reboot persistence of the Netwatch automation while the
+  test operator is remote and depends on the router for connectivity.
+
+## 12. Release gate
 
 Before tagging v1.2.0:
 
-- CI green at the exact release SHA;
-- Selective regression PASS;
-- Transit manual datapath PASS;
-- SSTP healthy/failure/recovery PASS;
-- AWG failure while on backup proves FAIL-CLOSED;
-- Selective -> Transit -> Selective PASS;
-- reboot in both modes PASS;
-- v1.1.0 -> v1.2.0 upgrade PASS;
-- diagnostics contain no private/preshared/header-protection keys.
+- [x] CI green at the RC3 Pi-code SHA used for hardware validation.
+- [x] v1.1.0 -> v1.2.0 upgrade path PASS.
+- [x] Selective reboot + FAIL-OPEN regression PASS.
+- [x] Transit manual datapath PASS.
+- [x] SSTP selected-client failover/failback PASS.
+- [x] SSTP two-probe health logic PASS with the interface remaining RUNNING.
+- [x] AWG failure while on backup proves FAIL-CLOSED.
+- [x] Selective -> Transit -> Selective/Transit round-trip PASS.
+- [x] Raspberry Pi reboot in Selective and Transit PASS.
+- [x] diagnostics/status redact private, preshared and header-protection keys.
+- [ ] clean fresh install defaults to Transit on clean media.
+- [ ] non-empty Selective state preservation/regression on real hardware.
+- [ ] CI green at the exact final release SHA after all release documentation is
+  frozen.
+
+RouterOS reboot persistence of the optional Netwatch automation is desirable but
+is not a Pi release blocker when the configuration has been saved and backed up;
+perform it before production rollout when a safe local recovery path is
+available.
