@@ -21,8 +21,17 @@ feature/v1.2-transit-datapath
 Current hardware release candidate:
 
 ```text
-rc/v1.2.0-rc7
+rc/v1.2.0-rc8
 ```
+
+RC8 keeps the RC7 TUI mode indicator and fixes a Selective-mode DIRECT
+precedence bug discovered by the non-empty v1.1 -> v1.2 hardware regression.
+A manual DIRECT parent such as `youtube.com` must also keep its subdomains
+DIRECT. dnsmasq chooses the most-specific matching domain directive, so a more
+specific OpenCCK/VPN child such as `accounts.youtube.com` could previously
+populate `vpn4` instead of the parent DIRECT nftset. RC8 omits every
+VPN/OpenCCK domain directive already covered by a manual DIRECT rule and adds a
+regression test for both parent-DIRECT and child-DIRECT cases.
 
 RC7 keeps the RC6 clean-install race fix and adds persistent operating-mode
 identification in the SSH TUI. The dialog backtitle, main-menu title, System
@@ -41,8 +50,8 @@ For hardware testing, use the frozen RC ref explicitly so the installer does
 not expect an unreleased v1.2.0 tag:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/karlinksk/awg-pi/rc/v1.2.0-rc7/install.sh -o /tmp/install-v1.2-rc7.sh
-sudo AWG_PI_REF=rc/v1.2.0-rc7 bash /tmp/install-v1.2-rc7.sh
+curl -fsSL https://raw.githubusercontent.com/karlinksk/awg-pi/rc/v1.2.0-rc8/install.sh -o /tmp/install-v1.2-rc8.sh
+sudo AWG_PI_REF=rc/v1.2.0-rc8 bash /tmp/install-v1.2-rc8.sh
 ```
 
 ## 2. Baseline status
@@ -307,8 +316,14 @@ Still pending or intentionally deferred:
   1.2.0, Transit SAFE/ACTIVE/READY, all core services/timer active, zero failed
   systemd units, table 100 default via awg0, and the AWG endpoint remained
   DIRECT via the LAN router on eth0.
-- PENDING — full Selective regression with non-empty manual/OpenCCK/client lists
-  preserved across the v1.1 -> v1.2 upgrade; the hardware run used empty lists.
+- PARTIAL PASS / RC8 RETEST PENDING — non-empty v1.1 -> RC7 upgrade preserved
+  env, manual VPN/DIRECT lists, client list, requested VPN state, AWG profile and
+  OpenCCK metadata/cache byte-for-byte. Manual VPN routing, client allow-list
+  loading and a normal OpenCCK domain all worked. The same run exposed a real
+  DIRECT-parent/OpenCCK-child dnsmasq specificity bug: `youtube.com` was manual
+  DIRECT but `accounts.youtube.com` entered `vpn4`. The RC8 fix filters
+  DIRECT-covered VPN/OpenCCK directives; targeted hardware confirmation and the
+  Selective -> Transit -> Selective preservation round-trip remain pending.
 - DEFERRED — RouterOS reboot persistence of the Netwatch automation while the
   test operator is remote and depends on the router for connectivity.
 
@@ -330,7 +345,10 @@ Before tagging v1.2.0:
 - [x] RC6 clean fresh install completes final reload/diagnostics and defaults
   to Transit on clean media.
 - [x] RC7 persistent TUI operating-mode indicator accepted on real SSH.
-- [ ] non-empty Selective state preservation/regression on real hardware.
+- [ ] non-empty Selective state preservation/regression on real hardware:
+  byte-for-byte upgrade preservation passed on RC7; RC8 DIRECT-precedence fix
+  and final Selective -> Transit -> Selective round-trip still require hardware
+  confirmation.
 - [ ] CI green at the exact final release SHA after all release documentation is
   frozen.
 
