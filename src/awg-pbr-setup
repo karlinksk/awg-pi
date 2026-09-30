@@ -9,6 +9,15 @@ TRANSIT_NFT="${AWG_TRANSIT_NFT:-/usr/local/sbin/awg-transit-nft}"
 NFT_BIN="${NFT_BIN:-nft}"
 IP_BIN="${IP_BIN:-ip}"
 PING_BIN="${PING_BIN:-ping}"
+SETUP_LOCK_FILE="${AWG_SETUP_LOCK_FILE:-/run/awg-pbr/setup.lock}"
+
+# awg-pbr-health may request a base-ruleset rebuild while an explicit reload is
+# already running. GNU install is not safe when two processes replace the same
+# destination concurrently, so serialize the complete setup transaction.
+mkdir -p "$(dirname "$SETUP_LOCK_FILE")"
+exec 8>"$SETUP_LOCK_FILE"
+chmod 600 "$SETUP_LOCK_FILE"
+flock -x 8
 
 # shellcheck disable=SC1090
 source "$AWG_ENV_FILE"
