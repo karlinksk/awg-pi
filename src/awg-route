@@ -560,17 +560,21 @@ run_diagnostics(){
   manual="$(cat "$VE" 2>/dev/null || echo 1)"
   systemctl is-active --quiet "$HEALTH_SERVICE" && prev_health_active=yes || true
 
+  # Resolve mode before the tee pipeline. The brace group below executes in a
+  # pipeline subshell, so assigning diag_mode inside it would be lost before
+  # the FAIL-OPEN / FAIL-CLOSED verification that follows under set -u.
+  if diag_mode="$(awg_mode_get 2>/dev/null)"; then
+    diag_mode_label="$(awg_mode_label "$diag_mode" 2>/dev/null || echo unknown)"
+  else
+    diag_mode=invalid
+    diag_mode_label="INVALID / corrupt state"
+  fi
+
   {
     echo "=== AWG Gateway diagnostics ==="
     echo "Date: $(date -Is)"
     echo "Host: $(hostname)"
     echo "Version: $(cat /etc/awg-pbr/version 2>/dev/null || echo unknown)"
-    if diag_mode="$(awg_mode_get 2>/dev/null)"; then
-      diag_mode_label="$(awg_mode_label "$diag_mode" 2>/dev/null || echo unknown)"
-    else
-      diag_mode=invalid
-      diag_mode_label="INVALID / corrupt state"
-    fi
     echo "Operating mode: $diag_mode_label"
     echo "Mode ID: $diag_mode"
     echo "Model: $(tr -d '\0' </proc/device-tree/model 2>/dev/null || echo unknown)"
