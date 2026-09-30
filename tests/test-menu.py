@@ -25,4 +25,31 @@ assert check_pos < replace_pos, "pasted profile must be validated before replace
 assert 'PASTE_TMP=""' in menu
 assert 'trap cleanup EXIT' in menu
 
-print("menu config paste checks: OK")
+
+# Every interactive menu must provide context help for the highlighted item.
+assert menu.count("--menu") == menu.count("--item-help --menu"), (
+    "every dialog menu must use --item-help"
+)
+
+for label in (
+    '"Состояние системы"',
+    '"VPN-маршрутизация"',
+    '"Домены VPN"',
+    '"DIRECT-исключения"',
+    '"OpenCCK"',
+    '"Клиенты"',
+    '"Диагностика"',
+    '"Обновления"',
+    '"Журналы"',
+    '"Системные функции"',
+    '"Выйти в обычный Shell"',
+    '"Завершить SSH-сессию"',
+    '"Selective Gateway"',
+    '"MikroTik Transit / Backup VPN"',
+):
+    assert label in menu, f"missing documented menu item: {label}"
+
+assert "Весь маршрутизируемый трафик будет идти DIRECT" in menu
+assert "SSH и Transit backup" in menu
+
+print("menu config paste/help checks: OK")
