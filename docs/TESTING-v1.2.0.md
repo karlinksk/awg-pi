@@ -211,8 +211,7 @@ Run `sudo awg-menu` on a real SSH terminal and verify:
   handshake/transport validation and previous-profile rollback path.
 
 CI includes `tests/test-menu.py` to enforce the secure paste path and require
-`--item-help` on every dialog menu. Hardware validation is still required for
-the actual terminal rendering and clipboard interaction.
+`--item-help` on every dialog menu. Hardware validation on a real SSH terminal: PASS for menu rendering, contextual help, multiline paste entry, rejection of an invalid test profile before any live change, and cleanup of the temporary paste file.
 
 ## 11. v1.1.0 -> v1.2.0 upgrade
 
@@ -279,7 +278,7 @@ Results:
 
 Still pending or intentionally deferred:
 
-- PENDING — RC5 TUI rendering/profile-paste smoke test on the real SSH terminal.
+- PASS — RC5 TUI rendering/profile-paste negative-path smoke test on the real SSH terminal.
 - PENDING — clean v1.2.0 fresh install on clean media with default Transit;
   requires physical access to the test microSD/Raspberry Pi.
 - PENDING — full Selective regression with non-empty manual/OpenCCK/client lists
@@ -301,7 +300,7 @@ Before tagging v1.2.0:
 - [x] Selective -> Transit -> Selective/Transit round-trip PASS.
 - [x] Raspberry Pi reboot in Selective and Transit PASS.
 - [x] diagnostics/status redact private, preshared and header-protection keys.
-- [ ] RC5 TUI contextual-help and pasted-profile workflow PASS on real SSH.
+- [x] RC5 TUI contextual-help and invalid pasted-profile rejection PASS on real SSH.
 - [ ] clean fresh install defaults to Transit on clean media.
 - [ ] non-empty Selective state preservation/regression on real hardware.
 - [ ] CI green at the exact final release SHA after all release documentation is
