@@ -54,7 +54,19 @@ case "$*" in
     cp "${3}" "${MOCK_LAST_CHECK}"
     ;;
   "-f "*)
+    if [[ -n "${MOCK_CRITICAL_DIR:-}" ]]; then
+      if ! mkdir "$MOCK_CRITICAL_DIR" 2>/dev/null; then
+        echo overlap >>"$MOCK_OVERLAP_LOG"
+        exit 91
+      fi
+      trap 'rmdir "$MOCK_CRITICAL_DIR" 2>/dev/null || true' EXIT
+      sleep 0.2
+    fi
     cp "${2}" "${MOCK_LAST_APPLY}"
+    if [[ -n "${MOCK_CRITICAL_DIR:-}" ]]; then
+      rmdir "$MOCK_CRITICAL_DIR"
+      trap - EXIT
+    fi
     ;;
   "add element inet awg_pbr clients4 "*)
     ;;
@@ -111,9 +123,11 @@ run_setup(){
   sudo env \
     AWG_ENV_FILE="$tmp/env" AWG_COMMON_FILE="$tmp/common" AWG_MODE_FILE="$tmp/mode" \
     AWG_CLIENTS_FILE="$tmp/clients" AWG_NFT_FILE="$tmp/active.nft" AWG_TRANSIT_NFT="$tmp/transit-nft" \
+    AWG_SETUP_LOCK_FILE="$tmp/setup.lock" \
     NFT_BIN="$tmp/bin/nft" IP_BIN="$tmp/bin/ip" PING_BIN="$tmp/bin/ping" \
     MOCK_IP_LOG="$tmp/ip.log" MOCK_NFT_LOG="$tmp/nft.log" MOCK_ROUTER_UP="${MOCK_ROUTER_UP:-1}" \
     MOCK_LAST_CHECK="$tmp/last-check.nft" MOCK_LAST_APPLY="$tmp/last-apply.nft" \
+    MOCK_CRITICAL_DIR="${MOCK_CRITICAL_DIR:-}" MOCK_OVERLAP_LOG="$tmp/overlap.log" \
     bash "$repo_root/src/awg-pbr-setup"
 }
 
@@ -152,5 +166,21 @@ if sudo grep -Fq 'ether saddr' "$tmp/active.nft"; then
   echo 'FAIL: router failure did not leave lockdown rules active' >&2
   exit 1
 fi
+
+echo "=== concurrent setup serialization ==="
+echo transit >"$tmp/mode"
+: >"$tmp/overlap.log"
+MOCK_CRITICAL_DIR="$tmp/nft-critical" run_setup >"$tmp/concurrent-1.out" 2>"$tmp/concurrent-1.err" &
+p1=$!
+MOCK_CRITICAL_DIR="$tmp/nft-critical" run_setup >"$tmp/concurrent-2.out" 2>"$tmp/concurrent-2.err" &
+p2=$!
+wait "$p1"
+wait "$p2"
+if [[ -s "$tmp/overlap.log" ]]; then
+  echo 'FAIL: concurrent awg-pbr-setup executions overlapped nft apply' >&2
+  exit 1
+fi
+grep -Fqx 'AWG_SETUP_MODE=transit' "$tmp/concurrent-1.out"
+grep -Fqx 'AWG_SETUP_MODE=transit' "$tmp/concurrent-2.out"
 
 echo "mode-aware boot setup: OK"
