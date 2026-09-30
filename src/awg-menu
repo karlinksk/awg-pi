@@ -123,7 +123,15 @@ logs_screen(){
 domain_menu(){
   local kind="$1" label="$2" choice d path
   while true; do
-    choice="$(dialog --backtitle "$BACKTITLE" --title "$label" --menu "Выберите действие" 20 88 10       1 "Показать списки"       2 "Добавить домен"       3 "Удалить домен"       4 "Импортировать файл (добавить)"       5 "Импортировать файл (полностью заменить)"       6 "Экспортировать файл"       0 "Назад" 3>&1 1>&2 2>&3)" || return 0
+    choice="$(dialog --backtitle "$BACKTITLE" --title "$label" --item-help --menu \
+      "Выберите действие. Подсказка для выделенного пункта показана внизу." 23 96 10 \
+      1 "Показать списки" "Показывает ручные VPN/DIRECT-списки и связанные источники; ничего не меняет." \
+      2 "Добавить домен" "Добавляет домен в этот список. Запись example.com применяется и к его поддоменам." \
+      3 "Удалить домен" "Удаляет домен только из выбранного ручного списка и пересобирает правила." \
+      4 "Импортировать файл (добавить)" "Добавляет валидные домены из файла к существующим, не удаляя текущие записи." \
+      5 "Импортировать файл (полностью заменить)" "Полностью заменяет выбранный ручной список содержимым файла после проверки." \
+      6 "Экспортировать файл" "Сохраняет текущий ручной список в указанный файл с правами только для root." \
+      0 "Назад" "Возвращает в главное меню без изменений." 3>&1 1>&2 2>&3)" || return 0
     case "$choice" in
       1)
         title="$label"
@@ -163,7 +171,17 @@ domain_menu(){
 opencck_menu(){
   local choice name type kind action
   while true; do
-    choice="$(dialog --backtitle "$BACKTITLE" --title "OpenCCK" --menu "Управление источниками" 23 92 13       1 "Показать источники"       2 "Добавить источник"       3 "Показать содержимое источника"       4 "Обновить все источники"       5 "Обновить один источник"       6 "Включить источник"       7 "Отключить источник"       8 "Удалить источник"       0 "Назад" 3>&1 1>&2 2>&3)" || return 0
+    choice="$(dialog --backtitle "$BACKTITLE" --title "OpenCCK" --item-help --menu \
+      "Управление внешними списками OpenCCK. Подсказка для выделенного пункта показана внизу." 26 100 13 \
+      1 "Показать источники" "Показывает имя, тип, состояние, число записей и время последнего успешного обновления." \
+      2 "Добавить источник" "Добавляет группу или сайт OpenCCK, загружает данные и включает источник только после успешной первой загрузки." \
+      3 "Показать содержимое источника" "Показывает закэшированные домены/IP/CIDR выбранного источника; правила не меняются." \
+      4 "Обновить все источники" "Загружает свежие данные для всех настроенных источников OpenCCK." \
+      5 "Обновить один источник" "Обновляет только выбранный источник, не затрагивая остальные." \
+      6 "Включить источник" "Включает источник в Selective-классификацию; при необходимости сначала обновляет его кэш." \
+      7 "Отключить источник" "Исключает источник из активной Selective-классификации, сохраняя его настройки и кэш." \
+      8 "Удалить источник" "Удаляет настройки и локальный кэш выбранного источника OpenCCK." \
+      0 "Назад" "Возвращает в главное меню без изменений." 3>&1 1>&2 2>&3)" || return 0
     case "$choice" in
       1)
         title="OpenCCK sources"
@@ -171,8 +189,13 @@ opencck_menu(){
         ;;
       2)
         name="$(input "OpenCCK" "Имя группы или сайта (например youtube или youtube.com):")" || continue
-        type="$(dialog --backtitle "$BACKTITLE" --title "Тип данных" --menu "Выберите тип" 14 74 4           domains "Домены (рекомендуется)"           ip4 "IPv4-адреса"           cidr4 "IPv4-подсети CIDR" 3>&1 1>&2 2>&3)" || continue
-        kind="$(dialog --backtitle "$BACKTITLE" --title "Тип источника" --menu "Как трактовать имя?" 13 74 3           group "Группа OpenCCK"           site "Конкретный сайт/портал" 3>&1 1>&2 2>&3)" || continue
+        type="$(dialog --backtitle "$BACKTITLE" --title "Тип данных" --item-help --menu "Выберите тип данных OpenCCK" 17 88 4 \
+          domains "Домены (рекомендуется)" "Маршрутизация по доменным именам через dnsmasq/nftset; обычно лучший выбор для сайтов и сервисов." \
+          ip4 "IPv4-адреса" "Загружает отдельные IPv4-адреса непосредственно в nftables." \
+          cidr4 "IPv4-подсети CIDR" "Загружает IPv4-подсети CIDR непосредственно в nftables." 3>&1 1>&2 2>&3)" || continue
+        kind="$(dialog --backtitle "$BACKTITLE" --title "Тип источника" --item-help --menu "Как трактовать введённое имя?" 16 88 3 \
+          group "Группа OpenCCK" "Ищет именованную группу OpenCCK, например youtube, и использует её набор данных." \
+          site "Конкретный сайт/портал" "Ищет данные OpenCCK для конкретного сайта или домена, например youtube.com." 3>&1 1>&2 2>&3)" || continue
         title="Добавление OpenCCK"
         capture "$AWG_ROUTE" source add opencck "$name" --type "$type" --kind "$kind" || true
         ;;
@@ -209,7 +232,12 @@ opencck_menu(){
 client_menu(){
   local choice ip
   while true; do
-    choice="$(dialog --backtitle "$BACKTITLE" --title "Клиенты" --menu "PBR allow-list" 17 78 7       1 "Показать клиентов"       2 "Добавить IPv4"       3 "Удалить IPv4"       0 "Назад" 3>&1 1>&2 2>&3)" || return 0
+    choice="$(dialog --backtitle "$BACKTITLE" --title "Клиенты" --item-help --menu \
+      "Selective PBR allow-list. Пустой список означает: участвуют все устройства, использующие Pi как gateway." 20 96 7 \
+      1 "Показать клиентов" "Показывает текущий allow-list IPv4-адресов; ничего не меняет." \
+      2 "Добавить IPv4" "Ограничивает Selective PBR указанными клиентами. Добавьте статический/закреплённый IPv4 устройства." \
+      3 "Удалить IPv4" "Удаляет адрес из allow-list. Если список станет пустым, PBR снова применяется ко всем Pi-gateway клиентам." \
+      0 "Назад" "Возвращает в главное меню без изменений." 3>&1 1>&2 2>&3)" || return 0
     case "$choice" in
       1)
         title="Клиенты"
@@ -278,13 +306,13 @@ paste_awg_config(){
 awg_config_menu(){
   local choice path
   while true; do
-    choice="$(dialog --backtitle "$BACKTITLE" --title "Конфигурация AmneziaWG" --menu \
+    choice="$(dialog --backtitle "$BACKTITLE" --title "Конфигурация AmneziaWG" --item-help --menu \
       "Выберите способ установки native .conf. Перед заменой профиль проходит безопасную проверку." \
-      18 92 8 \
-      1 "Вставить конфигурацию текстом" \
-      2 "Загрузить конфигурацию из файла" \
-      3 "Откатить предыдущую конфигурацию" \
-      0 "Назад" 3>&1 1>&2 2>&3)" || return 0
+      21 100 8 \
+      1 "Вставить конфигурацию текстом" "Открывает защищённое многострочное поле: вставьте native AmneziaWG .conf из буфера обмена. Сначала выполняется check." \
+      2 "Загрузить конфигурацию из файла" "Использует уже существующий native .conf на Raspberry Pi и запускает транзакционную замену с rollback." \
+      3 "Откатить предыдущую конфигурацию" "Меняет текущий и предыдущий профили местами и проверяет handshake/transport; используется для быстрого возврата." \
+      0 "Назад" "Возвращает в меню VPN без изменений." 3>&1 1>&2 2>&3)" || return 0
     case "$choice" in
       1) paste_awg_config ;;
       2)
@@ -302,13 +330,13 @@ vpn_menu(){
   while true; do
     mode="$(cat /etc/awg-pbr/mode 2>/dev/null || echo selective)"
     if [[ "$mode" == transit ]]; then
-      choice="$(dialog --backtitle "$BACKTITLE" --title "AWG / Transit" --menu \
-        "Transit mode: vpn on/off не применяется. Health monitor автоматически включает AWG при health=up и FAIL-CLOSED при health=down." \
-        18 92 7 \
-        1 "Показать состояние режима" \
-        2 "Перезапустить awg0 и health monitor" \
-        3 "Конфигурация AmneziaWG" \
-        0 "Назад" 3>&1 1>&2 2>&3)" || return 0
+      choice="$(dialog --backtitle "$BACKTITLE" --title "AWG / Transit" --item-help --menu \
+        "Transit: MikroTik выбирает трафик. Health monitor автоматически управляет AWG и применяет FAIL-CLOSED при отказе." \
+        21 100 7 \
+        1 "Показать состояние режима" "Показывает текущий Operating mode, Transit guard, policy rule и готовность VPN table." \
+        2 "Перезапустить awg0 и health monitor" "Перезапускает сам туннель AmneziaWG и его контроль здоровья. Возможен краткий обрыв backup VPN-трафика." \
+        3 "Конфигурация AmneziaWG" "Установка нового native .conf текстом/из файла или rollback предыдущего профиля." \
+        0 "Назад" "Возвращает в главное меню без изменений." 3>&1 1>&2 2>&3)" || return 0
       case "$choice" in
         1)
           title="Transit"
@@ -325,14 +353,20 @@ vpn_menu(){
       continue
     fi
 
-    choice="$(dialog --backtitle "$BACKTITLE" --title "VPN policy" --menu "Управление Selective Gateway" 16 80 7       1 "Включить VPN policy"       2 "Выключить VPN policy (всё DIRECT)"       3 "Перезапустить awg0 и health monitor"       4 "Конфигурация AmneziaWG"       0 "Назад" 3>&1 1>&2 2>&3)" || return 0
+    choice="$(dialog --backtitle "$BACKTITLE" --title "VPN policy" --item-help --menu \
+      "Управление Selective Gateway. Подсказка для выделенного пункта показана внизу." 21 100 7 \
+      1 "Включить VPN policy" "Разрешает выборочную VPN-маршрутизацию. Policy станет ACTIVE только после успешного health-check AWG." \
+      2 "Выключить VPN policy (всё DIRECT)" "Отключает Selective policy: весь маршрутизируемый трафик идёт DIRECT. Сам awg0 не удаляется." \
+      3 "Перезапустить awg0 и health monitor" "Перезапускает туннель AmneziaWG и проверку здоровья; VPN-трафик может кратковременно перейти в FAIL-OPEN/DIRECT." \
+      4 "Конфигурация AmneziaWG" "Установка нового native .conf текстом/из файла или rollback предыдущего профиля." \
+      0 "Назад" "Возвращает в главное меню без изменений." 3>&1 1>&2 2>&3)" || return 0
     case "$choice" in
       1)
         title="VPN ON"
         capture "$AWG_ROUTE" vpn on || true
         ;;
       2)
-        confirm "VPN OFF" "Перевести весь маршрутизируемый трафик в DIRECT?" || continue
+        confirm "VPN OFF" "Отключить Selective VPN policy?\n\nВесь маршрутизируемый трафик будет идти DIRECT. Сам туннель awg0 и сохранённые списки не удаляются." || continue
         title="VPN OFF"
         capture "$AWG_ROUTE" vpn off || true
         ;;
@@ -353,7 +387,11 @@ dns_menu(){
     # shellcheck disable=SC1091
     source /etc/awg-pbr/env
     current="${UPSTREAM_DNS:-}"
-    choice="$(dialog --backtitle "$BACKTITLE" --title "DNS upstream" --menu "Текущие: $current" 16 82 6       1 "Показать текущую конфигурацию"       2 "Изменить upstream DNS"       0 "Назад" 3>&1 1>&2 2>&3)" || return 0
+    choice="$(dialog --backtitle "$BACKTITLE" --title "DNS upstream" --item-help --menu \
+      "Текущие upstream DNS: $current" 19 96 6 \
+      1 "Показать текущую конфигурацию" "Показывает сохранённые upstream DNS и фактические server= записи dnsmasq; ничего не меняет." \
+      2 "Изменить upstream DNS" "Задаёт до четырёх IPv4 DNS через запятую, проверяет конфигурацию dnsmasq и применяет её транзакционно." \
+      0 "Назад" "Возвращает в системное меню без изменений." 3>&1 1>&2 2>&3)" || return 0
     case "$choice" in
       1)
         title="DNS upstream"
@@ -371,7 +409,13 @@ dns_menu(){
 update_menu(){
   local choice
   while true; do
-    choice="$(dialog --backtitle "$BACKTITLE" --title "Обновления" --menu "Выберите компонент" 18 84 8       1 "Показать версии"       2 "Обновить AWG Pi Gateway"       3 "Обновить AmneziaWG core"       4 "Проверить/обновить всё"       0 "Назад" 3>&1 1>&2 2>&3)" || return 0
+    choice="$(dialog --backtitle "$BACKTITLE" --title "Обновления" --item-help --menu \
+      "Обновления проверяются по стабильным версиям проекта." 21 100 8 \
+      1 "Показать версии" "Показывает установленную и доступную версию AWG Pi Gateway и наличие updater для AmneziaWG core." \
+      2 "Обновить AWG Pi Gateway" "Проверяет и устанавливает новый стабильный релиз gateway; меню после успешного обновления перезапускается." \
+      3 "Обновить AmneziaWG core" "Проверяет и устанавливает поддерживаемую стабильную версию AmneziaWG tools/core." \
+      4 "Проверить/обновить всё" "Последовательно проверяет Gateway и AmneziaWG core и устанавливает доступные стабильные обновления." \
+      0 "Назад" "Возвращает в главное меню без изменений." 3>&1 1>&2 2>&3)" || return 0
     case "$choice" in
       1)
         title="Версии"
@@ -407,12 +451,12 @@ operating_mode_menu(){
   while true; do
     current="$("$AWG_ROUTE" mode status 2>/dev/null | awk -F': ' '/^Operating mode:/{print $2; exit}')"
     [[ -n "$current" ]] || current="unknown"
-    choice="$(dialog --backtitle "$BACKTITLE" --title "Operating mode" --menu \
-      "Текущий режим: $current\n\nSelective: Pi классифицирует трафик.\nTransit: MikroTik выбирает трафик, Pi отправляет его в AWG." \
-      18 92 6 \
-      1 "Selective Gateway" \
-      2 "MikroTik Transit / Backup VPN" \
-      0 "Назад" 3>&1 1>&2 2>&3)" || return 0
+    choice="$(dialog --backtitle "$BACKTITLE" --title "Operating mode" --item-help --menu \
+      "Текущий режим: $current\n\nВыберите архитектуру маршрутизации. Сохранённые Selective-списки не удаляются при Transit." \
+      21 100 6 \
+      1 "Selective Gateway" "Raspberry Pi сама классифицирует VPN/DIRECT/OpenCCK/client трафик и применяет FAIL-OPEN при отказе AWG." \
+      2 "MikroTik Transit / Backup VPN" "MikroTik выбирает трафик; Pi принимает его только от доверенного роутера и отправляет через AWG с FAIL-CLOSED." \
+      0 "Назад" "Возвращает в системное меню без изменения режима." 3>&1 1>&2 2>&3)" || return 0
     case "$choice" in
       1)
         confirm "Selective Gateway" "Переключить Pi в Selective Gateway? Списки OpenCCK/VPN/DIRECT и clients будут снова активны." || continue
@@ -432,17 +476,25 @@ operating_mode_menu(){
 system_menu(){
   local choice
   while true; do
-    choice="$(dialog --backtitle "$BACKTITLE" --title "Система" --menu "Системные функции" 21 86 10       1 "Перезагрузить конфигурацию AWG Gateway"       2 "Перезагрузить Raspberry Pi"       3 "Выключить Raspberry Pi"       4 "Перенастроить LAN gateway"       5 "DNS upstream"       6 "Operating mode"       0 "Назад" 3>&1 1>&2 2>&3)" || return 0
+    choice="$(dialog --backtitle "$BACKTITLE" --title "Система" --item-help --menu \
+      "Системные функции AWG Pi Gateway. Опасные действия требуют отдельного подтверждения." 24 100 10 \
+      1 "Перезагрузить конфигурацию AWG Gateway" "Повторно применяет текущие правила nftables/DNS/маршрутизации и перезапускает health monitor без reboot Pi." \
+      2 "Перезагрузить Raspberry Pi" "Полностью перезагружает ОС Raspberry Pi. SSH и backup VPN будут временно недоступны." \
+      3 "Выключить Raspberry Pi" "Корректно завершает работу ОС и выключает Pi. Для включения потребуется подача/перезапуск питания." \
+      4 "Перенастроить LAN gateway" "Повторно определяет LAN interface, адрес Pi, подсеть и основной роутер; операция транзакционная и может повлиять на SSH." \
+      5 "DNS upstream" "Просмотр и изменение DNS-серверов, которыми пользуется локальный dnsmasq Pi." \
+      6 "Operating mode" "Переключение между Selective Gateway и MikroTik Transit / Backup VPN с безопасными проверками." \
+      0 "Назад" "Возвращает в главное меню без изменений." 3>&1 1>&2 2>&3)" || return 0
     case "$choice" in
       1)
         title="Reload"
         capture "$AWG_ROUTE" reload || true
         ;;
       2)
-        confirm "Reboot" "Перезагрузить Raspberry Pi?" && systemctl reboot
+        confirm "Reboot" "Перезагрузить Raspberry Pi?\n\nSSH и Transit backup через эту Pi будут временно недоступны до завершения загрузки." && systemctl reboot
         ;;
       3)
-        confirm "Poweroff" "Выключить Raspberry Pi?" && systemctl poweroff
+        confirm "Poweroff" "Выключить Raspberry Pi?\n\nSSH и Transit backup перестанут работать. Для последующего запуска потребуется питание/перезапуск питания." && systemctl poweroff
         ;;
       4) run_interactive "Перенастройка сети" "$AWG_ROUTE" network reconfigure ;;
       5) dns_menu ;;
@@ -454,9 +506,22 @@ system_menu(){
 
 while true; do
   summary="$(quick_summary)"
-  choice="$(dialog --clear --backtitle "$BACKTITLE" --title "Главное меню" --menu     "$summary
+  choice="$(dialog --clear --backtitle "$BACKTITLE" --title "Главное меню" --item-help --menu \
+    "$summary
 
-Стрелки — выбор, Enter — открыть." 29 96 15     1 "Состояние системы"     2 "VPN-маршрутизация"     3 "Домены VPN"     4 "DIRECT-исключения"     5 "OpenCCK"     6 "Клиенты"     7 "Диагностика"     8 "Обновления"     9 "Журналы"     10 "Системные функции"     11 "Выйти в обычный Shell"     0 "Завершить SSH-сессию" 3>&1 1>&2 2>&3)" || exit 20
+Стрелки — выбор, Enter — открыть. Внизу показано пояснение выделенного пункта." 32 106 15 \
+    1 "Состояние системы" "Сводка режима, health, сервисов, списков и безопасно отредактированного состояния AmneziaWG; ничего не меняет." \
+    2 "VPN-маршрутизация" "Управление VPN policy/Transit, перезапуском awg0 и профилем AmneziaWG." \
+    3 "Домены VPN" "Ручной список доменов, которые в Selective должны направляться через AmneziaWG." \
+    4 "DIRECT-исключения" "Ручной список доменов, которые в Selective всегда должны идти напрямую, даже при пересечении с VPN-правилами." \
+    5 "OpenCCK" "Подключение и обслуживание внешних списков доменов/IP/CIDR для Selective-классификации." \
+    6 "Клиенты" "Allow-list устройств для Selective PBR. Пустой список означает всех клиентов, использующих Pi как gateway." \
+    7 "Диагностика" "Запускает расширенную проверку сети, сервисов, AWG и fail-open/fail-closed логики; формирует локальный отчёт." \
+    8 "Обновления" "Проверка и установка стабильных обновлений AWG Pi Gateway и AmneziaWG core." \
+    9 "Журналы" "Показывает последние записи systemd для AWG, health monitor, dnsmasq, setup и OpenCCK updater." \
+    10 "Системные функции" "Reload, reboot/poweroff, перенастройка LAN/DNS и выбор Operating mode." \
+    11 "Выйти в обычный Shell" "Закрывает меню, но оставляет текущую SSH-сессию открытой в командной строке." \
+    0 "Завершить SSH-сессию" "Закрывает меню и завершает текущий сеанс в соответствии с оболочкой входа." 3>&1 1>&2 2>&3)" || exit 20
 
   case "$choice" in
     1) status_screen ;;
