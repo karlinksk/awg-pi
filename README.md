@@ -159,6 +159,9 @@ The current implementation branch adds:
 - a Transit lockdown ruleset that is installed before router/MAC-dependent boot setup;
 - mode-aware boot/reload setup;
 - CLI and SSH-TUI mode selection;
+- persistent TUI mode identification: the dialog backtitle, main-menu title and
+  System/Operating mode screens visibly show SELECTIVE or TRANSIT, and the
+  active choice is marked as current;
 - context help for every existing and new TUI menu item, with expanded warnings
   before routing/network/power actions;
 - AmneziaWG profile replacement from the TUI either by file path or by pasting
