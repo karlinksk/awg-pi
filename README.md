@@ -170,7 +170,11 @@ The current implementation branch adds:
   available;
 - preservation of VPN/DIRECT/OpenCCK/client state while Transit classification
   is active; OpenCCK continues refreshing its persistent cache without
-  reloading the live Transit datapath.
+  reloading the live Transit datapath;
+- hierarchical manual DIRECT precedence in Selective mode: VPN/OpenCCK domain
+  directives already covered by a manual DIRECT parent are omitted from the
+  generated dnsmasq nftset rules, preventing a more-specific source entry from
+  overriding the DIRECT exception.
 
 Core mode commands are:
 
