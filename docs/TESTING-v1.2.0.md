@@ -18,18 +18,18 @@ Implementation branch:
 feature/v1.2-transit-datapath
 ```
 
-First hardware release candidate:
+Current hardware release candidate:
 
 ```text
-rc/v1.2.0-rc1
+rc/v1.2.0-rc3
 ```
 
 For hardware testing, use the frozen RC ref explicitly so the installer does
 not expect an unreleased v1.2.0 tag:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/karlinksk/awg-pi/rc/v1.2.0-rc1/install.sh -o /tmp/install-v1.2.sh
-sudo AWG_PI_REF=rc/v1.2.0-rc1 bash /tmp/install-v1.2.sh
+curl -fsSL https://raw.githubusercontent.com/karlinksk/awg-pi/rc/v1.2.0-rc3/install.sh -o /tmp/install-v1.2-rc3.sh
+sudo AWG_PI_REF=rc/v1.2.0-rc3 bash /tmp/install-v1.2-rc3.sh
 ```
 
 ## 2. Baseline status
