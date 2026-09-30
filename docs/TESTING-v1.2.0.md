@@ -21,13 +21,14 @@ feature/v1.2-transit-datapath
 Current release candidate:
 
 ```text
-rc/v1.2.0-rc9
+rc/v1.2.0-rc10
 ```
 
-RC9 is a documentation-only freeze on top of the hardware-validated RC8 runtime.
-It records the completed non-empty v1.1 -> v1.2 Selective preservation test and
-the successful Selective -> Transit -> Selective round-trip after the RC8
-DIRECT-precedence fix.
+RC10 is a documentation-only freeze on top of the hardware-validated RC8 runtime.
+It records the completed MikroTik reboot-persistence check in addition to the
+non-empty v1.1 -> v1.2 Selective preservation test and the successful
+Selective -> Transit -> Selective round-trip after the RC8 DIRECT-precedence
+fix.
 
 RC8 keeps the RC7 TUI mode indicator and fixes a Selective-mode DIRECT
 precedence bug discovered by the non-empty v1.1 -> v1.2 hardware regression.
@@ -55,8 +56,8 @@ For hardware testing, use the frozen RC ref explicitly so the installer does
 not expect an unreleased v1.2.0 tag:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/karlinksk/awg-pi/rc/v1.2.0-rc9/install.sh -o /tmp/install-v1.2-rc9.sh
-sudo AWG_PI_REF=rc/v1.2.0-rc9 bash /tmp/install-v1.2-rc9.sh
+curl -fsSL https://raw.githubusercontent.com/karlinksk/awg-pi/rc/v1.2.0-rc10/install.sh -o /tmp/install-v1.2-rc10.sh
+sudo AWG_PI_REF=rc/v1.2.0-rc10 bash /tmp/install-v1.2-rc10.sh
 ```
 
 ## 2. Baseline status
@@ -332,8 +333,14 @@ Still pending or intentionally deferred:
   SAFE/ACTIVE/READY, Selective classification was inactive in Transit, the
   restored Selective datapath passed all three routing checks, and
   `systemctl --failed` reported zero failed units.
-- DEFERRED — RouterOS reboot persistence of the Netwatch automation while the
-  test operator is remote and depends on the router for connectivity.
+- PASS — RouterOS 7.24.2 reboot persistence verified with physical recovery
+  available. After reboot, `sstp-AlfaHost` returned RUNNING; the primary
+  `r_to_vpn` default route (distance 2), Pi/AWG backup route (distance 3), both
+  forced /32 SSTP probe routes, both blackhole guards, both Netwatch checks and
+  the output probe-mark rule all persisted. Netwatch briefly detected both probes
+  down during startup, activated the Pi/AWG backup, and automatically restored
+  the SSTP primary once health returned. No manual SSTP interface disable was
+  used.
 
 ## 13. Release gate
 
@@ -356,10 +363,11 @@ Before tagging v1.2.0:
 - [x] non-empty Selective state preservation/regression on real hardware:
   8/8 byte-for-byte upgrade checks PASS; RC8 DIRECT-parent precedence PASS; final
   Selective -> Transit -> Selective round-trip PASS with zero failed units.
+- [x] MikroTik RouterOS reboot persistence PASS: SSTP, primary/backup routes,
+  dual Netwatch probes, probe routes/blackholes and automatic failover/failback
+  survived reboot.
 - [x] CI green at the exact final release SHA after all release documentation is
   frozen.
 
-RouterOS reboot persistence of the optional Netwatch automation is desirable but
-is not a Pi release blocker when the configuration has been saved and backed up;
-perform it before production rollout when a safe local recovery path is
-available.
+RouterOS reboot persistence of the optional Netwatch automation has now also
+been verified on the test hAP ax² with physical recovery available.
