@@ -1,13 +1,15 @@
-name: v1.1.0 CI
+name: v1.2.0 CI
 
 on:
   push:
     branches:
-      - 'develop/v1.1.0'
+      - 'develop/v1.2.0'
+      - 'feature/v1.2-*'
+      - 'rc/v1.2.0-*'
   pull_request:
     branches:
       - main
-      - 'develop/v1.1.0'
+      - 'develop/v1.2.0'
 
 jobs:
   shell:
@@ -16,6 +18,9 @@ jobs:
       - uses: actions/checkout@v4
       - name: Test dependencies
         run: |
+          # Hosted runners may carry an unrelated Microsoft apt source that can
+          # intermittently return 403 and block apt-get update. CI does not use it.
+          sudo find /etc/apt/sources.list.d -maxdepth 1 -type f -iname '*microsoft*' -delete
           sudo apt-get update
           sudo apt-get install -y nftables
       - name: Bash syntax
@@ -23,28 +28,58 @@ jobs:
           bash -n install.sh
           bash -n src/awg-common
           bash -n src/awg-route
+          bash -n src/awg-pbr-setup
+          bash -n src/awg-transit-nft
+          bash -n src/awg-transit-preflight
+          bash -n src/awg-transit-apply
+          bash -n src/awg-transit-routing
+          bash -n src/awg-mode-switch
+          bash -n src/awg-pbr-health
           bash -n src/awg-opencck-update
           bash -n src/awg-core-update
           bash -n src/awg-update
           bash -n src/awg-menu
           bash -n tests/test-common.sh
+          bash -n tests/test-mode.sh
+          bash -n tests/test-route-mode.sh
+          bash -n tests/test-setup-mode.sh
+          bash -n tests/test-transit-nft.sh
+          bash -n tests/test-transit-preflight.sh
+          bash -n tests/test-transit-apply.sh
+          bash -n tests/test-transit-routing.sh
+          bash -n tests/test-health-mode.sh
+          bash -n tests/test-mode-switch.sh
+          bash -n tests/test-upgrade-mode.sh
           bash -n tests/test-opencck-updater.sh
+          bash -n tests/test-direct-domain-precedence.sh
           bash -n tests/mock-curl.sh
           bash -n tests/test-nft-template.sh
           bash -n tests/test-rc2.sh
           bash -n tests/test-redaction.sh
       - name: ShellCheck errors
         run: |
-          shellcheck -S error install.sh src/awg-common src/awg-route src/awg-opencck-update src/awg-core-update src/awg-update src/awg-menu tests/test-common.sh tests/test-opencck-updater.sh tests/mock-curl.sh tests/test-nft-template.sh
+          shellcheck -S error install.sh src/awg-common src/awg-route src/awg-pbr-setup src/awg-transit-nft src/awg-transit-preflight src/awg-transit-apply src/awg-transit-routing src/awg-mode-switch src/awg-pbr-health src/awg-opencck-update src/awg-core-update src/awg-update src/awg-menu tests/test-common.sh tests/test-mode.sh tests/test-route-mode.sh tests/test-setup-mode.sh tests/test-transit-nft.sh tests/test-transit-preflight.sh tests/test-transit-apply.sh tests/test-transit-routing.sh tests/test-health-mode.sh tests/test-mode-switch.sh tests/test-upgrade-mode.sh tests/test-opencck-updater.sh tests/test-direct-domain-precedence.sh tests/mock-curl.sh tests/test-nft-template.sh
       - name: Unit tests
         run: |
           bash tests/test-common.sh
+          bash tests/test-mode.sh
+          bash tests/test-route-mode.sh
+          bash tests/test-setup-mode.sh
+          bash tests/test-transit-nft.sh
+          bash tests/test-transit-preflight.sh
+          bash tests/test-transit-apply.sh
+          bash tests/test-transit-routing.sh
+          bash tests/test-health-mode.sh
+          bash tests/test-mode-switch.sh
+          bash tests/test-upgrade-mode.sh
           bash tests/test-opencck-updater.sh
+          bash tests/test-direct-domain-precedence.sh
           bash tests/test-nft-template.sh
           bash tests/test-rc2.sh
           bash tests/test-redaction.sh
           python3 tests/test-maintenance.py
           python3 tests/test-confirm.py
+          python3 tests/test-menu.py
 
   awg-v31:
     runs-on: ubuntu-latest

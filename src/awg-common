@@ -93,3 +93,59 @@ awg_service_domain(){
   [[ "$d" == *_* && "$d" =~ ^[a-z0-9_.-]+$ ]] || return 1
   awg_valid_domain "${d//_/a}"
 }
+
+# Persistent operating mode for AWG Pi Gateway v1.2+.
+# If no mode file exists, preserve v1.1.x behaviour by defaulting to selective.
+AWG_MODE_FILE="${AWG_MODE_FILE:-/etc/awg-pbr/mode}"
+
+awg_mode_valid(){
+  case "${1:-}" in
+    selective|transit) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+awg_mode_get(){
+  local mode
+
+  if [[ ! -e "$AWG_MODE_FILE" ]]; then
+    printf '%s\n' selective
+    return 0
+  fi
+
+  mode="$(tr -d '\r\n' <"$AWG_MODE_FILE")"
+
+  if ! awg_mode_valid "$mode"; then
+    printf 'Invalid operating mode in %s: %s\n' \
+      "$AWG_MODE_FILE" "${mode:-<empty>}" >&2
+    return 1
+  fi
+
+  printf '%s\n' "$mode"
+}
+
+awg_mode_label(){
+  case "${1:-}" in
+    selective) printf '%s\n' 'Selective Gateway' ;;
+    transit) printf '%s\n' 'MikroTik Transit / Backup VPN' ;;
+    *) return 1 ;;
+  esac
+}
+
+awg_mode_set(){
+  local mode="${1:-}"
+  local dir tmp
+
+  if ! awg_mode_valid "$mode"; then
+    printf 'Unsupported operating mode: %s\n' "${mode:-<empty>}" >&2
+    return 2
+  fi
+
+  dir="$(dirname "$AWG_MODE_FILE")"
+  mkdir -p "$dir"
+
+  tmp="$(mktemp "${AWG_MODE_FILE}.tmp.XXXXXX")"
+  printf '%s\n' "$mode" >"$tmp"
+  chmod 600 "$tmp"
+  mv -f "$tmp" "$AWG_MODE_FILE"
+}

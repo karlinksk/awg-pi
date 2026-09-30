@@ -2,7 +2,7 @@
 set -Eeuo pipefail
 IFS=$'\n\t'
 
-AWG_PI_VERSION="1.1.0"
+AWG_PI_VERSION="1.2.0"
 PROJECT_REF="${AWG_PI_REF:-v${AWG_PI_VERSION}}"
 PROJECT_RAW_BASE="https://raw.githubusercontent.com/karlinksk/awg-pi/${PROJECT_REF}"
 TTY=/dev/tty
@@ -18,6 +18,7 @@ VPN_DOMAINS="$PBR_DIR/vpn-domains.txt"
 DIRECT_DOMAINS="$PBR_DIR/direct-domains.txt"
 CLIENTS_FILE="$PBR_DIR/clients.txt"
 VPN_ENABLED_FILE="$PBR_DIR/vpn-enabled"
+MODE_FILE="$PBR_DIR/mode"
 DNS_CONF="/etc/dnsmasq.d/99-awg-pbr.conf"
 DNS_DOMAINS_CONF="/etc/dnsmasq.d/99-awg-pbr-domains.conf"
 NFT_FILE="/etc/nftables.d/99-awg-pbr.nft"
@@ -111,19 +112,46 @@ first_working_url(){
 }
 
 printf "%b=== AmneziaWG Raspberry Pi 4 Policy Gateway Installer v%s ===%b\n" "$B" "$AWG_PI_VERSION" "$R"
-printf "Архитектура: LAN router = основной DHCP/NAT; Raspberry Pi = выборочный PBR-шлюз.\n"
-printf "Default = DIRECT. Домены из VPN-list = AmneziaWG. VPN недоступен = FAIL-OPEN напрямую.\n"
+printf "Архитектура: Selective Gateway + MikroTik Transit / Backup VPN.\n"
+printf "Fresh install = Transit после безопасного preflight. Selective: FAIL-OPEN; Transit: FAIL-CLOSED при недоступном AWG.\n"
 printf "IPv6 в этой версии не маршрутизируется.\n\n"
 printf "Журнал установки: %s\n\n" "$INSTALL_REPORT"
 
 UPGRADE_EXISTING=0
+# Fresh v1.2 installs stage safely in Selective during installation, then
+# transactionally activate Transit after AWG health/preflight checks pass.
+ACTIVATE_TRANSIT_AFTER_INSTALL=1
 AUTO_UPGRADE="${AWG_PI_UPGRADE_AUTO:-0}"
+AUTO_TRANSIT="${AWG_PI_UPGRADE_TRANSIT:-}"
 EXISTING_VERSION="$(cat /etc/awg-pbr/version 2>/dev/null || true)"
+MODE_PREEXISTED=0
+[[ -f "$MODE_FILE" ]] && MODE_PREEXISTED=1
 if [[ -f "$ENV_FILE" && -f "$CONF_FILE" ]]; then
   printf "Обнаружена существующая AWG Pi Gateway: %s\n" "${EXISTING_VERSION:-версия до v1.1.0}"
   if [[ "$AUTO_UPGRADE" == 1 ]] || confirm "Выполнить безопасное обновление существующей установки до v$AWG_PI_VERSION с сохранением AWG-конфига, доменов и клиентов?" "Y"; then
     UPGRADE_EXISTING=1
+    ACTIVATE_TRANSIT_AFTER_INSTALL=0
     ok "Режим обновления: пользовательские списки и $CONF_FILE будут сохранены"
+    if [[ "$EXISTING_VERSION" == 1.1.0 && "$MODE_PREEXISTED" == 0 ]]; then
+      if [[ "$AUTO_UPGRADE" == 1 ]]; then
+        case "$AUTO_TRANSIT" in
+          1)
+            ACTIVATE_TRANSIT_AFTER_INSTALL=1
+            warn "v1.1.0 -> v1.2.0: подтверждена попытка включить MikroTik Transit / Backup VPN."
+            ;;
+          0)
+            warn "v1.1.0 -> v1.2.0: подтверждено сохранение Selective Gateway."
+            ;;
+          *)
+            warn "Unattended upgrade не получил явного AWG_PI_UPGRADE_TRANSIT=0|1; безопасно остаёмся в Selective Gateway."
+            ;;
+        esac
+      elif confirm "После обновления включить новый режим MikroTik Transit / Backup VPN? Перед переключением будет выполнен preflight; при ошибке останется Selective Gateway." "Y"; then
+        ACTIVATE_TRANSIT_AFTER_INSTALL=1
+      else
+        warn "Обновление продолжится в Selective Gateway."
+      fi
+    fi
   else
     die "Обновление отменено пользователем"
   fi
@@ -410,6 +438,10 @@ if (( UPGRADE_EXISTING == 1 )); then
   chmod 600 "$VPN_DOMAINS" "$DIRECT_DOMAINS" "$CLIENTS_FILE"
   [[ -f "$VPN_ENABLED_FILE" ]] || echo 1 >"$VPN_ENABLED_FILE"
   chmod 600 "$VPN_ENABLED_FILE"
+  # Mode framework stage: preserve any explicit mode; v1.1.x systems without
+  # a mode file remain Selective until Transit datapath + preflight are implemented.
+  [[ -f "$MODE_FILE" ]] || printf '%s\n' selective >"$MODE_FILE"
+  chmod 600 "$MODE_FILE"
   ok "Сетевая конфигурация сохранена: Pi=$PI_IP, Router=$ROUTER_IP, LAN=$LAN_CIDR"
 else
 printf "\nIPv4 интерфейсы:\n"
@@ -503,6 +535,8 @@ touch "$VPN_DOMAINS" "$DIRECT_DOMAINS" "$CLIENTS_FILE"
 chmod 600 "$VPN_DOMAINS" "$DIRECT_DOMAINS" "$CLIENTS_FILE"
 echo 1 >"$VPN_ENABLED_FILE"
 chmod 600 "$VPN_ENABLED_FILE"
+printf '%s\n' selective >"$MODE_FILE"
+chmod 600 "$MODE_FILE"
 fi
 
 # Duplicate-address detection. In DAD mode arping returns success when no peer
@@ -561,101 +595,7 @@ EOF
   [[ -n "$WD" && "$WD" != "0" ]] && ok "Watchdog включён: $WD" || warn "systemd не подтвердил RuntimeWatchdog; система продолжит работу без гарантии hardware watchdog"
 fi
 
-cat >"$SETUP_SCRIPT" <<'EOF'
-#!/usr/bin/env bash
-set -Eeuo pipefail
-# shellcheck disable=SC1091
-source /etc/awg-pbr/env
-CLIENTS=/etc/awg-pbr/clients.txt
-NFT=/etc/nftables.d/99-awg-pbr.nft
-
-nft delete table inet awg_pbr 2>/dev/null || true
-CLIENT_FILTER=""
-if grep -Ev '^\s*(#|$)' "$CLIENTS" 2>/dev/null | grep -q .; then
-  CLIENT_FILTER='ip saddr @clients4 '
-fi
-
-{
-cat <<NFT
-# Managed by awg-pbr-setup. This script owns only table inet awg_pbr.
-table inet awg_pbr {
-  set vpn4 {
-    type ipv4_addr
-    flags timeout
-    timeout 15m
-  }
-  set direct4 {
-    type ipv4_addr
-    flags timeout
-    timeout 15m
-  }
-  set clients4 {
-    type ipv4_addr
-  }
-  set source4 {
-    type ipv4_addr
-    flags interval
-  }
-
-  chain input_guard {
-    type filter hook input priority filter; policy drop;
-    iifname "lo" accept
-    ct state established,related accept
-    iifname "$LAN_IF" tcp dport 22 accept
-    iifname "$LAN_IF" udp dport 53 accept
-    iifname "$LAN_IF" tcp dport 53 accept
-    iifname "$LAN_IF" ip protocol icmp accept
-    iifname "$LAN_IF" meta l4proto ipv6-icmp accept
-    iifname "$LAN_IF" udp sport 67 udp dport 68 accept
-  }
-
-  chain forward_guard {
-    type filter hook forward priority filter; policy drop;
-    ct state established,related accept
-    iifname "$LAN_IF" ip saddr $LAN_CIDR oifname "$LAN_IF" accept
-    iifname "$LAN_IF" ip saddr $LAN_CIDR oifname "$VPN_IF" accept
-  }
-
-  chain prerouting_mark {
-    type filter hook prerouting priority mangle; policy accept;
-    iifname "$LAN_IF" ${CLIENT_FILTER}ip daddr @source4 meta mark set $VPN_MARK
-    iifname "$LAN_IF" ${CLIENT_FILTER}ip daddr @vpn4 meta mark set $VPN_MARK
-    iifname "$LAN_IF" ip daddr @direct4 meta mark set 0x0
-  }
-
-  chain dns_redirect {
-    type nat hook prerouting priority dstnat; policy accept;
-NFT
-if [[ "$DNS_REDIRECT" == 1 ]]; then
-  printf '    iifname "%s" udp dport 53 redirect to :53\n' "$LAN_IF"
-  printf '    iifname "%s" tcp dport 53 redirect to :53\n' "$LAN_IF"
-fi
-cat <<NFT
-  }
-
-  chain postrouting_nat {
-    type nat hook postrouting priority srcnat; policy accept;
-    ip saddr $LAN_CIDR oifname "$VPN_IF" masquerade
-    ip saddr $LAN_CIDR oifname "$LAN_IF" masquerade
-  }
-}
-NFT
-} >"$NFT"
-
-nft -c -f "$NFT"
-nft -f "$NFT"
-
-while IFS= read -r ip; do
-  ip="${ip%%#*}"; ip="${ip//[[:space:]]/}"
-  [[ -z "$ip" ]] && continue
-  nft add element inet awg_pbr clients4 "{ $ip }"
-done <"$CLIENTS"
-
-# Policy rule itself is controlled by health monitor for fail-open behavior.
-while ip -4 rule del priority 100 fwmark "$VPN_MARK" lookup "$VPN_TABLE" 2>/dev/null; do :; done
-ip -4 route flush table "$VPN_TABLE" 2>/dev/null || true
-EOF
-chmod 755 "$SETUP_SCRIPT"
+# awg-pbr-setup is installed from src/awg-pbr-setup in section 8b.
 
 cat >"$FAILOPEN_SCRIPT" <<'EOF'
 #!/usr/bin/env bash
@@ -714,10 +654,10 @@ dnsmasq --test || die "dnsmasq не принимает подготовленн�
 
 # awg-route is installed from src/awg-route below.
 
-# v1.1.0 helpers are maintained as standalone repository files so the TUI and
-# source manager can be audited independently of this installer.
-STAGE="установка компонентов v1.1.0"
-log "[8b/12] CLI v1.1.0 + OpenCCK + SSH TUI"
+# Runtime helpers are maintained as standalone repository files so routing,
+# health, TUI and source-management behavior can be audited independently.
+STAGE="установка компонентов v1.2.0"
+log "[8b/12] CLI v1.2.0 + Transit + OpenCCK + SSH TUI"
 install_project_helper(){
   local remote="$1" target="$2" tmp
   tmp="$(mktemp)"
@@ -736,6 +676,13 @@ python3 -c 'import ast,sys; ast.parse(open(sys.argv[1]).read())' "$_manage_tmp" 
 install -m 755 "$_manage_tmp" /usr/local/lib/awg-pi/manage.py
 rm -f "$_manage_tmp"
 install_project_helper src/awg-route "$ROUTE_CLI"
+install_project_helper src/awg-pbr-setup "$SETUP_SCRIPT"
+install_project_helper src/awg-transit-nft /usr/local/sbin/awg-transit-nft
+install_project_helper src/awg-transit-preflight /usr/local/sbin/awg-transit-preflight
+install_project_helper src/awg-transit-apply /usr/local/sbin/awg-transit-apply
+install_project_helper src/awg-transit-routing /usr/local/sbin/awg-transit-routing
+install_project_helper src/awg-mode-switch /usr/local/sbin/awg-mode-switch
+install_project_helper src/awg-pbr-health "$HEALTH_SCRIPT"
 install_project_helper src/awg-opencck-update /usr/local/sbin/awg-opencck-update
 install_project_helper src/awg-core-update /usr/local/sbin/awg-core-update
 install_project_helper src/awg-update "$UPDATE_SCRIPT"
@@ -786,78 +733,13 @@ EOF
 chmod 644 /etc/profile.d/awg-menu.sh
 
 # -----------------------------------------------------------------------------
-# 9. Fail-open health monitor
+# 9. Mode-aware health monitor
 # -----------------------------------------------------------------------------
-STAGE="настройка health-check и fail-open"
-log "[9/12] Health monitor + FAIL-OPEN"
-cat >"$HEALTH_SCRIPT" <<'EOF'
-#!/usr/bin/env bash
-set -Eeuo pipefail
-# shellcheck disable=SC1091
-source /etc/awg-pbr/env
-VE=/etc/awg-pbr/vpn-enabled
-STATE_DIR=/run/awg-pbr
-STATE="$STATE_DIR/health.state"
-mkdir -p "$STATE_DIR"
-
-rule_on(){
-  ip -4 route replace default dev "$VPN_IF" table "$VPN_TABLE"
-  if ! ip -4 rule show | grep -Eq '(^| )100:.*fwmark (0x100|256).*lookup (100|awgvpn)'; then
-    ip -4 rule add priority 100 fwmark "$VPN_MARK" lookup "$VPN_TABLE"
-  fi
-  if [[ "$(cat "$STATE" 2>/dev/null || true)" != up ]]; then
-    echo up >"$STATE"
-    logger -t awg-pbr "VPN healthy: policy route enabled"
-  fi
-}
-rule_off(){
-  while ip -4 rule del priority 100 fwmark "$VPN_MARK" lookup "$VPN_TABLE" 2>/dev/null; do :; done
-  if [[ "$(cat "$STATE" 2>/dev/null || true)" != down ]]; then
-    echo down >"$STATE"
-    logger -t awg-pbr "VPN unavailable/disabled: FAIL-OPEN to normal Internet"
-  fi
-}
-health_prepare(){
-  ip -4 route replace default dev "$VPN_IF" table "$HEALTH_TABLE" 2>/dev/null || true
-  if ! ip -4 rule show | grep -Eq '(^| )90:.*fwmark (0x101|257).*lookup (101|awghealth)'; then
-    ip -4 rule add priority 90 fwmark "$HEALTH_MARK" lookup "$HEALTH_TABLE" 2>/dev/null || true
-  fi
-}
-handshake_fresh(){
-  local hs now
-  hs="$(awg show "$VPN_IF" latest-handshakes 2>/dev/null | awk '$2>m{m=$2}END{print m+0}')"
-  [[ "$hs" -gt 0 ]] || return 1
-  now="$(date +%s)"
-  (( now - hs <= HANDSHAKE_MAX_AGE ))
-}
-transport_ok(){
-  # Ping itself stimulates a handshake when needed.
-  ping -4 -n -m "$((HEALTH_MARK))" -c1 -W2 9.9.9.9 >/dev/null 2>&1 || \
-  ping -4 -n -m "$((HEALTH_MARK))" -c1 -W2 1.1.1.1 >/dev/null 2>&1
-}
-
-trap 'rule_off' EXIT INT TERM
-rule_off
-while true; do
-  if [[ "$(cat "$VE" 2>/dev/null || echo 1)" != 1 ]]; then
-    rule_off
-    sleep "$HEALTH_INTERVAL"
-    continue
-  fi
-  if ip link show "$VPN_IF" >/dev/null 2>&1; then
-    health_prepare
-    if transport_ok && handshake_fresh; then rule_on; else rule_off; fi
-  else
-    rule_off
-  fi
-  sleep "$HEALTH_INTERVAL"
-done
-EOF
-chmod 755 "$HEALTH_SCRIPT"
-
+STAGE="настройка health-check"
+log "[9/12] Health monitor: Selective FAIL-OPEN / Transit FAIL-CLOSED"
 cat >"$HEALTH_SERVICE" <<'EOF'
 [Unit]
-Description=AmneziaWG fail-open health monitor
+Description=AWG Pi Gateway mode-aware health monitor
 After=network-online.target awg-quick@awg0.service awg-pbr-setup.service
 Wants=network-online.target
 
@@ -877,7 +759,7 @@ EOF
 # -----------------------------------------------------------------------------
 STAGE="проверка компонентов управления"
 log "[10/12] Проверка awg-route / awg-menu / awg-update"
-for f in "$ROUTE_CLI" /usr/local/sbin/awg-menu /usr/local/sbin/awg-opencck-update /usr/local/sbin/awg-core-update "$UPDATE_SCRIPT"; do
+for f in "$ROUTE_CLI" "$SETUP_SCRIPT" /usr/local/sbin/awg-menu /usr/local/sbin/awg-transit-nft /usr/local/sbin/awg-transit-preflight /usr/local/sbin/awg-transit-apply /usr/local/sbin/awg-transit-routing /usr/local/sbin/awg-mode-switch "$HEALTH_SCRIPT" /usr/local/sbin/awg-opencck-update /usr/local/sbin/awg-core-update "$UPDATE_SCRIPT"; do
   [[ -x "$f" ]] || die "Не установлен исполняемый компонент: $f"
   bash -n "$f" || die "Синтаксическая проверка компонента не пройдена: $f"
 done
@@ -914,6 +796,19 @@ systemctl is-active --quiet "awg-quick@$VPN_IF.service" || {
 ip link show "$VPN_IF" >/dev/null 2>&1 || die "Сервис AWG активен, но интерфейс $VPN_IF отсутствует"
 ok "$VPN_IF поднят"
 
+# An existing Selective installation may intentionally have vpn off.
+# Preserve that requested state, but temporarily enable Selective policy so the
+# installer can still prove handshake + marked transport before accepting the
+# upgrade. The requested OFF state is restored immediately after validation.
+RESTORE_VPN_OFF=0
+CURRENT_INSTALL_MODE="$(cat "$MODE_FILE" 2>/dev/null || echo selective)"
+if [[ "$CURRENT_INSTALL_MODE" == selective && "$(cat "$VPN_ENABLED_FILE" 2>/dev/null || echo 1)" != 1 ]]; then
+  RESTORE_VPN_OFF=1
+  echo 1 >"$VPN_ENABLED_FILE"
+  chmod 600 "$VPN_ENABLED_FILE"
+  warn "Selective VPN policy была выключена; временно включаем её только для upgrade health-check."
+fi
+
 systemctl restart awg-pbr-health.service
 systemctl is-active --quiet awg-pbr-health.service || die "health monitor не запустился"
 systemctl start awg-opencck-update.timer
@@ -944,6 +839,25 @@ if ! ip -4 route get 1.1.1.1 mark "$VPN_MARK" | grep -q "dev $VPN_IF"; then
 fi
 ok "Policy routing работает"
 
+if (( RESTORE_VPN_OFF == 1 )); then
+  echo 0 >"$VPN_ENABLED_FILE"
+  chmod 600 "$VPN_ENABLED_FILE"
+  "$FAILOPEN_SCRIPT"
+  systemctl restart awg-pbr-health.service
+  ok "Исходное состояние Selective VPN policy=OFF восстановлено"
+fi
+
+if (( ACTIVATE_TRANSIT_AFTER_INSTALL == 1 )); then
+  STAGE="активация MikroTik Transit"
+  log "[11b/12] Transit preflight + transactional switch"
+  if "$ROUTE_CLI" mode transit; then
+    ok "MikroTik Transit / Backup VPN активирован"
+  else
+    warn "Transit preflight/activation не прошёл. Runtime восстановлен; установка продолжится в Selective Gateway."
+    "$ROUTE_CLI" mode selective >/dev/null 2>&1 || true
+  fi
+fi
+
 # -----------------------------------------------------------------------------
 # 12. Deep diagnostics + summary
 # -----------------------------------------------------------------------------
@@ -968,15 +882,28 @@ printf "AWG tags:        go=%s tools=%s\n" "$GO_TAG" "$TOOLS_TAG"
 printf "Install report:  %s\n" "$INSTALL_REPORT"
 printf "Diagnostics:     %s\n" "${LATEST_DIAG:-см. $LOG_DIR}"
 
+FINAL_MODE="$(cat "$MODE_FILE" 2>/dev/null || echo selective)"
 printf "\nЛогика:\n"
-printf "  обычный трафик = DIRECT через LAN router\n"
-printf "  VPN-list = через AmneziaWG\n"
-printf "  VPN упал = автоматический FAIL-OPEN DIRECT\n"
+if [[ "$FINAL_MODE" == transit ]]; then
+  printf "  Operating mode = MikroTik Transit / Backup VPN\n"
+  printf "  MikroTik классифицирует и отправляет backup-трафик на Pi\n"
+  printf "  Pi forward/NAT = только через %s; AWG down = FAIL-CLOSED\n" "$VPN_IF"
+  printf "  management + AWG endpoint = DIRECT через LAN router\n"
+  printf "  OpenCCK/VPN/DIRECT/client state сохранён, но не классифицирует Transit\n"
+else
+  printf "  Operating mode = Selective Gateway\n"
+  printf "  обычный трафик = DIRECT через LAN router\n"
+  printf "  VPN-list = через AmneziaWG\n"
+  printf "  VPN упал = автоматический FAIL-OPEN DIRECT\n"
+  printf "  DNS клиентов PBR = %s (dnsmasq -> независимые upstream DNS)\n" "$PI_IP"
+fi
 printf "  DHCP остаётся на LAN router\n"
-printf "  DNS клиентов PBR = %s (dnsmasq -> независимые upstream DNS)\n" "$PI_IP"
 
 printf "\nОсновные команды:\n"
 printf "  sudo awg-route status\n"
+printf "  sudo awg-route mode status\n"
+printf "  sudo awg-route mode selective\n"
+printf "  sudo awg-route mode transit\n"
 printf "  sudo awg-route vpn add youtube.com\n"
 printf "  sudo awg-route vpn del youtube.com\n"
 printf "  sudo awg-route direct add example.com\n"
@@ -998,11 +925,18 @@ printf "  sudo awg-update status\n"
 printf "  sudo awg-update gateway\n"
 printf "  sudo awg-update core\n"
 
-printf "\nДля первого тестового оборудования:\n"
-printf "  IPv4:    свободный фиксированный адрес в %s\n" "$LAN_CIDR"
-printf "  Gateway: %s\n" "$PI_IP"
-printf "  DNS:     %s\n" "$PI_IP"
-printf "  IPv6:    не использовать\n"
+printf "\nПервичная проверка режима:\n"
+if [[ "$FINAL_MODE" == transit ]]; then
+  printf "  Клиентам НЕ назначать Pi как gateway/DNS для Transit.\n"
+  printf "  Сначала настройте один тестовый client/prefix на MikroTik по docs/MIKROTIK-TRANSIT-v1.2.0.md.\n"
+  printf "  Проверка Pi: sudo awg-route mode status && sudo awg-route status\n"
+  printf "  IPv6: не использовать в Transit v1.2.0.\n"
+else
+  printf "  IPv4:    свободный фиксированный адрес в %s\n" "$LAN_CIDR"
+  printf "  Gateway: %s\n" "$PI_IP"
+  printf "  DNS:     %s\n" "$PI_IP"
+  printf "  IPv6:    не использовать\n"
+  printf "  Сначала проверьте DIRECT, затем добавьте один тестовый домен в VPN-list.\n"
+fi
 
 printf "\n%bВАЖНО:%b IP оборудования выбирайте вне конфликтов с DHCP либо закрепите его на LAN router.\n" "$Y" "$R"
-printf "После настройки оборудования сначала проверьте DIRECT, затем добавьте один тестовый домен в VPN-list.\n"

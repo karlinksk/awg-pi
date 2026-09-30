@@ -45,7 +45,7 @@ backup_gateway(){
   local dir="$1"
   mkdir -p "$dir"
   chmod 700 "$dir"
-  tar -C / -czf "$dir/gateway-state.tgz"     --ignore-failed-read     etc/awg-pbr     etc/amnezia/amneziawg     etc/dnsmasq.d/99-awg-pbr.conf     etc/dnsmasq.d/99-awg-pbr-domains.conf     etc/nftables.d/99-awg-pbr.nft     etc/sysctl.d/99-awg-pbr.conf     etc/profile.d/awg-menu.sh     etc/systemd/system/awg-pbr-setup.service     etc/systemd/system/awg-pbr-health.service     etc/systemd/system/awg-opencck-update.service     etc/systemd/system/awg-opencck-update.timer     usr/local/lib/awg-pi     usr/local/sbin/awg-route     usr/local/sbin/awg-menu     usr/local/sbin/awg-opencck-update     usr/local/sbin/awg-core-update     usr/local/sbin/awg-update     usr/local/sbin/awg-pbr-setup     usr/local/sbin/awg-pbr-health     usr/local/sbin/awg-pbr-failopen 2>/dev/null || true
+  tar -C / -czf "$dir/gateway-state.tgz"     --ignore-failed-read     etc/awg-pbr     etc/amnezia/amneziawg     etc/dnsmasq.d/99-awg-pbr.conf     etc/dnsmasq.d/99-awg-pbr-domains.conf     etc/nftables.d/99-awg-pbr.nft     etc/sysctl.d/99-awg-pbr.conf     etc/profile.d/awg-menu.sh     etc/systemd/system/awg-pbr-setup.service     etc/systemd/system/awg-pbr-health.service     etc/systemd/system/awg-opencck-update.service     etc/systemd/system/awg-opencck-update.timer     usr/local/lib/awg-pi     usr/local/sbin/awg-route     usr/local/sbin/awg-menu     usr/local/sbin/awg-opencck-update     usr/local/sbin/awg-core-update     usr/local/sbin/awg-update     usr/local/sbin/awg-pbr-setup     usr/local/sbin/awg-pbr-health     usr/local/sbin/awg-pbr-failopen     usr/local/sbin/awg-transit-nft     usr/local/sbin/awg-transit-preflight     usr/local/sbin/awg-transit-apply     usr/local/sbin/awg-transit-routing     usr/local/sbin/awg-mode-switch 2>/dev/null || true
   chmod 600 "$dir/gateway-state.tgz"
   tar -tzf "$dir/gateway-state.tgz" >/dev/null || {
     echo "Не удалось проверить backup archive" >&2
@@ -58,7 +58,7 @@ restore_gateway(){
   systemctl stop awg-opencck-update.timer awg-pbr-health.service 2>/dev/null || true
 
   rm -rf /etc/awg-pbr /usr/local/lib/awg-pi
-  rm -f /usr/local/sbin/awg-route /usr/local/sbin/awg-menu /usr/local/sbin/awg-opencck-update         /usr/local/sbin/awg-core-update /usr/local/sbin/awg-update         /usr/local/sbin/awg-pbr-setup /usr/local/sbin/awg-pbr-health /usr/local/sbin/awg-pbr-failopen
+  rm -f /usr/local/sbin/awg-route /usr/local/sbin/awg-menu /usr/local/sbin/awg-opencck-update         /usr/local/sbin/awg-core-update /usr/local/sbin/awg-update         /usr/local/sbin/awg-pbr-setup /usr/local/sbin/awg-pbr-health /usr/local/sbin/awg-pbr-failopen         /usr/local/sbin/awg-transit-nft /usr/local/sbin/awg-transit-preflight /usr/local/sbin/awg-transit-apply /usr/local/sbin/awg-transit-routing /usr/local/sbin/awg-mode-switch
   rm -f /etc/systemd/system/awg-pbr-setup.service /etc/systemd/system/awg-pbr-health.service         /etc/systemd/system/awg-opencck-update.service /etc/systemd/system/awg-opencck-update.timer         /etc/profile.d/awg-menu.sh
 
   tar -C / -xzf "$dir/gateway-state.tgz"
@@ -73,7 +73,7 @@ restore_gateway(){
 }
 
 gateway_update(){
-  local cur latest tag tmp internal bk
+  local cur latest tag tmp internal bk transit_choice=""
   cur="$(current_version)"
   latest="$(latest_release)"
   [[ -n "$latest" ]] || { echo "Не удалось определить latest release AWG Pi Gateway" >&2; return 1; }
@@ -84,6 +84,18 @@ gateway_update(){
     return 0
   fi
   confirm "Обновить AWG Pi Gateway $cur -> $latest?" || return 0
+
+  if [[ "$cur" == 1.1.0 && "$latest" == 1.2.0 ]]; then
+    if (( ASSUME_YES == 1 )); then
+      transit_choice=1
+      echo "v1.1.0 -> v1.2.0: --yes подтверждает post-upgrade Transit preflight/switch."
+    elif confirm "После обновления попытаться включить MikroTik Transit / Backup VPN? При ошибке останется Selective Gateway."; then
+      transit_choice=1
+    else
+      transit_choice=0
+      echo "После обновления будет сохранён Selective Gateway."
+    fi
+  fi
 
   tag="v$latest"
   tmp="$(mktemp /tmp/awg-pi-install.XXXXXX.sh)"
@@ -101,7 +113,11 @@ gateway_update(){
   echo "Backup: $bk"
 
   set +e
-  AWG_PI_REF="$tag" AWG_PI_UPGRADE_AUTO=1 bash "$tmp"
+  if [[ -n "$transit_choice" ]]; then
+    AWG_PI_REF="$tag" AWG_PI_UPGRADE_AUTO=1 AWG_PI_UPGRADE_TRANSIT="$transit_choice" bash "$tmp"
+  else
+    AWG_PI_REF="$tag" AWG_PI_UPGRADE_AUTO=1 bash "$tmp"
+  fi
   rc=$?
   set -e
   rm -f "$tmp"

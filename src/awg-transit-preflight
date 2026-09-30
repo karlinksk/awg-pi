@@ -1,0 +1,121 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+AWG_ENV_FILE="${AWG_ENV_FILE:-/etc/awg-pbr/env}"
+# shellcheck disable=SC1090
+source "$AWG_ENV_FILE"
+
+: "${LAN_IF:?LAN_IF is required}"
+: "${PI_IP:?PI_IP is required}"
+: "${ROUTER_IP:?ROUTER_IP is required}"
+: "${VPN_IF:?VPN_IF is required}"
+: "${HEALTH_MARK:?HEALTH_MARK is required}"
+: "${HEALTH_TABLE:?HEALTH_TABLE is required}"
+HANDSHAKE_MAX_AGE="${HANDSHAKE_MAX_AGE:-180}"
+
+fail(){
+  printf 'FAIL: %s\n' "$*" >&2
+  exit 1
+}
+
+ok(){
+  printf 'OK: %s\n' "$*"
+}
+
+route_uses_lan_router(){
+  local target="$1" route
+  route="$(ip -4 route get "$target" 2>/dev/null | head -n1)" || return 1
+  grep -Fq "dev $LAN_IF" <<<"$route" || return 1
+  grep -Fq "via $ROUTER_IP" <<<"$route" || return 1
+  ! grep -Fq "dev $VPN_IF" <<<"$route"
+}
+
+echo "=== Transit preflight ==="
+
+[[ "$(sysctl -n net.ipv4.ip_forward 2>/dev/null)" == 1 ]] ||
+  fail "net.ipv4.ip_forward must be 1"
+ok "IPv4 forwarding is enabled"
+
+[[ "$(sysctl -n net.ipv4.conf.all.src_valid_mark 2>/dev/null)" == 1 ]] ||
+  fail "net.ipv4.conf.all.src_valid_mark must be 1"
+ok "src_valid_mark is enabled"
+
+ip link show dev "$LAN_IF" >/dev/null 2>&1 ||
+  fail "LAN interface is unavailable: $LAN_IF"
+ok "LAN interface is present: $LAN_IF"
+
+route_uses_lan_router 1.1.1.1 ||
+  fail "main IPv4 route is not DIRECT via $ROUTER_IP on $LAN_IF"
+ok "main IPv4 route is DIRECT via $ROUTER_IP on $LAN_IF"
+
+ping -4 -c1 -W2 "$ROUTER_IP" >/dev/null 2>&1 ||
+  fail "MikroTik/router is not reachable: $ROUTER_IP"
+
+router_mac="$(
+  ip neigh show to "$ROUTER_IP" dev "$LAN_IF" 2>/dev/null |
+    awk '{for(i=1;i<=NF;i++) if($i=="lladdr"){print $(i+1); exit}}'
+)"
+[[ "$router_mac" =~ ^([[:xdigit:]]{2}:){5}[[:xdigit:]]{2}$ ]] ||
+  fail "could not resolve MikroTik/router MAC for $ROUTER_IP on $LAN_IF"
+router_mac="${router_mac,,}"
+ok "MikroTik/router MAC resolved: $router_mac"
+
+ip link show dev "$VPN_IF" >/dev/null 2>&1 ||
+  fail "AWG interface is unavailable: $VPN_IF"
+ok "AWG interface is present: $VPN_IF"
+
+# Use the isolated health mark/table rather than the main client policy table.
+# Preparing this path cannot reroute unmarked client/management traffic.
+health_mark_decimal="$((HEALTH_MARK))"
+ip -4 route replace default dev "$VPN_IF" table "$HEALTH_TABLE" ||
+  fail "could not prepare AWG health route table"
+if ! ip -4 rule show |
+     grep -Eq "(^| )90:.*fwmark (${HEALTH_MARK}|${health_mark_decimal})(/0xffffffff)?.*lookup (${HEALTH_TABLE}|awghealth)( |$)"; then
+  ip -4 rule add priority 90 fwmark "$HEALTH_MARK" lookup "$HEALTH_TABLE" ||
+    fail "could not prepare AWG health policy rule"
+fi
+
+if ! ping -4 -n -I "$VPN_IF" -m "$health_mark_decimal" -c1 -W3 9.9.9.9 >/dev/null 2>&1 &&
+   ! ping -4 -n -I "$VPN_IF" -m "$health_mark_decimal" -c1 -W3 1.1.1.1 >/dev/null 2>&1; then
+  fail "AWG tunnel transport test failed via $VPN_IF"
+fi
+ok "AWG tunnel transport is usable"
+
+latest_hs="$(awg show "$VPN_IF" latest-handshakes 2>/dev/null |
+  awk '$2>m{m=$2}END{print m+0}')"
+[[ "$latest_hs" -gt 0 ]] || fail "AWG has no successful handshake"
+handshake_age=$(( $(date +%s) - latest_hs ))
+(( handshake_age >= 0 && handshake_age <= HANDSHAKE_MAX_AGE )) ||
+  fail "AWG handshake is stale/invalid: ${handshake_age}s"
+ok "AWG handshake is fresh: ${handshake_age}s"
+
+mapfile -t endpoints < <(
+  awg show "$VPN_IF" endpoints 2>/dev/null |
+    awk 'NF >= 2 && $2 != "(none)" {print $2}'
+)
+
+(( ${#endpoints[@]} > 0 )) ||
+  fail "AWG has no runtime peer endpoint"
+
+endpoint_count=0
+for endpoint in "${endpoints[@]}"; do
+  if [[ "$endpoint" == \[* ]]; then
+    fail "IPv6 AWG endpoint is not supported by the IPv4 Transit preflight: $endpoint"
+  fi
+
+  host="${endpoint%:*}"
+  [[ "$host" =~ ^[0-9]+(\.[0-9]+){3}$ ]] ||
+    fail "AWG runtime endpoint is not IPv4: $endpoint"
+
+  route_uses_lan_router "$host" ||
+    fail "AWG endpoint $host is not DIRECT via $ROUTER_IP on $LAN_IF"
+
+  ok "AWG endpoint stays DIRECT: $host via $ROUTER_IP on $LAN_IF"
+  endpoint_count=$((endpoint_count + 1))
+done
+
+(( endpoint_count > 0 )) ||
+  fail "no IPv4 AWG endpoint was validated"
+
+printf 'ROUTER_MAC=%s\n' "$router_mac"
+printf 'TRANSIT_PREFLIGHT=OK\n'

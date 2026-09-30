@@ -21,6 +21,7 @@ DNS = '/etc/dnsmasq.d/99-awg-pbr.conf'
 NFT = '/etc/nftables.d/99-awg-pbr.nft'
 CLIENTS = '/etc/awg-pbr/clients.txt'
 DOMAINS = '/etc/dnsmasq.d/99-awg-pbr-domains.conf'
+MODE = '/etc/awg-pbr/mode'
 HEALTH = 'awg-pbr-health.service'
 TIMER = 'awg-opencck-update.timer'
 UPDATER = 'awg-opencck-update.service'
@@ -238,6 +239,20 @@ def confirm(args, prompt):
         raise UserCancelled('Операция отменена; настройки не изменены')
 
 
+def current_mode():
+    try:
+        mode = Path(MODE).read_text().strip()
+    except FileNotFoundError:
+        return 'selective'
+    return mode if mode in ('selective', 'transit') else 'invalid'
+
+
+def paused_policy_description():
+    return ('Transit traffic will be FAIL-CLOSED while AWG is paused'
+            if current_mode() == 'transit'
+            else 'Selective policy will be DIRECT/FAIL-OPEN while AWG is paused')
+
+
 class Transaction:
     def __init__(self, kind, files):
         Path(BACKUPS).mkdir(mode=0o700, parents=True, exist_ok=True)
@@ -339,7 +354,8 @@ def reconfigure(args, env):
         except Exception:
             run('systemctl', 'stop', HEALTH, check=False)
             run(FAILOPEN, check=False)
-            print('Rollback файлов выполнен; восстановление сервисов не удалось. Policy DIRECT.', file=sys.stderr)
+            fallback = 'FAIL-CLOSED' if current_mode() == 'transit' else 'DIRECT/FAIL-OPEN'
+            print(f'Rollback файлов выполнен; восстановление сервисов не удалось. Policy {fallback}.', file=sys.stderr)
         raise
     print('Сеть обновлена; allow-list, DNS upstream и списки маршрутизации сохранены.')
 
@@ -478,7 +494,7 @@ def replace_config(args, env):
         if args.action == 'check':
             print('Native профиль и AWG core validation: OK. Рабочая конфигурация и сервисы не изменены.')
             return
-        confirm(args, 'Заменить профиль? На время проверки трафик будет DIRECT')
+        confirm(args, 'Заменить профиль? ' + paused_policy_description())
         tx = Transaction('config', [str(active), str(previous)])
         old = active.read_bytes()
         service = f'awg-quick@{vpn}.service'
@@ -509,7 +525,8 @@ def replace_config(args, env):
                 if not recovered:
                     run('systemctl', 'stop', HEALTH, check=False)
                     run(FAILOPEN, check=False)
-                    print('Старый файл возвращён, туннель не подтверждён: DIRECT; health остановлен.', file=sys.stderr)
+                    fallback = 'FAIL-CLOSED' if current_mode() == 'transit' else 'DIRECT/FAIL-OPEN'
+                    print(f'Старый файл возвращён, туннель не подтверждён: {fallback}; health остановлен.', file=sys.stderr)
             raise
     print('Профиль активирован. Handshake: OK. Transport: OK. Остальные настройки сохранены.')
 

@@ -142,17 +142,59 @@ For the existing Pi upgrade procedure and hardware validation, see
 [TESTING-v1.1.0.md](docs/TESTING-v1.1.0.md#13-rc2-existing-pi-upgrade-first).
 
 
-## Future v1.2.0
+## v1.2.0 development
 
-After the v1.1.0 release gate is complete, the planned next feature is an
-independent **MikroTik Transit / Backup VPN** operating mode. MikroTik will keep
-traffic classification and SSTP failover responsibility; the Pi will act as an
-AmneziaWG transit gateway when MikroTik selects it as the backup next hop.
+v1.2.0 is being developed on `develop/v1.2.0` with an independent
+**MikroTik Transit / Backup VPN** mode in addition to the v1.1.0 Selective
+Gateway.
 
-The existing Selective Gateway mode will remain available and mode selection
-will be persistent and transactional. For the planned v1.1.0 -> v1.2.0 upgrade,
-the default operating mode is **MikroTik Transit / Backup VPN**; the preserved
-Selective Gateway configuration can be restored at any time from
-`System -> Operating mode`.
+The current implementation branch adds:
 
-Design note: [ROADMAP-v1.2.0-TRANSIT.md](docs/ROADMAP-v1.2.0-TRANSIT.md)
+- persistent `selective` / `transit` operating mode;
+- transactional mode switching with rollback;
+- Transit preflight that verifies a healthy AWG path and keeps the AWG endpoint
+  DIRECT through the normal LAN router;
+- MikroTik-MAC-restricted Transit forwarding and NAT to `awg0`;
+- Selective FAIL-OPEN and Transit FAIL-CLOSED health behavior;
+- a Transit lockdown ruleset that is installed before router/MAC-dependent boot setup;
+- mode-aware boot/reload setup;
+- CLI and SSH-TUI mode selection;
+- persistent TUI mode identification: the dialog backtitle, main-menu title and
+  System/Operating mode screens visibly show SELECTIVE or TRANSIT, and the
+  active choice is marked as current;
+- context help for every existing and new TUI menu item, with expanded warnings
+  before routing/network/power actions;
+- AmneziaWG profile replacement from the TUI either by file path or by pasting
+  the native .conf text into a root-only temporary file in /run; pasted profiles
+  are validated before transactional replacement and automatic rollback remains
+  available;
+- preservation of VPN/DIRECT/OpenCCK/client state while Transit classification
+  is active; OpenCCK continues refreshing its persistent cache without
+  reloading the live Transit datapath;
+- hierarchical manual DIRECT precedence in Selective mode: VPN/OpenCCK domain
+  directives already covered by a manual DIRECT parent are omitted from the
+  generated dnsmasq nftset rules, preventing a more-specific source entry from
+  overriding the DIRECT exception.
+
+Core mode commands are:
+
+```bash
+sudo awg-route mode status
+sudo awg-route mode selective
+sudo awg-route mode transit
+```
+
+A fresh v1.2 install defaults to **Transit**. During installation the Pi stages
+the safe Selective ruleset while AWG is validated, then transactionally switches
+to Transit after preflight succeeds. A v1.1.0 -> v1.2.0 upgrade also offers
+Transit as the default post-upgrade mode. If Transit preflight/activation fails,
+the runtime is restored to Selective instead of leaving a partial Transit state.
+
+v1.2.0 is **not yet the stable release**. Hardware validation must pass before
+the stable tag is moved from v1.1.0.
+
+Design: [ROADMAP-v1.2.0-TRANSIT.md](docs/ROADMAP-v1.2.0-TRANSIT.md)
+
+Hardware release gate: [TESTING-v1.2.0.md](docs/TESTING-v1.2.0.md)
+
+RouterOS template: [MIKROTIK-TRANSIT-v1.2.0.md](docs/MIKROTIK-TRANSIT-v1.2.0.md)

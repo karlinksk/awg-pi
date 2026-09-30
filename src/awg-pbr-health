@@ -1,0 +1,144 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+AWG_ENV_FILE="${AWG_ENV_FILE:-/etc/awg-pbr/env}"
+AWG_COMMON_FILE="${AWG_COMMON_FILE:-/usr/local/lib/awg-pi/common.sh}"
+VE="${AWG_VPN_ENABLED_FILE:-/etc/awg-pbr/vpn-enabled}"
+STATE_DIR="${AWG_STATE_DIR:-/run/awg-pbr}"
+STATE="$STATE_DIR/health.state"
+TRANSIT_ROUTING="${AWG_TRANSIT_ROUTING:-/usr/local/sbin/awg-transit-routing}"
+SETUP="${AWG_SETUP:-/usr/local/sbin/awg-pbr-setup}"
+
+# shellcheck disable=SC1090
+source "$AWG_ENV_FILE"
+# shellcheck disable=SC1090
+source "$AWG_COMMON_FILE"
+
+IP_BIN="${IP_BIN:-ip}"
+AWG_BIN="${AWG_BIN:-awg}"
+PING_BIN="${PING_BIN:-ping}"
+LOGGER_BIN="${LOGGER_BIN:-logger}"
+
+mkdir -p "$STATE_DIR"
+
+set_state(){
+  local state="$1" message="$2"
+  if [[ "$(cat "$STATE" 2>/dev/null || true)" != "$state" ]]; then
+    printf '%s\n' "$state" >"$STATE"
+    "$LOGGER_BIN" -t awg-pbr "$message" 2>/dev/null || true
+  fi
+}
+
+selective_rule_on(){
+  "$IP_BIN" -4 route replace default dev "$VPN_IF" table "$VPN_TABLE"
+  if ! "$IP_BIN" -4 rule show | grep -Eq '(^| )100:.*fwmark (0x100|256).*lookup (100|awgvpn)'; then
+    "$IP_BIN" -4 rule add priority 100 fwmark "$VPN_MARK" lookup "$VPN_TABLE"
+  fi
+  set_state up "VPN healthy: Selective policy route enabled"
+}
+
+selective_rule_off(){
+  while "$IP_BIN" -4 rule del priority 100 fwmark "$VPN_MARK" lookup "$VPN_TABLE" 2>/dev/null; do :; done
+  set_state down "VPN unavailable/disabled: Selective FAIL-OPEN to normal Internet"
+}
+
+transit_rule_on(){
+  if ! "$TRANSIT_ROUTING" apply >/dev/null 2>&1; then
+    "$SETUP" >/dev/null
+    "$TRANSIT_ROUTING" apply >/dev/null
+  fi
+  set_state up "VPN healthy: Transit policy route enabled"
+}
+
+transit_rule_off(){
+  if ! "$TRANSIT_ROUTING" disable >/dev/null 2>&1; then
+    # Rebuild the mode-aware base ruleset first. In Transit this restores the
+    # MAC-restricted fail-closed guard and clears the policy rule.
+    "$SETUP" >/dev/null 2>&1 || true
+    "$TRANSIT_ROUTING" disable >/dev/null 2>&1 || {
+      while "$IP_BIN" -4 rule del priority 100 fwmark "$VPN_MARK" lookup "$VPN_TABLE" 2>/dev/null; do :; done
+    }
+  fi
+  set_state down "VPN unavailable: Transit FAIL-CLOSED"
+}
+
+health_prepare(){
+  "$IP_BIN" -4 route replace default dev "$VPN_IF" table "$HEALTH_TABLE" 2>/dev/null || true
+  if ! "$IP_BIN" -4 rule show | grep -Eq '(^| )90:.*fwmark (0x101|257).*lookup (101|awghealth)'; then
+    "$IP_BIN" -4 rule add priority 90 fwmark "$HEALTH_MARK" lookup "$HEALTH_TABLE" 2>/dev/null || true
+  fi
+}
+
+handshake_fresh(){
+  local hs now
+  hs="$("$AWG_BIN" show "$VPN_IF" latest-handshakes 2>/dev/null | awk '$2>m{m=$2}END{print m+0}')"
+  [[ "$hs" -gt 0 ]] || return 1
+  now="$(date +%s)"
+  (( now - hs <= HANDSHAKE_MAX_AGE ))
+}
+
+transport_ok(){
+  "$PING_BIN" -4 -n -m "$((HEALTH_MARK))" -c1 -W2 9.9.9.9 >/dev/null 2>&1 ||   "$PING_BIN" -4 -n -m "$((HEALTH_MARK))" -c1 -W2 1.1.1.1 >/dev/null 2>&1
+}
+
+current_mode(){
+  awg_mode_get 2>/dev/null || printf '%s\n' invalid
+}
+
+health_cycle(){
+  local mode
+  mode="$(current_mode)"
+
+  case "$mode" in
+    selective)
+      if [[ "$(cat "$VE" 2>/dev/null || echo 1)" != 1 ]]; then
+        selective_rule_off
+        return 0
+      fi
+      if "$IP_BIN" link show "$VPN_IF" >/dev/null 2>&1; then
+        health_prepare
+        if transport_ok && handshake_fresh; then
+          selective_rule_on
+        else
+          selective_rule_off
+        fi
+      else
+        selective_rule_off
+      fi
+      ;;
+    transit)
+      if "$IP_BIN" link show "$VPN_IF" >/dev/null 2>&1; then
+        health_prepare
+        if transport_ok && handshake_fresh; then
+          transit_rule_on
+        else
+          transit_rule_off
+        fi
+      else
+        transit_rule_off
+      fi
+      ;;
+    *)
+      # Corrupt/unknown mode: remove the policy rule. With Selective rules this
+      # fails open; with the Transit forward guard it fails closed.
+      selective_rule_off
+      ;;
+  esac
+}
+
+shutdown_safe(){
+  case "$(current_mode)" in
+    transit) transit_rule_off ;;
+    *) selective_rule_off ;;
+  esac
+}
+
+trap shutdown_safe EXIT INT TERM
+
+while true; do
+  health_cycle
+  [[ "${AWG_HEALTH_ONCE:-0}" == 1 ]] && break
+  sleep "$HEALTH_INTERVAL"
+done
+
+trap - EXIT INT TERM

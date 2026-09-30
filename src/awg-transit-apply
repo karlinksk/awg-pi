@@ -1,0 +1,154 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+[[ ${EUID:-$(id -u)} -eq 0 ]] || {
+  echo "Run awg-transit-apply as root." >&2
+  exit 1
+}
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+AWG_TRANSIT_PREFLIGHT="${AWG_TRANSIT_PREFLIGHT:-$SCRIPT_DIR/awg-transit-preflight}"
+AWG_TRANSIT_NFT_RENDERER="${AWG_TRANSIT_NFT_RENDERER:-$SCRIPT_DIR/awg-transit-nft}"
+AWG_TRANSIT_STATE_DIR="${AWG_TRANSIT_STATE_DIR:-/run/awg-pbr}"
+NFT_BIN="${NFT_BIN:-nft}"
+
+CANDIDATE="$AWG_TRANSIT_STATE_DIR/transit-candidate.nft"
+BACKUP="$AWG_TRANSIT_STATE_DIR/pre-transit-table.nft"
+APPLY_TXN="$AWG_TRANSIT_STATE_DIR/transit-apply.nft"
+ROLLBACK_TXN="$AWG_TRANSIT_STATE_DIR/transit-rollback.nft"
+
+fail(){
+  printf 'FAIL: %s\n' "$*" >&2
+  exit 1
+}
+
+ensure_state_dir(){
+  mkdir -p "$AWG_TRANSIT_STATE_DIR"
+  chmod 700 "$AWG_TRANSIT_STATE_DIR"
+}
+
+prepare_transit(){
+  local preflight_out router_mac tmp
+
+  ensure_state_dir
+
+  if ! preflight_out="$("$AWG_TRANSIT_PREFLIGHT")"; then
+    printf '%s\n' "$preflight_out" >&2
+    fail "Transit preflight failed"
+  fi
+  printf '%s\n' "$preflight_out"
+
+  router_mac="$(
+    awk -F= '$1=="ROUTER_MAC"{print $2}' <<<"$preflight_out" | tail -n1
+  )"
+  [[ "$router_mac" =~ ^([[:xdigit:]]{2}:){5}[[:xdigit:]]{2}$ ]] ||
+    fail "Transit preflight did not return a valid ROUTER_MAC"
+
+  tmp="$(mktemp "$AWG_TRANSIT_STATE_DIR/.transit-candidate.XXXXXX")"
+  if ! ROUTER_MAC="$router_mac" "$AWG_TRANSIT_NFT_RENDERER" >"$tmp"; then
+    rm -f "$tmp"
+    fail "could not render Transit nftables candidate"
+  fi
+  chmod 600 "$tmp"
+
+  if ! "$NFT_BIN" -c -f "$tmp"; then
+    rm -f "$tmp"
+    fail "Transit nftables candidate failed nft syntax validation"
+  fi
+
+  mv -f "$tmp" "$CANDIDATE"
+  chmod 600 "$CANDIDATE"
+
+  printf 'TRANSIT_CANDIDATE=%s\n' "$CANDIDATE"
+  printf 'TRANSIT_PREPARE=OK\n'
+}
+
+backup_current_table(){
+  local tmp
+  tmp="$(mktemp "$AWG_TRANSIT_STATE_DIR/.pre-transit.XXXXXX")"
+
+  if ! "$NFT_BIN" list table inet awg_pbr >"$tmp"; then
+    rm -f "$tmp"
+    fail "current inet awg_pbr table is unavailable; refusing Transit apply"
+  fi
+
+  [[ -s "$tmp" ]] || {
+    rm -f "$tmp"
+    fail "current inet awg_pbr table backup is empty"
+  }
+
+  chmod 600 "$tmp"
+  mv -f "$tmp" "$BACKUP"
+}
+
+build_replace_transaction(){
+  local source_file="$1" output_file="$2"
+  {
+    printf 'delete table inet awg_pbr\n'
+    cat "$source_file"
+  } >"$output_file"
+  chmod 600 "$output_file"
+}
+
+verify_transit_table(){
+  local forward mark nat
+
+  forward="$("$NFT_BIN" list chain inet awg_pbr forward_guard 2>/dev/null)" || return 1
+  mark="$("$NFT_BIN" list chain inet awg_pbr prerouting_mark 2>/dev/null)" || return 1
+  nat="$("$NFT_BIN" list chain inet awg_pbr postrouting_nat 2>/dev/null)" || return 1
+
+  grep -Fq 'oifname "awg0"' <<<"$forward" || return 1
+  grep -Fq 'ether saddr' <<<"$forward" || return 1
+  grep -Fq 'meta mark set' <<<"$mark" || return 1
+  grep -Fq 'oifname "awg0" masquerade' <<<"$nat" || return 1
+}
+
+rollback_previous_table(){
+  [[ -s "$BACKUP" ]] || return 1
+  build_replace_transaction "$BACKUP" "$ROLLBACK_TXN"
+  "$NFT_BIN" -c -f "$ROLLBACK_TXN" || return 1
+  "$NFT_BIN" -f "$ROLLBACK_TXN"
+}
+
+apply_transit(){
+  prepare_transit
+  backup_current_table
+  build_replace_transaction "$CANDIDATE" "$APPLY_TXN"
+
+  "$NFT_BIN" -c -f "$APPLY_TXN" ||
+    fail "Transit replacement transaction failed nft validation"
+
+  if ! "$NFT_BIN" -f "$APPLY_TXN"; then
+    fail "Transit nftables transaction was not applied"
+  fi
+
+  if ! verify_transit_table; then
+    printf 'Transit post-apply verification failed; restoring previous table.\n' >&2
+    if rollback_previous_table; then
+      printf 'ROLLBACK=OK\n' >&2
+    else
+      printf 'ROLLBACK=FAILED\n' >&2
+    fi
+    return 1
+  fi
+
+  printf 'TRANSIT_NFT=APPLIED\n'
+  printf 'NOTE: operating mode state was not changed.\n'
+}
+
+case "${1:-}" in
+  prepare) prepare_transit ;;
+  apply) apply_transit ;;
+  *)
+    cat >&2 <<'USAGE'
+Usage:
+  awg-transit-apply prepare
+  awg-transit-apply apply
+
+prepare is read-only except for files under /run/awg-pbr.
+apply replaces only table inet awg_pbr and rolls it back if post-apply verification fails.
+It does not change /etc/awg-pbr/mode.
+USAGE
+    exit 2
+    ;;
+esac
