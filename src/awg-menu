@@ -10,8 +10,6 @@ if [[ "${AWG_MENU_REEXEC:-0}" != 1 ]]; then
   export AWG_MENU_REEXEC=1
   exec "$_menu_tmp" "$@"
 fi
-trap 'rm -f "$0" 2>/dev/null || true' EXIT
-
 command -v dialog >/dev/null 2>&1 || { echo "Не найден dialog" >&2; exit 1; }
 
 AWG_ROUTE=/usr/local/sbin/awg-route
@@ -19,7 +17,17 @@ AWG_UPDATE=/usr/local/sbin/awg-update
 VERSION="$(cat /etc/awg-pbr/version 2>/dev/null || echo unknown)"
 BACKTITLE="AWG Pi Gateway v$VERSION"
 TMP="$(mktemp)"
-trap 'rm -f "$TMP"' EXIT
+PASTE_TMP=""
+SELF_TMP=""
+if [[ "${AWG_MENU_REEXEC:-0}" == 1 && "$0" == /tmp/awg-menu.* ]]; then
+  SELF_TMP="$0"
+fi
+cleanup(){
+  [[ -z "$PASTE_TMP" ]] || rm -f "$PASTE_TMP" 2>/dev/null || true
+  rm -f "$TMP" 2>/dev/null || true
+  [[ -z "$SELF_TMP" ]] || rm -f "$SELF_TMP" 2>/dev/null || true
+}
+trap cleanup EXIT
 
 # shellcheck disable=SC1091
 [[ -r /etc/awg-pbr/env ]] && source /etc/awg-pbr/env
@@ -222,8 +230,75 @@ client_menu(){
   done
 }
 
+paste_awg_config(){
+  local rc
+  install -d -m 700 /run/awg-pbr
+  PASTE_TMP="$(mktemp /run/awg-pbr/config-paste.XXXXXX.conf)"
+  chmod 600 "$PASTE_TMP"
+
+  set +e
+  dialog --backtitle "$BACKTITLE" --title "Вставить конфигурацию AmneziaWG" \
+    --ok-label "Проверить" --cancel-label "Отмена" \
+    --editbox "$PASTE_TMP" 30 110
+  rc=$?
+  set -e
+  if (( rc != 0 )); then
+    rm -f "$PASTE_TMP"
+    PASTE_TMP=""
+    return 0
+  fi
+
+  # Text copied from Windows terminals/clipboard may contain CRLF.
+  sed -i 's/\r$//' "$PASTE_TMP"
+  if ! grep -q '[^[:space:]]' "$PASTE_TMP"; then
+    msg "AmneziaWG" "Конфигурация пуста. Рабочий профиль не изменён."
+    rm -f "$PASTE_TMP"
+    PASTE_TMP=""
+    return 0
+  fi
+
+  title="Проверка AmneziaWG"
+  if ! capture "$AWG_ROUTE" config check "$PASTE_TMP"; then
+    msg "AmneziaWG" "Проверка не пройдена. Рабочая конфигурация не изменена."
+    rm -f "$PASTE_TMP"
+    PASTE_TMP=""
+    return 0
+  fi
+
+  if confirm "Установить AmneziaWG" \
+    "Проверка native .conf и AWG core пройдена.\n\nСекретные ключи в итоговом окне не отображаются.\nСтарый профиль будет сохранён для rollback.\n\nУстановить проверенную конфигурацию?"; then
+    title="Замена профиля"
+    capture "$AWG_ROUTE" config replace "$PASTE_TMP" --yes || true
+  fi
+
+  rm -f "$PASTE_TMP"
+  PASTE_TMP=""
+}
+
+awg_config_menu(){
+  local choice path
+  while true; do
+    choice="$(dialog --backtitle "$BACKTITLE" --title "Конфигурация AmneziaWG" --menu \
+      "Выберите способ установки native .conf. Перед заменой профиль проходит безопасную проверку." \
+      18 92 8 \
+      1 "Вставить конфигурацию текстом" \
+      2 "Загрузить конфигурацию из файла" \
+      3 "Откатить предыдущую конфигурацию" \
+      0 "Назад" 3>&1 1>&2 2>&3)" || return 0
+    case "$choice" in
+      1) paste_awg_config ;;
+      2)
+        path="$(input "AmneziaWG" "Полный путь к native .conf:")" || continue
+        run_interactive "Замена профиля" "$AWG_ROUTE" config replace "$path"
+        ;;
+      3) run_interactive "Откат профиля" "$AWG_ROUTE" config rollback ;;
+      0) return 0 ;;
+    esac
+  done
+}
+
 vpn_menu(){
-  local choice path mode
+  local choice mode
   while true; do
     mode="$(cat /etc/awg-pbr/mode 2>/dev/null || echo selective)"
     if [[ "$mode" == transit ]]; then
@@ -232,8 +307,7 @@ vpn_menu(){
         18 92 7 \
         1 "Показать состояние режима" \
         2 "Перезапустить awg0 и health monitor" \
-        3 "Заменить конфигурацию AmneziaWG" \
-        4 "Откатить предыдущую конфигурацию" \
+        3 "Конфигурация AmneziaWG" \
         0 "Назад" 3>&1 1>&2 2>&3)" || return 0
       case "$choice" in
         1)
@@ -245,17 +319,13 @@ vpn_menu(){
           systemctl restart awg-quick@awg0.service awg-pbr-health.service
           msg "VPN" "Сервисы перезапущены."
           ;;
-        3)
-          path="$(input "AmneziaWG" "Полный путь к native .conf:")" || continue
-          run_interactive "Замена профиля" "$AWG_ROUTE" config replace "$path"
-          ;;
-        4) run_interactive "Откат профиля" "$AWG_ROUTE" config rollback ;;
+        3) awg_config_menu ;;
         0) return 0 ;;
       esac
       continue
     fi
 
-    choice="$(dialog --backtitle "$BACKTITLE" --title "VPN policy" --menu "Управление Selective Gateway" 16 80 7       1 "Включить VPN policy"       2 "Выключить VPN policy (всё DIRECT)"       3 "Перезапустить awg0 и health monitor"       4 "Заменить конфигурацию AmneziaWG"       5 "Откатить предыдущую конфигурацию"       0 "Назад" 3>&1 1>&2 2>&3)" || return 0
+    choice="$(dialog --backtitle "$BACKTITLE" --title "VPN policy" --menu "Управление Selective Gateway" 16 80 7       1 "Включить VPN policy"       2 "Выключить VPN policy (всё DIRECT)"       3 "Перезапустить awg0 и health monitor"       4 "Конфигурация AmneziaWG"       0 "Назад" 3>&1 1>&2 2>&3)" || return 0
     case "$choice" in
       1)
         title="VPN ON"
@@ -271,11 +341,7 @@ vpn_menu(){
         systemctl restart awg-quick@awg0.service awg-pbr-health.service
         msg "VPN" "Сервисы перезапущены."
         ;;
-      4)
-        path="$(input "AmneziaWG" "Полный путь к native .conf:")" || continue
-        run_interactive "Замена профиля" "$AWG_ROUTE" config replace "$path"
-        ;;
-      5) run_interactive "Откат профиля" "$AWG_ROUTE" config rollback ;;
+      4) awg_config_menu ;;
       0) return 0 ;;
     esac
   done
