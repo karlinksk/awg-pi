@@ -52,4 +52,17 @@ for label in (
 assert "Весь маршрутизируемый трафик будет идти DIRECT" in menu
 assert "SSH и Transit backup" in menu
 
+
+for needle in (
+    'BASE_BACKTITLE="AWG Pi Gateway v$VERSION"',
+    'BACKTITLE="$BASE_BACKTITLE | Режим: $(operating_mode_badge "$mode")"',
+    "РЕЖИМ РАБОТЫ:",
+    'Главное меню — [$mode_badge]',
+    '[ТЕКУЩИЙ]',
+    'Operating mode [$mode_badge]',
+    'AWG / Transit [TRANSIT]',
+    'VPN policy [SELECTIVE]',
+):
+    assert needle in menu, f"missing operating-mode indicator: {needle}"
+
 print("menu config paste/help checks: OK")
