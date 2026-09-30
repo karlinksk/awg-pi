@@ -288,8 +288,11 @@ Still pending or intentionally deferred:
   Direct overwrite of the same target with GNU install 9.7 succeeds when run
   alone, confirming the filesystem/target itself is normal. RC6 serializes
   setup and has a concurrent regression test.
-- PENDING — repeat the clean v1.2.0 fresh install on clean media with RC6 and
-  confirm the final reload/diagnostics complete in default Transit.
+- PASS — RC6 clean v1.2.0 install on clean Debian 13 ARM64 completed through
+  final reload/diagnostics in default Transit. Post-install state: version
+  1.2.0, Transit SAFE/ACTIVE/READY, all core services/timer active, zero failed
+  systemd units, table 100 default via awg0, and the AWG endpoint remained
+  DIRECT via the LAN router on eth0.
 - PENDING — full Selective regression with non-empty manual/OpenCCK/client lists
   preserved across the v1.1 -> v1.2 upgrade; the hardware run used empty lists.
 - DEFERRED — RouterOS reboot persistence of the Netwatch automation while the
@@ -310,7 +313,7 @@ Before tagging v1.2.0:
 - [x] Raspberry Pi reboot in Selective and Transit PASS.
 - [x] diagnostics/status redact private, preshared and header-protection keys.
 - [x] RC5 TUI contextual-help and invalid pasted-profile rejection PASS on real SSH.
-- [ ] RC6 clean fresh install completes final reload/diagnostics and defaults
+- [x] RC6 clean fresh install completes final reload/diagnostics and defaults
   to Transit on clean media.
 - [ ] non-empty Selective state preservation/regression on real hardware.
 - [ ] CI green at the exact final release SHA after all release documentation is
