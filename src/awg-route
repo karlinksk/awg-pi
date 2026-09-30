@@ -127,29 +127,38 @@ domain_matches_file(){
   return 1
 }
 
+append_dns_rules_from_file(){
+  local f="$1" setname="$2" d
+  [[ -r "$f" ]] || return 0
+  while IFS= read -r d || [[ -n "$d" ]]; do
+    d="${d%%#*}"; d="${d//[[:space:]]/}"
+    [[ -z "$d" ]] && continue
+
+    # Manual DIRECT rules are hierarchical (example.com includes subdomains).
+    # dnsmasq chooses the most specific matching domain directive, so a more
+    # specific VPN/OpenCCK entry would otherwise suppress a parent DIRECT rule.
+    # Omit every VPN-classifying entry already covered by a DIRECT rule.
+    if [[ "$setname" == vpn4 ]] && domain_matches_file "$d" "$DD"; then
+      continue
+    fi
+
+    printf 'nftset=/%s/4#inet#awg_pbr#%s\n' "$d" "$setname" >>"$DC"
+  done <"$f"
+}
+
 regen_domains(){
   local m tmp_static tmp_entries entry
   : >"$DC"
 
-  add_dns_file(){
-    local f="$1" setname="$2" d
-    [[ -r "$f" ]] || return 0
-    while IFS= read -r d || [[ -n "$d" ]]; do
-      d="${d%%#*}"; d="${d//[[:space:]]/}"
-      [[ -z "$d" ]] && continue
-      printf 'nftset=/%s/4#inet#awg_pbr#%s\n' "$d" "$setname" >>"$DC"
-    done <"$f"
-  }
-
-  add_dns_file "$VD" vpn4
-  add_dns_file "$DD" direct4
+  append_dns_rules_from_file "$VD" vpn4
+  append_dns_rules_from_file "$DD" direct4
 
   while IFS= read -r m; do
     [[ -n "$m" ]] || continue
     load_meta "$m"
     [[ "${PROVIDER:-}" == opencck && "${ENABLED:-0}" == 1 ]] || continue
     [[ "${SOURCE_TYPE:-}" == domains && -r "${DATA_FILE:-}" ]] || continue
-    add_dns_file "$DATA_FILE" vpn4
+    append_dns_rules_from_file "$DATA_FILE" vpn4
   done < <(source_meta_files)
 
   dnsmasq --test >/dev/null
