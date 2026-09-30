@@ -108,4 +108,14 @@ if route mode garbage >"$tmp/out" 2>"$tmp/err"; then
   fail "invalid mode subcommand was accepted"
 fi
 
+echo "=== diagnostics mode pipeline scope regression ==="
+diag_func="$(sed -n '/^run_diagnostics(){/,/^}/p' "$repo_root/src/awg-route")"
+assign_line="$(grep -n 'if diag_mode="$(awg_mode_get' <<<"$diag_func" | head -1 | cut -d: -f1)"
+tee_line="$(grep -n '} | tee "$report"' <<<"$diag_func" | head -1 | cut -d: -f1)"
+post_line="$(grep -n 'if \[\[ "$diag_mode" == transit \]\]; then' <<<"$diag_func" | tail -1 | cut -d: -f1)"
+[[ -n "$assign_line" && -n "$tee_line" && -n "$post_line" ]] ||
+  fail "diagnostics mode scope markers missing"
+(( assign_line < tee_line && tee_line < post_line )) ||
+  fail "diag_mode must be resolved before the tee pipeline and remain available afterward"
+
 echo "route mode CLI: OK"
