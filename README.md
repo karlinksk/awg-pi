@@ -159,6 +159,12 @@ The current implementation branch adds:
 - a Transit lockdown ruleset that is installed before router/MAC-dependent boot setup;
 - mode-aware boot/reload setup;
 - CLI and SSH-TUI mode selection;
+- context help for every existing and new TUI menu item, with expanded warnings
+  before routing/network/power actions;
+- AmneziaWG profile replacement from the TUI either by file path or by pasting
+  the native .conf text into a root-only temporary file in /run; pasted profiles
+  are validated before transactional replacement and automatic rollback remains
+  available;
 - preservation of VPN/DIRECT/OpenCCK/client state while Transit classification
   is active; OpenCCK continues refreshing its persistent cache without
   reloading the live Transit datapath.
