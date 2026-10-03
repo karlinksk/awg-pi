@@ -1,63 +1,144 @@
 #EXTM3U
-# Новосибирск — компактный IPTV-плейлист для Lampa
-# Обновлено: 2026-10-03
-
-#EXTINF:-1 group-title="Новосибирск",49 канал (Новосибирск)
-https://49channel.mediacdn.ru/live/cdn/49channel/playlist.m3u8
-
-#EXTINF:-1 group-title="Новосибирск",ОТС (Новосибирск)
-https://strm.yandex.ru/kal/otstv/otstv0.m3u8
-
-#EXTINF:-1 tvg-id="Channel8Novosibirsk.ru@SD" group-title="Новосибирск",8 канал (Новосибирск)
-https://live-8knsk.cdnvideo.ru/8knsk/stream1/playlist.m3u8
-
-#EXTINF:-1 tvg-id="Russia1.ru@HD" group-title="Федеральные",Россия 1 HD
-https://live.smotrim.ru/vgtrk/0/russia1-hd/index.m3u8
-
-#EXTINF:-1 tvg-id="Russia24.ru@HD" group-title="Федеральные",Россия 24 HD
-https://live.smotrim.ru/vgtrk/0/russia24-hd/index.m3u8
-
-#EXTINF:-1 tvg-id="RussiaK.ru@HD" group-title="Федеральные",Россия К HD
-https://stream.smotrim.ru/hls2/russia_k/playlist_5.m3u8
-
-#EXTINF:-1 tvg-id="NTV.ru@HD" group-title="Федеральные",НТВ HD
-https://cdn-dvr.ntv.ru/ntv0_hd/index.m3u8
-
-#EXTINF:-1 tvg-id="RENTV.ru@SD" group-title="Федеральные",РЕН ТВ
-https://ad-hls-rentv.cdnvideo.ru/ren/smil:ren.smil/playlist.m3u8
-
-#EXTINF:-1 tvg-id="Channel5.ru@SD" group-title="Федеральные",Пятый канал
-https://zabava-htlive.cdn.ngenix.net/hls/CH_5TV/variant.m3u8
-
-#EXTINF:-1 tvg-id="OTR.ru@SD" group-title="Федеральные",ОТР
-https://zabava-htlive.cdn.ngenix.net/hls/CH_OTR/variant.m3u8
-
-#EXTINF:-1 tvg-id="Carousel.ru@SD" group-title="Федеральные",Карусель
-https://stream.smotrim.ru/hls2/karusel/playlist_3.m3u8
-
-#EXTINF:-1 tvg-id="RBKTV.ru@SD" group-title="Новости",РБК
-https://online.video.rbc.ru/online/rbctv_576p/index.m3u8
-
-#EXTINF:-1 tvg-id="360.ru@SD" group-title="Новости",360°
-https://cdn-evacoder-tv.facecast.io/evacoder_hls_hi/CkxfR1xNUAJwTgtXTBZTAJli/index.m3u8
-
-#EXTINF:-1 tvg-id="RT.ru@HD" group-title="Новости",RT HD
-https://wisewatchoott.wiseplayout.com/RT/master.m3u8
-
-#EXTINF:-1 tvg-id="TVBRICSRussian.ru@SD" group-title="Познавательные",TV BRICS
-https://rusbrics.mediacdn.ru/cdn/brics/russian/playlist.m3u8
-
-#EXTINF:-1 tvg-id="ProBusiness.ru@SD" group-title="Познавательные",Про Бизнес
-https://tv-streaming.bsh.ru:21938/probusiness/probusiness.stream/playlist.m3u8
-
-#EXTINF:-1 tvg-id="RadostMoya.ru@SD" group-title="Семья",Радость моя
-https://radm.mediacdn.ru/cdn/radost/playlist_sdhigh.m3u8
-
-#EXTINF:-1 tvg-id="Soyuzny.ru@SD" group-title="Семья",Союзный
-https://souzny.mediacdn.ru/cdn/souzny/playlist.m3u8
-
-#EXTINF:-1 tvg-id="RUTVKids.ru@SD" group-title="Музыка и дети",RU.TV Kids
-https://rutvkids.ru/live/efir/index.m3u8
-
-#EXTINF:-1 tvg-id="Afontovo.ru@SD" group-title="Региональные",Афонтово
+#EXTINF:-1 group-title="01 Новосибирск",НСК 49
+https://rt-sib-nsk-htlive.cdn.ngenix.net/hls/CH_R01_49CHANNEL/variant.m3u8
+#EXTINF:-1 group-title="01 Новосибирск",ОТС
+http://tele2dvrnat01-02.cdnvideo.ru/stream/NAT_OTC_ap1f55f482a2df2bede07c661806c4eb/hls/1024x576@1272/playlist.m3u8
+#EXTINF:-1 tvg-id="Channel8Novosibirsk.ru@SD" group-title="01 Новосибирск",8 канал Новосибирск
+https://rt-sib-nsk-htlive.cdn.ngenix.net/hls/CH_R01_OTT_SIB_NSK_8CHANNEL/variant.m3u8
+#EXTINF:-1 tvg-id="Afontovo.ru@SD" group-title="01 Новосибирск",Афонтово
 https://stream.afontovo.ru/hd.m3u8
+#EXTINF:-1 tvg-id="ChannelOne.ru@HD" group-title="02 Федеральные",Первый канал
+https://stream8.cinerama.uz/1214/tracks-v1a1/mono.m3u8
+#EXTINF:-1 tvg-id="Russia1.ru@HD" group-title="02 Федеральные",Россия 1
+https://stream.smotrim.ru/hls2/russia_hd/playlist_6.m3u8
+#EXTINF:-1 tvg-id="NTV.ru@HD" group-title="02 Федеральные",НТВ
+#EXTVLCOPT:http-user-agent=WINK/1.80.1 (AndroidTV/9) HlsWinkPlayer
+https://zabava-htlive.cdn.ngenix.net/hls/CH_NTV/variant.m3u8
+#EXTINF:-1 tvg-id="Channel5.ru@SD" group-title="02 Федеральные",Пятый канал
+http://31.148.5.241/kanal_5/index.m3u8
+#EXTINF:-1 tvg-id="RussiaK.ru@HD" group-title="02 Федеральные",Россия К
+https://stream.smotrim.ru/hls2/russia_k/playlist_5.m3u8
+#EXTINF:-1 tvg-id="Russia24.ru@HD" group-title="02 Федеральные",Россия 24
+https://live.smotrim.ru/vgtrk/0/russia24-hd/index.m3u8
+#EXTINF:-1 tvg-id="Carousel.ru@Plus4" group-title="02 Федеральные",Карусель
+http://185.37.150.46/Karusel/index.m3u8
+#EXTINF:-1 tvg-id="OTR.ru@SD" group-title="02 Федеральные",ОТР
+http://flussonic.linkintel.ru/otr/index.m3u8
+#EXTINF:-1 tvg-id="TVCentr.ru@SD" group-title="02 Федеральные",ТВ Центр
+https://stream8.cinerama.uz/1025/tracks-v1a1/mono.m3u8
+#EXTINF:-1 tvg-id="RENTV.ru@SD" group-title="02 Федеральные",РЕН ТВ
+http://185.23.80.23:8080/REN/index.m3u8
+#EXTINF:-1 tvg-id="Spas.ru@SD" group-title="02 Федеральные",Спас
+#EXTVLCOPT:http-user-agent=WINK/1.80.1 (AndroidTV/9) HlsWinkPlayer
+https://zabava-htlive.cdn.ngenix.net/hls/CH_SPAS/variant.m3u8
+#EXTINF:-1 tvg-id="STS.ru@HD" group-title="02 Федеральные",СТС
+http://stream.mcquack.net/138/index.m3u8
+#EXTINF:-1 tvg-id="Domashniy.ru@SD" group-title="02 Федеральные",Домашний
+https://fs.uplink.kz/domashniy/mono.m3u8?token=onlinetv
+#EXTINF:-1 tvg-id="TV3.ru@HD" group-title="02 Федеральные",ТВ-3
+http://stream.mcquack.net/136/index.m3u8
+#EXTINF:-1 tvg-id="Friday.ru@SD" group-title="02 Федеральные",Пятница!
+https://vod.tuva.ru/friday/index.m3u8
+#EXTINF:-1 tvg-id="Zvezda.ru@SD" group-title="02 Федеральные",Звезда
+http://51.158.144.33:2021/zvezda/index.m3u8
+#EXTINF:-1 tvg-id="Mir.ru@HD" group-title="02 Федеральные",Мир
+http://hls.mirtv.cdnvideo.ru/mirtv-parampublish/mirtv_2500/playlist.m3u8
+#EXTINF:-1 tvg-id="TNT.ru@SD" group-title="02 Федеральные",ТНТ
+http://flussonic.linkintel.ru/tnt/index.m3u8
+#EXTINF:-1 tvg-id="2x2.ru@SD" group-title="02 Федеральные",2x2
+https://bl.rutube.ru/livestream/392b4686b770bae2da6bf5ac4574add5/index.m3u8?e=2068731801&s=tenr-yHXUv1wibfka78s2A&scheme=https
+#EXTINF:-1 tvg-id="Che.ru@SD" group-title="02 Федеральные",Че!
+http://flussonic.linkintel.ru/che/index.m3u8
+#EXTINF:-1 tvg-id="TNT4.ru@SD" group-title="02 Федеральные",ТНТ4
+http://flussonic.linkintel.ru/tnt4/index.m3u8
+#EXTINF:-1 tvg-id="U.ru@SD" group-title="02 Федеральные",Ю
+https://bl.rutube.ru/livestream/5c9327074e25ca86f3111d4085cbbb65/index.m3u8?e=2066519758&s=9cPc1rCGu6M932eqrifRhQ&scheme=https
+#EXTINF:-1 tvg-id="Subbota.ru@SD" group-title="02 Федеральные",Суббота!
+https://bl.rutube.ru/livestream/310744c10a5809da38aa445c952976da/index.m3u8?e=2066519758&s=dmUf6BUQzDBTwtQOseAfog&scheme=https
+#EXTINF:-1 tvg-id="Solnce.ru@SD" group-title="02 Федеральные",Солнце
+https://tv.mediacdn.ru/live/solntse/playlist.m3u8
+#EXTINF:-1 tvg-id="RT.ru@SD" group-title="03 Новости",RT
+https://rt-glb.rttv.com/live/rtnews/playlist.m3u8
+#EXTINF:-1 tvg-id="RBKTV.ru@SD" group-title="03 Новости",РБК
+https://uiptv.do.am/1ufc/701293058/playlist.m3u8
+#EXTINF:-1 tvg-id="360.ru@SD" group-title="03 Новости",360°
+https://cdn-evacoder-tv.facecast.io/evacoder_hls_hi/CkxfR1xNUAJwTgtXTBZTAJli/index.m3u8
+#EXTINF:-1 tvg-id="360News.ru@SD" group-title="03 Новости",360° Новости
+https://edge-tv-ll.facecast.io/evacoder_hls_hi/UBZfFgtKB1JwTwoDERNQVGGs/index.m3u8
+#EXTINF:-1 tvg-id="Mir24.ru@SD" group-title="03 Новости",Мир 24
+http://hls.mirtv.cdnvideo.ru/mirtv-parampublish/mir24_2500/playlist.m3u8
+#EXTINF:-1 tvg-id="Moskva24.ru@SD" group-title="03 Новости",Москва 24
+https://stream.smotrim.ru/hls2/givc9/playlist_4.m3u8
+#EXTINF:-1 group-title="04 Спорт",Матч ТВ
+#EXTVLCOPT:http-user-agent=WINK/1.80.1 (AndroidTV/9) HlsWinkPlayer
+https://zabava-htlive.cdn.ngenix.net/hls/CH_MATCHTV/variant.m3u8
+#EXTINF:-1 tvg-id="MatchStrana.ru@SD" group-title="04 Спорт",Матч! Страна
+http://stream.mcquack.net/143/index.m3u8
+#EXTINF:-1 tvg-id="MatchArena.ru@SD" group-title="04 Спорт",Матч! Арена
+http://stream.mcquack.net/163/index.m3u8
+#EXTINF:-1 tvg-id="MatchIgra.ru@SD" group-title="04 Спорт",Матч! Игра
+http://stream.mcquack.net/188/index.m3u8
+#EXTINF:-1 tvg-id="MatchBoets.ru@SD" group-title="04 Спорт",Матч! Боец
+http://stream.mcquack.net/112/index.m3u8
+#EXTINF:-1 tvg-id="KHL.ru@SD" group-title="04 Спорт",КХЛ
+https://fs.uplink.kz/telekanal_khl/mono.m3u8?token=onlinetv
+#EXTINF:-1 tvg-id="KHLPrime.ru@SD" group-title="04 Спорт",КХЛ Prime
+https://fs.uplink.kz/khl_prime/mono.m3u8?token=onlinetv
+#EXTINF:-1 tvg-id="MosfilmGoldCollection.ru@SD" group-title="05 Кино и сериалы",Мосфильм. Золотая коллекция
+https://fs.uplink.kz/mosfilm/mono.m3u8?token=onlinetv
+#EXTINF:-1 tvg-id="Domkino.ru@International" group-title="05 Кино и сериалы",Дом кино
+https://fs.uplink.kz/dom_kino/mono.m3u8?token=onlinetv
+#EXTINF:-1 tvg-id="DomkinoPremium.ru@HD" group-title="05 Кино и сериалы",Дом кино Премиум
+https://fs.uplink.kz/dom_kino_premium/mono.m3u8?token=onlinetv
+#EXTINF:-1 tvg-id="KinoTV.ru@HD" group-title="05 Кино и сериалы",Кино ТВ
+http://176.118.197.101/KinoTvHD/playlist.m3u8
+#EXTINF:-1 tvg-id="Kinomix.ru@SD" group-title="05 Кино и сериалы",Киномикс
+https://fs.uplink.kz/kinomix/mono.m3u8?token=onlinetv
+#EXTINF:-1 tvg-id="Kinokomedija.ru@SD" group-title="05 Кино и сериалы",Кинокомедия
+https://fs.uplink.kz/kinokomedia/mono.m3u8?token=onlinetv
+#EXTINF:-1 tvg-id="Kinoseriya.ru@SD" group-title="05 Кино и сериалы",Киносерия
+https://fs.uplink.kz/kinoseria/mono.m3u8?token=onlinetv
+#EXTINF:-1 tvg-id="NasheNovoeKino.ru@SD" group-title="05 Кино и сериалы",Наше новое кино
+https://fs.uplink.kz/nashe_novoe_kino/mono.m3u8?token=onlinetv
+#EXTINF:-1 tvg-id="RusskiyBestseller.ru@SD" group-title="05 Кино и сериалы",Русский бестселлер
+http://stream.mcquack.net/208/index.m3u8
+#EXTINF:-1 tvg-id="Russkiyroman.ru@SD" group-title="05 Кино и сериалы",Русский роман
+https://vod.tuva.ru/rusroman/index.m3u8
+#EXTINF:-1 tvg-id="MoyaPlaneta.ru@SD" group-title="06 Познавательные",Моя планета
+http://91.226.120.120/chid210/tracks-v1a1/mono.m3u8
+#EXTINF:-1 tvg-id="Nauka.ru@SD" group-title="06 Познавательные",Наука
+http://stream.mcquack.net/125/index.m3u8
+#EXTINF:-1 tvg-id="Doctor.ru@SD" group-title="06 Познавательные",Доктор
+https://stream8.cinerama.uz/1409/tracks-v1a1/mono.m3u8
+#EXTINF:-1 tvg-id="Istoriya.ru@SD" group-title="06 Познавательные",История
+https://fs.uplink.kz/istoriya/mono.m3u8?token=onlinetv
+#EXTINF:-1 tvg-id="AutoPlus.ru@SD" group-title="06 Познавательные",Авто Плюс
+https://stream8.cinerama.uz/1036/tracks-v1a1/mono.m3u8
+#EXTINF:-1 tvg-id="Drive.ru@SD" group-title="06 Познавательные",Драйв
+https://stream8.cinerama.uz/1421/tracks-v1a1/mono.m3u8
+#EXTINF:-1 tvg-id="ZhivayaPlaneta.ru@SD" group-title="06 Познавательные",Живая планета
+https://stream8.cinerama.uz/1250/tracks-v1a1/mono.m3u8
+#EXTINF:-1 tvg-id="Mult.ru@SD" group-title="07 Детские",Мульт
+https://stream8.cinerama.uz/1246/tracks-v1a1/mono.m3u8
+#EXTINF:-1 tvg-id="Multilandia.ru@SD" group-title="07 Детские",Мультиландия
+https://fs.uplink.kz/multilandia/mono.m3u8?token=onlinetv
+#EXTINF:-1 tvg-id="O.ru@International" group-title="07 Детские",О!
+https://fs.uplink.kz/o/mono.m3u8?token=onlinetv
+#EXTINF:-1 tvg-id="Ani.ru@SD" group-title="07 Детские",Ani
+http://stream.mcquack.net/306/index.m3u8
+#EXTINF:-1 tvg-id="Vgostyakhuskazki.ru@SD" group-title="07 Детские",В гостях у сказки
+https://stream8.cinerama.uz/1270/tracks-v1a1/mono.m3u8
+#EXTINF:-1 tvg-id="STSkids.ru@International" group-title="07 Детские",СТС Kids
+https://fs.uplink.kz/sts_kids/mono.m3u8?token=onlinetv
+#EXTINF:-1 tvg-id="MuzTV.ru@SD" group-title="08 Музыка",МУЗ-ТВ
+https://fs.uplink.kz/muz_tv/mono.m3u8?token=onlinetv
+#EXTINF:-1 tvg-id="EuropaPlusTV.ru@SD" group-title="08 Музыка",Europa Plus TV
+https://fs.uplink.kz/europa_plus/mono.m3u8?token=onlinetv
+#EXTINF:-1 tvg-id="BRIDGE.ru@SD" group-title="08 Музыка",BRIDGE
+http://stream.mcquack.net/318/index.m3u8
+#EXTINF:-1 tvg-id="BRIDGEClassic.ru@SD" group-title="08 Музыка",BRIDGE Classic
+https://fs.uplink.kz/bridge_classic/mono.m3u8?token=onlinetv
+#EXTINF:-1 tvg-id="MuzykaPervogo.ru@SD" group-title="08 Музыка",Музыка Первого
+http://stream.mcquack.net/153/index.m3u8
+#EXTINF:-1 tvg-id="1HDMusicTelevision.ru@SD" group-title="08 Музыка",1HD Music Television
+https://stream8.cinerama.uz/1267/tracks-v1a1/mono.m3u8
