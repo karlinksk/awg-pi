@@ -162,6 +162,8 @@ Maintenance is exclusive; concurrent CLI/OpenCCK changes are refused.
 For the existing Pi upgrade procedure and hardware validation, see
 [TESTING-v1.1.0.md](docs/TESTING-v1.1.0.md#13-rc2-existing-pi-upgrade-first).
 
+For full microSD/SSD imaging and bare-metal recovery, see
+[BACKUP-RESTORE.md](docs/BACKUP-RESTORE.md).
 
 ## v1.2.0
 
