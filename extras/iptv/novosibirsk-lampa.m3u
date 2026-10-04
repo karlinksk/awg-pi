@@ -104,7 +104,7 @@ https://fs.uplink.kz/nashe_novoe_kino/mono.m3u8?token=onlinetv
 https://flussonic.mkpnet.ru/tv-ccf8c891702508a7/video.m3u8
 #EXTINF:-1 tvg-id="Russkiyroman.ru@SD" group-title="05 Кино и сериалы",Русский роман
 https://vod.tuva.ru/rusroman/index.m3u8
-#EXTINF:-1 tvg-id="MoyaPlaneta.ru@SD" group-title="06 Познавательные",Моя планета
+#EXTINF:-1 tvg-id="MoyaPlaneta.ru@SD" group-title="06 Познавательные",Моя планета [TEST]
 http://91.226.120.120/chid210/tracks-v1a1/mono.m3u8
 #EXTINF:-1 tvg-id="Nauka.ru@SD" group-title="06 Познавательные",Наука
 http://stream.mcquack.net/125/index.m3u8
