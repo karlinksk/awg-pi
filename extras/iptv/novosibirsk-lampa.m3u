@@ -101,7 +101,7 @@ https://fs.uplink.kz/kinoseria/mono.m3u8?token=onlinetv
 #EXTINF:-1 tvg-id="NasheNovoeKino.ru@SD" group-title="05 Кино и сериалы",Наше новое кино
 https://fs.uplink.kz/nashe_novoe_kino/mono.m3u8?token=onlinetv
 #EXTINF:-1 tvg-id="RusskiyBestseller.ru@SD" group-title="05 Кино и сериалы",Русский бестселлер
-http://stream.mcquack.net/208/index.m3u8
+http://flussonic.mkpnet.ru/tv-ccf8c891702508a7/video.m3u8
 #EXTINF:-1 tvg-id="Russkiyroman.ru@SD" group-title="05 Кино и сериалы",Русский роман
 https://vod.tuva.ru/rusroman/index.m3u8
 #EXTINF:-1 tvg-id="MoyaPlaneta.ru@SD" group-title="06 Познавательные",Моя планета
