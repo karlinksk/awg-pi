@@ -118,6 +118,14 @@ https://stream8.cinerama.uz/1036/tracks-v1a1/mono.m3u8
 https://stream8.cinerama.uz/1421/tracks-v1a1/mono.m3u8
 #EXTINF:-1 tvg-id="ZhivayaPlaneta.ru@SD" group-title="06 Познавательные",Живая планета
 https://stream8.cinerama.uz/1250/tracks-v1a1/mono.m3u8
+#EXTINF:-1 tvg-id="NanoHD.ru" group-title="06 Познавательные",Nano HD
+http://185.23.80.23:8080/NANO_HD/index.m3u8
+#EXTINF:-1 tvg-id="NeizvestnayaRossiya.ru" group-title="06 Познавательные",Неизвестная Россия HD
+http://185.23.80.23:8080/NeizvestnayaRossia/index.m3u8
+#EXTINF:-1 tvg-id="NeizvestnayaPlaneta.ru" group-title="06 Познавательные",Неизвестная планета HD
+http://stitch.teletarget.ru/api/v1/hls/vintera/neplaneta/index.m3u8
+#EXTINF:-1 tvg-id="RTDocumentary.ru" group-title="06 Познавательные",RT Documentary RU
+https://rt-doc.rttv.com/dvr/rtdru/playlist.m3u8
 #EXTINF:-1 tvg-id="Mult.ru@SD" group-title="07 Детские",Мульт
 https://stream8.cinerama.uz/1246/tracks-v1a1/mono.m3u8
 #EXTINF:-1 tvg-id="Multilandia.ru@SD" group-title="07 Детские",Мультиландия
