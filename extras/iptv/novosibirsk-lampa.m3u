@@ -1,7 +1,7 @@
-#EXTM3U
-#EXTINF:-1 group-title="01 Новосибирск",НСК 49
+#EXTM3U tvg-url="https://raw.githubusercontent.com/karlinksk/awg-pi/iptv-playlist/extras/iptv/novosibirsk-lampa.xml.gz"
+#EXTINF:-1 tvg-id="NSK49.ru@SD" group-title="01 Новосибирск",НСК 49
 https://rt-sib-nsk-htlive.cdn.ngenix.net/hls/CH_R01_49CHANNEL/variant.m3u8
-#EXTINF:-1 group-title="01 Новосибирск",ОТС
+#EXTINF:-1 tvg-id="OTS.ru@SD" group-title="01 Новосибирск",ОТС
 http://tele2dvrnat01-02.cdnvideo.ru/stream/NAT_OTC_ap1f55f482a2df2bede07c661806c4eb/hls/1024x576@1272/playlist.m3u8
 #EXTINF:-1 tvg-id="Channel8Novosibirsk.ru@SD" group-title="01 Новосибирск",8 канал Новосибирск
 https://rt-sib-nsk-htlive.cdn.ngenix.net/hls/CH_R01_OTT_SIB_NSK_8CHANNEL/variant.m3u8
@@ -69,7 +69,7 @@ https://edge-tv-ll.facecast.io/evacoder_hls_hi/UBZfFgtKB1JwTwoDERNQVGGs/index.m3
 http://hls.mirtv.cdnvideo.ru/mirtv-parampublish/mir24_2500/playlist.m3u8
 #EXTINF:-1 tvg-id="Moskva24.ru@SD" group-title="03 Новости",Москва 24
 https://stream.smotrim.ru/hls2/givc9/playlist_4.m3u8
-#EXTINF:-1 group-title="04 Спорт",Матч ТВ
+#EXTINF:-1 tvg-id="Match.ru@SD" group-title="04 Спорт",Матч ТВ
 #EXTVLCOPT:http-user-agent=WINK/1.80.1 (AndroidTV/9) HlsWinkPlayer
 https://zabava-htlive.cdn.ngenix.net/hls/CH_MATCHTV/variant.m3u8
 #EXTINF:-1 tvg-id="MatchStrana.ru@SD" group-title="04 Спорт",Матч! Страна
@@ -82,7 +82,7 @@ http://stream.mcquack.net/188/index.m3u8
 http://stream.mcquack.net/112/index.m3u8
 #EXTINF:-1 tvg-id="KHL.ru@SD" group-title="04 Спорт",КХЛ
 https://fs.uplink.kz/telekanal_khl/mono.m3u8?token=onlinetv
-#EXTINF:-1 tvg-id="KHLPrime.ru@SD" group-title="04 Спорт",КХЛ Prime
+#EXTINF:-1 tvg-id="KHLPrime.ru@HD" group-title="04 Спорт",КХЛ Prime
 https://fs.uplink.kz/khl_prime/mono.m3u8?token=onlinetv
 #EXTINF:-1 tvg-id="MosfilmGoldCollection.ru@SD" group-title="05 Кино и сериалы",Мосфильм. Золотая коллекция
 https://fs.uplink.kz/mosfilm/mono.m3u8?token=onlinetv
