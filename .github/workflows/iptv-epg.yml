@@ -1,0 +1,37 @@
+name: Build Novosibirsk IPTV EPG
+
+on:
+  push:
+    branches: [iptv-playlist]
+    paths:
+      - 'scripts/iptv/build-novosibirsk-epg.py'
+      - 'extras/iptv/novosibirsk-lampa.m3u'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: iptv-playlist
+      - name: Build curated XMLTV
+        run: python3 scripts/iptv/build-novosibirsk-epg.py
+      - name: Validate XMLTV
+        run: |
+          gzip -t extras/iptv/novosibirsk-lampa.xml.gz
+          gzip -dc extras/iptv/novosibirsk-lampa.xml.gz | python3 -c 'import sys,xml.etree.ElementTree as ET; r=ET.parse(sys.stdin.buffer).getroot(); c=r.findall("channel"); p=r.findall("programme"); assert len(c)==70; assert len({x.attrib["id"] for x in c})==70; assert len(p)>1000; print("validated:",len(c),"channels,",len(p),"programmes")'
+      - name: Commit updated EPG
+        run: |
+          if git diff --quiet -- extras/iptv/novosibirsk-lampa.xml.gz; then
+            echo "EPG unchanged"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add extras/iptv/novosibirsk-lampa.xml.gz
+          git commit -m "iptv: update Novosibirsk EPG"
+          git push
