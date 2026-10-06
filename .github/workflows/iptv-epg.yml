@@ -1,11 +1,6 @@
 name: Build Novosibirsk IPTV EPG
 
 on:
-  push:
-    branches: [iptv-playlist]
-    paths:
-      - 'scripts/iptv/build-novosibirsk-epg.py'
-      - 'extras/iptv/novosibirsk-lampa.m3u'
   workflow_dispatch:
 
 permissions:
