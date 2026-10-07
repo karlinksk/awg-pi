@@ -13,6 +13,10 @@ MIHOMO_PROVIDER_FILE="${MIHOMO_PROVIDER_FILE:-/var/lib/awg-pbr/mihomo/providers/
 MIHOMO_CONFIG_FILE="${MIHOMO_CONFIG_FILE:-/etc/awg-pbr/transports/mihomo/config.yaml}"
 MIHOMO_INSTALLER="${MIHOMO_INSTALLER:-/usr/local/sbin/awg-mihomo-install}"
 MIHOMO_UPDATER="${MIHOMO_UPDATER:-/usr/local/sbin/awg-mihomo-update}"
+MIHOMO_PREPARE="${MIHOMO_PREPARE:-/usr/local/sbin/awg-mihomo-prepare}"
+MIHOMO_PROVIDER_HELPER="${MIHOMO_PROVIDER_HELPER:-/usr/local/lib/awg-pi/mihomo-provider.py}"
+MIHOMO_DIRECT_CONFIRMED_FILE="${MIHOMO_DIRECT_CONFIRMED_FILE:-/etc/awg-pbr/transports/mihomo/direct-confirmed-endpoint}"
+PYTHON_BIN="${PYTHON_BIN:-python3}"
 TRANSPORT_CLI="${AWG_TRANSPORT_CLI:-/usr/local/sbin/awg-transport}"
 SYSTEMCTL_BIN="${SYSTEMCTL_BIN:-systemctl}"
 MIHOMO_SERVICE="${MIHOMO_SERVICE:-awg-mihomo.service}"
@@ -32,6 +36,9 @@ Usage:
   awg-mihomo-configure provider-url set URL
   awg-mihomo-configure provider update [auto|mihomo|awg|router]
   awg-mihomo-configure provider import FILE
+  awg-mihomo-configure node list
+  awg-mihomo-configure node prepare NAME
+  awg-mihomo-configure node select NAME ENDPOINT_IP --direct-confirmed
 
 FILE is a root-trusted environment file. Required:
   MIHOMO_PROVIDER_URL
@@ -203,6 +210,148 @@ provider_import(){
     "$MIHOMO_UPDATER" --file "$file"
 }
 
+remove_env_key(){
+  local file="$1" key="$2" dir tmp
+  [[ -r "$file" ]] || return 0
+  dir="$(dirname "$file")"
+  tmp="$(mktemp "$dir/.provider-env.XXXXXX")"
+  grep -Ev "^${key}=" "$file" >"$tmp" || true
+  chmod 600 "$tmp"
+  mv -f "$tmp" "$file"
+}
+
+node_info_json(){
+  local name="$1"
+  [[ -r "$MIHOMO_PROVIDER_FILE" ]] || {
+    echo "Provider cache is missing: $MIHOMO_PROVIDER_FILE" >&2
+    return 1
+  }
+  [[ -x "$MIHOMO_PROVIDER_HELPER" || -r "$MIHOMO_PROVIDER_HELPER" ]] || {
+    echo "Mihomo provider helper is unavailable: $MIHOMO_PROVIDER_HELPER" >&2
+    return 2
+  }
+  "$PYTHON_BIN" "$MIHOMO_PROVIDER_HELPER" info "$MIHOMO_PROVIDER_FILE" "$name"
+}
+
+node_list(){
+  [[ -r "$MIHOMO_PROVIDER_FILE" ]] || {
+    echo "Provider cache is missing: $MIHOMO_PROVIDER_FILE" >&2
+    return 1
+  }
+  "$PYTHON_BIN" "$MIHOMO_PROVIDER_HELPER" list "$MIHOMO_PROVIDER_FILE" --format tsv
+}
+
+node_prepare(){
+  local name="$1" info
+  info="$(node_info_json "$name")" || return
+  printf 'Node: %s\n' "$(jq -r '.name' <<<"$info")"
+  printf 'Type: %s\n' "$(jq -r '.type' <<<"$info")"
+  printf 'Provider server: %s:%s\n' "$(jq -r '.server' <<<"$info")" "$(jq -r '.port' <<<"$info")"
+  printf 'Resolved IPv4 endpoints:\n'
+  jq -r '.endpoint_ips[] | "  - " + .' <<<"$info"
+  printf 'DIRECT protection required: yes\n'
+  printf 'Required scope: Pi %s -> selected endpoint TCP/%s must bypass router-side VPN policy\n'     "${PI_IP:-192.168.112.34}" "$(jq -r '.port' <<<"$info")"
+  printf 'NEXT: confirm/add the MikroTik DIRECT rule, then run node select with --direct-confirmed.\n'
+}
+
+node_select(){
+  local name="$1" endpoint="$2" confirmation="$3"
+  local current info filter snapshot rc service_enabled=0 service_active=0 healthy=0
+
+  [[ "$confirmation" == "--direct-confirmed" ]] || {
+    echo "Refusing node change without explicit --direct-confirmed" >&2
+    return 2
+  }
+  valid_ipv4 "$endpoint" || {
+    echo "Selected endpoint must be a valid IPv4 address" >&2
+    return 2
+  }
+
+  current="$(awg_transport_get)"
+  [[ "$current" == awg ]] || {
+    echo "Refusing to change Mihomo node while Mihomo is active; select AWG first." >&2
+    return 1
+  }
+
+  info="$(node_info_json "$name")" || return
+  jq -e --arg ip "$endpoint" '.endpoint_ips | index($ip) != null' <<<"$info" >/dev/null || {
+    echo "Selected endpoint is not one of the current IPv4 addresses for this node" >&2
+    return 2
+  }
+  filter="$(jq -r '.filter_regex' <<<"$info")"
+
+  exec 9>"$AWG_LOCK_FILE"
+  flock -x 9
+
+  [[ "$(awg_transport_get)" == awg ]] || {
+    echo "Transport changed while preparing node selection; retry." >&2
+    return 1
+  }
+
+  snapshot="$(mktemp -d)"
+  chmod 700 "$snapshot"
+  snapshot_path "$MIHOMO_ENV_FILE" env "$snapshot"
+  snapshot_path "$MIHOMO_ENDPOINT_IP_FILE" endpoint "$snapshot"
+  snapshot_path "$MIHOMO_EXPECTED_EGRESS_IP_FILE" egress "$snapshot"
+  snapshot_path "$MIHOMO_DIRECT_CONFIRMED_FILE" direct "$snapshot"
+  snapshot_path "$MIHOMO_CONFIG_FILE" config "$snapshot"
+
+  unit_enabled "$MIHOMO_SERVICE" && service_enabled=1 || true
+  unit_active "$MIHOMO_SERVICE" && service_active=1 || true
+
+  rollback_node(){
+    rc=$?
+    trap - ERR
+    "$SYSTEMCTL_BIN" stop "$MIHOMO_SERVICE" >/dev/null 2>&1 || true
+    restore_path "$MIHOMO_ENV_FILE" env "$snapshot"
+    restore_path "$MIHOMO_ENDPOINT_IP_FILE" endpoint "$snapshot"
+    restore_path "$MIHOMO_EXPECTED_EGRESS_IP_FILE" egress "$snapshot"
+    restore_path "$MIHOMO_DIRECT_CONFIRMED_FILE" direct "$snapshot"
+    restore_path "$MIHOMO_CONFIG_FILE" config "$snapshot"
+    "$SYSTEMCTL_BIN" daemon-reload >/dev/null 2>&1 || true
+    restore_unit_state "$MIHOMO_SERVICE" "$service_enabled" "$service_active"
+    rm -rf "$snapshot"
+    echo "Mihomo node change failed; previous node configuration restored." >&2
+    exit "$rc"
+  }
+  trap rollback_node ERR
+
+  "$SYSTEMCTL_BIN" stop "$MIHOMO_SERVICE" >/dev/null 2>&1 || true
+
+  write_env_key "$MIHOMO_ENV_FILE" MIHOMO_NODE_FILTER "$filter"
+  write_env_key "$MIHOMO_ENV_FILE" MIHOMO_ENDPOINT_IP "$endpoint"
+  remove_env_key "$MIHOMO_ENV_FILE" MIHOMO_EXPECTED_EGRESS_IP
+  printf '%s\n' "$endpoint" >"$MIHOMO_ENDPOINT_IP_FILE"
+  chmod 600 "$MIHOMO_ENDPOINT_IP_FILE"
+  printf '%s\n' "$endpoint" >"$MIHOMO_DIRECT_CONFIRMED_FILE"
+  chmod 600 "$MIHOMO_DIRECT_CONFIRMED_FILE"
+  rm -f "$MIHOMO_EXPECTED_EGRESS_IP_FILE"
+
+  MIHOMO_ENV_FILE="$MIHOMO_ENV_FILE"   MIHOMO_PROVIDER_FILE="$MIHOMO_PROVIDER_FILE"   MIHOMO_CONFIG_FILE="$MIHOMO_CONFIG_FILE"   MIHOMO_BIN="$MIHOMO_BIN"     "$MIHOMO_PREPARE"
+
+  "$SYSTEMCTL_BIN" daemon-reload
+  "$SYSTEMCTL_BIN" enable --now "$MIHOMO_SERVICE"
+
+  for _ in $(seq 1 30); do
+    if "$TRANSPORT_CLI" check mihomo >/dev/null 2>&1; then
+      healthy=1
+      break
+    fi
+    "$SLEEP_BIN" 0.2
+  done
+  (( healthy == 1 ))
+
+  trap - ERR
+  rm -rf "$snapshot"
+
+  printf 'MIHOMO_NODE=%s\n' "$name"
+  printf 'MIHOMO_ENDPOINT_IP=%s\n' "$endpoint"
+  printf 'DIRECT_CONFIRMED=1\n'
+  printf 'MIHOMO_HEALTH=healthy\n'
+  printf 'ACTIVE_TRANSPORT=%s\n' "$(awg_transport_get)"
+  printf 'NEXT=awg-transport select mihomo\n'
+}
+
 apply_cmd(){
   local source_file="$1" current tmp_env snapshot rc
   local service_enabled=0 service_active=0 timer_enabled=0 timer_active=0
@@ -349,6 +498,26 @@ case "${1:-}" in
   provider-url)
     [[ $# -eq 3 && "$2" == set ]] || { usage >&2; exit 2; }
     provider_url_set "$3"
+    ;;
+  node)
+    case "${2:-}" in
+      list)
+        [[ $# -eq 2 ]] || { usage >&2; exit 2; }
+        node_list
+        ;;
+      prepare)
+        [[ $# -eq 3 ]] || { usage >&2; exit 2; }
+        node_prepare "$3"
+        ;;
+      select)
+        [[ $# -eq 5 ]] || { usage >&2; exit 2; }
+        node_select "$3" "$4" "$5"
+        ;;
+      *)
+        usage >&2
+        exit 2
+        ;;
+    esac
     ;;
   provider)
     case "${2:-}" in
