@@ -136,6 +136,18 @@ class Maintenance(unittest.TestCase):
         self.assertNotIn('Jc =', clean)
         self.assertEqual(endpoint, '192.0.2.55:51820')
 
+    def test_plain_wireguard_profile_is_accepted(self):
+        plain = '\n'.join(
+            line for line in PROFILE.splitlines()
+            if not line.startswith(('Jc =', 'Jmin =', 'Jmax =', 'S1 =', 'S2 =',
+                                    'H1 =', 'H2 =', 'H3 =', 'H4 ='))
+        ) + '\n'
+        clean, endpoint = m.profile(plain)
+        self.assertEqual(endpoint, '192.0.2.1:51820')
+        self.assertIn('Table = off', clean)
+        self.assertNotIn('DNS =', clean)
+        self.assertNotIn('Jc =', clean)
+
     def test_v31_profile_preserves_native_fields_and_dual_stack(self):
         clean, _ = m.profile(V3_PROFILE)
         self.assertNotIn('H1 =', clean)
