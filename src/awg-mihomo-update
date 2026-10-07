@@ -260,6 +260,7 @@ if [[ -r "$MIHOMO_PROVIDER_FILE" ]] && cmp -s "$tmp" "$MIHOMO_PROVIDER_FILE"; th
   changed=0
   echo "MIHOMO_PROVIDER=UNCHANGED"
 else
+  stage_candidate >/dev/null
   if [[ -r "$MIHOMO_PROVIDER_FILE" ]]; then
     backup="$(mktemp "$provider_dir/.subscription.backup.XXXXXX")"
     cp -a "$MIHOMO_PROVIDER_FILE" "$backup"
@@ -279,7 +280,7 @@ if (( cache_only == 0 )) && [[ -x "$MIHOMO_PREPARE" ]]; then
       fi
     fi
     [[ -z "$backup" ]] || rm -f "$backup"
-    echo "Mihomo runtime validation failed; provider cache rolled back" >&2
+    echo "Mihomo runtime validation failed; live provider rolled back and candidate kept for node selection" >&2
     exit 1
   fi
 fi
@@ -288,18 +289,13 @@ fi
 
 # Record only a provider/cache update that survived normalization and runtime
 # validation. Failed attempts must not replace "last successful" status.
-mkdir -p "$(dirname "$MIHOMO_LAST_FETCH_FILE")"
-fetch_state_tmp="$(mktemp "$(dirname "$MIHOMO_LAST_FETCH_FILE")/.last-fetch.XXXXXX")"
-printf '%s\n' "$fetch_path" >"$fetch_state_tmp"
-chmod 600 "$fetch_state_tmp"
-mv -f "$fetch_state_tmp" "$MIHOMO_LAST_FETCH_FILE"
+write_state_file "$MIHOMO_LAST_FETCH_FILE" "$fetch_path"
 printf 'MIHOMO_FETCH_PATH=%s\n' "$fetch_path"
+write_state_file "$MIHOMO_LAST_FORMAT_FILE" "$detected_format"
 
-mkdir -p "$(dirname "$MIHOMO_LAST_FORMAT_FILE")"
-format_state_tmp="$(mktemp "$(dirname "$MIHOMO_LAST_FORMAT_FILE")/.last-format.XXXXXX")"
-printf '%s\n' "$detected_format" >"$format_state_tmp"
-chmod 600 "$format_state_tmp"
-mv -f "$format_state_tmp" "$MIHOMO_LAST_FORMAT_FILE"
+if (( changed == 1 )); then
+  clear_candidate
+fi
 
 if (( cache_only == 1 )); then
   echo "MIHOMO_RUNTIME=DEFERRED"
