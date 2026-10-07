@@ -236,10 +236,19 @@ case "$cmd" in
     fi
     ;;
   status)
-    transport="$(awg_transport_get)"
-    printf 'Active transport: %s\n' "$(awg_transport_label "$transport")"
-    printf 'Transport ID: %s\n' "$transport"
-    printf 'Transport health: %s\n' "$(health_word "$transport")"
+    if transport="$(awg_transport_get)"; then
+      printf 'Active transport: %s\n' "$(awg_transport_label "$transport")"
+      printf 'Transport ID: %s\n' "$transport"
+      printf 'Transport health: %s\n' "$(health_word "$transport")"
+    else
+      rc=$?
+      if (( rc == 3 )); then
+        printf 'Active transport: requires-root\n'
+        printf 'Transport ID: requires-root\n'
+        printf 'Transport health: requires-root\n'
+      fi
+      exit "$rc"
+    fi
     ;;
   list)
     for transport in awg mihomo; do
