@@ -753,10 +753,9 @@ STAGE="первый запуск и критические проверки"
 log "[11/12] Первый запуск"
 systemctl daemon-reload
 systemctl enable awg-pbr-setup.service dnsmasq.service awg-pbr-health.service awg-opencck-update.timer >/dev/null
-if (( AWG_CONFIG_PRESENT == 1 )); then
-  systemctl enable "awg-quick@$VPN_IF.service" >/dev/null
-fi
 
+# Base control plane comes up before any VPN backend. This is what keeps SSH,
+# TUI, DNS and recovery available even with zero working transports.
 systemctl restart awg-pbr-setup.service
 nft list table inet awg_pbr >/dev/null 2>&1 || die "Не создана nftables table inet awg_pbr"
 ok "nftables PBR table создана"
@@ -771,72 +770,96 @@ if ! dig +time=3 +tries=1 +short A example.com @"$PI_IP" | grep -qE '^[0-9]+\.';
 fi
 ok "DNS Raspberry Pi работает"
 
-systemctl restart awg-pbr-health.service
-systemctl is-active --quiet awg-pbr-health.service || die "health monitor не запустился"
-systemctl start awg-opencck-update.timer
-systemctl is-active --quiet awg-opencck-update.timer || warn "OpenCCK timer не активен; ручное обновление останется доступно"
+if (( UPGRADE_EXISTING == 0 )); then
+  STAGE="выбор первого transport"
+  log "[11a/12] First transport wizard"
+  if "$FIRST_RUN_CLI" wizard; then
+    ok "Первичная настройка transport завершена"
+  else
+    warn "Первичный transport не удалось настроить. Установка продолжится в recovery-state; повторите настройку через sudo awg-menu."
+    printf '%s\n' unconfigured >"$TRANSPORT_FILE"
+    chmod 600 "$TRANSPORT_FILE"
+  fi
+fi
 
 ACTIVE_TRANSPORT="$(cat "$TRANSPORT_FILE" 2>/dev/null || echo unconfigured)"
 case "$ACTIVE_TRANSPORT" in
   awg)
-    if (( AWG_CONFIG_PRESENT == 1 )); then
-      if systemctl restart "awg-quick@$VPN_IF.service" && ip link show "$VPN_IF" >/dev/null 2>&1; then
-        ok "AWG backend запущен; health monitor проверит datapath."
+    if [[ -f "$CONF_FILE" ]]; then
+      systemctl enable "awg-quick@$VPN_IF.service" >/dev/null
+      if systemctl restart "awg-quick@$VPN_IF.service" && "$TRANSPORT_CLI" check awg >/dev/null 2>&1; then
+        ok "AmneziaWG backend healthy"
       else
-        warn "AWG backend сейчас не поднялся. Установка продолжается: Selective останется FAIL-OPEN, Transit — FAIL-CLOSED."
+        warn "AWG backend сейчас unhealthy. Transport state сохранён для recovery; клиентская policy будет безопасной для выбранного режима."
       fi
     else
       warn "Transport state указывает AWG, но конфиг отсутствует; переводим state в unconfigured."
       printf '%s\n' unconfigured >"$TRANSPORT_FILE"
       chmod 600 "$TRANSPORT_FILE"
       ACTIVE_TRANSPORT=unconfigured
-      "$ROUTE_CLI" reload
     fi
     ;;
   mihomo)
-    if systemctl start awg-mihomo.service >/dev/null 2>&1; then
-      ok "Существующий Mihomo backend запущен/сохранён."
+    if systemctl start awg-mihomo.service >/dev/null 2>&1 && "$TRANSPORT_CLI" check mihomo >/dev/null 2>&1; then
+      ok "Mihomo backend healthy"
     else
-      warn "Mihomo backend сейчас не поднялся; control plane и recovery остаются доступны."
+      warn "Mihomo backend сейчас unhealthy. Transport state сохранён для recovery; другой backend можно настроить независимо."
     fi
     ;;
   unconfigured)
-    if (( UPGRADE_EXISTING == 0 && AWG_CONFIG_PRESENT == 1 )); then
-      log "Проверяем импортированный AWG как первый независимый backend"
-      if "$TRANSPORT_CLI" select awg; then
-        ACTIVE_TRANSPORT=awg
-        ok "AmneziaWG проверен и выбран как active transport."
-      else
-        warn "AWG не прошёл первичную проверку. Transport остаётся unconfigured; настройте AWG или Mihomo через TUI."
-      fi
-    else
-      warn "Active transport не настроен. Это допустимое recovery-состояние; SSH/TUI/DNS остаются доступны."
-    fi
+    warn "Active transport не настроен. Это допустимое recovery-состояние; SSH/TUI/DNS остаются доступны."
     ;;
   *)
     die "Некорректный transport state: $ACTIVE_TRANSPORT"
     ;;
 esac
 
+systemctl restart awg-pbr-health.service
+systemctl is-active --quiet awg-pbr-health.service || die "health monitor не запустился"
+systemctl start awg-opencck-update.timer
+systemctl is-active --quiet awg-opencck-update.timer || warn "OpenCCK timer не активен; ручное обновление останется доступно"
+
 ACTIVE_TRANSPORT="$(cat "$TRANSPORT_FILE" 2>/dev/null || echo unconfigured)"
 if [[ "$ACTIVE_TRANSPORT" != unconfigured ]]; then
   if "$TRANSPORT_CLI" check "$ACTIVE_TRANSPORT" >/dev/null 2>&1; then
-    ok "Active transport '$ACTIVE_TRANSPORT' отвечает на backend health-check."
+    ok "Active transport '$ACTIVE_TRANSPORT' прошёл итоговый backend health-check."
   else
-    warn "Active transport '$ACTIVE_TRANSPORT' сейчас unhealthy. Установка не блокируется; recovery другого backend доступен."
+    warn "Active transport '$ACTIVE_TRANSPORT' unhealthy. Control plane/recovery остаются доступны."
   fi
 fi
 
-if (( ACTIVATE_TRANSIT_AFTER_INSTALL == 1 )); then
+if (( UPGRADE_EXISTING == 0 )); then
+  STAGE="выбор Operating Mode"
+  log "[11b/12] Operating Mode selection"
+  printf "\nOperating Mode выбирается независимо от transport:\n"
+  printf "1) Selective Gateway — transport DOWN/not-ready => FAIL-OPEN DIRECT\n"
+  printf "2) MikroTik Transit / Backup VPN — transport DOWN/not-ready => FAIL-CLOSED/LOCKDOWN\n"
+  ask "Режим работы" "1"
+  case "$REPLY" in
+    1)
+      "$ROUTE_CLI" mode selective >/dev/null
+      ok "Operating Mode: Selective Gateway"
+      ;;
+    2)
+      if "$ROUTE_CLI" mode transit; then
+        ok "Operating Mode: MikroTik Transit / Backup VPN"
+      else
+        warn "Transit activation failed; installer restores Selective Gateway."
+        "$ROUTE_CLI" mode selective >/dev/null 2>&1 || true
+      fi
+      ;;
+    *)
+      warn "Неизвестный выбор Operating Mode; безопасно остаёмся в Selective Gateway."
+      "$ROUTE_CLI" mode selective >/dev/null 2>&1 || true
+      ;;
+  esac
+elif (( ACTIVATE_TRANSIT_AFTER_INSTALL == 1 )); then
   STAGE="активация MikroTik Transit"
-  log "[11b/12] Transit preflight + transactional switch"
-  ACTIVE_TRANSPORT="$(cat "$TRANSPORT_FILE" 2>/dev/null || echo unconfigured)"
-  if [[ "$ACTIVE_TRANSPORT" == unconfigured ]]; then
-    warn "Transit не активируется без проверенного transport. Остаёмся в Selective Gateway для настройки/recovery."
-  elif "$TRANSPORT_CLI" check "$ACTIVE_TRANSPORT" >/dev/null 2>&1 && "$ROUTE_CLI" mode transit; then
-    ok "MikroTik Transit / Backup VPN активирован через transport '$ACTIVE_TRANSPORT'."
+  log "[11b/12] Legacy upgrade Transit request"
+  if "$ROUTE_CLI" mode transit; then
+    ok "MikroTik Transit / Backup VPN активирован"
   else
-    warn "Transit preflight/activation не прошёл. Runtime восстановлен; установка продолжится в Selective Gateway."
+    warn "Transit activation не прошла. Runtime восстановлен; upgrade продолжится в Selective Gateway."
     "$ROUTE_CLI" mode selective >/dev/null 2>&1 || true
   fi
 fi
