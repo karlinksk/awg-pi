@@ -89,7 +89,7 @@ activate_awg_file(){
   local file="$1"
   ensure_fresh_target
   [[ -f "$file" && -r "$file" && ! -L "$file" ]] || {
-    echo "AWG profile is not a readable regular file: $file" >&2
+    echo "AWG/WireGuard profile is not a readable regular file: $file" >&2
     return 2
   }
   "$AWG_ROUTE" config check "$file"
@@ -199,8 +199,8 @@ wizard(){
 === Первичная настройка transport ===
 Что у вас уже есть?
 
-1) AmneziaWG native .conf — файл
-2) AmneziaWG native .conf — вставить текст
+1) AmneziaWG / WireGuard native .conf — файл
+2) AmneziaWG / WireGuard native .conf — вставить текст
 3) Mihomo / VLESS subscription URL
 4) Mihomo provider/subscription — локальный файл
 5) Mihomo provider/subscription — вставить текст
@@ -218,7 +218,7 @@ TEXT
       activate_awg_file "$REPLY"
       ;;
     2)
-      tmp="$(paste_to_temp 'Вставьте native AmneziaWG .conf')" || return
+      tmp="$(paste_to_temp 'Вставьте native AmneziaWG / WireGuard .conf')" || return
       if activate_awg_file "$tmp"; then
         rm -f "$tmp"
       else
