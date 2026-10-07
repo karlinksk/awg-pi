@@ -27,7 +27,7 @@ grep -Fqx 'bind-address: 127.0.0.1' "$tmp/rendered.yaml"
 grep -Fqx '  device: mihomo0' "$tmp/rendered.yaml"
 grep -Fqx '  auto-route: false' "$tmp/rendered.yaml"
 grep -Fqx '  auto-redirect: false' "$tmp/rendered.yaml"
-grep -Fqx "    path: $tmp/state/providers/subscription.yaml" "$tmp/rendered.yaml"
+grep -Fqx "    path: '$tmp/state/providers/subscription.yaml'" "$tmp/rendered.yaml"
 grep -Fqx "    filter: '^Test Node
 cat >"$tmp/bin/curl" <<'MOCK'
 #!/usr/bin/env bash
