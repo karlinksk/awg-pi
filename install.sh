@@ -19,6 +19,7 @@ DIRECT_DOMAINS="$PBR_DIR/direct-domains.txt"
 CLIENTS_FILE="$PBR_DIR/clients.txt"
 VPN_ENABLED_FILE="$PBR_DIR/vpn-enabled"
 MODE_FILE="$PBR_DIR/mode"
+TRANSPORT_FILE="$PBR_DIR/transport"
 DNS_CONF="/etc/dnsmasq.d/99-awg-pbr.conf"
 DNS_DOMAINS_CONF="/etc/dnsmasq.d/99-awg-pbr-domains.conf"
 NFT_FILE="/etc/nftables.d/99-awg-pbr.nft"
@@ -119,20 +120,20 @@ first_working_url(){
 
 printf "%b=== AmneziaWG Raspberry Pi 4 Policy Gateway Installer v%s ===%b\n" "$B" "$AWG_PI_VERSION" "$R"
 printf "Архитектура: Selective Gateway + MikroTik Transit / Backup VPN.\n"
-printf "Fresh install = Transit после безопасного preflight. Selective: FAIL-OPEN; Transit: FAIL-CLOSED при недоступном AWG.\n"
+printf "Fresh install начинается с безопасного transport=unconfigured. Selective: FAIL-OPEN; Transit: FAIL-CLOSED при недоступном active transport.\n"
 printf "IPv6 в этой версии не маршрутизируется.\n\n"
 printf "Журнал установки: %s\n\n" "$INSTALL_REPORT"
 
 UPGRADE_EXISTING=0
-# Fresh v1.3 installs stage safely in Selective during installation, then
-# transactionally activate Transit after AWG health/preflight checks pass.
+# Fresh v1.3 installs stage safely in Selective + transport=unconfigured.
+# Transit may be activated only after a selected backend passes health/preflight.
 ACTIVATE_TRANSIT_AFTER_INSTALL=1
 AUTO_UPGRADE="${AWG_PI_UPGRADE_AUTO:-0}"
 AUTO_TRANSIT="${AWG_PI_UPGRADE_TRANSIT:-}"
 EXISTING_VERSION="$(cat /etc/awg-pbr/version 2>/dev/null || true)"
 MODE_PREEXISTED=0
 [[ -f "$MODE_FILE" ]] && MODE_PREEXISTED=1
-if [[ -f "$ENV_FILE" && -f "$CONF_FILE" ]]; then
+if [[ -f "$ENV_FILE" ]]; then
   printf "Обнаружена существующая AWG Pi Gateway: %s\n" "${EXISTING_VERSION:-версия до v1.1.0}"
   if [[ "$AUTO_UPGRADE" == 1 ]] || confirm "Выполнить безопасное обновление существующей установки до v$AWG_PI_VERSION с сохранением AWG-конфига, доменов и клиентов?" "Y"; then
     UPGRADE_EXISTING=1
@@ -315,99 +316,113 @@ ok "$(amneziawg-go --version 2>/dev/null || echo 'amneziawg-go установл�
 fi
 
 # -----------------------------------------------------------------------------
-# 5. Import and validate AWG config
+# 5. Optional AmneziaWG configuration
 # -----------------------------------------------------------------------------
-STAGE="импорт конфигурации AmneziaWG"
-log "[5/12] Конфигурация AmneziaWG"
+STAGE="настройка AmneziaWG backend"
+log "[5/12] AmneziaWG backend (независимый transport)"
 mkdir -p "$CONF_DIR" "$PBR_DIR" /etc/nftables.d
 chmod 700 "$CONF_DIR" "$PBR_DIR"
 
+AWG_CONFIG_PRESENT=0
 if [[ -f "$CONF_FILE" ]]; then
+  AWG_CONFIG_PRESENT=1
   cp -a "$CONF_FILE" "$CONF_FILE.bak.$(date +%Y%m%d-%H%M%S)"
 fi
 
 if (( UPGRADE_EXISTING == 0 )); then
-printf "1) указать путь к .conf\n2) вставить конфиг в терминал\n"
-ask "Способ импорта" "2"
-mode="$REPLY"
-tmp="$(mktemp --suffix=.conf)"
-cleanup_tmp(){ rm -f "$tmp" "${tmp}.new" 2>/dev/null || true; }
-trap cleanup_tmp EXIT
-case "$mode" in
-  1)
-    ask "Полный путь к .conf"
-    [[ -f "$REPLY" ]] || die "Файл не найден: $REPLY"
-    cp "$REPLY" "$tmp"
-    ;;
-  2)
-    printf "Вставьте конфиг. Завершите отдельной строкой __END__\n"
-    : >"$tmp"
-    while IFS= read -r line <"$TTY"; do
-      [[ "$line" == "__END__" ]] && break
-      printf '%s\n' "$line" >>"$tmp"
-    done
-    ;;
-  *) die "Неверный способ импорта" ;;
-esac
-sed -i 's/\r$//' "$tmp"
+  printf "1) указать путь к AmneziaWG .conf\n2) вставить конфиг в терминал\n3) пропустить — настроить AWG позже\n"
+  ask "Способ настройки AmneziaWG" "3"
+  awg_import_mode="$REPLY"
 
-[[ "$(grep -Ec '^\s*\[Interface\]\s*$' "$tmp")" -eq 1 ]] || die "Конфиг должен содержать ровно один [Interface]"
-[[ "$(grep -Ec '^\s*\[Peer\]\s*$' "$tmp")" -ge 1 ]] || die "В конфиге нет [Peer]"
-grep -qE '^\s*PrivateKey\s*=' "$tmp" || die "В [Interface] нет PrivateKey"
-grep -qE '^\s*Address\s*=' "$tmp" || die "В [Interface] нет Address"
-grep -qE '^\s*PublicKey\s*=' "$tmp" || die "В [Peer] нет PublicKey"
-grep -qE '^\s*Endpoint\s*=' "$tmp" || die "В [Peer] нет Endpoint"
-grep -qE '^\s*AllowedIPs\s*=.*0\.0\.0\.0/0' "$tmp" || die "Для PBR peer должен разрешать 0.0.0.0/0 в AllowedIPs"
+  if [[ "$awg_import_mode" != 3 ]]; then
+    tmp="$(mktemp --suffix=.conf)"
+    cleanup_tmp(){ rm -f "$tmp" "${tmp}.new" 2>/dev/null || true; }
+    trap cleanup_tmp EXIT
 
-if grep -qE '^\s*(Jc|Jmin|Jmax|S1|H1)\s*=' "$tmp"; then
-  ok "Обнаружены параметры AmneziaWG"
-else
-  warn "Специфические параметры AWG не обнаружены; убедитесь, что экспортирован именно профиль AmneziaWG"
-fi
+    case "$awg_import_mode" in
+      1)
+        ask "Полный путь к .conf"
+        [[ -f "$REPLY" ]] || die "Файл не найден: $REPLY"
+        cp "$REPLY" "$tmp"
+        ;;
+      2)
+        printf "Вставьте конфиг. Завершите отдельной строкой __END__\n"
+        : >"$tmp"
+        while IFS= read -r line <"$TTY"; do
+          [[ "$line" == "__END__" ]] && break
+          printf '%s\n' "$line" >>"$tmp"
+        done
+        ;;
+      *) die "Неверный способ настройки AmneziaWG" ;;
+    esac
 
-if grep -qE '^\s*PersistentKeepalive\s*=' "$tmp"; then
-  ok "PersistentKeepalive уже задан"
-else
-  warn "PersistentKeepalive отсутствует"
-  if confirm "Добавить PersistentKeepalive = 25 в первый [Peer]?" "Y"; then
+    sed -i 's/\r$//' "$tmp"
+    [[ "$(grep -Ec '^\s*\[Interface\]\s*$' "$tmp")" -eq 1 ]] || die "Конфиг должен содержать ровно один [Interface]"
+    [[ "$(grep -Ec '^\s*\[Peer\]\s*$' "$tmp")" -ge 1 ]] || die "В конфиге нет [Peer]"
+    grep -qE '^\s*PrivateKey\s*=' "$tmp" || die "В [Interface] нет PrivateKey"
+    grep -qE '^\s*Address\s*=' "$tmp" || die "В [Interface] нет Address"
+    grep -qE '^\s*PublicKey\s*=' "$tmp" || die "В [Peer] нет PublicKey"
+    grep -qE '^\s*Endpoint\s*=' "$tmp" || die "В [Peer] нет Endpoint"
+    grep -qE '^\s*AllowedIPs\s*=.*0\.0\.0\.0/0' "$tmp" || die "Для PBR peer должен разрешать 0.0.0.0/0 в AllowedIPs"
+
+    if grep -qE '^\s*(Jc|Jmin|Jmax|S1|H1)\s*=' "$tmp"; then
+      ok "Обнаружены параметры AmneziaWG"
+    else
+      warn "Специфические параметры AWG не обнаружены; проверьте тип экспортированного профиля"
+    fi
+
+    if ! grep -qE '^\s*PersistentKeepalive\s*=' "$tmp"; then
+      warn "PersistentKeepalive отсутствует"
+      if confirm "Добавить PersistentKeepalive = 25 в первый [Peer]?" "Y"; then
+        awk '
+          BEGIN{inp=0; done=0}
+          /^[[:space:]]*\[Peer\][[:space:]]*$/ { if(!done){inp=1}; print; next }
+          /^[[:space:]]*\[/ { if(inp && !done){print "PersistentKeepalive = 25"; done=1; inp=0}; print; next }
+          {print}
+          END{if(inp && !done) print "PersistentKeepalive = 25"}
+        ' "$tmp" >"${tmp}.new"
+        mv "${tmp}.new" "$tmp"
+      fi
+    fi
+
     awk '
-      BEGIN{inp=0; done=0}
-      /^[[:space:]]*\[Peer\][[:space:]]*$/ { if(!done){inp=1}; print; next }
-      /^[[:space:]]*\[/ { if(inp && !done){print "PersistentKeepalive = 25"; done=1; inp=0}; print; next }
+      BEGIN{inif=0; inserted=0}
+      /^[[:space:]]*\[Interface\][[:space:]]*$/ {print; inif=1; next}
+      /^[[:space:]]*\[/ && $0 !~ /^[[:space:]]*\[Interface\][[:space:]]*$/ {
+        if(inif && !inserted){print "Table = off"; inserted=1}
+        inif=0
+      }
+      inif && /^[[:space:]]*Table[[:space:]]*=/ {next}
+      inif && /^[[:space:]]*DNS[[:space:]]*=/ {next}
       {print}
-      END{if(inp && !done) print "PersistentKeepalive = 25"}
+      END{if(inif && !inserted) print "Table = off"}
     ' "$tmp" >"${tmp}.new"
     mv "${tmp}.new" "$tmp"
-    ok "Добавлен PersistentKeepalive = 25"
+    install -m 600 "$tmp" "$CONF_FILE"
+    AWG_CONFIG_PRESENT=1
+    cleanup_tmp
+    trap - EXIT
+  else
+    warn "AmneziaWG пока не настроен. Это допустимо: Mihomo или AWG можно настроить позже через TUI."
+  fi
+else
+  if [[ -f "$CONF_FILE" ]]; then
+    AWG_CONFIG_PRESENT=1
+    ok "Существующий AWG-конфиг сохранён: $CONF_FILE"
+  else
+    AWG_CONFIG_PRESENT=0
+    warn "AWG-конфиг отсутствует; обновление продолжится без зависимости от AWG."
   fi
 fi
 
-# We own routing and DNS. Remove DNS/Table from imported Interface and force Table=off.
-awk '
-  BEGIN{inif=0; inserted=0}
-  /^[[:space:]]*\[Interface\][[:space:]]*$/ {print; inif=1; next}
-  /^[[:space:]]*\[/ && $0 !~ /^[[:space:]]*\[Interface\][[:space:]]*$/ {
-    if(inif && !inserted){print "Table = off"; inserted=1}
-    inif=0
-  }
-  inif && /^[[:space:]]*Table[[:space:]]*=/ {next}
-  inif && /^[[:space:]]*DNS[[:space:]]*=/ {next}
-  {print}
-  END{if(inif && !inserted) print "Table = off"}
-' "$tmp" >"${tmp}.new"
-mv "${tmp}.new" "$tmp"
-install -m 600 "$tmp" "$CONF_FILE"
-cleanup_tmp
-trap - EXIT
+if (( AWG_CONFIG_PRESENT == 1 )); then
+  if ! awg-quick strip "$CONF_FILE" >/dev/null 2>&1; then
+    die "awg-quick не смог разобрать импортированный конфиг. Проверьте синтаксис и параметры версии AWG"
+  fi
+  ok "AWG-конфиг валиден для awg-quick; Table=off; DNS управляется отдельно"
 else
-  ok "Существующий AWG-конфиг сохранён: $CONF_FILE"
+  ok "AWG backend оставлен ненастроенным; control plane продолжает установку"
 fi
-
-# Parser-level validation without bringing the tunnel up yet.
-if ! awg-quick strip "$CONF_FILE" >/dev/null 2>&1; then
-  die "awg-quick не смог разобрать импортированный конфиг. Проверьте синтаксис и параметры версии AWG"
-fi
-ok "Конфиг валиден для awg-quick; Table=off включён; DNS управляется отдельно"
 
 # -----------------------------------------------------------------------------
 # 6. LAN/router parameters
