@@ -24,7 +24,10 @@ source "$AWG_COMMON_FILE"
 RULE_PRIORITY="${TRANSIT_RULE_PRIORITY:-100}"
 VPN_MARK_DECIMAL="$((VPN_MARK))"
 TRANSPORT_ID="$(awg_transport_get)"
-TRANSPORT_IF="$(awg_transport_device "$TRANSPORT_ID")"
+TRANSPORT_IF=""
+if awg_transport_backend_valid "$TRANSPORT_ID"; then
+  TRANSPORT_IF="$(awg_transport_device "$TRANSPORT_ID")"
+fi
 
 fail(){
   printf 'FAIL: %s\n' "$*" >&2
@@ -37,6 +40,7 @@ rule_present(){
 }
 
 route_present(){
+  [[ -n "$TRANSPORT_IF" ]] || return 1
   "$IP_BIN" -4 route show table "$VPN_TABLE" |
     grep -Eq "^default[[:space:]]+dev[[:space:]]+${TRANSPORT_IF}([[:space:]]|$)"
 }
@@ -67,6 +71,7 @@ guard_fail_closed(){
 
 guard_ready(){
   local chain
+  [[ -n "$TRANSPORT_IF" ]] || return 1
   guard_fail_closed || return 1
   chain="$("$NFT_BIN" list chain inet awg_pbr forward_guard 2>/dev/null)" || return 1
   grep -E "iifname \"${LAN_IF}\".*ether saddr ([[:xdigit:]]{2}:){5}[[:xdigit:]]{2}.*oifname \"${TRANSPORT_IF}\".*accept" <<<"$chain" >/dev/null
@@ -91,6 +96,8 @@ show_status(){
 apply_policy(){
   local had_rule=0 old_default=""
 
+  [[ -n "$TRANSPORT_IF" ]] ||
+    fail "No active transport is configured"
   guard_ready ||
     fail "Transit nftables forward guard is not ready/safe"
 
