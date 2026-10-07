@@ -16,6 +16,7 @@ required = [
     '"Mihomo / Multi-Transport"',
     '"Заменить ссылку подписки"',
     '"Обновить подписку — AUTO"',
+    '"Обновить через выбранный канал"',
     '"Импортировать локальный профиль"',
     '"Переключить транспорт на Mihomo"',
     '"Переключить транспорт на AmneziaWG"',
@@ -69,6 +70,9 @@ assert "SSH и Transit backup" in menu
 assert '--passwordbox "$prompt"' in menu
 assert '"$MIHOMO_CONFIGURE" provider-url set-file "$url_tmp"' in menu
 assert '"$MIHOMO_CONFIGURE" provider update auto' in menu
+assert 'direct "DIRECT"' in menu
+assert 'router "Router/default"' not in menu
+assert "DIRECT → текущий healthy transport → остальные healthy transports" in menu
 assert '"$MIHOMO_CONFIGURE" provider import "$path"' in menu
 assert '"$AWG_TRANSPORT" select mihomo' in menu
 assert '"$AWG_TRANSPORT" select awg' in menu
