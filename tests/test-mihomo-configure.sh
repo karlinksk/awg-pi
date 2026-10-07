@@ -239,7 +239,7 @@ if MOCK_UPDATE_FAIL=1 run_cli provider-url set "https://broken.example/profile" 
   echo "FAIL: failed provider URL update was accepted" >&2
   exit 1
 fi
-sudo grep -Fqx "MIHOMO_PROVIDER_URL=https://new.example/profile" "$tmp/etc/provider.env"
+sudo grep -Fqx "MIHOMO_PROVIDER_URL=https://file.example/private-token" "$tmp/etc/provider.env"
 if sudo grep -Fq "broken.example" "$tmp/etc/provider.env"; then
   echo "FAIL: broken provider URL was not rolled back" >&2
   exit 1
