@@ -529,6 +529,7 @@ mihomo_menu(){
         [[ "$provider_format" != 0 ]] || continue
         confirm "Формат subscription" "Проверить текущую subscription в формате '$provider_format' и применить его только при успешной нормализации?" || continue
         run_interactive "Формат Mihomo provider" "$MIHOMO_CONFIGURE" provider format set "$provider_format"
+        ;;
       0) return 0 ;;
     esac
   done
