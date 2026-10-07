@@ -81,17 +81,35 @@ trap 'rm -f "$tmp"; rm -rf "$validate_dir"' EXIT
 "$MIHOMO_BIN" -t -d "$validate_dir" -f "$tmp" >/dev/null
 
 changed=1
+backup=""
 if [[ -r "$MIHOMO_PROVIDER_FILE" ]] && cmp -s "$tmp" "$MIHOMO_PROVIDER_FILE"; then
   changed=0
   echo "MIHOMO_PROVIDER=UNCHANGED"
 else
+  if [[ -r "$MIHOMO_PROVIDER_FILE" ]]; then
+    backup="$(mktemp "$provider_dir/.subscription.backup.XXXXXX")"
+    cp -a "$MIHOMO_PROVIDER_FILE" "$backup"
+  fi
   install -m 600 "$tmp" "$MIHOMO_PROVIDER_FILE"
   echo "MIHOMO_PROVIDER=UPDATED"
 fi
 
 if [[ -x "$MIHOMO_PREPARE" ]]; then
-  "$MIHOMO_PREPARE"
+  if ! "$MIHOMO_PREPARE"; then
+    if (( changed == 1 )); then
+      if [[ -n "$backup" && -r "$backup" ]]; then
+        install -m 600 "$backup" "$MIHOMO_PROVIDER_FILE"
+        "$MIHOMO_PREPARE" >/dev/null 2>&1 || true
+      else
+        rm -f "$MIHOMO_PROVIDER_FILE"
+      fi
+    fi
+    echo "Mihomo runtime validation failed; provider cache rolled back" >&2
+    exit 1
+  fi
 fi
+
+[[ -z "$backup" ]] || rm -f "$backup"
 
 if (( changed == 1 )) && "$SYSTEMCTL_BIN" is-active --quiet "$MIHOMO_SERVICE" 2>/dev/null; then
   "$SYSTEMCTL_BIN" restart "$MIHOMO_SERVICE"
