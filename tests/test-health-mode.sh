@@ -153,6 +153,20 @@ MOCK_MIHOMO_HEALTH=down run_health
 grep -Fqx disable "$tmp/transit.log"
 grep -Fqx down "$tmp/state/health.state"
 
+echo "=== unconfigured transport keeps mode semantics ==="
+echo unconfigured >"$tmp/transport"
+echo selective >"$tmp/mode"
+rm -f "$tmp/rule"
+run_health
+sudo test ! -e "$tmp/rule"
+grep -Fqx down "$tmp/state/health.state"
+
+echo transit >"$tmp/mode"
+: >"$tmp/transit.log"
+run_health
+grep -Fqx disable "$tmp/transit.log"
+grep -Fqx down "$tmp/state/health.state"
+
 echo awg >"$tmp/transport"
 
 echo "mode-aware health monitor: OK"
