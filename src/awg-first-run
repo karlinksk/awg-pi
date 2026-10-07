@@ -13,9 +13,7 @@ MIHOMO_BIN="${MIHOMO_BIN:-/usr/local/bin/mihomo}"
 export MIHOMO_ENV_FILE MIHOMO_BIN
 
 ui_print(){
-  if [[ -w "$TTY" ]]; then
-    printf '%s\n' "$*" >"$TTY"
-  else
+  if ! printf '%s\n' "$*" >"$TTY" 2>/dev/null; then
     printf '%s\n' "$*"
   fi
 }
