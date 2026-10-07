@@ -90,6 +90,12 @@ printf 'new-provider\n' >"$MIHOMO_PROVIDER_FILE"
 printf 'new-config\n' >"${MOCK_CONFIG_FILE:?}"
 MOCK
 
+cat >"$tmp/bin/prepare" <<'MOCK'
+#!/usr/bin/env bash
+set -Eeuo pipefail
+printf 'prepared-config\n' >"${MOCK_CONFIG_FILE:?}"
+MOCK
+
 cat >"$tmp/bin/transport" <<'MOCK'
 #!/usr/bin/env bash
 set -Eeuo pipefail
@@ -132,9 +138,16 @@ run_cli(){
     MIHOMO_LAST_FETCH_FILE="$tmp/state/last-fetch-path" \
     MIHOMO_LAST_FORMAT_FILE="$tmp/state/last-provider-format" \
     MIHOMO_PROVIDER_FILE="$tmp/state/providers/subscription.yaml" \
+    MIHOMO_CANDIDATE_FILE="$tmp/state/providers/candidate.yaml" \
+    MIHOMO_CANDIDATE_ENV_FILE="$tmp/state/providers/candidate.env" \
+    MIHOMO_CANDIDATE_FETCH_FILE="$tmp/state/candidate-fetch-path" \
+    MIHOMO_CANDIDATE_FORMAT_FILE="$tmp/state/candidate-provider-format" \
     MIHOMO_CONFIG_FILE="$tmp/etc/config.yaml" \
     MIHOMO_INSTALLER="$tmp/bin/installer" \
     MIHOMO_UPDATER="$tmp/bin/updater" \
+    MIHOMO_PREPARE="$tmp/bin/prepare" \
+    MIHOMO_PROVIDER_HELPER="$repo_root/src/awg-mihomo-provider.py" \
+    PYTHON_BIN=python3 \
     AWG_TRANSPORT_CLI="$tmp/bin/transport" \
     SYSTEMCTL_BIN="$tmp/bin/systemctl" \
     MIHOMO_BIN="$tmp/bin/mihomo" \
@@ -300,5 +313,57 @@ if sudo grep -Fq 'MIHOMO_PROVIDER_FORMAT=base64' "$tmp/etc/provider.env"; then
   exit 1
 fi
 grep -Fq 'previous format restored' "$tmp/err"
+
+echo "=== staged candidate list/prepare/commit is atomic ==="
+sudo sh -c "cat >'$tmp/state/providers/candidate.yaml' <<'YAML'
+proxies:
+  - name: Candidate Finland
+    type: vless
+    server: 45.86.66.171
+    port: 443
+    uuid: 11111111-1111-1111-1111-111111111111
+YAML"
+sudo sh -c "printf '%s\n' 'MIHOMO_PROVIDER_URL=https://candidate.example/token' 'MIHOMO_PROVIDER_FORMAT=auto' >'$tmp/state/providers/candidate.env'"
+sudo sh -c "printf '%s\n' file >'$tmp/state/candidate-fetch-path'; printf '%s\n' mihomo >'$tmp/state/candidate-provider-format'"
+sudo chmod 600 "$tmp/state/providers/candidate.yaml" "$tmp/state/providers/candidate.env" "$tmp/state/candidate-fetch-path" "$tmp/state/candidate-provider-format"
+out="$(run_cli provider candidate list)"
+grep -Fq $'Candidate Finland\tvless\t45.86.66.171:443' <<<"$out"
+out="$(run_cli provider candidate prepare 'Candidate Finland')"
+grep -Fq '45.86.66.171' <<<"$out"
+sudo sh -c "printf '%s\n' awg >'$tmp/transport'"
+out="$(run_cli provider candidate commit 'Candidate Finland' 45.86.66.171)"
+grep -Fqx 'MIHOMO_PROVIDER=COMMITTED' <<<"$out"
+grep -Fqx 'MIHOMO_HEALTH=healthy' <<<"$out"
+grep -Fqx 'ACTIVE_TRANSPORT=awg' <<<"$out"
+sudo grep -Fq 'name: Candidate Finland' "$tmp/state/providers/subscription.yaml"
+sudo grep -Fqx '45.86.66.171' "$tmp/etc/endpoint-ip"
+sudo grep -Fqx 'Candidate Finland' "$tmp/etc/node-name"
+sudo grep -Fq 'MIHOMO_PROVIDER_URL=https://candidate.example/token' "$tmp/etc/provider.env"
+sudo test ! -e "$tmp/state/providers/candidate.yaml"
+sudo test ! -e "$tmp/state/providers/candidate.env"
+
+echo "=== failed candidate commit restores live and preserves candidate ==="
+sudo cp "$tmp/state/providers/subscription.yaml" "$tmp/live-provider.before"
+sudo cp "$tmp/etc/provider.env" "$tmp/live-env.before"
+sudo cp "$tmp/etc/endpoint-ip" "$tmp/live-endpoint.before"
+sudo sh -c "cat >'$tmp/state/providers/candidate.yaml' <<'YAML'
+proxies:
+  - name: Broken Candidate
+    type: vless
+    server: 203.0.113.88
+    port: 443
+    uuid: 22222222-2222-2222-2222-222222222222
+YAML"
+sudo sh -c "printf '%s\n' 'MIHOMO_PROVIDER_URL=https://broken-candidate.example/token' >'$tmp/state/providers/candidate.env'"
+sudo chmod 600 "$tmp/state/providers/candidate.yaml" "$tmp/state/providers/candidate.env"
+if MOCK_HEALTH=down run_cli provider candidate commit 'Broken Candidate' 203.0.113.88 >"$tmp/out" 2>"$tmp/err"; then
+  echo 'FAIL: unhealthy candidate commit succeeded' >&2
+  exit 1
+fi
+sudo cmp -s "$tmp/live-provider.before" "$tmp/state/providers/subscription.yaml"
+sudo cmp -s "$tmp/live-env.before" "$tmp/etc/provider.env"
+sudo cmp -s "$tmp/live-endpoint.before" "$tmp/etc/endpoint-ip"
+sudo test -e "$tmp/state/providers/candidate.yaml"
+grep -Fq 'candidate preserved' "$tmp/err"
 
 echo "mihomo configure transaction: OK"
