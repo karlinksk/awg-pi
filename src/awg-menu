@@ -405,6 +405,93 @@ mihomo_node_menu(){
   fi
 }
 
+mihomo_candidate_menu(){
+  local node_name endpoint info_tmp current rc
+
+  title="Staged Mihomo provider"
+  if ! capture "$MIHOMO_CONFIGURE" provider candidate list; then
+    return 0
+  fi
+
+  node_name="$(input "Candidate node" "Введите ТОЧНОЕ имя узла из staged provider:")" || return 0
+  [[ -n "$node_name" ]] || { msg "Mihomo" "Имя candidate node не задано."; return 0; }
+
+  info_tmp="$(mktemp)"
+  if ! "$MIHOMO_CONFIGURE" provider candidate prepare "$node_name" >"$info_tmp" 2>&1; then
+    dialog --backtitle "$BACKTITLE" --title "Candidate node" --textbox "$info_tmp" 24 108
+    rm -f "$info_tmp"
+    return 0
+  fi
+  dialog --backtitle "$BACKTITLE" --title "Candidate node" --textbox "$info_tmp" 24 108
+  endpoint="$(input "Candidate endpoint" "Введите один IPv4 из Resolved IPv4 endpoints:")" || {
+    rm -f "$info_tmp"
+    return 0
+  }
+  rm -f "$info_tmp"
+  [[ -n "$endpoint" ]] || return 0
+
+  confirm "Commit staged provider?" "Live provider и текущий node будут заменены только после успешного запуска и health-check candidate. При ошибке live автоматически восстановится, а candidate останется для повторной попытки." || return 0
+
+  current="$("$AWG_TRANSPORT" get 2>/dev/null || echo unconfigured)"
+  title="Commit staged Mihomo provider"
+  if capture "$MIHOMO_CONFIGURE" provider candidate commit "$node_name" "$endpoint"; then
+    rc=0
+  else
+    rc=$?
+  fi
+
+  if (( rc == 0 )) && [[ "$current" != mihomo ]]; then
+    if confirm "Активировать Mihomo?" "Новый provider/node healthy. Сделать Mihomo активным transport сейчас?"; then
+      title="Transport → Mihomo"
+      capture "$AWG_TRANSPORT" select mihomo || true
+    fi
+  elif (( rc != 0 )); then
+    msg "Mihomo candidate" "Commit не выполнен. Предыдущий live provider сохранён/восстановлен; staged candidate оставлен."
+  fi
+}
+
+mihomo_local_source_mode(){
+  dialog --backtitle "$BACKTITLE" --title "Источник обновлений" --item-help --menu \
+    "Что делать с URL источника после commit локального/pasted provider?" 18 102 4 \
+    keep-source "Сохранить текущий URL" "Подходит для offline recovery: профиль импортируется локально, а будущие обновления снова используют текущий URL." \
+    local-only "Только локальный provider" "После commit сетевой URL для этого provider не используется; update timer будет отключён." \
+    0 "Назад" "Отменить staging." 3>&1 1>&2 2>&3
+}
+
+paste_mihomo_provider(){
+  local rc source_mode
+  install -d -m 700 /run/awg-pbr
+  PASTE_TMP="$(mktemp /run/awg-pbr/mihomo-paste.XXXXXX)"
+  chmod 600 "$PASTE_TMP"
+
+  set +e
+  dialog --backtitle "$BACKTITLE" --title "Вставить Mihomo provider/subscription" \
+    --ok-label "Проверить" --cancel-label "Отмена" \
+    --editbox "$PASTE_TMP" 30 110
+  rc=$?
+  set -e
+  if (( rc != 0 )); then
+    rm -f "$PASTE_TMP"; PASTE_TMP=""; return 0
+  fi
+
+  sed -i 's/\r$//' "$PASTE_TMP"
+  if ! grep -q '[^[:space:]]' "$PASTE_TMP"; then
+    msg "Mihomo" "Вставленный provider пуст. Live state не изменён."
+    rm -f "$PASTE_TMP"; PASTE_TMP=""; return 0
+  fi
+
+  source_mode="$(mihomo_local_source_mode)" || { rm -f "$PASTE_TMP"; PASTE_TMP=""; return 0; }
+  [[ "$source_mode" != 0 ]] || { rm -f "$PASTE_TMP"; PASTE_TMP=""; return 0; }
+
+  title="Stage Mihomo provider"
+  if capture "$MIHOMO_CONFIGURE" provider stage-file "$PASTE_TMP" "$source_mode"; then
+    rm -f "$PASTE_TMP"; PASTE_TMP=""
+    mihomo_candidate_menu
+  else
+    rm -f "$PASTE_TMP"; PASTE_TMP=""
+  fi
+}
+
 mihomo_provider_format_dialog(){
   dialog --backtitle "$BACKTITLE" --title "Формат subscription" --item-help --menu \
     "AUTO рекомендуется по умолчанию. Ручной формат нужен, если autodetect неоднозначен или оператор использует известную обёртку." \
