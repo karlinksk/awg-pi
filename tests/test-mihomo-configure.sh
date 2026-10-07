@@ -6,13 +6,14 @@ tmp="$(mktemp -d)"
 trap 'sudo rm -rf "$tmp"' EXIT
 mkdir -p "$tmp/bin" "$tmp/etc" "$tmp/state/providers" "$tmp/old"
 printf '%s\n' awg >"$tmp/transport"
+printf '%s\n' selective >"$tmp/mode"
 
 cat >"$tmp/input.env" <<'ENV'
 MIHOMO_PROVIDER_URL='https://subscription.example/profile'
 MIHOMO_NODE_FILTER='^Finland$'
 MIHOMO_ENDPOINT_IP='45.86.66.170'
 MIHOMO_EXPECTED_EGRESS_IP='198.51.100.77'
-MIHOMO_UPDATE_INTERFACE='awg0'
+MIHOMO_FETCH_MODE='auto'
 ENV
 
 cat >"$tmp/bin/systemctl" <<'MOCK'
@@ -49,7 +50,7 @@ case "${1:-}" in
   disable)
     rm -f "$enabled_file"
     ;;
-  start)
+  start|restart)
     unit="${2:-}"
     : >"$state/${unit}.active"
     ;;
@@ -102,13 +103,29 @@ case "$*" in
 esac
 MOCK
 
+cat >"$tmp/bin/failopen" <<'MOCK'
+#!/usr/bin/env bash
+printf 'failopen\n' >>"${MOCK_DATAPLANE_LOG:?}"
+MOCK
+
+cat >"$tmp/bin/transit-routing" <<'MOCK'
+#!/usr/bin/env bash
+set -Eeuo pipefail
+printf 'transit:%s\n' "$*" >>"${MOCK_DATAPLANE_LOG:?}"
+[[ "$1" == disable ]]
+MOCK
+
 chmod +x "$tmp/bin/"*
 
 run_cli(){
   sudo env \
     AWG_COMMON_FILE="$repo_root/src/awg-common" \
     AWG_TRANSPORT_FILE="$tmp/transport" \
+    AWG_MODE_FILE="$tmp/mode" \
     AWG_LOCK_FILE="$tmp/lock" \
+    AWG_FAILOPEN="$tmp/bin/failopen" \
+    AWG_TRANSIT_ROUTING="$tmp/bin/transit-routing" \
+    AWG_HEALTH_SERVICE="awg-pbr-health.service" \
     MIHOMO_ENV_FILE="$tmp/etc/provider.env" \
     MIHOMO_ENDPOINT_IP_FILE="$tmp/etc/endpoint-ip" \
     MIHOMO_EXPECTED_EGRESS_IP_FILE="$tmp/etc/expected-egress-ip" \
@@ -124,6 +141,7 @@ run_cli(){
     SLEEP_BIN=/bin/true \
     MOCK_UNIT_STATE="$tmp/unit-state" \
     MOCK_SYSTEMCTL_LOG="$tmp/systemctl.log" \
+    MOCK_DATAPLANE_LOG="$tmp/dataplane.log" \
     MOCK_INSTALL_LOG="$tmp/install.log" \
     MOCK_UPDATE_LOG="$tmp/update.log" \
     MOCK_UPDATE_FAIL="${MOCK_UPDATE_FAIL:-0}" \
@@ -137,7 +155,7 @@ run_configure(){
 }
 
 mkdir -p "$tmp/unit-state"
-: >"$tmp/systemctl.log"; : >"$tmp/install.log"; : >"$tmp/update.log"
+: >"$tmp/systemctl.log"; : >"$tmp/install.log"; : >"$tmp/update.log"; : >"$tmp/dataplane.log"
 
 echo "=== user-owned configure input is rejected ==="
 if run_configure >"$tmp/out" 2>"$tmp/err"; then
@@ -168,13 +186,18 @@ grep -Fqx 'MIHOMO_HEALTH=healthy' <<<"$out"
 grep -Fqx 'ACTIVE_TRANSPORT=awg' <<<"$out"
 grep -Fqx 'NEXT=awg-transport select mihomo' <<<"$out"
 
-echo "=== active Mihomo cannot be reconfigured ==="
-sudo sh -c "printf '%s\n' mihomo >'$tmp/transport'"
-if run_configure >"$tmp/out" 2>"$tmp/err"; then
-  echo 'FAIL: active Mihomo reconfiguration was accepted' >&2
+echo "=== active Mihomo reconfiguration is independent of AWG ==="
+sudo sh -c "printf '%s\n' mihomo >'$tmp/transport'; printf '%s\n' selective >'$tmp/mode'"
+sudo touch "$tmp/unit-state/awg-mihomo.service.active" "$tmp/unit-state/awg-pbr-health.service.active"
+: >"$tmp/systemctl.log"; : >"$tmp/dataplane.log"
+out="$(run_configure)"
+grep -Fqx 'ACTIVE_TRANSPORT=mihomo' <<<"$out"
+grep -Fqx failopen "$tmp/dataplane.log"
+grep -Fq 'restart awg-pbr-health.service' "$tmp/systemctl.log"
+if grep -Fq 'awg-quick@' "$tmp/systemctl.log"; then
+  echo 'FAIL: active Mihomo reconfiguration touched AWG' >&2
   exit 1
 fi
-grep -Fq 'select AWG first' "$tmp/err"
 sudo sh -c "printf '%s\n' awg >'$tmp/transport'"
 
 echo "=== health failure restores previous files and unit state ==="

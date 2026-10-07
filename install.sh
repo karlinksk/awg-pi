@@ -34,6 +34,7 @@ MIHOMO_UPDATE_SCRIPT="/usr/local/sbin/awg-mihomo-update"
 MIHOMO_INSTALL_SCRIPT="/usr/local/sbin/awg-mihomo-install"
 MIHOMO_PREPARE_SCRIPT="/usr/local/sbin/awg-mihomo-prepare"
 MIHOMO_CONFIGURE_SCRIPT="/usr/local/sbin/awg-mihomo-configure"
+FIRST_RUN_CLI="/usr/local/sbin/awg-first-run"
 UPDATE_SCRIPT="/usr/local/sbin/awg-update"
 SETUP_SERVICE="/etc/systemd/system/awg-pbr-setup.service"
 HEALTH_SERVICE="/etc/systemd/system/awg-pbr-health.service"
@@ -127,8 +128,8 @@ printf "Журнал установки: %s\n\n" "$INSTALL_REPORT"
 
 UPGRADE_EXISTING=0
 # Fresh v1.3 installs stage safely in Selective + transport=unconfigured.
-# Transit may be activated only after a selected backend passes health/preflight.
-ACTIVATE_TRANSIT_AFTER_INSTALL=1
+# The user chooses Operating Mode only after the first transport/recovery step.
+ACTIVATE_TRANSIT_AFTER_INSTALL=0
 AUTO_UPGRADE="${AWG_PI_UPGRADE_AUTO:-0}"
 AUTO_TRANSIT="${AWG_PI_UPGRADE_TRANSIT:-}"
 EXISTING_VERSION="$(cat /etc/awg-pbr/version 2>/dev/null || true)"
@@ -317,112 +318,31 @@ ok "$(amneziawg-go --version 2>/dev/null || echo 'amneziawg-go установл�
 fi
 
 # -----------------------------------------------------------------------------
-# 5. Optional AmneziaWG configuration
+# 5. Preserve existing transport configuration; fresh choice happens later
 # -----------------------------------------------------------------------------
-STAGE="настройка AmneziaWG backend"
-log "[5/12] AmneziaWG backend (независимый transport)"
+STAGE="подготовка transport state"
+log "[5/12] Transport state / existing backend preservation"
 mkdir -p "$CONF_DIR" "$PBR_DIR" /etc/nftables.d
 chmod 700 "$CONF_DIR" "$PBR_DIR"
 
 AWG_CONFIG_PRESENT=0
 if [[ -f "$CONF_FILE" ]]; then
   AWG_CONFIG_PRESENT=1
-  cp -a "$CONF_FILE" "$CONF_FILE.bak.$(date +%Y%m%d-%H%M%S)"
-fi
-
-if (( UPGRADE_EXISTING == 0 )); then
-  printf "1) указать путь к AmneziaWG .conf\n2) вставить конфиг в терминал\n3) пропустить — настроить AWG позже\n"
-  ask "Способ настройки AmneziaWG" "3"
-  awg_import_mode="$REPLY"
-
-  if [[ "$awg_import_mode" != 3 ]]; then
-    tmp="$(mktemp --suffix=.conf)"
-    cleanup_tmp(){ rm -f "$tmp" "${tmp}.new" 2>/dev/null || true; }
-    trap cleanup_tmp EXIT
-
-    case "$awg_import_mode" in
-      1)
-        ask "Полный путь к .conf"
-        [[ -f "$REPLY" ]] || die "Файл не найден: $REPLY"
-        cp "$REPLY" "$tmp"
-        ;;
-      2)
-        printf "Вставьте конфиг. Завершите отдельной строкой __END__\n"
-        : >"$tmp"
-        while IFS= read -r line <"$TTY"; do
-          [[ "$line" == "__END__" ]] && break
-          printf '%s\n' "$line" >>"$tmp"
-        done
-        ;;
-      *) die "Неверный способ настройки AmneziaWG" ;;
-    esac
-
-    sed -i 's/\r$//' "$tmp"
-    [[ "$(grep -Ec '^\s*\[Interface\]\s*$' "$tmp")" -eq 1 ]] || die "Конфиг должен содержать ровно один [Interface]"
-    [[ "$(grep -Ec '^\s*\[Peer\]\s*$' "$tmp")" -ge 1 ]] || die "В конфиге нет [Peer]"
-    grep -qE '^\s*PrivateKey\s*=' "$tmp" || die "В [Interface] нет PrivateKey"
-    grep -qE '^\s*Address\s*=' "$tmp" || die "В [Interface] нет Address"
-    grep -qE '^\s*PublicKey\s*=' "$tmp" || die "В [Peer] нет PublicKey"
-    grep -qE '^\s*Endpoint\s*=' "$tmp" || die "В [Peer] нет Endpoint"
-    grep -qE '^\s*AllowedIPs\s*=.*0\.0\.0\.0/0' "$tmp" || die "Для PBR peer должен разрешать 0.0.0.0/0 в AllowedIPs"
-
-    if grep -qE '^\s*(Jc|Jmin|Jmax|S1|H1)\s*=' "$tmp"; then
-      ok "Обнаружены параметры AmneziaWG"
-    else
-      warn "Специфические параметры AWG не обнаружены; проверьте тип экспортированного профиля"
+  if (( UPGRADE_EXISTING == 1 )); then
+    cp -a "$CONF_FILE" "$CONF_FILE.bak.$(date +%Y%m%d-%H%M%S)"
+    if ! awg-quick strip "$CONF_FILE" >/dev/null 2>&1; then
+      die "Существующий AWG-конфиг не разбирается awg-quick; upgrade остановлен без изменения профиля"
     fi
-
-    if ! grep -qE '^\s*PersistentKeepalive\s*=' "$tmp"; then
-      warn "PersistentKeepalive отсутствует"
-      if confirm "Добавить PersistentKeepalive = 25 в первый [Peer]?" "Y"; then
-        awk '
-          BEGIN{inp=0; done=0}
-          /^[[:space:]]*\[Peer\][[:space:]]*$/ { if(!done){inp=1}; print; next }
-          /^[[:space:]]*\[/ { if(inp && !done){print "PersistentKeepalive = 25"; done=1; inp=0}; print; next }
-          {print}
-          END{if(inp && !done) print "PersistentKeepalive = 25"}
-        ' "$tmp" >"${tmp}.new"
-        mv "${tmp}.new" "$tmp"
-      fi
-    fi
-
-    awk '
-      BEGIN{inif=0; inserted=0}
-      /^[[:space:]]*\[Interface\][[:space:]]*$/ {print; inif=1; next}
-      /^[[:space:]]*\[/ && $0 !~ /^[[:space:]]*\[Interface\][[:space:]]*$/ {
-        if(inif && !inserted){print "Table = off"; inserted=1}
-        inif=0
-      }
-      inif && /^[[:space:]]*Table[[:space:]]*=/ {next}
-      inif && /^[[:space:]]*DNS[[:space:]]*=/ {next}
-      {print}
-      END{if(inif && !inserted) print "Table = off"}
-    ' "$tmp" >"${tmp}.new"
-    mv "${tmp}.new" "$tmp"
-    install -m 600 "$tmp" "$CONF_FILE"
-    AWG_CONFIG_PRESENT=1
-    cleanup_tmp
-    trap - EXIT
+    ok "Существующий AWG backend сохранён"
   else
-    warn "AmneziaWG пока не настроен. Это допустимо: Mihomo или AWG можно настроить позже через TUI."
+    warn "На fresh install найден существующий $CONF_FILE; он не будет автоматически выбран. First-run wizard попросит явный выбор."
   fi
 else
-  if [[ -f "$CONF_FILE" ]]; then
-    AWG_CONFIG_PRESENT=1
-    ok "Существующий AWG-конфиг сохранён: $CONF_FILE"
-  else
-    AWG_CONFIG_PRESENT=0
+  if (( UPGRADE_EXISTING == 1 )); then
     warn "AWG-конфиг отсутствует; обновление продолжится без зависимости от AWG."
+  else
+    ok "Fresh install: transport пока не выбран"
   fi
-fi
-
-if (( AWG_CONFIG_PRESENT == 1 )); then
-  if ! awg-quick strip "$CONF_FILE" >/dev/null 2>&1; then
-    die "awg-quick не смог разобрать импортированный конфиг. Проверьте синтаксис и параметры версии AWG"
-  fi
-  ok "AWG-конфиг валиден для awg-quick; Table=off; DNS управляется отдельно"
-else
-  ok "AWG backend оставлен ненастроенным; control plane продолжает установку"
 fi
 
 # -----------------------------------------------------------------------------
@@ -731,6 +651,7 @@ install_project_helper src/awg-mihomo-update "$MIHOMO_UPDATE_SCRIPT"
 install_project_helper src/awg-mihomo-install "$MIHOMO_INSTALL_SCRIPT"
 install_project_helper src/awg-mihomo-prepare "$MIHOMO_PREPARE_SCRIPT"
 install_project_helper src/awg-mihomo-configure "$MIHOMO_CONFIGURE_SCRIPT"
+install_project_helper src/awg-first-run "$FIRST_RUN_CLI"
 install_project_helper src/awg-pbr-setup "$SETUP_SCRIPT"
 install_project_helper src/awg-transit-nft /usr/local/sbin/awg-transit-nft
 install_project_helper src/awg-transit-preflight /usr/local/sbin/awg-transit-preflight
@@ -819,7 +740,7 @@ EOF
 # -----------------------------------------------------------------------------
 STAGE="проверка компонентов управления"
 log "[10/12] Проверка awg-route / awg-menu / awg-update"
-for f in "$ROUTE_CLI" "$TRANSPORT_CLI" "$FETCH_CLI" "$MIHOMO_CONFIG_SCRIPT" "$MIHOMO_UPDATE_SCRIPT" "$MIHOMO_INSTALL_SCRIPT" "$MIHOMO_PREPARE_SCRIPT" "$MIHOMO_CONFIGURE_SCRIPT" "$SETUP_SCRIPT" /usr/local/sbin/awg-menu /usr/local/sbin/awg-transit-nft /usr/local/sbin/awg-transit-preflight /usr/local/sbin/awg-transit-apply /usr/local/sbin/awg-transit-routing /usr/local/sbin/awg-mode-switch "$HEALTH_SCRIPT" /usr/local/sbin/awg-opencck-update /usr/local/sbin/awg-core-update "$UPDATE_SCRIPT"; do
+for f in "$ROUTE_CLI" "$TRANSPORT_CLI" "$FETCH_CLI" "$MIHOMO_CONFIG_SCRIPT" "$MIHOMO_UPDATE_SCRIPT" "$MIHOMO_INSTALL_SCRIPT" "$MIHOMO_PREPARE_SCRIPT" "$MIHOMO_CONFIGURE_SCRIPT" "$FIRST_RUN_CLI" "$SETUP_SCRIPT" /usr/local/sbin/awg-menu /usr/local/sbin/awg-transit-nft /usr/local/sbin/awg-transit-preflight /usr/local/sbin/awg-transit-apply /usr/local/sbin/awg-transit-routing /usr/local/sbin/awg-mode-switch "$HEALTH_SCRIPT" /usr/local/sbin/awg-opencck-update /usr/local/sbin/awg-core-update "$UPDATE_SCRIPT"; do
   [[ -x "$f" ]] || die "Не установлен исполняемый компонент: $f"
   bash -n "$f" || die "Синтаксическая проверка компонента не пройдена: $f"
 done
@@ -832,10 +753,9 @@ STAGE="первый запуск и критические проверки"
 log "[11/12] Первый запуск"
 systemctl daemon-reload
 systemctl enable awg-pbr-setup.service dnsmasq.service awg-pbr-health.service awg-opencck-update.timer >/dev/null
-if (( AWG_CONFIG_PRESENT == 1 )); then
-  systemctl enable "awg-quick@$VPN_IF.service" >/dev/null
-fi
 
+# Base control plane comes up before any VPN backend. This is what keeps SSH,
+# TUI, DNS and recovery available even with zero working transports.
 systemctl restart awg-pbr-setup.service
 nft list table inet awg_pbr >/dev/null 2>&1 || die "Не создана nftables table inet awg_pbr"
 ok "nftables PBR table создана"
@@ -850,72 +770,96 @@ if ! dig +time=3 +tries=1 +short A example.com @"$PI_IP" | grep -qE '^[0-9]+\.';
 fi
 ok "DNS Raspberry Pi работает"
 
-systemctl restart awg-pbr-health.service
-systemctl is-active --quiet awg-pbr-health.service || die "health monitor не запустился"
-systemctl start awg-opencck-update.timer
-systemctl is-active --quiet awg-opencck-update.timer || warn "OpenCCK timer не активен; ручное обновление останется доступно"
+if (( UPGRADE_EXISTING == 0 )); then
+  STAGE="выбор первого transport"
+  log "[11a/12] First transport wizard"
+  if "$FIRST_RUN_CLI" wizard; then
+    ok "Первичная настройка transport завершена"
+  else
+    warn "Первичный transport не удалось настроить. Установка продолжится в recovery-state; повторите настройку через sudo awg-menu."
+    printf '%s\n' unconfigured >"$TRANSPORT_FILE"
+    chmod 600 "$TRANSPORT_FILE"
+  fi
+fi
 
 ACTIVE_TRANSPORT="$(cat "$TRANSPORT_FILE" 2>/dev/null || echo unconfigured)"
 case "$ACTIVE_TRANSPORT" in
   awg)
-    if (( AWG_CONFIG_PRESENT == 1 )); then
-      if systemctl restart "awg-quick@$VPN_IF.service" && ip link show "$VPN_IF" >/dev/null 2>&1; then
-        ok "AWG backend запущен; health monitor проверит datapath."
+    if [[ -f "$CONF_FILE" ]]; then
+      systemctl enable "awg-quick@$VPN_IF.service" >/dev/null
+      if systemctl restart "awg-quick@$VPN_IF.service" && "$TRANSPORT_CLI" check awg >/dev/null 2>&1; then
+        ok "AmneziaWG backend healthy"
       else
-        warn "AWG backend сейчас не поднялся. Установка продолжается: Selective останется FAIL-OPEN, Transit — FAIL-CLOSED."
+        warn "AWG backend сейчас unhealthy. Transport state сохранён для recovery; клиентская policy будет безопасной для выбранного режима."
       fi
     else
       warn "Transport state указывает AWG, но конфиг отсутствует; переводим state в unconfigured."
       printf '%s\n' unconfigured >"$TRANSPORT_FILE"
       chmod 600 "$TRANSPORT_FILE"
       ACTIVE_TRANSPORT=unconfigured
-      "$ROUTE_CLI" reload
     fi
     ;;
   mihomo)
-    if systemctl start awg-mihomo.service >/dev/null 2>&1; then
-      ok "Существующий Mihomo backend запущен/сохранён."
+    if systemctl start awg-mihomo.service >/dev/null 2>&1 && "$TRANSPORT_CLI" check mihomo >/dev/null 2>&1; then
+      ok "Mihomo backend healthy"
     else
-      warn "Mihomo backend сейчас не поднялся; control plane и recovery остаются доступны."
+      warn "Mihomo backend сейчас unhealthy. Transport state сохранён для recovery; другой backend можно настроить независимо."
     fi
     ;;
   unconfigured)
-    if (( UPGRADE_EXISTING == 0 && AWG_CONFIG_PRESENT == 1 )); then
-      log "Проверяем импортированный AWG как первый независимый backend"
-      if "$TRANSPORT_CLI" select awg; then
-        ACTIVE_TRANSPORT=awg
-        ok "AmneziaWG проверен и выбран как active transport."
-      else
-        warn "AWG не прошёл первичную проверку. Transport остаётся unconfigured; настройте AWG или Mihomo через TUI."
-      fi
-    else
-      warn "Active transport не настроен. Это допустимое recovery-состояние; SSH/TUI/DNS остаются доступны."
-    fi
+    warn "Active transport не настроен. Это допустимое recovery-состояние; SSH/TUI/DNS остаются доступны."
     ;;
   *)
     die "Некорректный transport state: $ACTIVE_TRANSPORT"
     ;;
 esac
 
+systemctl restart awg-pbr-health.service
+systemctl is-active --quiet awg-pbr-health.service || die "health monitor не запустился"
+systemctl start awg-opencck-update.timer
+systemctl is-active --quiet awg-opencck-update.timer || warn "OpenCCK timer не активен; ручное обновление останется доступно"
+
 ACTIVE_TRANSPORT="$(cat "$TRANSPORT_FILE" 2>/dev/null || echo unconfigured)"
 if [[ "$ACTIVE_TRANSPORT" != unconfigured ]]; then
   if "$TRANSPORT_CLI" check "$ACTIVE_TRANSPORT" >/dev/null 2>&1; then
-    ok "Active transport '$ACTIVE_TRANSPORT' отвечает на backend health-check."
+    ok "Active transport '$ACTIVE_TRANSPORT' прошёл итоговый backend health-check."
   else
-    warn "Active transport '$ACTIVE_TRANSPORT' сейчас unhealthy. Установка не блокируется; recovery другого backend доступен."
+    warn "Active transport '$ACTIVE_TRANSPORT' unhealthy. Control plane/recovery остаются доступны."
   fi
 fi
 
-if (( ACTIVATE_TRANSIT_AFTER_INSTALL == 1 )); then
+if (( UPGRADE_EXISTING == 0 )); then
+  STAGE="выбор Operating Mode"
+  log "[11b/12] Operating Mode selection"
+  printf "\nOperating Mode выбирается независимо от transport:\n"
+  printf "1) Selective Gateway — transport DOWN/not-ready => FAIL-OPEN DIRECT\n"
+  printf "2) MikroTik Transit / Backup VPN — transport DOWN/not-ready => FAIL-CLOSED/LOCKDOWN\n"
+  ask "Режим работы" "1"
+  case "$REPLY" in
+    1)
+      "$ROUTE_CLI" mode selective >/dev/null
+      ok "Operating Mode: Selective Gateway"
+      ;;
+    2)
+      if "$ROUTE_CLI" mode transit; then
+        ok "Operating Mode: MikroTik Transit / Backup VPN"
+      else
+        warn "Transit activation failed; installer restores Selective Gateway."
+        "$ROUTE_CLI" mode selective >/dev/null 2>&1 || true
+      fi
+      ;;
+    *)
+      warn "Неизвестный выбор Operating Mode; безопасно остаёмся в Selective Gateway."
+      "$ROUTE_CLI" mode selective >/dev/null 2>&1 || true
+      ;;
+  esac
+elif (( ACTIVATE_TRANSIT_AFTER_INSTALL == 1 )); then
   STAGE="активация MikroTik Transit"
-  log "[11b/12] Transit preflight + transactional switch"
-  ACTIVE_TRANSPORT="$(cat "$TRANSPORT_FILE" 2>/dev/null || echo unconfigured)"
-  if [[ "$ACTIVE_TRANSPORT" == unconfigured ]]; then
-    warn "Transit не активируется без проверенного transport. Остаёмся в Selective Gateway для настройки/recovery."
-  elif "$TRANSPORT_CLI" check "$ACTIVE_TRANSPORT" >/dev/null 2>&1 && "$ROUTE_CLI" mode transit; then
-    ok "MikroTik Transit / Backup VPN активирован через transport '$ACTIVE_TRANSPORT'."
+  log "[11b/12] Legacy upgrade Transit request"
+  if "$ROUTE_CLI" mode transit; then
+    ok "MikroTik Transit / Backup VPN активирован"
   else
-    warn "Transit preflight/activation не прошёл. Runtime восстановлен; установка продолжится в Selective Gateway."
+    warn "Transit activation не прошла. Runtime восстановлен; upgrade продолжится в Selective Gateway."
     "$ROUTE_CLI" mode selective >/dev/null 2>&1 || true
   fi
 fi

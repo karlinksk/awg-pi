@@ -39,7 +39,15 @@ verify_transit_active(){
 }
 
 verify_transit_guard(){
-  "$AWG_TRANSIT_ROUTING" status | grep -Fqx 'Transit guard: SAFE'
+  "$AWG_TRANSIT_ROUTING" status | grep -Eq '^Transit guard: (SAFE|LOCKDOWN)$'
+}
+
+verify_transit_lockdown(){
+  local status
+  status="$("$AWG_TRANSIT_ROUTING" status)"
+  grep -Fqx 'Transit guard: LOCKDOWN' <<<"$status" &&
+    grep -Fqx 'Transit policy rule: INACTIVE' <<<"$status" &&
+    grep -Fqx 'Transit VPN table: NOT_READY' <<<"$status"
 }
 
 restore_mode(){
@@ -52,8 +60,9 @@ restore_mode(){
 }
 
 switch_transit(){
-  local previous
+  local previous transport
   previous="$(awg_mode_get)"
+  transport="$(awg_transport_get)"
 
   if [[ "$previous" == transit ]]; then
     verify_transit_guard || fail "Transit mode is selected but the fail-closed guard is not active"
@@ -76,6 +85,18 @@ switch_transit(){
     exit "$rc"
   }
   trap rollback ERR
+
+  if [[ "$transport" == unconfigured ]]; then
+    awg_mode_set transit
+    selective_reload
+    health_start
+    verify_transit_lockdown
+    trap - ERR
+    printf 'Operating mode activated: MikroTik Transit / Backup VPN\n'
+    printf 'Mode ID: transit\n'
+    printf 'Transit state: LOCKDOWN (transport not configured)\n'
+    return 0
+  fi
 
   "$AWG_TRANSIT_APPLY" apply
   "$AWG_TRANSIT_ROUTING" apply

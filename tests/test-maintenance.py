@@ -51,17 +51,28 @@ DisableCookies = on
 [Peer]''').replace('AllowedIPs = 0.0.0.0/0', 'AllowedIPs = 0.0.0.0/0, ::/0')
 V3_PROFILE += 'PersistentKeepalive = 25-35\n'
 
+WG_PROFILE = f'''[Interface]
+PrivateKey = {KEY}
+Address = 10.9.0.2/32
+[Peer]
+PublicKey = {KEY}
+Endpoint = 192.0.2.55:51820
+AllowedIPs = 0.0.0.0/0
+PersistentKeepalive = 25
+'''
+
 
 class Maintenance(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
         self.root = Path(self.tmp.name)
-        for key in ('ENV', 'DNS', 'NFT', 'CLIENTS', 'DOMAINS', 'BACKUPS', 'CONF_DIR'):
+        for key in ('ENV', 'DNS', 'NFT', 'CLIENTS', 'DOMAINS', 'BACKUPS', 'CONF_DIR', 'MODE'):
             p = patch.object(m, key, str(self.root / key))
             p.start()
             self.addCleanup(p.stop)
         Path(m.CONF_DIR).mkdir()
+        Path(m.MODE).write_text('selective\n')
         self.env = dict(LAN_IF='eth0', PI_IP='192.168.1.2', LAN_CIDR='192.168.1.0/24',
                         ROUTER_IP='192.168.1.1', VPN_IF='awg0', HEALTH_MARK='0x101',
                         HEALTH_TABLE='101', UPSTREAM_DNS='9.9.9.9', VPN_MARK='0x100')
@@ -70,6 +81,7 @@ class Maintenance(unittest.TestCase):
         Path(m.NFT).write_text('old nft\n')
         Path(m.CLIENTS).write_text('192.168.1.28\n')
         Path(m.DOMAINS).write_text('old domains\n')
+        Path(m.MODE).write_text('selective\n')
         self.active = Path(m.CONF_DIR) / 'awg0.conf'
         self.active.write_text(PROFILE)
         self.previous = self.active.with_suffix('.conf.previous')
@@ -117,6 +129,12 @@ class Maintenance(unittest.TestCase):
                     PROFILE.replace('Address = 10.8.0.2/32', 'Address = garbage')):
             with self.subTest(bad=bad[:20]), self.assertRaises(ValueError):
                 m.profile(bad)
+
+    def test_plain_wireguard_profile_is_supported_by_shared_backend(self):
+        clean, endpoint = m.profile(WG_PROFILE)
+        self.assertIn('Table = off', clean)
+        self.assertNotIn('Jc =', clean)
+        self.assertEqual(endpoint, '192.0.2.55:51820')
 
     def test_v31_profile_preserves_native_fields_and_dual_stack(self):
         clean, _ = m.profile(V3_PROFILE)
@@ -241,6 +259,32 @@ class Maintenance(unittest.TestCase):
         with contextlib.redirect_stdout(io.StringIO()) as out:
             m.network_status(self.env)
         self.assertEqual(out.getvalue(), '')
+
+    def test_first_awg_profile_install_uses_same_validation_path(self):
+        self.active.unlink()
+        self.previous.unlink(missing_ok=True)
+        m.replace_config(self.args(), self.env)
+        self.assertIn('192.0.2.2:', self.active.read_text())
+        self.assertIn('Table = off', self.active.read_text())
+        self.assertFalse(self.previous.exists())
+        self.preflight.assert_called_once()
+        self.assertEqual(
+            sum(call == ('systemctl', 'start', 'awg-quick@awg0.service') for call in self.calls),
+            1,
+        )
+
+    def test_failed_first_awg_profile_returns_to_no_profile(self):
+        self.active.unlink()
+        self.previous.unlink(missing_ok=True)
+        self.health.return_value = False
+        with self.assertRaises(RuntimeError):
+            m.replace_config(self.args(), self.env)
+        self.assertFalse(self.active.exists())
+        self.assertFalse(self.previous.exists())
+        self.assertEqual(
+            sum(call == ('systemctl', 'start', 'awg-quick@awg0.service') for call in self.calls),
+            1,
+        )
 
     def test_config_success_and_manual_rollback(self):
         before = {f: Path(f).read_bytes() for f in [m.ENV, m.DNS, m.NFT, m.CLIENTS, m.DOMAINS]}
