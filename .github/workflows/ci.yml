@@ -22,7 +22,7 @@ jobs:
           # intermittently return 403 and block apt-get update. CI does not use it.
           sudo find /etc/apt/sources.list.d -maxdepth 1 -type f -iname '*microsoft*' -delete
           sudo apt-get update
-          sudo apt-get install -y nftables
+          sudo apt-get install -y nftables python3-yaml
       - name: Bash syntax
         run: |
           bash -n install.sh
@@ -45,6 +45,7 @@ jobs:
           bash -n src/awg-mihomo-install
           bash -n src/awg-mihomo-update
           bash -n src/awg-mihomo-config
+          python3 -m py_compile src/awg-mihomo-provider.py
           bash -n tests/test-common.sh
           bash -n tests/test-transport.sh
           bash -n tests/test-transport-switch.sh
@@ -91,6 +92,7 @@ jobs:
           bash tests/test-nft-template.sh
           bash tests/test-rc2.sh
           bash tests/test-redaction.sh
+          python3 tests/test-mihomo-provider.py
           python3 tests/test-maintenance.py
           python3 tests/test-confirm.py
           python3 tests/test-menu.py
