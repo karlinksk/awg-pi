@@ -28,6 +28,7 @@ FAILOPEN_SCRIPT="/usr/local/sbin/awg-pbr-failopen"
 HEALTH_SCRIPT="/usr/local/sbin/awg-pbr-health"
 ROUTE_CLI="/usr/local/sbin/awg-route"
 TRANSPORT_CLI="/usr/local/sbin/awg-transport"
+FETCH_CLI="/usr/local/sbin/awg-fetch"
 MIHOMO_CONFIG_SCRIPT="/usr/local/sbin/awg-mihomo-config"
 MIHOMO_UPDATE_SCRIPT="/usr/local/sbin/awg-mihomo-update"
 MIHOMO_INSTALL_SCRIPT="/usr/local/sbin/awg-mihomo-install"
@@ -724,6 +725,7 @@ install -m 755 "$_mihomo_provider_tmp" /usr/local/lib/awg-pi/mihomo-provider.py
 rm -f "$_mihomo_provider_tmp"
 install_project_helper src/awg-route "$ROUTE_CLI"
 install_project_helper src/awg-transport "$TRANSPORT_CLI"
+install_project_helper src/awg-fetch "$FETCH_CLI"
 install_project_helper src/awg-mihomo-config "$MIHOMO_CONFIG_SCRIPT"
 install_project_helper src/awg-mihomo-update "$MIHOMO_UPDATE_SCRIPT"
 install_project_helper src/awg-mihomo-install "$MIHOMO_INSTALL_SCRIPT"
@@ -817,7 +819,7 @@ EOF
 # -----------------------------------------------------------------------------
 STAGE="проверка компонентов управления"
 log "[10/12] Проверка awg-route / awg-menu / awg-update"
-for f in "$ROUTE_CLI" "$TRANSPORT_CLI" "$MIHOMO_CONFIG_SCRIPT" "$MIHOMO_UPDATE_SCRIPT" "$MIHOMO_INSTALL_SCRIPT" "$MIHOMO_PREPARE_SCRIPT" "$MIHOMO_CONFIGURE_SCRIPT" "$SETUP_SCRIPT" /usr/local/sbin/awg-menu /usr/local/sbin/awg-transit-nft /usr/local/sbin/awg-transit-preflight /usr/local/sbin/awg-transit-apply /usr/local/sbin/awg-transit-routing /usr/local/sbin/awg-mode-switch "$HEALTH_SCRIPT" /usr/local/sbin/awg-opencck-update /usr/local/sbin/awg-core-update "$UPDATE_SCRIPT"; do
+for f in "$ROUTE_CLI" "$TRANSPORT_CLI" "$FETCH_CLI" "$MIHOMO_CONFIG_SCRIPT" "$MIHOMO_UPDATE_SCRIPT" "$MIHOMO_INSTALL_SCRIPT" "$MIHOMO_PREPARE_SCRIPT" "$MIHOMO_CONFIGURE_SCRIPT" "$SETUP_SCRIPT" /usr/local/sbin/awg-menu /usr/local/sbin/awg-transit-nft /usr/local/sbin/awg-transit-preflight /usr/local/sbin/awg-transit-apply /usr/local/sbin/awg-transit-routing /usr/local/sbin/awg-mode-switch "$HEALTH_SCRIPT" /usr/local/sbin/awg-opencck-update /usr/local/sbin/awg-core-update "$UPDATE_SCRIPT"; do
   [[ -x "$f" ]] || die "Не установлен исполняемый компонент: $f"
   bash -n "$f" || die "Синтаксическая проверка компонента не пройдена: $f"
 done
