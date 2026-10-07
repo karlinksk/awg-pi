@@ -1,0 +1,81 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+MIHOMO_ENV_FILE="${MIHOMO_ENV_FILE:-/etc/awg-pbr/transports/mihomo/provider.env}"
+MIHOMO_PROVIDER_FILE="${MIHOMO_PROVIDER_FILE:-/var/lib/awg-pbr/mihomo/providers/subscription.yaml}"
+
+[[ -r "$MIHOMO_ENV_FILE" ]] && source "$MIHOMO_ENV_FILE"
+
+MIHOMO_MIXED_PORT="${MIHOMO_MIXED_PORT:-7890}"
+MIHOMO_CONTROLLER="${MIHOMO_CONTROLLER:-127.0.0.1:9090}"
+MIHOMO_TUN_IF="${MIHOMO_TUN_IF:-mihomo0}"
+MIHOMO_PROVIDER_NAME="${MIHOMO_PROVIDER_NAME:-subscription}"
+MIHOMO_GROUP_NAME="${MIHOMO_GROUP_NAME:-AWG-MIHOMO}"
+MIHOMO_PROVIDER_HEALTH_URL="${MIHOMO_PROVIDER_HEALTH_URL:-https://www.gstatic.com/generate_204}"
+MIHOMO_PROVIDER_HEALTH_INTERVAL="${MIHOMO_PROVIDER_HEALTH_INTERVAL:-300}"
+
+[[ "$MIHOMO_MIXED_PORT" =~ ^[0-9]+$ ]] || {
+  echo "Invalid MIHOMO_MIXED_PORT: $MIHOMO_MIXED_PORT" >&2
+  exit 2
+}
+[[ "$MIHOMO_PROVIDER_HEALTH_INTERVAL" =~ ^[0-9]+$ ]] || {
+  echo "Invalid MIHOMO_PROVIDER_HEALTH_INTERVAL: $MIHOMO_PROVIDER_HEALTH_INTERVAL" >&2
+  exit 2
+}
+[[ "$MIHOMO_TUN_IF" =~ ^[A-Za-z0-9_.-]{1,15}$ ]] || {
+  echo "Invalid MIHOMO_TUN_IF: $MIHOMO_TUN_IF" >&2
+  exit 2
+}
+[[ "$MIHOMO_PROVIDER_NAME" =~ ^[A-Za-z0-9_.-]+$ ]] || {
+  echo "Invalid MIHOMO_PROVIDER_NAME" >&2
+  exit 2
+}
+[[ "$MIHOMO_GROUP_NAME" != *$'\n'* ]] || {
+  echo "Invalid MIHOMO_GROUP_NAME" >&2
+  exit 2
+}
+[[ -r "$MIHOMO_PROVIDER_FILE" ]] || {
+  echo "Mihomo provider cache is missing: $MIHOMO_PROVIDER_FILE" >&2
+  exit 1
+}
+
+cat <<YAML
+mixed-port: $MIHOMO_MIXED_PORT
+allow-lan: false
+bind-address: 127.0.0.1
+mode: rule
+log-level: warning
+ipv6: false
+external-controller: $MIHOMO_CONTROLLER
+
+profile:
+  store-selected: true
+  store-fake-ip: false
+
+proxy-providers:
+  $MIHOMO_PROVIDER_NAME:
+    type: file
+    path: $MIHOMO_PROVIDER_FILE
+    health-check:
+      enable: true
+      url: $MIHOMO_PROVIDER_HEALTH_URL
+      interval: $MIHOMO_PROVIDER_HEALTH_INTERVAL
+      lazy: true
+
+proxy-groups:
+  - name: $MIHOMO_GROUP_NAME
+    type: select
+    use:
+      - $MIHOMO_PROVIDER_NAME
+
+rules:
+  - MATCH,$MIHOMO_GROUP_NAME
+
+tun:
+  enable: true
+  device: $MIHOMO_TUN_IF
+  stack: mixed
+  auto-route: false
+  auto-redirect: false
+  auto-detect-interface: true
+YAML
