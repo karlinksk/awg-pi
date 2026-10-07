@@ -6,17 +6,68 @@ set -Eeuo pipefail
 MIHOMO_VERSION="${MIHOMO_VERSION:-1.19.32}"
 MIHOMO_TARGET="${MIHOMO_TARGET:-/usr/local/bin/mihomo}"
 CURL_BIN="${CURL_BIN:-curl}"
+AWG_ENV_FILE="${AWG_ENV_FILE:-/etc/awg-pbr/env}"
+MIHOMO_INSTALL_FETCH_MODE="${MIHOMO_INSTALL_FETCH_MODE:-auto}"
+MIHOMO_INSTALL_FETCH_ORDER="${MIHOMO_INSTALL_FETCH_ORDER:-awg router}"
+MIHOMO_AWG_INTERFACE="${MIHOMO_AWG_INTERFACE:-}"
+MIHOMO_INSTALL_ASSET_URL="${MIHOMO_INSTALL_ASSET_URL:-}"
+MIHOMO_INSTALL_ASSET_SHA256="${MIHOMO_INSTALL_ASSET_SHA256:-}"
+
+# shellcheck disable=SC1090
+[[ -r "$AWG_ENV_FILE" ]] && source "$AWG_ENV_FILE"
+MIHOMO_AWG_INTERFACE="${MIHOMO_AWG_INTERFACE:-${VPN_IF:-awg0}}"
+
+usage(){
+  cat <<'USAGE'
+Usage:
+  awg-mihomo-install [--mode auto|awg|router]
+
+AUTO bootstrap order:
+  1. AmneziaWG interface (normally awg0)
+  2. router/default path
+
+The router/default path means the host's normal route to MikroTik. MikroTik may
+then keep the request DIRECT or policy-route it through SSTP/another VPN.
+USAGE
+}
+
+while (( $# )); do
+  case "$1" in
+    --mode)
+      [[ $# -ge 2 ]] || { usage >&2; exit 2; }
+      MIHOMO_INSTALL_FETCH_MODE="$2"
+      shift 2
+      ;;
+    -h|--help|help)
+      usage
+      exit 0
+      ;;
+    *)
+      echo "Unknown argument: $1" >&2
+      usage >&2
+      exit 2
+      ;;
+  esac
+done
+
+case "$MIHOMO_INSTALL_FETCH_MODE" in
+  auto|awg|router) ;;
+  *)
+    echo "Unsupported MIHOMO_INSTALL_FETCH_MODE: $MIHOMO_INSTALL_FETCH_MODE" >&2
+    exit 2
+    ;;
+esac
 
 case "$(dpkg --print-architecture 2>/dev/null || uname -m)" in
   arm64|aarch64)
     asset="mihomo-linux-arm64-v${MIHOMO_VERSION}.gz"
     asset_id="601415736"
-    sha256="9dd862e28b46ff7d775f169cceebc28deccaa0a9e804237d421cd2571e0caba0"
+    pinned_sha256="9dd862e28b46ff7d775f169cceebc28deccaa0a9e804237d421cd2571e0caba0"
     ;;
   amd64|x86_64)
     asset="mihomo-linux-amd64-compatible-v${MIHOMO_VERSION}.gz"
     asset_id="601415773"
-    sha256="ba3ce607747a07f948fc35780e108a4a7c7f552a38b9bd4d115f313ebcb89c20"
+    pinned_sha256="ba3ce607747a07f948fc35780e108a4a7c7f552a38b9bd4d115f313ebcb89c20"
     ;;
   *)
     echo "Unsupported architecture for Mihomo: $(uname -m)" >&2
@@ -24,18 +75,70 @@ case "$(dpkg --print-architecture 2>/dev/null || uname -m)" in
     ;;
 esac
 
+sha256="${MIHOMO_INSTALL_ASSET_SHA256:-$pinned_sha256}"
+api_url="${MIHOMO_INSTALL_ASSET_URL:-https://api.github.com/repos/MetaCubeX/mihomo/releases/assets/$asset_id}"
+
 tmpdir="$(mktemp -d)"
 trap 'rm -rf "$tmpdir"' EXIT
 archive="$tmpdir/$asset"
 binary="$tmpdir/mihomo"
 
-api_url="https://api.github.com/repos/MetaCubeX/mihomo/releases/assets/$asset_id"
-"$CURL_BIN" -4 --http1.1 --tlsv1.2 -fL \
-  --retry 3 --retry-delay 1 \
-  --connect-timeout 10 --max-time 180 \
-  -H 'Accept: application/octet-stream' \
-  -H 'User-Agent: AWG-Pi-Gateway-v1.3' \
-  -o "$archive" "$api_url"
+curl_args=(
+  -4 --http1.1 --tlsv1.2 -fsSL
+  --retry 3 --retry-all-errors --retry-delay 1
+  --connect-timeout 10 --max-time 180
+  -H 'Accept: application/octet-stream'
+  -H 'User-Agent: AWG-Pi-Gateway-v1.3'
+)
+
+fetch_path=""
+download_once(){
+  local path="$1"
+  local -a args=("${curl_args[@]}")
+
+  case "$path" in
+    awg)
+      [[ -n "$MIHOMO_AWG_INTERFACE" ]] || return 1
+      ip link show "$MIHOMO_AWG_INTERFACE" >/dev/null 2>&1 || return 1
+      args+=(--interface "$MIHOMO_AWG_INTERFACE")
+      ;;
+    router)
+      ;;
+    *)
+      return 2
+      ;;
+  esac
+
+  rm -f "$archive"
+  if "$CURL_BIN" "${args[@]}" -o "$archive" "$api_url"; then
+    fetch_path="$path"
+    return 0
+  fi
+  return 1
+}
+
+if [[ "$MIHOMO_INSTALL_FETCH_MODE" == auto ]]; then
+  fetched=0
+  for candidate in $MIHOMO_INSTALL_FETCH_ORDER; do
+    case "$candidate" in
+      awg|router) ;;
+      *) continue ;;
+    esac
+    if download_once "$candidate"; then
+      fetched=1
+      break
+    fi
+  done
+  (( fetched == 1 )) || {
+    echo "Unable to download Mihomo binary through any bootstrap path" >&2
+    exit 1
+  }
+else
+  download_once "$MIHOMO_INSTALL_FETCH_MODE" || {
+    echo "Unable to download Mihomo binary through $MIHOMO_INSTALL_FETCH_MODE" >&2
+    exit 1
+  }
+fi
 
 printf '%s  %s\n' "$sha256" "$archive" | sha256sum -c -
 gzip -dc "$archive" >"$binary"
@@ -45,3 +148,4 @@ chmod 755 "$binary"
 install -m 755 "$binary" "$MIHOMO_TARGET"
 printf 'MIHOMO_VERSION=%s\n' "$MIHOMO_VERSION"
 printf 'MIHOMO_BINARY=%s\n' "$MIHOMO_TARGET"
+printf 'MIHOMO_BINARY_FETCH_PATH=%s\n' "$fetch_path"
