@@ -18,9 +18,7 @@ source "$AWG_COMMON_FILE"
 : "${HEALTH_TABLE:?HEALTH_TABLE is required}"
 HANDSHAKE_MAX_AGE="${HANDSHAKE_MAX_AGE:-180}"
 TRANSPORT_ID="$(awg_transport_get)"
-awg_transport_backend_valid "$TRANSPORT_ID" ||
-  fail "no active transport is configured"
-TRANSPORT_IF="$(awg_transport_device "$TRANSPORT_ID")"
+TRANSPORT_IF=""
 
 fail(){
   printf 'FAIL: %s\n' "$*" >&2
@@ -30,6 +28,10 @@ fail(){
 ok(){
   printf 'OK: %s\n' "$*"
 }
+
+awg_transport_backend_valid "$TRANSPORT_ID" ||
+  fail "no active transport is configured"
+TRANSPORT_IF="$(awg_transport_device "$TRANSPORT_ID")"
 
 route_uses_lan_router(){
   local target="$1" route
