@@ -165,7 +165,11 @@ provider_url_set(){
 
   write_env_key "$MIHOMO_ENV_FILE" MIHOMO_PROVIDER_URL "$url"
 
-  if ! MIHOMO_ENV_FILE="$MIHOMO_ENV_FILE" "$MIHOMO_UPDATER" --mode auto; then
+  if ! MIHOMO_ENV_FILE="$MIHOMO_ENV_FILE" \
+       MIHOMO_PROVIDER_FILE="$MIHOMO_PROVIDER_FILE" \
+       MIHOMO_BIN="$MIHOMO_BIN" \
+       MIHOMO_LAST_FETCH_FILE="$MIHOMO_LAST_FETCH_FILE" \
+       "$MIHOMO_UPDATER" --mode auto; then
     if [[ -s "$snapshot" ]]; then
       install -m 600 "$snapshot" "$MIHOMO_ENV_FILE"
     else
@@ -183,12 +187,20 @@ provider_url_set(){
 provider_update(){
   local mode="${1:-auto}"
   case "$mode" in auto|mihomo|awg|router) ;; *) return 2 ;; esac
-  MIHOMO_ENV_FILE="$MIHOMO_ENV_FILE" "$MIHOMO_UPDATER" --mode "$mode"
+  MIHOMO_ENV_FILE="$MIHOMO_ENV_FILE" \
+  MIHOMO_PROVIDER_FILE="$MIHOMO_PROVIDER_FILE" \
+  MIHOMO_BIN="$MIHOMO_BIN" \
+  MIHOMO_LAST_FETCH_FILE="$MIHOMO_LAST_FETCH_FILE" \
+    "$MIHOMO_UPDATER" --mode "$mode"
 }
 
 provider_import(){
   local file="$1"
-  MIHOMO_ENV_FILE="$MIHOMO_ENV_FILE" "$MIHOMO_UPDATER" --file "$file"
+  MIHOMO_ENV_FILE="$MIHOMO_ENV_FILE" \
+  MIHOMO_PROVIDER_FILE="$MIHOMO_PROVIDER_FILE" \
+  MIHOMO_BIN="$MIHOMO_BIN" \
+  MIHOMO_LAST_FETCH_FILE="$MIHOMO_LAST_FETCH_FILE" \
+    "$MIHOMO_UPDATER" --file "$file"
 }
 
 apply_cmd(){
