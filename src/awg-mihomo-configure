@@ -452,6 +452,9 @@ candidate_commit(){
   fi
 
   "$SYSTEMCTL_BIN" stop "$MIHOMO_UPDATE_TIMER" "$MIHOMO_UPDATE_SERVICE" "$MIHOMO_SERVICE" >/dev/null 2>&1 || true
+  mkdir -p "$(dirname "$MIHOMO_PROVIDER_FILE")" "$(dirname "$MIHOMO_ENV_FILE")" \
+    "$(dirname "$MIHOMO_ENDPOINT_IP_FILE")" "$(dirname "$MIHOMO_NODE_NAME_FILE")"
+  chmod 700 "$(dirname "$MIHOMO_PROVIDER_FILE")" "$(dirname "$MIHOMO_ENV_FILE")"
   install -m 600 "$MIHOMO_CANDIDATE_FILE" "$MIHOMO_PROVIDER_FILE"
   [[ ! -r "$MIHOMO_CANDIDATE_ENV_FILE" ]] || install -m 600 "$MIHOMO_CANDIDATE_ENV_FILE" "$MIHOMO_ENV_FILE"
   write_env_key "$MIHOMO_ENV_FILE" MIHOMO_NODE_FILTER "$filter"
