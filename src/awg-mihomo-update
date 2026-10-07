@@ -1,0 +1,80 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+MIHOMO_ENV_FILE="${MIHOMO_ENV_FILE:-/etc/awg-pbr/transports/mihomo/provider.env}"
+MIHOMO_BIN="${MIHOMO_BIN:-/usr/local/bin/mihomo}"
+MIHOMO_PROVIDER_FILE="${MIHOMO_PROVIDER_FILE:-/var/lib/awg-pbr/mihomo/providers/subscription.yaml}"
+MIHOMO_SERVICE="${MIHOMO_SERVICE:-awg-mihomo.service}"
+CURL_BIN="${CURL_BIN:-curl}"
+SYSTEMCTL_BIN="${SYSTEMCTL_BIN:-systemctl}"
+
+[[ -r "$MIHOMO_ENV_FILE" ]] || {
+  echo "Missing Mihomo provider environment: $MIHOMO_ENV_FILE" >&2
+  exit 2
+}
+# shellcheck disable=SC1090
+source "$MIHOMO_ENV_FILE"
+
+: "${MIHOMO_PROVIDER_URL:?MIHOMO_PROVIDER_URL is required}"
+: "${MIHOMO_PROVIDER_HWID:?MIHOMO_PROVIDER_HWID is required}"
+
+MIHOMO_UPDATE_INTERFACE="${MIHOMO_UPDATE_INTERFACE:-awg0}"
+MIHOMO_UPDATE_SUFFIX="${MIHOMO_UPDATE_SUFFIX:-mihomo}"
+MIHOMO_DEVICE_OS="${MIHOMO_DEVICE_OS:-Linux}"
+MIHOMO_DEVICE_VERSION="${MIHOMO_DEVICE_VERSION:-Debian}"
+MIHOMO_DEVICE_MODEL="${MIHOMO_DEVICE_MODEL:-AWG Pi Gateway}"
+
+[[ -x "$MIHOMO_BIN" ]] || {
+  echo "Mihomo binary is unavailable: $MIHOMO_BIN" >&2
+  exit 2
+}
+
+provider_dir="$(dirname "$MIHOMO_PROVIDER_FILE")"
+mkdir -p "$provider_dir"
+chmod 700 "$provider_dir"
+
+tmp="$(mktemp "$provider_dir/.subscription.XXXXXX")"
+trap 'rm -f "$tmp"' EXIT
+
+curl_args=(
+  -4 --http1.1 -fsSL
+  --connect-timeout 10 --max-time 45
+  -A 'mihomo/1.19.32'
+  -H "x-hwid: $MIHOMO_PROVIDER_HWID"
+  -H "x-device-os: $MIHOMO_DEVICE_OS"
+  -H "x-ver-os: $MIHOMO_DEVICE_VERSION"
+  -H "x-device-model: $MIHOMO_DEVICE_MODEL"
+)
+
+if [[ -n "$MIHOMO_UPDATE_INTERFACE" && "$MIHOMO_UPDATE_INTERFACE" != direct ]]; then
+  curl_args+=(--interface "$MIHOMO_UPDATE_INTERFACE")
+fi
+
+url="${MIHOMO_PROVIDER_URL%/}/${MIHOMO_UPDATE_SUFFIX#/}"
+"$CURL_BIN" "${curl_args[@]}" "$url" -o "$tmp"
+
+[[ -s "$tmp" ]] || {
+  echo "Downloaded Mihomo provider is empty" >&2
+  exit 1
+}
+grep -Eq '^[[:space:]]*proxies:[[:space:]]*$' "$tmp" || {
+  echo "Downloaded subscription is not a Mihomo/Clash profile with proxies" >&2
+  exit 1
+}
+
+validate_dir="$(mktemp -d)"
+trap 'rm -f "$tmp"; rm -rf "$validate_dir"' EXIT
+"$MIHOMO_BIN" -t -d "$validate_dir" -f "$tmp" >/dev/null
+
+if [[ -r "$MIHOMO_PROVIDER_FILE" ]] && cmp -s "$tmp" "$MIHOMO_PROVIDER_FILE"; then
+  echo "MIHOMO_PROVIDER=UNCHANGED"
+  exit 0
+fi
+
+install -m 600 "$tmp" "$MIHOMO_PROVIDER_FILE"
+echo "MIHOMO_PROVIDER=UPDATED"
+
+if "$SYSTEMCTL_BIN" is-active --quiet "$MIHOMO_SERVICE" 2>/dev/null; then
+  "$SYSTEMCTL_BIN" restart "$MIHOMO_SERVICE"
+  echo "MIHOMO_SERVICE=RESTARTED"
+fi
