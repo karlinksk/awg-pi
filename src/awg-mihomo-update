@@ -10,6 +10,9 @@ MIHOMO_SERVICE="${MIHOMO_SERVICE:-awg-mihomo.service}"
 CURL_BIN="${CURL_BIN:-curl}"
 SYSTEMCTL_BIN="${SYSTEMCTL_BIN:-systemctl}"
 MIHOMO_PREPARE="${MIHOMO_PREPARE:-/usr/local/sbin/awg-mihomo-prepare}"
+MIHOMO_PROVIDER_HELPER="${MIHOMO_PROVIDER_HELPER:-/usr/local/lib/awg-pi/mihomo-provider.py}"
+PYTHON_BIN="${PYTHON_BIN:-python3}"
+MIHOMO_LAST_FORMAT_FILE="${MIHOMO_LAST_FORMAT_FILE:-/var/lib/awg-pbr/mihomo/last-provider-format}"
 
 [[ -r "$MIHOMO_ENV_FILE" ]] || {
   echo "Missing Mihomo provider environment: $MIHOMO_ENV_FILE" >&2
@@ -33,13 +36,14 @@ MIHOMO_DEVICE_VERSION="${MIHOMO_DEVICE_VERSION:-Debian}"
 MIHOMO_DEVICE_MODEL="${MIHOMO_DEVICE_MODEL:-AWG Pi Gateway}"
 MIHOMO_PROVIDER_USER_AGENT="${MIHOMO_PROVIDER_USER_AGENT:-mihomo/1.19.32}"
 MIHOMO_PROVIDER_AUTHORIZATION="${MIHOMO_PROVIDER_AUTHORIZATION:-}"
+MIHOMO_PROVIDER_FORMAT="${MIHOMO_PROVIDER_FORMAT:-auto}"
 
 usage(){
   cat <<'USAGE'
 Usage:
-  awg-mihomo-update [--mode auto|mihomo|awg|router]
-  awg-mihomo-update --file PROFILE
-  awg-mihomo-update --cache-only [--mode auto|mihomo|awg|router]
+  awg-mihomo-update [--mode auto|mihomo|awg|router] [--format auto|mihomo|vless|base64]
+  awg-mihomo-update --file PROFILE [--format auto|mihomo|vless|base64]
+  awg-mihomo-update --cache-only [--mode auto|mihomo|awg|router] [--format auto|mihomo|vless|base64]
 
 AUTO tries the current Mihomo proxy, then AmneziaWG, then the normal
 router/default path. On the router/default path MikroTik decides whether the
@@ -59,6 +63,11 @@ while (( $# )); do
     --file)
       [[ $# -ge 2 ]] || { usage >&2; exit 2; }
       local_file="$2"
+      shift 2
+      ;;
+    --format)
+      [[ $# -ge 2 ]] || { usage >&2; exit 2; }
+      MIHOMO_PROVIDER_FORMAT="$2"
       shift 2
       ;;
     --cache-only)
@@ -98,6 +107,19 @@ case "$MIHOMO_FETCH_MODE" in
     exit 2
     ;;
 esac
+
+case "$MIHOMO_PROVIDER_FORMAT" in
+  auto|mihomo|vless|base64) ;;
+  *)
+    echo "Unsupported MIHOMO_PROVIDER_FORMAT: $MIHOMO_PROVIDER_FORMAT" >&2
+    exit 2
+    ;;
+esac
+
+[[ -r "$MIHOMO_PROVIDER_HELPER" ]] || {
+  echo "Mihomo provider adapter is unavailable: $MIHOMO_PROVIDER_HELPER" >&2
+  exit 2
+}
 
 [[ -x "$MIHOMO_BIN" ]] || {
   echo "Mihomo binary is unavailable: $MIHOMO_BIN" >&2
@@ -200,10 +222,28 @@ fi
   echo "Downloaded Mihomo provider is empty" >&2
   exit 1
 }
-grep -Eq '^[[:space:]]*proxies:[[:space:]]*$' "$tmp" || {
-  echo "Downloaded subscription is not a Mihomo/Clash profile with proxies" >&2
+
+normalized_tmp="$(mktemp "$provider_dir/.normalized.XXXXXX")"
+adapter_output="$("$PYTHON_BIN" "$MIHOMO_PROVIDER_HELPER" normalize "$tmp" "$normalized_tmp" --format "$MIHOMO_PROVIDER_FORMAT")" || {
+  rm -f "$normalized_tmp"
+  echo "Provider adapter rejected the subscription; working cache unchanged" >&2
   exit 1
 }
+install -m 600 "$normalized_tmp" "$tmp"
+rm -f "$normalized_tmp"
+
+detected_format="$(awk -F= '$1=="MIHOMO_PROVIDER_FORMAT_DETECTED"{print $2}' <<<"$adapter_output" | head -n1)"
+node_count="$(awk -F= '$1=="MIHOMO_PROVIDER_NODE_COUNT"{print $2}' <<<"$adapter_output" | head -n1)"
+[[ "$detected_format" =~ ^(mihomo|vless|base64)$ ]] || {
+  echo "Provider adapter did not return a supported detected format" >&2
+  exit 1
+}
+[[ "$node_count" =~ ^[1-9][0-9]*$ ]] || {
+  echo "Provider adapter did not return a valid node count" >&2
+  exit 1
+}
+printf 'MIHOMO_PROVIDER_FORMAT_DETECTED=%s\n' "$detected_format"
+printf 'MIHOMO_PROVIDER_NODE_COUNT=%s\n' "$node_count"
 
 validate_dir="$(mktemp -d)"
 trap 'rm -f "$tmp"; rm -rf "$validate_dir"' EXIT
@@ -215,6 +255,12 @@ printf '%s\n' "$fetch_path" >"$fetch_state_tmp"
 chmod 600 "$fetch_state_tmp"
 mv -f "$fetch_state_tmp" "$MIHOMO_LAST_FETCH_FILE"
 printf 'MIHOMO_FETCH_PATH=%s\n' "$fetch_path"
+
+mkdir -p "$(dirname "$MIHOMO_LAST_FORMAT_FILE")"
+format_state_tmp="$(mktemp "$(dirname "$MIHOMO_LAST_FORMAT_FILE")/.last-format.XXXXXX")"
+printf '%s\n' "$detected_format" >"$format_state_tmp"
+chmod 600 "$format_state_tmp"
+mv -f "$format_state_tmp" "$MIHOMO_LAST_FORMAT_FILE"
 
 changed=1
 backup=""
