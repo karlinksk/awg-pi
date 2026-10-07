@@ -126,6 +126,18 @@ if grep -q '^interface=' "$tmp/curl.log"; then
   exit 1
 fi
 
+echo "=== generic provider works without HWID ==="
+cat >"$tmp/provider.env" <<'ENV'
+MIHOMO_PROVIDER_URL='https://subscription.example/profile.yaml'
+MIHOMO_UPDATE_INTERFACE='direct'
+ENV
+: >"$tmp/curl.log"
+run_update >/dev/null
+if grep -q '^header=x-hwid:' "$tmp/curl.log"; then
+  echo 'FAIL: generic provider unexpectedly sent x-hwid' >&2
+  exit 1
+fi
+
 echo "=== invalid provider never replaces cache ==="
 cp "$tmp/state/providers/live.yaml" "$tmp/before.yaml"
 cat >"$tmp/invalid.yaml" <<'YAML'
