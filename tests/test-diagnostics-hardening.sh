@@ -7,8 +7,8 @@ INSTALL="$ROOT/install.sh"
 
 echo "=== diagnostics fail-closed verification is pipefail-safe ==="
 grep -Fq 'transit_status="$("$TRANSIT_ROUTING" status 2>&1 || true)"' "$ROUTE"
-grep -Fq 'grep -Fqx '''Transit guard: SAFE''' <<<"$transit_status"' "$ROUTE"
-if grep -Fq '"$TRANSIT_ROUTING" status 2>/dev/null | grep -Fqx '''Transit guard: SAFE'''' "$ROUTE"; then
+grep -Fq "grep -Fqx 'Transit guard: SAFE' <<<\"\$transit_status\"" "$ROUTE"
+if grep -Fq "\"\$TRANSIT_ROUTING\" status 2>/dev/null | grep -Fqx 'Transit guard: SAFE'" "$ROUTE"; then
   echo 'FAIL: diagnostics still pipes a non-zero transit status into grep under pipefail' >&2
   exit 1
 fi
@@ -23,7 +23,7 @@ grep -Fq 'Active transport: $transport_id' "$ROUTE"
 grep -Fq '"$TRANSPORT_CLI" status 2>&1 || true' "$ROUTE"
 
 echo "=== installer publishes version before diagnostics ==="
-version_line="$(grep -n -F 'printf '''%s\n''' "$AWG_PI_VERSION" >/etc/awg-pbr/version' "$INSTALL" | head -1 | cut -d: -f1)"
+version_line="$(grep -n -F "printf '%s\\n' \"\$AWG_PI_VERSION\" >/etc/awg-pbr/version" "$INSTALL" | head -1 | cut -d: -f1)"
 diag_line="$(grep -n -F '"$ROUTE_CLI" diagnostics' "$INSTALL" | head -1 | cut -d: -f1)"
 [[ -n "$version_line" && -n "$diag_line" ]]
 (( version_line < diag_line ))
