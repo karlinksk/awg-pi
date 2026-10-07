@@ -11,6 +11,8 @@ cat >"$tmp/preflight" <<'EOF'
 cat <<'OUT'
 === Transit preflight ===
 OK: mock preflight
+TRANSPORT_ID=mihomo
+TRANSPORT_IF=mihomo0
 ROUTER_MAC=02:11:22:33:44:55
 TRANSIT_PREFLIGHT=OK
 OUT
@@ -22,8 +24,8 @@ cat <<NFT
 table inet awg_pbr {
   chain forward_guard {
     type filter hook forward priority filter; policy drop;
-    iifname "awg0" oifname "eth0" ct state established,related accept
-    iifname "eth0" ether saddr ${ROUTER_MAC} oifname "awg0" accept
+    iifname "mihomo0" oifname "eth0" ct state established,related accept
+    iifname "eth0" ether saddr ${ROUTER_MAC} oifname "mihomo0" accept
   }
   chain prerouting_mark {
     type filter hook prerouting priority mangle; policy accept;
@@ -31,7 +33,7 @@ table inet awg_pbr {
   }
   chain postrouting_nat {
     type nat hook postrouting priority srcnat; policy accept;
-    oifname "awg0" masquerade
+    oifname "mihomo0" masquerade
   }
 }
 NFT
@@ -67,14 +69,14 @@ NFT
     if [[ "${MOCK_VERIFY_FAIL:-0}" == 1 ]]; then
       echo 'chain forward_guard { }'
     else
-      echo 'chain forward_guard { iifname "eth0" ether saddr 02:11:22:33:44:55 oifname "awg0" accept }'
+      echo 'chain forward_guard { iifname "eth0" ether saddr 02:11:22:33:44:55 oifname "mihomo0" accept }'
     fi
     ;;
   "list chain inet awg_pbr prerouting_mark")
     echo 'chain prerouting_mark { meta mark set 0x100 }'
     ;;
   "list chain inet awg_pbr postrouting_nat")
-    echo 'chain postrouting_nat { oifname "awg0" masquerade }'
+    echo 'chain postrouting_nat { oifname "mihomo0" masquerade }'
     ;;
   *)
     echo "unexpected nft call: $*" >&2

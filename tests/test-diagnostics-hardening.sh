@@ -7,7 +7,7 @@ INSTALL="$ROOT/install.sh"
 
 echo "=== diagnostics fail-closed verification is pipefail-safe ==="
 grep -Fq 'transit_status="$("$TRANSIT_ROUTING" status 2>&1 || true)"' "$ROUTE"
-grep -Fq "grep -Fqx 'Transit guard: SAFE' <<<\"\$transit_status\"" "$ROUTE"
+grep -Fq "grep -Eq '^Transit guard: (SAFE|LOCKDOWN)\$' <<<\"\$transit_status\"" "$ROUTE"
 if grep -Fq "\"\$TRANSIT_ROUTING\" status 2>/dev/null | grep -Fqx 'Transit guard: SAFE'" "$ROUTE"; then
   echo 'FAIL: diagnostics still pipes a non-zero transit status into grep under pipefail' >&2
   exit 1

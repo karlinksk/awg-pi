@@ -19,6 +19,7 @@ DIRECT_DOMAINS="$PBR_DIR/direct-domains.txt"
 CLIENTS_FILE="$PBR_DIR/clients.txt"
 VPN_ENABLED_FILE="$PBR_DIR/vpn-enabled"
 MODE_FILE="$PBR_DIR/mode"
+TRANSPORT_FILE="$PBR_DIR/transport"
 DNS_CONF="/etc/dnsmasq.d/99-awg-pbr.conf"
 DNS_DOMAINS_CONF="/etc/dnsmasq.d/99-awg-pbr-domains.conf"
 NFT_FILE="/etc/nftables.d/99-awg-pbr.nft"
@@ -119,20 +120,20 @@ first_working_url(){
 
 printf "%b=== AmneziaWG Raspberry Pi 4 Policy Gateway Installer v%s ===%b\n" "$B" "$AWG_PI_VERSION" "$R"
 printf "Архитектура: Selective Gateway + MikroTik Transit / Backup VPN.\n"
-printf "Fresh install = Transit после безопасного preflight. Selective: FAIL-OPEN; Transit: FAIL-CLOSED при недоступном AWG.\n"
+printf "Fresh install начинается с безопасного transport=unconfigured. Selective: FAIL-OPEN; Transit: FAIL-CLOSED при недоступном active transport.\n"
 printf "IPv6 в этой версии не маршрутизируется.\n\n"
 printf "Журнал установки: %s\n\n" "$INSTALL_REPORT"
 
 UPGRADE_EXISTING=0
-# Fresh v1.3 installs stage safely in Selective during installation, then
-# transactionally activate Transit after AWG health/preflight checks pass.
+# Fresh v1.3 installs stage safely in Selective + transport=unconfigured.
+# Transit may be activated only after a selected backend passes health/preflight.
 ACTIVATE_TRANSIT_AFTER_INSTALL=1
 AUTO_UPGRADE="${AWG_PI_UPGRADE_AUTO:-0}"
 AUTO_TRANSIT="${AWG_PI_UPGRADE_TRANSIT:-}"
 EXISTING_VERSION="$(cat /etc/awg-pbr/version 2>/dev/null || true)"
 MODE_PREEXISTED=0
 [[ -f "$MODE_FILE" ]] && MODE_PREEXISTED=1
-if [[ -f "$ENV_FILE" && -f "$CONF_FILE" ]]; then
+if [[ -f "$ENV_FILE" ]]; then
   printf "Обнаружена существующая AWG Pi Gateway: %s\n" "${EXISTING_VERSION:-версия до v1.1.0}"
   if [[ "$AUTO_UPGRADE" == 1 ]] || confirm "Выполнить безопасное обновление существующей установки до v$AWG_PI_VERSION с сохранением AWG-конфига, доменов и клиентов?" "Y"; then
     UPGRADE_EXISTING=1
@@ -315,99 +316,113 @@ ok "$(amneziawg-go --version 2>/dev/null || echo 'amneziawg-go установл�
 fi
 
 # -----------------------------------------------------------------------------
-# 5. Import and validate AWG config
+# 5. Optional AmneziaWG configuration
 # -----------------------------------------------------------------------------
-STAGE="импорт конфигурации AmneziaWG"
-log "[5/12] Конфигурация AmneziaWG"
+STAGE="настройка AmneziaWG backend"
+log "[5/12] AmneziaWG backend (независимый transport)"
 mkdir -p "$CONF_DIR" "$PBR_DIR" /etc/nftables.d
 chmod 700 "$CONF_DIR" "$PBR_DIR"
 
+AWG_CONFIG_PRESENT=0
 if [[ -f "$CONF_FILE" ]]; then
+  AWG_CONFIG_PRESENT=1
   cp -a "$CONF_FILE" "$CONF_FILE.bak.$(date +%Y%m%d-%H%M%S)"
 fi
 
 if (( UPGRADE_EXISTING == 0 )); then
-printf "1) указать путь к .conf\n2) вставить конфиг в терминал\n"
-ask "Способ импорта" "2"
-mode="$REPLY"
-tmp="$(mktemp --suffix=.conf)"
-cleanup_tmp(){ rm -f "$tmp" "${tmp}.new" 2>/dev/null || true; }
-trap cleanup_tmp EXIT
-case "$mode" in
-  1)
-    ask "Полный путь к .conf"
-    [[ -f "$REPLY" ]] || die "Файл не найден: $REPLY"
-    cp "$REPLY" "$tmp"
-    ;;
-  2)
-    printf "Вставьте конфиг. Завершите отдельной строкой __END__\n"
-    : >"$tmp"
-    while IFS= read -r line <"$TTY"; do
-      [[ "$line" == "__END__" ]] && break
-      printf '%s\n' "$line" >>"$tmp"
-    done
-    ;;
-  *) die "Неверный способ импорта" ;;
-esac
-sed -i 's/\r$//' "$tmp"
+  printf "1) указать путь к AmneziaWG .conf\n2) вставить конфиг в терминал\n3) пропустить — настроить AWG позже\n"
+  ask "Способ настройки AmneziaWG" "3"
+  awg_import_mode="$REPLY"
 
-[[ "$(grep -Ec '^\s*\[Interface\]\s*$' "$tmp")" -eq 1 ]] || die "Конфиг должен содержать ровно один [Interface]"
-[[ "$(grep -Ec '^\s*\[Peer\]\s*$' "$tmp")" -ge 1 ]] || die "В конфиге нет [Peer]"
-grep -qE '^\s*PrivateKey\s*=' "$tmp" || die "В [Interface] нет PrivateKey"
-grep -qE '^\s*Address\s*=' "$tmp" || die "В [Interface] нет Address"
-grep -qE '^\s*PublicKey\s*=' "$tmp" || die "В [Peer] нет PublicKey"
-grep -qE '^\s*Endpoint\s*=' "$tmp" || die "В [Peer] нет Endpoint"
-grep -qE '^\s*AllowedIPs\s*=.*0\.0\.0\.0/0' "$tmp" || die "Для PBR peer должен разрешать 0.0.0.0/0 в AllowedIPs"
+  if [[ "$awg_import_mode" != 3 ]]; then
+    tmp="$(mktemp --suffix=.conf)"
+    cleanup_tmp(){ rm -f "$tmp" "${tmp}.new" 2>/dev/null || true; }
+    trap cleanup_tmp EXIT
 
-if grep -qE '^\s*(Jc|Jmin|Jmax|S1|H1)\s*=' "$tmp"; then
-  ok "Обнаружены параметры AmneziaWG"
-else
-  warn "Специфические параметры AWG не обнаружены; убедитесь, что экспортирован именно профиль AmneziaWG"
-fi
+    case "$awg_import_mode" in
+      1)
+        ask "Полный путь к .conf"
+        [[ -f "$REPLY" ]] || die "Файл не найден: $REPLY"
+        cp "$REPLY" "$tmp"
+        ;;
+      2)
+        printf "Вставьте конфиг. Завершите отдельной строкой __END__\n"
+        : >"$tmp"
+        while IFS= read -r line <"$TTY"; do
+          [[ "$line" == "__END__" ]] && break
+          printf '%s\n' "$line" >>"$tmp"
+        done
+        ;;
+      *) die "Неверный способ настройки AmneziaWG" ;;
+    esac
 
-if grep -qE '^\s*PersistentKeepalive\s*=' "$tmp"; then
-  ok "PersistentKeepalive уже задан"
-else
-  warn "PersistentKeepalive отсутствует"
-  if confirm "Добавить PersistentKeepalive = 25 в первый [Peer]?" "Y"; then
+    sed -i 's/\r$//' "$tmp"
+    [[ "$(grep -Ec '^\s*\[Interface\]\s*$' "$tmp")" -eq 1 ]] || die "Конфиг должен содержать ровно один [Interface]"
+    [[ "$(grep -Ec '^\s*\[Peer\]\s*$' "$tmp")" -ge 1 ]] || die "В конфиге нет [Peer]"
+    grep -qE '^\s*PrivateKey\s*=' "$tmp" || die "В [Interface] нет PrivateKey"
+    grep -qE '^\s*Address\s*=' "$tmp" || die "В [Interface] нет Address"
+    grep -qE '^\s*PublicKey\s*=' "$tmp" || die "В [Peer] нет PublicKey"
+    grep -qE '^\s*Endpoint\s*=' "$tmp" || die "В [Peer] нет Endpoint"
+    grep -qE '^\s*AllowedIPs\s*=.*0\.0\.0\.0/0' "$tmp" || die "Для PBR peer должен разрешать 0.0.0.0/0 в AllowedIPs"
+
+    if grep -qE '^\s*(Jc|Jmin|Jmax|S1|H1)\s*=' "$tmp"; then
+      ok "Обнаружены параметры AmneziaWG"
+    else
+      warn "Специфические параметры AWG не обнаружены; проверьте тип экспортированного профиля"
+    fi
+
+    if ! grep -qE '^\s*PersistentKeepalive\s*=' "$tmp"; then
+      warn "PersistentKeepalive отсутствует"
+      if confirm "Добавить PersistentKeepalive = 25 в первый [Peer]?" "Y"; then
+        awk '
+          BEGIN{inp=0; done=0}
+          /^[[:space:]]*\[Peer\][[:space:]]*$/ { if(!done){inp=1}; print; next }
+          /^[[:space:]]*\[/ { if(inp && !done){print "PersistentKeepalive = 25"; done=1; inp=0}; print; next }
+          {print}
+          END{if(inp && !done) print "PersistentKeepalive = 25"}
+        ' "$tmp" >"${tmp}.new"
+        mv "${tmp}.new" "$tmp"
+      fi
+    fi
+
     awk '
-      BEGIN{inp=0; done=0}
-      /^[[:space:]]*\[Peer\][[:space:]]*$/ { if(!done){inp=1}; print; next }
-      /^[[:space:]]*\[/ { if(inp && !done){print "PersistentKeepalive = 25"; done=1; inp=0}; print; next }
+      BEGIN{inif=0; inserted=0}
+      /^[[:space:]]*\[Interface\][[:space:]]*$/ {print; inif=1; next}
+      /^[[:space:]]*\[/ && $0 !~ /^[[:space:]]*\[Interface\][[:space:]]*$/ {
+        if(inif && !inserted){print "Table = off"; inserted=1}
+        inif=0
+      }
+      inif && /^[[:space:]]*Table[[:space:]]*=/ {next}
+      inif && /^[[:space:]]*DNS[[:space:]]*=/ {next}
       {print}
-      END{if(inp && !done) print "PersistentKeepalive = 25"}
+      END{if(inif && !inserted) print "Table = off"}
     ' "$tmp" >"${tmp}.new"
     mv "${tmp}.new" "$tmp"
-    ok "Добавлен PersistentKeepalive = 25"
+    install -m 600 "$tmp" "$CONF_FILE"
+    AWG_CONFIG_PRESENT=1
+    cleanup_tmp
+    trap - EXIT
+  else
+    warn "AmneziaWG пока не настроен. Это допустимо: Mihomo или AWG можно настроить позже через TUI."
+  fi
+else
+  if [[ -f "$CONF_FILE" ]]; then
+    AWG_CONFIG_PRESENT=1
+    ok "Существующий AWG-конфиг сохранён: $CONF_FILE"
+  else
+    AWG_CONFIG_PRESENT=0
+    warn "AWG-конфиг отсутствует; обновление продолжится без зависимости от AWG."
   fi
 fi
 
-# We own routing and DNS. Remove DNS/Table from imported Interface and force Table=off.
-awk '
-  BEGIN{inif=0; inserted=0}
-  /^[[:space:]]*\[Interface\][[:space:]]*$/ {print; inif=1; next}
-  /^[[:space:]]*\[/ && $0 !~ /^[[:space:]]*\[Interface\][[:space:]]*$/ {
-    if(inif && !inserted){print "Table = off"; inserted=1}
-    inif=0
-  }
-  inif && /^[[:space:]]*Table[[:space:]]*=/ {next}
-  inif && /^[[:space:]]*DNS[[:space:]]*=/ {next}
-  {print}
-  END{if(inif && !inserted) print "Table = off"}
-' "$tmp" >"${tmp}.new"
-mv "${tmp}.new" "$tmp"
-install -m 600 "$tmp" "$CONF_FILE"
-cleanup_tmp
-trap - EXIT
+if (( AWG_CONFIG_PRESENT == 1 )); then
+  if ! awg-quick strip "$CONF_FILE" >/dev/null 2>&1; then
+    die "awg-quick не смог разобрать импортированный конфиг. Проверьте синтаксис и параметры версии AWG"
+  fi
+  ok "AWG-конфиг валиден для awg-quick; Table=off; DNS управляется отдельно"
 else
-  ok "Существующий AWG-конфиг сохранён: $CONF_FILE"
+  ok "AWG backend оставлен ненастроенным; control plane продолжает установку"
 fi
-
-# Parser-level validation without bringing the tunnel up yet.
-if ! awg-quick strip "$CONF_FILE" >/dev/null 2>&1; then
-  die "awg-quick не смог разобрать импортированный конфиг. Проверьте синтаксис и параметры версии AWG"
-fi
-ok "Конфиг валиден для awg-quick; Table=off включён; DNS управляется отдельно"
 
 # -----------------------------------------------------------------------------
 # 6. LAN/router parameters
@@ -448,6 +463,15 @@ if (( UPGRADE_EXISTING == 1 )); then
   # a mode file remain Selective until Transit datapath + preflight are implemented.
   [[ -f "$MODE_FILE" ]] || printf '%s\n' selective >"$MODE_FILE"
   chmod 600 "$MODE_FILE"
+  if [[ ! -f "$TRANSPORT_FILE" ]]; then
+    if (( AWG_CONFIG_PRESENT == 1 )); then
+      printf '%s\n' awg >"$TRANSPORT_FILE"
+      warn "Миграция legacy state: существующий AWG backend принят как active transport."
+    else
+      printf '%s\n' unconfigured >"$TRANSPORT_FILE"
+    fi
+  fi
+  chmod 600 "$TRANSPORT_FILE"
   ok "Сетевая конфигурация сохранена: Pi=$PI_IP, Router=$ROUTER_IP, LAN=$LAN_CIDR"
 else
 printf "\nIPv4 интерфейсы:\n"
@@ -543,6 +567,8 @@ echo 1 >"$VPN_ENABLED_FILE"
 chmod 600 "$VPN_ENABLED_FILE"
 printf '%s\n' selective >"$MODE_FILE"
 chmod 600 "$MODE_FILE"
+printf '%s\n' unconfigured >"$TRANSPORT_FILE"
+chmod 600 "$TRANSPORT_FILE"
 fi
 
 # Duplicate-address detection. In DAD mode arping returns success when no peer
@@ -772,7 +798,7 @@ log "[9/12] Health monitor: Selective FAIL-OPEN / Transit FAIL-CLOSED"
 cat >"$HEALTH_SERVICE" <<'EOF'
 [Unit]
 Description=AWG Pi Gateway mode-aware health monitor
-After=network-online.target awg-quick@awg0.service awg-pbr-setup.service
+After=network-online.target awg-pbr-setup.service
 Wants=network-online.target
 
 [Service]
@@ -803,7 +829,10 @@ ok "Компоненты управления v$AWG_PI_VERSION установл�
 STAGE="первый запуск и критические проверки"
 log "[11/12] Первый запуск"
 systemctl daemon-reload
-systemctl enable awg-pbr-setup.service dnsmasq.service "awg-quick@$VPN_IF.service" awg-pbr-health.service awg-opencck-update.timer >/dev/null
+systemctl enable awg-pbr-setup.service dnsmasq.service awg-pbr-health.service awg-opencck-update.timer >/dev/null
+if (( AWG_CONFIG_PRESENT == 1 )); then
+  systemctl enable "awg-quick@$VPN_IF.service" >/dev/null
+fi
 
 systemctl restart awg-pbr-setup.service
 nft list table inet awg_pbr >/dev/null 2>&1 || die "Не создана nftables table inet awg_pbr"
@@ -819,71 +848,70 @@ if ! dig +time=3 +tries=1 +short A example.com @"$PI_IP" | grep -qE '^[0-9]+\.';
 fi
 ok "DNS Raspberry Pi работает"
 
-systemctl restart "awg-quick@$VPN_IF.service"
-systemctl is-active --quiet "awg-quick@$VPN_IF.service" || {
-  systemctl status "awg-quick@$VPN_IF.service" --no-pager || true
-  journalctl -u "awg-quick@$VPN_IF.service" -n 80 --no-pager || true
-  die "awg0 не поднялся"
-}
-ip link show "$VPN_IF" >/dev/null 2>&1 || die "Сервис AWG активен, но интерфейс $VPN_IF отсутствует"
-ok "$VPN_IF поднят"
-
-# An existing Selective installation may intentionally have vpn off.
-# Preserve that requested state, but temporarily enable Selective policy so the
-# installer can still prove handshake + marked transport before accepting the
-# upgrade. The requested OFF state is restored immediately after validation.
-RESTORE_VPN_OFF=0
-CURRENT_INSTALL_MODE="$(cat "$MODE_FILE" 2>/dev/null || echo selective)"
-if [[ "$CURRENT_INSTALL_MODE" == selective && "$(cat "$VPN_ENABLED_FILE" 2>/dev/null || echo 1)" != 1 ]]; then
-  RESTORE_VPN_OFF=1
-  echo 1 >"$VPN_ENABLED_FILE"
-  chmod 600 "$VPN_ENABLED_FILE"
-  warn "Selective VPN policy была выключена; временно включаем её только для upgrade health-check."
-fi
-
 systemctl restart awg-pbr-health.service
 systemctl is-active --quiet awg-pbr-health.service || die "health monitor не запустился"
 systemctl start awg-opencck-update.timer
 systemctl is-active --quiet awg-opencck-update.timer || warn "OpenCCK timer не активен; ручное обновление останется доступно"
 
-printf "Ожидание handshake/проверки VPN"
-VPN_HEALTH=0
-for _ in $(seq 1 15); do
-  sleep 2
-  printf "."
-  if [[ "$(cat /run/awg-pbr/health.state 2>/dev/null || true)" == "up" ]]; then VPN_HEALTH=1; break; fi
-done
-printf "\n"
-if (( VPN_HEALTH == 0 )); then
-  # shellcheck disable=SC1091
-  source /usr/local/lib/awg-pi/common.sh
-  awg_safe_show "$VPN_IF" || true
-  journalctl -u awg-pbr-health.service -n 50 --no-pager || true
-  die "VPN не прошёл health-check: нет рабочего транспорта и/или свежего handshake. PBR не активирован"
-fi
-ok "AmneziaWG: handshake + интернет через туннель работают"
+ACTIVE_TRANSPORT="$(cat "$TRANSPORT_FILE" 2>/dev/null || echo unconfigured)"
+case "$ACTIVE_TRANSPORT" in
+  awg)
+    if (( AWG_CONFIG_PRESENT == 1 )); then
+      if systemctl restart "awg-quick@$VPN_IF.service" && ip link show "$VPN_IF" >/dev/null 2>&1; then
+        ok "AWG backend запущен; health monitor проверит datapath."
+      else
+        warn "AWG backend сейчас не поднялся. Установка продолжается: Selective останется FAIL-OPEN, Transit — FAIL-CLOSED."
+      fi
+    else
+      warn "Transport state указывает AWG, но конфиг отсутствует; переводим state в unconfigured."
+      printf '%s\n' unconfigured >"$TRANSPORT_FILE"
+      chmod 600 "$TRANSPORT_FILE"
+      ACTIVE_TRANSPORT=unconfigured
+      "$ROUTE_CLI" reload
+    fi
+    ;;
+  mihomo)
+    if systemctl start awg-mihomo.service >/dev/null 2>&1; then
+      ok "Существующий Mihomo backend запущен/сохранён."
+    else
+      warn "Mihomo backend сейчас не поднялся; control plane и recovery остаются доступны."
+    fi
+    ;;
+  unconfigured)
+    if (( UPGRADE_EXISTING == 0 && AWG_CONFIG_PRESENT == 1 )); then
+      log "Проверяем импортированный AWG как первый независимый backend"
+      if "$TRANSPORT_CLI" select awg; then
+        ACTIVE_TRANSPORT=awg
+        ok "AmneziaWG проверен и выбран как active transport."
+      else
+        warn "AWG не прошёл первичную проверку. Transport остаётся unconfigured; настройте AWG или Mihomo через TUI."
+      fi
+    else
+      warn "Active transport не настроен. Это допустимое recovery-состояние; SSH/TUI/DNS остаются доступны."
+    fi
+    ;;
+  *)
+    die "Некорректный transport state: $ACTIVE_TRANSPORT"
+    ;;
+esac
 
-if ! ip -4 rule show | grep -Eq '(^| )100:.*fwmark (0x100|256).*lookup (100|awgvpn)'; then
-  die "Health успешен, но policy rule не активировался"
-fi
-if ! ip -4 route get 1.1.1.1 mark "$VPN_MARK" | grep -q "dev $VPN_IF"; then
-  die "Маркированный трафик не маршрутизируется в $VPN_IF"
-fi
-ok "Policy routing работает"
-
-if (( RESTORE_VPN_OFF == 1 )); then
-  echo 0 >"$VPN_ENABLED_FILE"
-  chmod 600 "$VPN_ENABLED_FILE"
-  "$FAILOPEN_SCRIPT"
-  systemctl restart awg-pbr-health.service
-  ok "Исходное состояние Selective VPN policy=OFF восстановлено"
+ACTIVE_TRANSPORT="$(cat "$TRANSPORT_FILE" 2>/dev/null || echo unconfigured)"
+if [[ "$ACTIVE_TRANSPORT" != unconfigured ]]; then
+  if "$TRANSPORT_CLI" check "$ACTIVE_TRANSPORT" >/dev/null 2>&1; then
+    ok "Active transport '$ACTIVE_TRANSPORT' отвечает на backend health-check."
+  else
+    warn "Active transport '$ACTIVE_TRANSPORT' сейчас unhealthy. Установка не блокируется; recovery другого backend доступен."
+  fi
 fi
 
 if (( ACTIVATE_TRANSIT_AFTER_INSTALL == 1 )); then
   STAGE="активация MikroTik Transit"
   log "[11b/12] Transit preflight + transactional switch"
-  if "$ROUTE_CLI" mode transit; then
-    ok "MikroTik Transit / Backup VPN активирован"
+  ACTIVE_TRANSPORT="$(cat "$TRANSPORT_FILE" 2>/dev/null || echo unconfigured)"
+  if [[ "$ACTIVE_TRANSPORT" == unconfigured ]]; then
+    warn "Transit не активируется без проверенного transport. Остаёмся в Selective Gateway для настройки/recovery."
+  elif "$TRANSPORT_CLI" check "$ACTIVE_TRANSPORT" >/dev/null 2>&1 && "$ROUTE_CLI" mode transit; then
+    ok "MikroTik Transit / Backup VPN активирован через transport '$ACTIVE_TRANSPORT'."
   else
     warn "Transit preflight/activation не прошёл. Runtime восстановлен; установка продолжится в Selective Gateway."
     "$ROUTE_CLI" mode selective >/dev/null 2>&1 || true
@@ -913,25 +941,33 @@ printf "Raspberry Pi:    %s\n" "$PI_IP"
 printf "MAC (%s):       %s\n" "$LAN_IF" "$LAN_MAC"
 printf "LAN router:      %s\n" "$ROUTER_IP"
 printf "LAN:             %s\n" "$LAN_CIDR"
-printf "VPN interface:   %s\n" "$VPN_IF"
+printf "AWG interface:   %s\n" "$VPN_IF"
 printf "AWG tags:        go=%s tools=%s\n" "$GO_TAG" "$TOOLS_TAG"
 printf "Install report:  %s\n" "$INSTALL_REPORT"
 printf "Diagnostics:     %s\n" "${LATEST_DIAG:-см. $LOG_DIR}"
 
 FINAL_MODE="$(cat "$MODE_FILE" 2>/dev/null || echo selective)"
+FINAL_TRANSPORT="$(cat "$TRANSPORT_FILE" 2>/dev/null || echo unconfigured)"
+case "$FINAL_TRANSPORT" in
+  awg) FINAL_TRANSPORT_LABEL="AmneziaWG" ;;
+  mihomo) FINAL_TRANSPORT_LABEL="Mihomo" ;;
+  unconfigured) FINAL_TRANSPORT_LABEL="Not configured / recovery" ;;
+  *) FINAL_TRANSPORT_LABEL="INVALID" ;;
+esac
+printf "Active transport: %s (%s)\n" "$FINAL_TRANSPORT_LABEL" "$FINAL_TRANSPORT"
 printf "\nЛогика:\n"
 if [[ "$FINAL_MODE" == transit ]]; then
   printf "  Operating mode = MikroTik Transit / Backup VPN\n"
   printf "  MikroTik классифицирует и отправляет backup-трафик на Pi\n"
-  printf "  Active transport after install = awg (AmneziaWG)\n"
-  printf "  Pi forward/NAT = только через active transport; transport down = FAIL-CLOSED\n"
-  printf "  management + AWG endpoint = DIRECT через LAN router\n"
+  printf "  Active transport = %s\n" "$FINAL_TRANSPORT_LABEL"
+  printf "  Pi forward/NAT = только через active transport; transport down/not-ready = FAIL-CLOSED\n"
+  printf "  management/control plane + transport endpoints = DIRECT через LAN router\n"
   printf "  OpenCCK/VPN/DIRECT/client state сохранён, но не классифицирует Transit\n"
 else
   printf "  Operating mode = Selective Gateway\n"
   printf "  обычный трафик = DIRECT через LAN router\n"
-  printf "  VPN-list = через AmneziaWG\n"
-  printf "  VPN упал = автоматический FAIL-OPEN DIRECT\n"
+  printf "  VPN-list = через выбранный active transport\n"
+  printf "  transport down/not-ready = автоматический FAIL-OPEN DIRECT\n"
   printf "  DNS клиентов PBR = %s (dnsmasq -> независимые upstream DNS)\n" "$PI_IP"
 fi
 printf "  DHCP остаётся на LAN router\n"
@@ -974,7 +1010,11 @@ else
   printf "  Gateway: %s\n" "$PI_IP"
   printf "  DNS:     %s\n" "$PI_IP"
   printf "  IPv6:    не использовать\n"
-  printf "  Сначала проверьте DIRECT, затем добавьте один тестовый домен в VPN-list.\n"
+  if [[ "$FINAL_TRANSPORT" == unconfigured ]]; then
+    printf "  Сначала настройте AWG или Mihomo через sudo awg-menu; DIRECT/control plane уже доступны.\n"
+  else
+    printf "  Сначала проверьте DIRECT, затем добавьте один тестовый домен в VPN-list.\n"
+  fi
 fi
 
 printf "\n%bВАЖНО:%b IP оборудования выбирайте вне конфликтов с DHCP либо закрепите его на LAN router.\n" "$Y" "$R"

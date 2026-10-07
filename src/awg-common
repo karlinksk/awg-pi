@@ -150,11 +150,18 @@ awg_mode_set(){
   mv -f "$tmp" "$AWG_MODE_FILE"
 }
 # Persistent transport backend for AWG Pi Gateway v1.3+.
-# The file is intentionally passive in the first v1.3 phase: existing v1.2
-# datapath keeps using AmneziaWG until transport switching is integrated.
+# "unconfigured" is a real recovery/control-plane state: no data transport is
+# assumed healthy merely because the gateway is installed.
 AWG_TRANSPORT_FILE="${AWG_TRANSPORT_FILE:-/etc/awg-pbr/transport}"
 
 awg_transport_valid(){
+  case "${1:-}" in
+    unconfigured|awg|mihomo) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+awg_transport_backend_valid(){
   case "${1:-}" in
     awg|mihomo) return 0 ;;
     *) return 1 ;;
@@ -176,7 +183,7 @@ awg_transport_get(){
     printf 'Transport state requires root: %s\n' "$AWG_TRANSPORT_FILE" >&2
     return 3
   else
-    printf '%s\n' awg
+    printf '%s\n' unconfigured
     return 0
   fi
 
@@ -193,6 +200,7 @@ awg_transport_get(){
 
 awg_transport_label(){
   case "${1:-}" in
+    unconfigured) printf '%s\n' 'Not configured' ;;
     awg) printf '%s\n' 'AmneziaWG' ;;
     mihomo) printf '%s\n' 'Mihomo' ;;
     *) return 1 ;;
