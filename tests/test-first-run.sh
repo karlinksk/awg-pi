@@ -137,7 +137,8 @@ mode_line="$(grep -n -F 'log "[11b/12] Operating Mode selection"' "$ROOT/install
 [[ -n "$first_line" && -n "$mode_line" ]]
 (( first_line < mode_line ))
 
-grep -Fq '1) AmneziaWG native .conf — файл' "$ROOT/src/awg-first-run"
+grep -Fq '1) AmneziaWG / WireGuard native .conf — файл' "$ROOT/src/awg-first-run"
+grep -Fq '2) AmneziaWG / WireGuard native .conf — вставить текст' "$ROOT/src/awg-first-run"
 grep -Fq '3) Mihomo / VLESS subscription URL' "$ROOT/src/awg-first-run"
 grep -Fq '4) Mihomo provider/subscription — локальный файл' "$ROOT/src/awg-first-run"
 grep -Fq '5) Mihomo provider/subscription — вставить текст' "$ROOT/src/awg-first-run"
