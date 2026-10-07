@@ -51,6 +51,16 @@ DisableCookies = on
 [Peer]''').replace('AllowedIPs = 0.0.0.0/0', 'AllowedIPs = 0.0.0.0/0, ::/0')
 V3_PROFILE += 'PersistentKeepalive = 25-35\n'
 
+WG_PROFILE = f'''[Interface]
+PrivateKey = {KEY}
+Address = 10.9.0.2/32
+[Peer]
+PublicKey = {KEY}
+Endpoint = 192.0.2.55:51820
+AllowedIPs = 0.0.0.0/0
+PersistentKeepalive = 25
+'''
+
 
 class Maintenance(unittest.TestCase):
     def setUp(self):
@@ -117,6 +127,12 @@ class Maintenance(unittest.TestCase):
                     PROFILE.replace('Address = 10.8.0.2/32', 'Address = garbage')):
             with self.subTest(bad=bad[:20]), self.assertRaises(ValueError):
                 m.profile(bad)
+
+    def test_plain_wireguard_profile_is_supported_by_shared_backend(self):
+        clean, endpoint = m.profile(WG_PROFILE)
+        self.assertIn('Table = off', clean)
+        self.assertNotIn('Jc =', clean)
+        self.assertEqual(endpoint, '192.0.2.55:51820')
 
     def test_v31_profile_preserves_native_fields_and_dual_stack(self):
         clean, _ = m.profile(V3_PROFILE)
