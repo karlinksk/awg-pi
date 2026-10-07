@@ -463,6 +463,15 @@ if (( UPGRADE_EXISTING == 1 )); then
   # a mode file remain Selective until Transit datapath + preflight are implemented.
   [[ -f "$MODE_FILE" ]] || printf '%s\n' selective >"$MODE_FILE"
   chmod 600 "$MODE_FILE"
+  if [[ ! -f "$TRANSPORT_FILE" ]]; then
+    if (( AWG_CONFIG_PRESENT == 1 )); then
+      printf '%s\n' awg >"$TRANSPORT_FILE"
+      warn "Миграция legacy state: существующий AWG backend принят как active transport."
+    else
+      printf '%s\n' unconfigured >"$TRANSPORT_FILE"
+    fi
+  fi
+  chmod 600 "$TRANSPORT_FILE"
   ok "Сетевая конфигурация сохранена: Pi=$PI_IP, Router=$ROUTER_IP, LAN=$LAN_CIDR"
 else
 printf "\nIPv4 интерфейсы:\n"
@@ -558,6 +567,8 @@ echo 1 >"$VPN_ENABLED_FILE"
 chmod 600 "$VPN_ENABLED_FILE"
 printf '%s\n' selective >"$MODE_FILE"
 chmod 600 "$MODE_FILE"
+printf '%s\n' unconfigured >"$TRANSPORT_FILE"
+chmod 600 "$TRANSPORT_FILE"
 fi
 
 # Duplicate-address detection. In DAD mode arping returns success when no peer
