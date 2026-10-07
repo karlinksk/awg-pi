@@ -78,7 +78,8 @@ fi
 # Backward compatibility with the first v1.3 runtime drafts.
 if [[ -z "$MIHOMO_FETCH_MODE" ]]; then
   case "$MIHOMO_UPDATE_INTERFACE" in
-    ""|awg0) MIHOMO_FETCH_MODE=auto ;;
+    "") MIHOMO_FETCH_MODE=auto ;;
+    awg0) MIHOMO_FETCH_MODE=awg ;;
     direct) MIHOMO_FETCH_MODE=router ;;
     *) MIHOMO_FETCH_MODE=auto ;;
   esac
@@ -139,12 +140,13 @@ fetch_once(){
       ;;
     awg)
       [[ -n "$MIHOMO_AWG_INTERFACE" ]] || return 1
-      ip link show "$MIHOMO_AWG_INTERFACE" >/dev/null 2>&1 || return 1
       args+=(--interface "$MIHOMO_AWG_INTERFACE")
       ;;
     router)
-      [[ -n "$MIHOMO_ROUTER_INTERFACE" ]] && args+=(--interface "$MIHOMO_ROUTER_INTERFACE")
+      # Use the host's normal route. On this hop MikroTik may keep the request
+      # DIRECT or policy-route it through SSTP/another router-side VPN.
       ;;
+
     *)
       return 2
       ;;
