@@ -1,0 +1,47 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+[[ ${EUID:-$(id -u)} -eq 0 ]] || exec sudo "$0" "$@"
+
+MIHOMO_VERSION="${MIHOMO_VERSION:-1.19.32}"
+MIHOMO_TARGET="${MIHOMO_TARGET:-/usr/local/bin/mihomo}"
+CURL_BIN="${CURL_BIN:-curl}"
+
+case "$(dpkg --print-architecture 2>/dev/null || uname -m)" in
+  arm64|aarch64)
+    asset="mihomo-linux-arm64-v${MIHOMO_VERSION}.gz"
+    asset_id="601415736"
+    sha256="9dd862e28b46ff7d775f169cceebc28deccaa0a9e804237d421cd2571e0caba0"
+    ;;
+  amd64|x86_64)
+    asset="mihomo-linux-amd64-compatible-v${MIHOMO_VERSION}.gz"
+    asset_id="601415773"
+    sha256="ba3ce607747a07f948fc35780e108a4a7c7f552a38b9bd4d115f313ebcb89c20"
+    ;;
+  *)
+    echo "Unsupported architecture for Mihomo: $(uname -m)" >&2
+    exit 2
+    ;;
+esac
+
+tmpdir="$(mktemp -d)"
+trap 'rm -rf "$tmpdir"' EXIT
+archive="$tmpdir/$asset"
+binary="$tmpdir/mihomo"
+
+api_url="https://api.github.com/repos/MetaCubeX/mihomo/releases/assets/$asset_id"
+"$CURL_BIN" -4 --http1.1 --tlsv1.2 -fL \
+  --retry 3 --retry-delay 1 \
+  --connect-timeout 10 --max-time 180 \
+  -H 'Accept: application/octet-stream' \
+  -H 'User-Agent: AWG-Pi-Gateway-v1.3' \
+  -o "$archive" "$api_url"
+
+printf '%s  %s\n' "$sha256" "$archive" | sha256sum -c -
+gzip -dc "$archive" >"$binary"
+chmod 755 "$binary"
+"$binary" -v | grep -Fq "Mihomo Meta v${MIHOMO_VERSION}"
+
+install -m 755 "$binary" "$MIHOMO_TARGET"
+printf 'MIHOMO_VERSION=%s\n' "$MIHOMO_VERSION"
+printf 'MIHOMO_BINARY=%s\n' "$MIHOMO_TARGET"
