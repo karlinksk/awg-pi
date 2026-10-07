@@ -2,7 +2,7 @@
 set -Eeuo pipefail
 IFS=$'\n\t'
 
-AWG_PI_VERSION="1.2.0"
+AWG_PI_VERSION="1.3.0"
 PROJECT_REF="${AWG_PI_REF:-v${AWG_PI_VERSION}}"
 PROJECT_RAW_BASE="https://raw.githubusercontent.com/karlinksk/awg-pi/${PROJECT_REF}"
 TTY=/dev/tty
@@ -124,7 +124,7 @@ printf "IPv6 в этой версии не маршрутизируется.\n\n
 printf "Журнал установки: %s\n\n" "$INSTALL_REPORT"
 
 UPGRADE_EXISTING=0
-# Fresh v1.2 installs stage safely in Selective during installation, then
+# Fresh v1.3 installs stage safely in Selective during installation, then
 # transactionally activate Transit after AWG health/preflight checks pass.
 ACTIVATE_TRANSIT_AFTER_INSTALL=1
 AUTO_UPGRADE="${AWG_PI_UPGRADE_AUTO:-0}"
@@ -143,10 +143,10 @@ if [[ -f "$ENV_FILE" && -f "$CONF_FILE" ]]; then
         case "$AUTO_TRANSIT" in
           1)
             ACTIVATE_TRANSIT_AFTER_INSTALL=1
-            warn "v1.1.0 -> v1.2.0: подтверждена попытка включить MikroTik Transit / Backup VPN."
+            warn "Legacy v1.1.0 -> v1.3.0: подтверждена попытка включить MikroTik Transit / Backup VPN."
             ;;
           0)
-            warn "v1.1.0 -> v1.2.0: подтверждено сохранение Selective Gateway."
+            warn "Legacy v1.1.0 -> v1.3.0: подтверждено сохранение Selective Gateway."
             ;;
           *)
             warn "Unattended upgrade не получил явного AWG_PI_UPGRADE_TRANSIT=0|1; безопасно остаёмся в Selective Gateway."
