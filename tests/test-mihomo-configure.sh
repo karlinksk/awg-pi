@@ -348,26 +348,26 @@ fi
 sudo cmp -s "$tmp/candidate-env.before" "$tmp/state/providers/candidate.env"
 sudo cmp -s "$tmp/candidate-provider.before" "$tmp/state/providers/candidate.yaml"
 
-echo "=== provider format change is transactional ==="
+echo "=== provider format change is staged, not live ==="
 sudo sh -c "printf '%s\n' 'MIHOMO_PROVIDER_URL=https://file.example/private-token' 'MIHOMO_PROVIDER_FORMAT=auto' >'$tmp/etc/provider.env'"
 sudo chmod 600 "$tmp/etc/provider.env"
 : >"$tmp/update.log"
 out="$(run_cli provider format set vless)"
-sudo grep -Fqx 'MIHOMO_PROVIDER_FORMAT=vless' "$tmp/etc/provider.env"
-grep -Fqx 'update --mode auto --format vless' "$tmp/update.log"
-grep -Fqx 'MIHOMO_PROVIDER_FORMAT=vless' <<<"$out"
+sudo grep -Fqx 'MIHOMO_PROVIDER_FORMAT=auto' "$tmp/etc/provider.env"
+sudo grep -Fqx 'MIHOMO_PROVIDER_FORMAT=vless' "$tmp/state/providers/candidate.env"
+grep -Fq 'update --stage-only --mode auto' "$tmp/update.log"
+grep -Fqx 'MIHOMO_PROVIDER_FORMAT=vless-STAGED' <<<"$out"
 
-echo "=== failed provider format change restores previous format ==="
+echo "=== failed provider format staging preserves live and prior candidate ==="
+sudo cp "$tmp/state/providers/candidate.env" "$tmp/candidate-env.before"
+sudo cp "$tmp/state/providers/candidate.yaml" "$tmp/candidate-provider.before"
 if MOCK_UPDATE_FAIL=1 run_cli provider format set base64 >"$tmp/out" 2>"$tmp/err"; then
-  echo 'FAIL: failed provider format change was accepted' >&2
+  echo 'FAIL: failed provider format staging was accepted' >&2
   exit 1
 fi
-sudo grep -Fqx 'MIHOMO_PROVIDER_FORMAT=vless' "$tmp/etc/provider.env"
-if sudo grep -Fq 'MIHOMO_PROVIDER_FORMAT=base64' "$tmp/etc/provider.env"; then
-  echo 'FAIL: failed provider format change was not rolled back' >&2
-  exit 1
-fi
-grep -Fq 'previous format restored' "$tmp/err"
+sudo grep -Fqx 'MIHOMO_PROVIDER_FORMAT=auto' "$tmp/etc/provider.env"
+sudo cmp -s "$tmp/candidate-env.before" "$tmp/state/providers/candidate.env"
+sudo cmp -s "$tmp/candidate-provider.before" "$tmp/state/providers/candidate.yaml"
 
 echo "=== staged candidate list/prepare/commit is atomic ==="
 sudo sh -c "cat >'$tmp/state/providers/candidate.yaml' <<'YAML'
