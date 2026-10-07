@@ -1,0 +1,165 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+AWG_ENV_FILE="${AWG_ENV_FILE:-/etc/awg-pbr/env}"
+AWG_COMMON_FILE="${AWG_COMMON_FILE:-/usr/local/lib/awg-pi/common.sh}"
+AWG_TRANSPORT_CLI="${AWG_TRANSPORT_CLI:-/usr/local/sbin/awg-transport}"
+CURL_BIN="${CURL_BIN:-curl}"
+MIHOMO_PROXY_URL="${MIHOMO_PROXY_URL:-http://127.0.0.1:7890}"
+
+[[ -r "$AWG_ENV_FILE" ]] || {
+  echo "Missing gateway environment: $AWG_ENV_FILE" >&2
+  exit 2
+}
+# shellcheck disable=SC1090
+source "$AWG_ENV_FILE"
+# shellcheck disable=SC1090
+source "$AWG_COMMON_FILE"
+
+: "${LAN_IF:?LAN_IF is required}"
+VPN_IF="${VPN_IF:-awg0}"
+
+usage(){
+  cat <<'USAGE'
+Usage:
+  awg-fetch --url URL --output FILE [--mode auto|direct|awg|mihomo] [-- CURL_ARGS...]
+
+AUTO order:
+  1. DIRECT via the Pi LAN/uplink interface
+  2. currently selected healthy transport, if any
+  3. other healthy registered transports
+
+The request is a control-plane/bootstrap request. Transport endpoints themselves
+must remain on the normal DIRECT WAN path and must never depend on another VPN.
+"router" is accepted only as a legacy alias for "direct".
+USAGE
+}
+
+mode=auto
+url=""
+output=""
+declare -a extra_args=()
+
+while (( $# )); do
+  case "$1" in
+    --mode)
+      [[ $# -ge 2 ]] || { usage >&2; exit 2; }
+      mode="$2"
+      shift 2
+      ;;
+    --url)
+      [[ $# -ge 2 ]] || { usage >&2; exit 2; }
+      url="$2"
+      shift 2
+      ;;
+    --output)
+      [[ $# -ge 2 ]] || { usage >&2; exit 2; }
+      output="$2"
+      shift 2
+      ;;
+    --)
+      shift
+      extra_args=("$@")
+      break
+      ;;
+    -h|--help|help)
+      usage
+      exit 0
+      ;;
+    *)
+      echo "Unknown argument: $1" >&2
+      usage >&2
+      exit 2
+      ;;
+  esac
+done
+
+[[ "$url" =~ ^https?://[^[:space:]]+$ ]] || {
+  echo "Fetch URL must be http(s) without whitespace" >&2
+  exit 2
+}
+[[ -n "$output" ]] || {
+  echo "Fetch output path is required" >&2
+  exit 2
+}
+
+if [[ "$mode" == router ]]; then
+  echo "Deprecated fetch mode 'router' mapped to DIRECT." >&2
+  mode=direct
+fi
+case "$mode" in
+  auto|direct|awg|mihomo) ;;
+  *)
+    echo "Unsupported fetch mode: $mode" >&2
+    exit 2
+    ;;
+esac
+
+backend_healthy(){
+  local backend="$1"
+  [[ -x "$AWG_TRANSPORT_CLI" ]] || return 1
+  "$AWG_TRANSPORT_CLI" check "$backend" >/dev/null 2>&1
+}
+
+fetch_once(){
+  local path="$1"
+  local -a args=("${extra_args[@]}")
+
+  case "$path" in
+    direct)
+      args+=(--interface "$LAN_IF")
+      ;;
+    awg)
+      args+=(--interface "$VPN_IF")
+      ;;
+    mihomo)
+      args+=(-x "$MIHOMO_PROXY_URL")
+      ;;
+    *)
+      return 2
+      ;;
+  esac
+
+  rm -f -- "$output"
+  if "$CURL_BIN" "${args[@]}" -o "$output" "$url"; then
+    [[ -s "$output" ]] || {
+      rm -f -- "$output"
+      return 1
+    }
+    printf 'AWG_FETCH_PATH=%s\n' "$path"
+    return 0
+  fi
+  rm -f -- "$output"
+  return 1
+}
+
+if [[ "$mode" != auto ]]; then
+  fetch_once "$mode" || {
+    echo "Unable to fetch through $mode" >&2
+    exit 1
+  }
+  exit 0
+fi
+
+declare -a candidates=(direct)
+active="$(awg_transport_get 2>/dev/null || echo unconfigured)"
+
+if awg_transport_backend_valid "$active" && backend_healthy "$active"; then
+  candidates+=("$active")
+fi
+
+# Registry order is deterministic. The selected healthy transport is promoted
+# ahead of the remaining healthy backends.
+for backend in awg mihomo; do
+  [[ "$backend" == "$active" ]] && continue
+  backend_healthy "$backend" && candidates+=("$backend")
+done
+
+for candidate in "${candidates[@]}"; do
+  if fetch_once "$candidate"; then
+    exit 0
+  fi
+done
+
+echo "Unable to fetch through DIRECT or any healthy transport backend" >&2
+exit 1
