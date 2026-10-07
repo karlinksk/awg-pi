@@ -10,20 +10,22 @@ grep -Fq 'AWG_PI_UPGRADE_TRANSIT=0|1' install.sh
 grep -Fq 'AWG_PI_UPGRADE_TRANSIT="$transit_choice"' src/awg-update
 grep -Fq '"$ROUTE_CLI" mode transit' install.sh
 grep -Fq '"$ROUTE_CLI" mode selective' install.sh
-grep -Fq 'RESTORE_VPN_OFF=0' install.sh
-grep -Fq 'echo 1 >"$VPN_ENABLED_FILE"' install.sh
-grep -Fq 'if (( RESTORE_VPN_OFF == 1 )); then' install.sh
-grep -Fq 'echo 0 >"$VPN_ENABLED_FILE"' install.sh
+grep -Fq 'TRANSPORT_FILE="$PBR_DIR/transport"' install.sh
+grep -Fq "printf '%s\\n' unconfigured >\"\$TRANSPORT_FILE\"" install.sh
+grep -Fq '3) пропустить — настроить AWG позже' install.sh
+grep -Fq 'Active transport не настроен. Это допустимое recovery-состояние' install.sh
 
-# Fresh installs stage in Selective while AWG is validated, then the default
-# post-install transaction activates Transit. Legacy systems without a mode file
-# still stage as Selective for v1.1.x compatibility.
+# Fresh installs stage in Selective + unconfigured. Transit is attempted only
+# after a real backend is selected and passes health/preflight. Legacy systems
+# without a transport state are migrated to AWG only when an AWG config exists.
 grep -Fq "printf '%s\\n' selective >\"\$MODE_FILE\"" install.sh
 grep -Fq 'ACTIVATE_TRANSIT_AFTER_INSTALL=1' install.sh
 grep -Fq 'if (( ACTIVATE_TRANSIT_AFTER_INSTALL == 1 )); then' install.sh
 
-# Existing v1.2+ mode state is preserved instead of being reset during upgrade.
+# Existing v1.2+ mode and v1.3 transport state are preserved during upgrade.
 grep -Fq '[[ -f "$MODE_FILE" ]] || printf' install.sh
+grep -Fq 'if [[ ! -f "$TRANSPORT_FILE" ]]; then' install.sh
+grep -Fq 'Миграция legacy state: существующий AWG backend принят как active transport.' install.sh
 
 # The updater must support direct legacy v1.1 -> newer releases, while
 # preserving existing v1.2+ mode state through the installer.
