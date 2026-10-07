@@ -28,6 +28,7 @@ FAILOPEN="${AWG_FAILOPEN:-/usr/local/sbin/awg-pbr-failopen}"
 HEALTH_SERVICE="${AWG_HEALTH_SERVICE:-awg-pbr-health.service}"
 MODE_SWITCH="${AWG_MODE_SWITCH:-/usr/local/sbin/awg-mode-switch}"
 TRANSIT_ROUTING="${AWG_TRANSIT_ROUTING:-/usr/local/sbin/awg-transit-routing}"
+TRANSPORT_CLI="${AWG_TRANSPORT_CLI:-/usr/local/sbin/awg-transport}"
 OPENCCK_UPDATE="${AWG_OPENCCK_UPDATE:-/usr/local/sbin/awg-opencck-update}"
 SOURCE_ROOT="${SOURCE_ROOT:-/etc/awg-pbr/sources}"
 OPENCCK_DIR="$SOURCE_ROOT/opencck"
@@ -564,7 +565,8 @@ test_domain(){
 
 run_diagnostics(){
   local report age direct_ip="" health_ok=no mark_test="" prev_health_active=no manual m diag_mode diag_mode_label
-  local endpoint endpoint_host router_mac
+  local endpoint endpoint_host router_mac transit_status="" restore_status="" restore_ok=no
+  local diag_rc=0 transport_id
   report="$LOG_DIR/diagnostics-$(date +%Y%m%d-%H%M%S).txt"
   manual="$(cat "$VE" 2>/dev/null || echo 1)"
   systemctl is-active --quiet "$HEALTH_SERVICE" && prev_health_active=yes || true
@@ -572,6 +574,8 @@ run_diagnostics(){
   # Resolve mode before the tee pipeline. The brace group below executes in a
   # pipeline subshell, so assigning diag_mode inside it would be lost before
   # the FAIL-OPEN / FAIL-CLOSED verification that follows under set -u.
+  transport_id="$(awg_transport_get 2>/dev/null || echo awg)"
+
   if diag_mode="$(awg_mode_get 2>/dev/null)"; then
     diag_mode_label="$(awg_mode_label "$diag_mode" 2>/dev/null || echo unknown)"
   else
@@ -586,6 +590,10 @@ run_diagnostics(){
     echo "Version: $(cat /etc/awg-pbr/version 2>/dev/null || echo unknown)"
     echo "Operating mode: $diag_mode_label"
     echo "Mode ID: $diag_mode"
+    echo "Active transport: $transport_id"
+    if [[ -x "$TRANSPORT_CLI" ]]; then
+      "$TRANSPORT_CLI" status 2>&1 || true
+    fi
     echo "Model: $(tr -d '\0' </proc/device-tree/model 2>/dev/null || echo unknown)"
     echo "OS: $(. /etc/os-release; echo "${PRETTY_NAME:-unknown}")"
     echo "Kernel: $(uname -srmo)"
@@ -631,7 +639,7 @@ run_diagnostics(){
       while IFS= read -r endpoint; do
         [[ -n "$endpoint" && "$endpoint" != "(none)" ]] || continue
         if [[ "$endpoint" == \[* ]]; then
-          echo "AWG endpoint: $endpoint (IPv6 not supported by Transit v1.2)"
+          echo "AWG endpoint: $endpoint (IPv6 is not supported by the current IPv4 Transit datapath)"
           continue
         fi
         endpoint_host="${endpoint%:*}"
@@ -671,26 +679,59 @@ run_diagnostics(){
     echo "--- FAIL-CLOSED verification ---" | tee -a "$report"
     [[ "$prev_health_active" == yes ]] && systemctl stop "$HEALTH_SERVICE" >/dev/null 2>&1 || true
     "$TRANSIT_ROUTING" disable >/dev/null 2>&1 || true
-    "$TRANSIT_ROUTING" status 2>&1 | tee -a "$report"
-    if ! policy_present && "$TRANSIT_ROUTING" status 2>/dev/null | grep -Fqx 'Transit guard: SAFE'; then
+
+    # awg-transit-routing status intentionally returns non-zero when the policy
+    # rule is inactive. Capture its text separately so pipefail cannot turn a
+    # correct FAIL-CLOSED state into a false diagnostic failure.
+    transit_status="$("$TRANSIT_ROUTING" status 2>&1 || true)"
+    printf '%s\n' "$transit_status" | tee -a "$report"
+
+    if ! policy_present && grep -Fqx 'Transit guard: SAFE' <<<"$transit_status"; then
       echo "FAIL-CLOSED: OK" | tee -a "$report"
     else
       echo "FAIL-CLOSED: FAIL" | tee -a "$report"
+      diag_rc=1
     fi
-    [[ "$prev_health_active" == yes ]] && systemctl start "$HEALTH_SERVICE" >/dev/null 2>&1 || true
+
+    if [[ "$prev_health_active" == yes ]]; then
+      systemctl start "$HEALTH_SERVICE" >/dev/null 2>&1 || true
+      for _ in $(seq 1 15); do
+        restore_status="$("$TRANSIT_ROUTING" status 2>&1 || true)"
+        if policy_present && grep -Fqx 'Transit guard: SAFE' <<<"$restore_status"; then
+          restore_ok=yes
+          break
+        fi
+        sleep 1
+      done
+      if [[ "$restore_ok" == yes ]]; then
+        echo "Transit restore: OK" | tee -a "$report"
+      else
+        echo "Transit restore: FAIL" | tee -a "$report"
+        printf '%s\n' "$restore_status" | tee -a "$report"
+        diag_rc=1
+      fi
+    else
+      echo "Transit restore: skipped (health monitor was not active)" | tee -a "$report"
+    fi
   else
     echo "--- FAIL-OPEN simulation ---" | tee -a "$report"
     [[ "$prev_health_active" == yes ]] && systemctl stop "$HEALTH_SERVICE" >/dev/null 2>&1 || true
     "$FAILOPEN" >/dev/null 2>&1 || true
     failroute="$(ip -4 route get 1.1.1.1 mark "$VPN_MARK" 2>&1 | head -1 || true)"
     echo "Route after policy removal: $failroute" | tee -a "$report"
-    grep -q "dev $LAN_IF" <<<"$failroute" && echo "FAIL-OPEN: OK" | tee -a "$report" || echo "FAIL-OPEN: FAIL" | tee -a "$report"
+    if grep -q "dev $LAN_IF" <<<"$failroute"; then
+      echo "FAIL-OPEN: OK" | tee -a "$report"
+    else
+      echo "FAIL-OPEN: FAIL" | tee -a "$report"
+      diag_rc=1
+    fi
     [[ "$prev_health_active" == yes ]] && systemctl start "$HEALTH_SERVICE" >/dev/null 2>&1 || true
     [[ "$manual" == 0 ]] && "$FAILOPEN" >/dev/null 2>&1 || true
   fi
 
   echo "Report: $report" | tee -a "$report"
   chmod 600 "$report"; prune_reports
+  return "$diag_rc"
 }
 
 cmd="${1:-}"; action="${2:-}"; val="${3:-}"
