@@ -39,7 +39,16 @@ verify_transit_active(){
 }
 
 verify_transit_guard(){
-  "$AWG_TRANSIT_ROUTING" status | grep -Eq '^Transit guard: (SAFE|LOCKDOWN)
+  "$AWG_TRANSIT_ROUTING" status | grep -Eq '^Transit guard: (SAFE|LOCKDOWN)$'
+}
+
+verify_transit_lockdown(){
+  local status
+  status="$("$AWG_TRANSIT_ROUTING" status)"
+  grep -Fqx 'Transit guard: LOCKDOWN' <<<"$status" &&
+    grep -Fqx 'Transit policy rule: INACTIVE' <<<"$status" &&
+    grep -Fqx 'Transit VPN table: NOT_READY' <<<"$status"
+}
 
 restore_mode(){
   local mode="$1"
@@ -88,105 +97,6 @@ switch_transit(){
     printf 'Transit state: LOCKDOWN (transport not configured)\n'
     return 0
   fi
-
-  "$AWG_TRANSIT_APPLY" apply
-  "$AWG_TRANSIT_ROUTING" apply
-  verify_transit_active
-  awg_mode_set transit
-  health_start
-  verify_transit_active
-
-  trap - ERR
-  printf 'Operating mode activated: MikroTik Transit / Backup VPN\n'
-  printf 'Mode ID: transit\n'
-}
-
-switch_selective(){
-  local previous
-  previous="$(awg_mode_get)"
-
-  if [[ "$previous" == selective ]]; then
-    printf 'Operating mode already active: Selective Gateway\n'
-    return 0
-  fi
-
-  health_stop
-
-  rollback(){
-    local rc=$?
-    trap - ERR
-    printf 'Selective activation failed; restoring %s.\n' "$previous" >&2
-    if restore_mode "$previous"; then
-      printf 'ROLLBACK=OK\n' >&2
-    else
-      printf 'ROLLBACK=FAILED\n' >&2
-    fi
-    exit "$rc"
-  }
-  trap rollback ERR
-
-  awg_mode_set selective
-  selective_reload
-
-  [[ "$(awg_mode_get)" == selective ]]
-  trap - ERR
-  printf 'Operating mode activated: Selective Gateway\n'
-  printf 'Mode ID: selective\n'
-}
-
-case "${1:-}" in
-  transit) switch_transit ;;
-  selective) switch_selective ;;
-  *)
-    echo "Usage: awg-mode-switch selective|transit" >&2
-    exit 2
-    ;;
-esac
-
-}
-
-verify_transit_lockdown(){
-  local status
-  status="$("$AWG_TRANSIT_ROUTING" status)"
-  grep -Fqx 'Transit guard: LOCKDOWN' <<<"$status" &&
-    grep -Fqx 'Transit policy rule: INACTIVE' <<<"$status" &&
-    grep -Fqx 'Transit VPN table: NOT_READY' <<<"$status"
-}
-
-restore_mode(){
-  local mode="$1"
-  awg_mode_set "$mode"
-  # awg-route reload is mode-aware and restores a safe boot/runtime ruleset
-  # without requiring a healthy tunnel. The health monitor decides whether the
-  # policy rule should be active afterwards.
-  selective_reload
-}
-
-switch_transit(){
-  local previous
-  previous="$(awg_mode_get)"
-
-  if [[ "$previous" == transit ]]; then
-    verify_transit_guard || fail "Transit mode is selected but the fail-closed guard is not active"
-    printf 'Operating mode already selected: MikroTik Transit / Backup VPN\n'
-    "$AWG_TRANSIT_ROUTING" status || true
-    return 0
-  fi
-
-  health_stop
-
-  rollback(){
-    local rc=$?
-    trap - ERR
-    printf 'Transit activation failed; restoring %s.\n' "$previous" >&2
-    if restore_mode "$previous"; then
-      printf 'ROLLBACK=OK\n' >&2
-    else
-      printf 'ROLLBACK=FAILED\n' >&2
-    fi
-    exit "$rc"
-  }
-  trap rollback ERR
 
   "$AWG_TRANSIT_APPLY" apply
   "$AWG_TRANSIT_ROUTING" apply
