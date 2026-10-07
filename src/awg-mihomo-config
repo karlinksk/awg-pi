@@ -13,6 +13,8 @@ MIHOMO_PROVIDER_NAME="${MIHOMO_PROVIDER_NAME:-subscription}"
 MIHOMO_GROUP_NAME="${MIHOMO_GROUP_NAME:-AWG-MIHOMO}"
 MIHOMO_PROVIDER_HEALTH_URL="${MIHOMO_PROVIDER_HEALTH_URL:-https://www.gstatic.com/generate_204}"
 MIHOMO_PROVIDER_HEALTH_INTERVAL="${MIHOMO_PROVIDER_HEALTH_INTERVAL:-300}"
+MIHOMO_NODE_FILTER="${MIHOMO_NODE_FILTER:-}"
+MIHOMO_ENDPOINT_IP="${MIHOMO_ENDPOINT_IP:-}"
 
 [[ "$MIHOMO_MIXED_PORT" =~ ^[0-9]+$ ]] || {
   echo "Invalid MIHOMO_MIXED_PORT: $MIHOMO_MIXED_PORT" >&2
@@ -30,10 +32,120 @@ MIHOMO_PROVIDER_HEALTH_INTERVAL="${MIHOMO_PROVIDER_HEALTH_INTERVAL:-300}"
   echo "Invalid MIHOMO_PROVIDER_NAME" >&2
   exit 2
 }
-[[ "$MIHOMO_GROUP_NAME" != *$'\n'* ]] || {
+[[ "$MIHOMO_GROUP_NAME" != *[[ -r "$MIHOMO_PROVIDER_FILE" ]] || {
+  echo "Mihomo provider cache is missing: $MIHOMO_PROVIDER_FILE" >&2
+  exit 1
+}
+
+cat <<YAML
+mixed-port: $MIHOMO_MIXED_PORT
+allow-lan: false
+bind-address: 127.0.0.1
+mode: rule
+log-level: warning
+ipv6: false
+external-controller: $MIHOMO_CONTROLLER
+
+profile:
+  store-selected: true
+  store-fake-ip: false
+
+proxy-providers:
+  $MIHOMO_PROVIDER_NAME:
+    type: file
+    path: $MIHOMO_PROVIDER_FILE
+    filter: '$MIHOMO_NODE_FILTER'
+    override:
+      override-expr:
+        - '.server = "$MIHOMO_ENDPOINT_IP"'
+    health-check:
+      enable: true
+      url: $MIHOMO_PROVIDER_HEALTH_URL
+      interval: $MIHOMO_PROVIDER_HEALTH_INTERVAL
+      lazy: true
+
+proxy-groups:
+  - name: $MIHOMO_GROUP_NAME
+    type: select
+    use:
+      - $MIHOMO_PROVIDER_NAME
+
+rules:
+  - MATCH,$MIHOMO_GROUP_NAME
+
+tun:
+  enable: true
+  device: $MIHOMO_TUN_IF
+  stack: mixed
+  auto-route: false
+  auto-redirect: false
+  auto-detect-interface: true
+YAML
+\n'* ]] || {
   echo "Invalid MIHOMO_GROUP_NAME" >&2
   exit 2
 }
+
+[[ -n "$MIHOMO_NODE_FILTER" && "$MIHOMO_NODE_FILTER" != *[[ -r "$MIHOMO_PROVIDER_FILE" ]] || {
+  echo "Mihomo provider cache is missing: $MIHOMO_PROVIDER_FILE" >&2
+  exit 1
+}
+
+cat <<YAML
+mixed-port: $MIHOMO_MIXED_PORT
+allow-lan: false
+bind-address: 127.0.0.1
+mode: rule
+log-level: warning
+ipv6: false
+external-controller: $MIHOMO_CONTROLLER
+
+profile:
+  store-selected: true
+  store-fake-ip: false
+
+proxy-providers:
+  $MIHOMO_PROVIDER_NAME:
+    type: file
+    path: $MIHOMO_PROVIDER_FILE
+    health-check:
+      enable: true
+      url: $MIHOMO_PROVIDER_HEALTH_URL
+      interval: $MIHOMO_PROVIDER_HEALTH_INTERVAL
+      lazy: true
+
+proxy-groups:
+  - name: $MIHOMO_GROUP_NAME
+    type: select
+    use:
+      - $MIHOMO_PROVIDER_NAME
+
+rules:
+  - MATCH,$MIHOMO_GROUP_NAME
+
+tun:
+  enable: true
+  device: $MIHOMO_TUN_IF
+  stack: mixed
+  auto-route: false
+  auto-redirect: false
+  auto-detect-interface: true
+YAML
+\n'* ]] || {
+  echo "MIHOMO_NODE_FILTER is required and must be one line" >&2
+  exit 2
+}
+[[ "$MIHOMO_ENDPOINT_IP" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]] || {
+  echo "MIHOMO_ENDPOINT_IP must be an IPv4 address" >&2
+  exit 2
+}
+IFS=. read -r _a _b _c _d <<<"$MIHOMO_ENDPOINT_IP"
+for _octet in "$_a" "$_b" "$_c" "$_d"; do
+  (( _octet >= 0 && _octet <= 255 )) || {
+    echo "MIHOMO_ENDPOINT_IP has an invalid octet" >&2
+    exit 2
+  }
+done
 [[ -r "$MIHOMO_PROVIDER_FILE" ]] || {
   echo "Mihomo provider cache is missing: $MIHOMO_PROVIDER_FILE" >&2
   exit 1
