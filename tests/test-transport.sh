@@ -60,4 +60,19 @@ if $CLI get >/dev/null 2>&1; then
   echo 'invalid transport unexpectedly accepted' >&2
   exit 1
 fi
+
+echo "=== inaccessible transport state requires root ==="
+printf '%s\n' mihomo >"$TMP/transport"
+chmod 000 "$TMP/transport"
+set +e
+OUT="$($CLI status 2>"$TMP/status.err")"
+RC=$?
+set -e
+chmod 600 "$TMP/transport"
+[[ "$RC" -eq 3 ]]
+grep -Fqx 'Active transport: requires-root' <<<"$OUT"
+grep -Fqx 'Transport ID: requires-root' <<<"$OUT"
+grep -Fqx 'Transport health: requires-root' <<<"$OUT"
+grep -Fq 'Transport state requires root' "$TMP/status.err"
+
 echo 'test-transport: PASS'
