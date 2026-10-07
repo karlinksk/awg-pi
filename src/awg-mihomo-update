@@ -15,6 +15,7 @@ MIHOMO_PROVIDER_HELPER="${MIHOMO_PROVIDER_HELPER:-/usr/local/lib/awg-pi/mihomo-p
 PYTHON_BIN="${PYTHON_BIN:-python3}"
 MIHOMO_LAST_FORMAT_FILE="${MIHOMO_LAST_FORMAT_FILE:-/var/lib/awg-pbr/mihomo/last-provider-format}"
 MIHOMO_CANDIDATE_FILE="${MIHOMO_CANDIDATE_FILE:-/var/lib/awg-pbr/mihomo/providers/candidate.yaml}"
+MIHOMO_CANDIDATE_ENV_FILE="${MIHOMO_CANDIDATE_ENV_FILE:-/var/lib/awg-pbr/mihomo/providers/candidate.env}"
 MIHOMO_CANDIDATE_FETCH_FILE="${MIHOMO_CANDIDATE_FETCH_FILE:-/var/lib/awg-pbr/mihomo/candidate-fetch-path}"
 MIHOMO_CANDIDATE_FORMAT_FILE="${MIHOMO_CANDIDATE_FORMAT_FILE:-/var/lib/awg-pbr/mihomo/candidate-provider-format}"
 
@@ -237,6 +238,12 @@ write_state_file(){
 
 stage_candidate(){
   install -m 600 "$tmp" "$MIHOMO_CANDIDATE_FILE"
+  # A normal refresh uses the current live env. Drop any source metadata from
+  # an older manually staged provider. Explicit staging passes candidate.env
+  # itself as MIHOMO_ENV_FILE, so its source metadata stays coupled to payload.
+  if [[ "$MIHOMO_ENV_FILE" != "$MIHOMO_CANDIDATE_ENV_FILE" && -e "$MIHOMO_CANDIDATE_ENV_FILE" ]]; then
+    rm -f "$MIHOMO_CANDIDATE_ENV_FILE"
+  fi
   write_state_file "$MIHOMO_CANDIDATE_FETCH_FILE" "$fetch_path"
   write_state_file "$MIHOMO_CANDIDATE_FORMAT_FILE" "$detected_format"
   printf 'MIHOMO_PROVIDER=STAGED\n'
@@ -246,7 +253,8 @@ stage_candidate(){
 }
 
 clear_candidate(){
-  rm -f "$MIHOMO_CANDIDATE_FILE" "$MIHOMO_CANDIDATE_FETCH_FILE" "$MIHOMO_CANDIDATE_FORMAT_FILE"
+  rm -f "$MIHOMO_CANDIDATE_FILE" "$MIHOMO_CANDIDATE_ENV_FILE" \
+    "$MIHOMO_CANDIDATE_FETCH_FILE" "$MIHOMO_CANDIDATE_FORMAT_FILE"
 }
 
 if (( stage_only == 1 )); then
