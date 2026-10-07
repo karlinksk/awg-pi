@@ -484,8 +484,14 @@ def replace_config(args, env):
     previous = active.with_suffix('.conf.previous')
     source = previous if args.action == 'rollback' else Path(args.file)
     clean, endpoint = profile(source.read_text())
-    old_endpoint = re.search(r'^\s*Endpoint\s*=\s*([^#\r\n]+)', active.read_text(), re.M)
-    print('Старый Endpoint: ' + (old_endpoint[1].strip() if old_endpoint else '(не указан)'))
+    had_active = active.exists()
+    old_endpoint = None
+    if had_active:
+        old_endpoint = re.search(r'^\s*Endpoint\s*=\s*([^#\r\n]+)', active.read_text(), re.M)
+    print('Старый Endpoint: ' + (
+        old_endpoint[1].strip() if old_endpoint else
+        ('(не указан)' if had_active else '(профиль не установлен)')
+    ))
     print('Новый Endpoint: ' + endpoint)
     with tempfile.TemporaryDirectory(prefix='awg-preflight-') as temp:
         candidate = Path(temp) / (vpn + '.conf')
@@ -496,18 +502,21 @@ def replace_config(args, env):
             return
         confirm(args, 'Заменить профиль? ' + paused_policy_description())
         tx = Transaction('config', [str(active), str(previous)])
-        old = active.read_bytes()
+        old = active.read_bytes() if had_active else None
         service = f'awg-quick@{vpn}.service'
         try:
             tx.pause()
             # Down reads the old profile, never the replacement.
-            run('systemctl', 'stop', service)
+            run('systemctl', 'stop', service, check=False)
             atomic(active, clean)
             since = int(time.time())
             run('systemctl', 'start', service)
             if not tunnel_ok(env, since):
                 raise RuntimeError('Новый профиль: handshake/transport не прошли проверку')
-            atomic(previous, old)
+            if old is not None:
+                atomic(previous, old)
+            else:
+                previous.unlink(missing_ok=True)
             tx.resume()
         except BaseException:
             print('Ошибка профиля; автоматический rollback.', file=sys.stderr)
@@ -517,16 +526,24 @@ def replace_config(args, env):
             tx.restore()
             recovered = False
             try:
-                since = int(time.time())
-                run('systemctl', 'start', service)
-                recovered = tunnel_ok(env, since)
-                tx.resume(healthy=recovered)
+                if had_active:
+                    since = int(time.time())
+                    run('systemctl', 'start', service)
+                    recovered = tunnel_ok(env, since)
+                    tx.resume(healthy=recovered)
+                else:
+                    # First-profile failure returns to the transport-unconfigured
+                    # recovery state. There is no previous tunnel to restart.
+                    run('systemctl', 'stop', service, check=False)
+                    tx.resume(healthy=False)
             finally:
-                if not recovered:
+                if had_active and not recovered:
                     run('systemctl', 'stop', HEALTH, check=False)
                     run(FAILOPEN, check=False)
                     fallback = 'FAIL-CLOSED' if current_mode() == 'transit' else 'DIRECT/FAIL-OPEN'
                     print(f'Старый файл возвращён, туннель не подтверждён: {fallback}; health остановлен.', file=sys.stderr)
+                elif not had_active:
+                    print('Первый AWG-профиль не принят; active transport не изменён.', file=sys.stderr)
             raise
     print('Профиль активирован. Handshake: OK. Transport: OK. Остальные настройки сохранены.')
 
