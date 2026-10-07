@@ -156,7 +156,7 @@ sudo grep -Fqx '198.51.100.77' "$tmp/etc/expected-egress-ip"
 [[ "$(sudo stat -c '%a' "$tmp/etc/provider.env")" == 600 ]]
 [[ "$(sudo stat -c '%a' "$tmp/etc/endpoint-ip")" == 600 ]]
 grep -Fqx install "$tmp/install.log"
-grep -Fqx update "$tmp/update.log"
+grep -Eq '^update( |$)' "$tmp/update.log"
 sudo test -e "$tmp/unit-state/awg-mihomo.service.enabled"
 sudo test -e "$tmp/unit-state/awg-mihomo.service.active"
 sudo test -e "$tmp/unit-state/awg-mihomo-update.timer.enabled"
