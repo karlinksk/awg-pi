@@ -4,6 +4,7 @@ set -Eeuo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
+echo awg >"$tmp/transport"
 
 cat >"$tmp/env" <<'EOF'
 LAN_IF='eth0'
@@ -12,7 +13,7 @@ VPN_IF='awg0'
 VPN_MARK='0x100'
 EOF
 
-AWG_ENV_FILE="$tmp/env" ROUTER_MAC='02:11:22:33:44:55' \
+AWG_ENV_FILE="$tmp/env" AWG_COMMON_FILE="$repo_root/src/awg-common" AWG_TRANSPORT_FILE="$tmp/transport" ROUTER_MAC='02:11:22:33:44:55' \
   bash "$repo_root/src/awg-transit-nft" >"$tmp/transit.nft"
 
 grep -Fq 'set transit4 {' "$tmp/transit.nft"
@@ -22,6 +23,19 @@ grep -Fq 'ip daddr != 192.168.88.0/24 meta mark set 0x100' "$tmp/transit.nft"
 grep -Fq 'iifname "awg0" oifname "eth0" ct state established,related accept' "$tmp/transit.nft"
 grep -Fq 'iifname "eth0" ether saddr 02:11:22:33:44:55 ip saddr @transit4 oifname "awg0" accept' "$tmp/transit.nft"
 grep -Fq 'ip saddr @transit4 oifname "awg0" masquerade' "$tmp/transit.nft"
+
+echo "=== mihomo transport candidate ==="
+echo mihomo >"$tmp/transport"
+AWG_ENV_FILE="$tmp/env" AWG_COMMON_FILE="$repo_root/src/awg-common" AWG_TRANSPORT_FILE="$tmp/transport" ROUTER_MAC='02:11:22:33:44:55' \
+  bash "$repo_root/src/awg-transit-nft" >"$tmp/transit-mihomo.nft"
+grep -Fq 'iifname "mihomo0" oifname "eth0" ct state established,related accept' "$tmp/transit-mihomo.nft"
+grep -Fq 'oifname "mihomo0" accept' "$tmp/transit-mihomo.nft"
+grep -Fq 'oifname "mihomo0" masquerade' "$tmp/transit-mihomo.nft"
+if grep -Fq 'oifname "awg0"' "$tmp/transit-mihomo.nft"; then
+  echo 'FAIL: Mihomo Transit candidate still references awg0 egress' >&2
+  exit 1
+fi
+echo awg >"$tmp/transport"
 
 if grep -Fq 'oifname "eth0" accept' "$tmp/transit.nft"; then
   echo 'FAIL: Transit rules must not allow LAN-to-LAN forwarding fallback' >&2
@@ -33,7 +47,7 @@ if grep -Fq 'redirect to :53' "$tmp/transit.nft"; then
   exit 1
 fi
 
-if AWG_ENV_FILE="$tmp/env" ROUTER_MAC='not-a-mac' \
+if AWG_ENV_FILE="$tmp/env" AWG_COMMON_FILE="$repo_root/src/awg-common" AWG_TRANSPORT_FILE="$tmp/transport" ROUTER_MAC='not-a-mac' \
   bash "$repo_root/src/awg-transit-nft" >"$tmp/out" 2>"$tmp/err"; then
   echo 'FAIL: invalid router MAC was accepted' >&2
   exit 1
@@ -42,7 +56,7 @@ fi
 sudo nft -c -f "$tmp/transit.nft"
 
 echo "=== transit lockdown candidate ==="
-AWG_ENV_FILE="$tmp/env" AWG_TRANSIT_LOCKDOWN=1 \
+AWG_ENV_FILE="$tmp/env" AWG_COMMON_FILE="$repo_root/src/awg-common" AWG_TRANSPORT_FILE="$tmp/transport" AWG_TRANSIT_LOCKDOWN=1 \
   bash "$repo_root/src/awg-transit-nft" >"$tmp/lockdown.nft"
 grep -Fq 'policy drop;' "$tmp/lockdown.nft"
 if grep -Fq 'ether saddr' "$tmp/lockdown.nft"; then

@@ -7,11 +7,14 @@ set -Eeuo pipefail
 }
 
 AWG_ENV_FILE="${AWG_ENV_FILE:-/etc/awg-pbr/env}"
+AWG_COMMON_FILE="${AWG_COMMON_FILE:-/usr/local/lib/awg-pi/common.sh}"
 IP_BIN="${IP_BIN:-ip}"
 NFT_BIN="${NFT_BIN:-nft}"
 
 # shellcheck disable=SC1090
 source "$AWG_ENV_FILE"
+# shellcheck disable=SC1090
+source "$AWG_COMMON_FILE"
 
 : "${LAN_IF:?LAN_IF is required}"
 : "${VPN_IF:?VPN_IF is required}"
@@ -20,6 +23,8 @@ source "$AWG_ENV_FILE"
 
 RULE_PRIORITY="${TRANSIT_RULE_PRIORITY:-100}"
 VPN_MARK_DECIMAL="$((VPN_MARK))"
+TRANSPORT_ID="$(awg_transport_get)"
+TRANSPORT_IF="$(awg_transport_device "$TRANSPORT_ID")"
 
 fail(){
   printf 'FAIL: %s\n' "$*" >&2
@@ -33,7 +38,7 @@ rule_present(){
 
 route_present(){
   "$IP_BIN" -4 route show table "$VPN_TABLE" |
-    grep -Eq "^default[[:space:]]+dev[[:space:]]+${VPN_IF}([[:space:]]|$)"
+    grep -Eq "^default[[:space:]]+dev[[:space:]]+${TRANSPORT_IF}([[:space:]]|$)"
 }
 
 guard_fail_closed(){
@@ -43,17 +48,17 @@ guard_fail_closed(){
   grep -Fq 'policy drop;' <<<"$chain" || return 1
 
   # Every accept rule must be one of the two Transit-safe shapes:
-  # AWG return traffic to LAN, or LAN ingress explicitly leaving through AWG.
+  # AWG return traffic to LAN, or LAN ingress explicitly leaving through the active transport.
   # A lockdown chain has no accept rules at all and is therefore safe.
   while IFS= read -r line; do
     [[ "$line" == *" accept"* ]] || continue
-    if [[ "$line" == *"iifname \"$VPN_IF\""* &&
+    if [[ "$line" == *"iifname \"$TRANSPORT_IF\""* &&
           "$line" == *"oifname \"$LAN_IF\""* &&
           "$line" == *"ct state established,related"* ]]; then
       continue
     fi
     if [[ "$line" == *"iifname \"$LAN_IF\""* &&
-          "$line" == *"oifname \"$VPN_IF\""* ]]; then
+          "$line" == *"oifname \"$TRANSPORT_IF\""* ]]; then
       continue
     fi
     return 1
@@ -64,7 +69,7 @@ guard_ready(){
   local chain
   guard_fail_closed || return 1
   chain="$("$NFT_BIN" list chain inet awg_pbr forward_guard 2>/dev/null)" || return 1
-  grep -E "iifname \"${LAN_IF}\".*ether saddr ([[:xdigit:]]{2}:){5}[[:xdigit:]]{2}.*oifname \"${VPN_IF}\".*accept" <<<"$chain" >/dev/null
+  grep -E "iifname \"${LAN_IF}\".*ether saddr ([[:xdigit:]]{2}:){5}[[:xdigit:]]{2}.*oifname \"${TRANSPORT_IF}\".*accept" <<<"$chain" >/dev/null
 }
 
 guard_state(){
@@ -89,8 +94,8 @@ apply_policy(){
   guard_ready ||
     fail "Transit nftables forward guard is not ready/safe"
 
-  "$IP_BIN" link show dev "$VPN_IF" >/dev/null 2>&1 ||
-    fail "AWG interface is unavailable: $VPN_IF"
+  "$IP_BIN" link show dev "$TRANSPORT_IF" >/dev/null 2>&1 ||
+    fail "Transport interface is unavailable: $TRANSPORT_IF ($TRANSPORT_ID)"
 
   rule_present && had_rule=1 || true
   old_default="$("$IP_BIN" -4 route show table "$VPN_TABLE" default 2>/dev/null | head -n1 || true)"
@@ -115,7 +120,7 @@ apply_policy(){
   }
   trap rollback ERR
 
-  "$IP_BIN" -4 route replace default dev "$VPN_IF" table "$VPN_TABLE"
+  "$IP_BIN" -4 route replace default dev "$TRANSPORT_IF" table "$VPN_TABLE"
 
   if ! rule_present; then
     "$IP_BIN" -4 rule add priority "$RULE_PRIORITY" fwmark "$VPN_MARK" lookup "$VPN_TABLE"
@@ -140,7 +145,7 @@ disable_policy(){
   fi
 
   # The main route may now point back to LAN, but the Transit forward guard
-  # accepts LAN ingress only when its actual egress is awg0. This is the
+  # accepts LAN ingress only when its actual egress is the active transport. This is the
   # fail-closed state used when AWG is unavailable.
   guard_fail_closed ||
     fail "Transit fail-closed guard verification failed"

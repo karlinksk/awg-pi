@@ -5,6 +5,8 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 mkdir -p "$tmp/bin"
+echo awg >"$tmp/transport"
+echo 45.86.66.170 >"$tmp/mihomo.expected-ip"
 
 cat >"$tmp/env" <<'EOF'
 LAN_IF='eth0'
@@ -55,6 +57,9 @@ case "$*" in
   "link show dev awg0")
     echo '9: awg0: <POINTOPOINT,NOARP,UP,LOWER_UP>'
     ;;
+  "link show dev mihomo0")
+    echo '10: mihomo0: <POINTOPOINT,NOARP,UP,LOWER_UP>'
+    ;;
   "-4 route get 1.1.1.1")
     echo '1.1.1.1 via 192.168.88.1 dev eth0 src 192.168.88.2'
     ;;
@@ -62,6 +67,8 @@ case "$*" in
     echo '192.168.88.1 lladdr 02:11:22:33:44:55 REACHABLE'
     ;;
   "-4 route replace default dev awg0 table 101")
+    ;;
+  "-4 route replace default dev mihomo0 table 101")
     ;;
   "-4 rule show")
     if [[ "${MOCK_HEALTH_RULE:-missing}" == present ]]; then
@@ -77,6 +84,13 @@ case "$*" in
       echo '203.0.113.7 via 192.168.88.1 dev eth0 src 192.168.88.2'
     fi
     ;;
+  "-4 route get 45.86.66.170")
+    if [[ "${MOCK_ENDPOINT_ROUTE:-direct}" == mihomo0 ]]; then
+      echo '45.86.66.170 dev mihomo0 src 198.18.0.1'
+    else
+      echo '45.86.66.170 via 192.168.88.1 dev eth0 src 192.168.88.2'
+    fi
+    ;;
   *)
     echo "unexpected ip call: $*" >&2
     exit 1
@@ -84,10 +98,20 @@ case "$*" in
 esac
 EOF
 
-chmod +x "$tmp/bin/"*
+cat >"$tmp/transport-cli" <<'EOF'
+#!/usr/bin/env bash
+set -Eeuo pipefail
+[[ "$*" == "check mihomo" ]] || exit 2
+[[ "${MOCK_MIHOMO_HEALTH:-up}" == up ]]
+EOF
+
+chmod +x "$tmp/bin/"* "$tmp/transport-cli"
 
 run_preflight(){
-  PATH="$tmp/bin:$PATH" AWG_ENV_FILE="$tmp/env" MOCK_IP_LOG="$tmp/ip.log" \
+  PATH="$tmp/bin:$PATH" AWG_ENV_FILE="$tmp/env" AWG_COMMON_FILE="$repo_root/src/awg-common" \
+    AWG_TRANSPORT_FILE="$tmp/transport" AWG_TRANSPORT_CLI="$tmp/transport-cli" \
+    MIHOMO_EXPECTED_IP_FILE="$tmp/mihomo.expected-ip" MOCK_IP_LOG="$tmp/ip.log" \
+    MOCK_MIHOMO_HEALTH="${MOCK_MIHOMO_HEALTH:-up}" \
     bash "$repo_root/src/awg-transit-preflight"
 }
 
@@ -121,3 +145,29 @@ if MOCK_TUNNEL_HEALTH=down run_preflight >"$tmp/out" 2>"$tmp/err"; then
   exit 1
 fi
 grep -Fq 'AWG tunnel transport test failed' "$tmp/err"
+
+echo "=== Mihomo transit preflight success ==="
+echo mihomo >"$tmp/transport"
+: >"$tmp/ip.log"
+out="$(run_preflight)"
+grep -Fqx 'OK: Transport interface is present: mihomo0 (mihomo)' <<<"$out"
+grep -Fqx 'OK: Mihomo TUN transport is usable' <<<"$out"
+grep -Fqx 'OK: Mihomo endpoint stays DIRECT: 45.86.66.170 via 192.168.88.1 on eth0' <<<"$out"
+grep -Fqx -- '-4 route replace default dev mihomo0 table 101' "$tmp/ip.log"
+grep -Fqx 'TRANSIT_PREFLIGHT=OK' <<<"$out"
+
+echo "=== Mihomo preflight rejects unhealthy backend ==="
+if MOCK_MIHOMO_HEALTH=down run_preflight >"$tmp/out" 2>"$tmp/err"; then
+  echo 'FAIL: unhealthy Mihomo transport was accepted' >&2
+  exit 1
+fi
+grep -Fq 'Mihomo transport health check failed' "$tmp/err"
+
+echo "=== Mihomo preflight rejects recursive endpoint route ==="
+if MOCK_ENDPOINT_ROUTE=mihomo0 run_preflight >"$tmp/out" 2>"$tmp/err"; then
+  echo 'FAIL: Mihomo endpoint routed through mihomo0 was accepted' >&2
+  exit 1
+fi
+grep -Fq 'Mihomo endpoint 45.86.66.170 is not DIRECT' "$tmp/err"
+
+echo awg >"$tmp/transport"

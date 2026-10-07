@@ -32,6 +32,9 @@ source "$AWG_COMMON_FILE"
 : "${VPN_TABLE:?VPN_TABLE is required}"
 : "${DNS_REDIRECT:?DNS_REDIRECT is required}"
 
+TRANSPORT_ID="$(awg_transport_get)"
+TRANSPORT_IF="$(awg_transport_device "$TRANSPORT_ID")"
+
 fail(){
   printf 'FAIL: %s\n' "$*" >&2
   exit 1
@@ -111,7 +114,7 @@ table inet awg_pbr {
     type filter hook forward priority filter; policy drop;
     ct state established,related accept
     iifname "$LAN_IF" ip saddr $LAN_CIDR oifname "$LAN_IF" accept
-    iifname "$LAN_IF" ip saddr $LAN_CIDR oifname "$VPN_IF" accept
+    iifname "$LAN_IF" ip saddr $LAN_CIDR oifname "$TRANSPORT_IF" accept
   }
 
   chain prerouting_mark {
@@ -133,7 +136,7 @@ NFT
 
   chain postrouting_nat {
     type nat hook postrouting priority srcnat; policy accept;
-    ip saddr $LAN_CIDR oifname "$VPN_IF" masquerade
+    ip saddr $LAN_CIDR oifname "$TRANSPORT_IF" masquerade
     ip saddr $LAN_CIDR oifname "$LAN_IF" masquerade
   }
 }

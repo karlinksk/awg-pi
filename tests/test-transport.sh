@@ -10,7 +10,10 @@ HANDSHAKE_MAX_AGE=180
 ENV
 cat >"$TMP/bin/ip" <<'MOCK'
 #!/usr/bin/env bash
-[[ "$*" == "link show awg0" ]]
+case "$*" in
+  "link show awg0"|"link show mihomo0") exit 0 ;;
+  *) exit 1 ;;
+esac
 MOCK
 cat >"$TMP/bin/awg" <<'MOCK'
 #!/usr/bin/env bash
