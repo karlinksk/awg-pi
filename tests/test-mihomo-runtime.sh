@@ -127,6 +127,9 @@ run_update(){
   MOCK_FETCH_FAIL="${MOCK_FETCH_FAIL:-0}" \
   MIHOMO_LAST_FETCH_FILE="$tmp/state/last-fetch-path" \
   MIHOMO_LAST_FORMAT_FILE="$tmp/state/last-provider-format" \
+  MIHOMO_CANDIDATE_FILE="$tmp/state/providers/candidate.yaml" \
+  MIHOMO_CANDIDATE_FETCH_FILE="$tmp/state/candidate-fetch-path" \
+  MIHOMO_CANDIDATE_FORMAT_FILE="$tmp/state/candidate-provider-format" \
   MIHOMO_PROVIDER_HELPER="$repo_root/src/awg-mihomo-provider.py" \
   PYTHON_BIN=python3 \
     bash "$repo_root/src/awg-mihomo-update" "$@"
@@ -230,6 +233,22 @@ grep -Fq 'name: Plain VLESS' "$tmp/state/providers/live.yaml"
 grep -Fq 'server: 192.0.2.77' "$tmp/state/providers/live.yaml"
 grep -Fq 'uuid: 11111111-1111-1111-1111-111111111111' "$tmp/state/providers/live.yaml"
 
+echo "=== stage-only validates candidate without touching live ==="
+cp "$tmp/state/providers/live.yaml" "$tmp/live-before-stage.yaml"
+cat >"$tmp/staged.yaml" <<'YAML'
+proxies:
+  - name: Staged Node
+    type: socks5
+    server: 192.0.2.33
+    port: 1080
+YAML
+out="$(MOCK_PROVIDER_SOURCE="$tmp/staged.yaml" run_update --stage-only)"
+grep -Fqx 'MIHOMO_PROVIDER=STAGED' <<<"$out"
+cmp -s "$tmp/live-before-stage.yaml" "$tmp/state/providers/live.yaml"
+grep -Fq 'name: Staged Node' "$tmp/state/providers/candidate.yaml"
+grep -Fqx mihomo "$tmp/state/candidate-provider-format"
+grep -Fqx direct "$tmp/state/candidate-fetch-path"
+
 echo "=== invalid provider never replaces cache ==="
 cp "$tmp/state/providers/live.yaml" "$tmp/before.yaml"
 cat >"$tmp/invalid.yaml" <<'YAML'
@@ -265,7 +284,8 @@ fi
 cmp -s "$tmp/before-runtime-fail.yaml" "$tmp/state/providers/live.yaml"
 cmp -s "$tmp/before-last-fetch" "$tmp/state/last-fetch-path"
 cmp -s "$tmp/before-last-format" "$tmp/state/last-provider-format"
-grep -Fq 'provider cache rolled back' "$tmp/err"
+grep -Fq 'live provider rolled back and candidate kept' "$tmp/err"
+grep -Fq 'name: Different Node' "$tmp/state/providers/candidate.yaml"
 [[ "$(grep -c '^prepare$' "$tmp/prepare.log")" -ge 2 ]]
 if find "$tmp/state/providers" -maxdepth 1 -type f -name '.subscription.backup.*' | grep -q .; then
   echo 'FAIL: failed provider update left a backup temp file behind' >&2
