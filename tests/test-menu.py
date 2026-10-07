@@ -21,8 +21,8 @@ required = [
     '"Переключить транспорт на Mihomo"',
     '"Переключить транспорт на AmneziaWG"',
     '"Точка выхода / узел"',
-    '"MikroTik DIRECT обязателен"',
     '"Первичная настройка Mihomo"',
+    '"Первичная настройка transport"',
     '"Citadel / Remnawave"',
     '"Формат подписки"',
     '"Mihomo / Clash YAML"',
@@ -61,6 +61,7 @@ for label in (
     '"Завершить SSH-сессию"',
     '"Selective Gateway"',
     '"MikroTik Transit / Backup VPN"',
+    '"Первичная настройка transport"',
 ):
     assert label in menu, f"missing documented menu item: {label}"
 
@@ -76,10 +77,12 @@ assert "DIRECT → текущий healthy transport → остальные healt
 assert '"$MIHOMO_CONFIGURE" provider import "$path"' in menu
 assert '"$AWG_TRANSPORT" select mihomo' in menu
 assert '"$AWG_TRANSPORT" select awg' in menu
-assert '"$MIHOMO_CONFIGURE" node select "$node_name" "$endpoint" --direct-confirmed' in menu
+assert '"$MIHOMO_CONFIGURE" node select "$node_name" "$endpoint"' in menu
+assert '--direct-confirmed' not in menu
 assert '"$MIHOMO_CONFIGURE" node prepare "$node_name"' in menu
-assert 'action=accept' in menu
-assert 'place-before=0' in menu
+assert 'Отдельное MikroTik правило для этого IP больше НЕ требуется' in menu
+assert 'gateway-wide DIRECT bypass' in menu
+assert '"$AWG_FIRST_RUN" wizard' in menu
 assert 'mktemp /run/awg-pbr/mihomo-url.XXXXXX' in menu
 assert 'chmod 600 "$url_tmp"' in menu
 assert 'printf \'MIHOMO_PROVIDER_URL=%q\\n\' "$url" >"$url_tmp"' in menu
