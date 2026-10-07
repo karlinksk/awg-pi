@@ -170,4 +170,12 @@ if MOCK_ENDPOINT_ROUTE=mihomo0 run_preflight >"$tmp/out" 2>"$tmp/err"; then
 fi
 grep -Fq 'Mihomo endpoint 45.86.66.170 is not DIRECT' "$tmp/err"
 
+echo "=== preflight rejects unconfigured transport ==="
+echo unconfigured >"$tmp/transport"
+if run_preflight >"$tmp/out" 2>"$tmp/err"; then
+  echo 'FAIL: Transit preflight accepted unconfigured transport' >&2
+  exit 1
+fi
+grep -Fq 'no active transport is configured' "$tmp/err"
+
 echo awg >"$tmp/transport"
