@@ -6,29 +6,20 @@ set -Eeuo pipefail
 MIHOMO_VERSION="${MIHOMO_VERSION:-1.19.32}"
 MIHOMO_TARGET="${MIHOMO_TARGET:-/usr/local/bin/mihomo}"
 CURL_BIN="${CURL_BIN:-curl}"
-IP_BIN="${IP_BIN:-ip}"
 AWG_ENV_FILE="${AWG_ENV_FILE:-/etc/awg-pbr/env}"
+AWG_FETCH_BIN="${AWG_FETCH_BIN:-/usr/local/sbin/awg-fetch}"
 MIHOMO_INSTALL_FETCH_MODE="${MIHOMO_INSTALL_FETCH_MODE:-auto}"
-MIHOMO_INSTALL_FETCH_ORDER="${MIHOMO_INSTALL_FETCH_ORDER:-awg router}"
-MIHOMO_AWG_INTERFACE="${MIHOMO_AWG_INTERFACE:-}"
 MIHOMO_INSTALL_ASSET_URL="${MIHOMO_INSTALL_ASSET_URL:-}"
 MIHOMO_INSTALL_ASSET_SHA256="${MIHOMO_INSTALL_ASSET_SHA256:-}"
 
-# shellcheck disable=SC1090
-[[ -r "$AWG_ENV_FILE" ]] && source "$AWG_ENV_FILE"
-MIHOMO_AWG_INTERFACE="${MIHOMO_AWG_INTERFACE:-${VPN_IF:-awg0}}"
 
 usage(){
   cat <<'USAGE'
 Usage:
-  awg-mihomo-install [--mode auto|awg|router]
+  awg-mihomo-install [--mode auto|direct|awg|mihomo]
 
-AUTO bootstrap order:
-  1. AmneziaWG interface (normally awg0)
-  2. router/default path
-
-The router/default path means the host's normal route to MikroTik. MikroTik may
-then keep the request DIRECT or policy-route it through SSTP/another VPN.
+AUTO delegates to the bootstrap manager: DIRECT first, then the selected
+healthy transport, then other healthy transports. Legacy "router" maps to DIRECT.
 USAGE
 }
 
@@ -51,8 +42,9 @@ while (( $# )); do
   esac
 done
 
+[[ "$MIHOMO_INSTALL_FETCH_MODE" == router ]] && MIHOMO_INSTALL_FETCH_MODE=direct
 case "$MIHOMO_INSTALL_FETCH_MODE" in
-  auto|awg|router) ;;
+  auto|direct|awg|mihomo) ;;
   *)
     echo "Unsupported MIHOMO_INSTALL_FETCH_MODE: $MIHOMO_INSTALL_FETCH_MODE" >&2
     exit 2
@@ -92,54 +84,23 @@ curl_args=(
   -H 'User-Agent: AWG-Pi-Gateway-v1.3'
 )
 
-fetch_path=""
-download_once(){
-  local path="$1"
-  local -a args=("${curl_args[@]}")
-
-  case "$path" in
-    awg)
-      [[ -n "$MIHOMO_AWG_INTERFACE" ]] || return 1
-      "$IP_BIN" link show "$MIHOMO_AWG_INTERFACE" >/dev/null 2>&1 || return 1
-      args+=(--interface "$MIHOMO_AWG_INTERFACE")
-      ;;
-    router)
-      ;;
-    *)
-      return 2
-      ;;
-  esac
-
-  rm -f "$archive"
-  if "$CURL_BIN" "${args[@]}" -o "$archive" "$api_url"; then
-    fetch_path="$path"
-    return 0
-  fi
-  return 1
+[[ -x "$AWG_FETCH_BIN" ]] || {
+  echo "Bootstrap fetch manager is unavailable: $AWG_FETCH_BIN" >&2
+  exit 2
 }
 
-if [[ "$MIHOMO_INSTALL_FETCH_MODE" == auto ]]; then
-  fetched=0
-  for candidate in $MIHOMO_INSTALL_FETCH_ORDER; do
-    case "$candidate" in
-      awg|router) ;;
-      *) continue ;;
-    esac
-    if download_once "$candidate"; then
-      fetched=1
-      break
-    fi
-  done
-  (( fetched == 1 )) || {
-    echo "Unable to download Mihomo binary through any bootstrap path" >&2
-    exit 1
-  }
-else
-  download_once "$MIHOMO_INSTALL_FETCH_MODE" || {
-    echo "Unable to download Mihomo binary through $MIHOMO_INSTALL_FETCH_MODE" >&2
-    exit 1
-  }
-fi
+fetch_output="$(
+  AWG_ENV_FILE="$AWG_ENV_FILE" CURL_BIN="$CURL_BIN" \
+    "$AWG_FETCH_BIN" --mode "$MIHOMO_INSTALL_FETCH_MODE" --url "$api_url" --output "$archive" -- "${curl_args[@]}"
+)" || {
+  echo "Unable to download Mihomo binary through bootstrap manager" >&2
+  exit 1
+}
+fetch_path="$(awk -F= '$1=="AWG_FETCH_PATH"{print $2}' <<<"$fetch_output" | tail -n1)"
+[[ "$fetch_path" =~ ^(direct|awg|mihomo)$ ]] || {
+  echo "Bootstrap manager returned an invalid binary fetch path" >&2
+  exit 1
+}
 
 printf '%s  %s\n' "$sha256" "$archive" | sha256sum -c -
 gzip -dc "$archive" >"$binary"

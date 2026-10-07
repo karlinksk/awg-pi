@@ -8,6 +8,7 @@ MIHOMO_BIN="${MIHOMO_BIN:-/usr/local/bin/mihomo}"
 MIHOMO_PROVIDER_FILE="${MIHOMO_PROVIDER_FILE:-/var/lib/awg-pbr/mihomo/providers/subscription.yaml}"
 MIHOMO_SERVICE="${MIHOMO_SERVICE:-awg-mihomo.service}"
 CURL_BIN="${CURL_BIN:-curl}"
+AWG_FETCH_BIN="${AWG_FETCH_BIN:-/usr/local/sbin/awg-fetch}"
 SYSTEMCTL_BIN="${SYSTEMCTL_BIN:-systemctl}"
 MIHOMO_PREPARE="${MIHOMO_PREPARE:-/usr/local/sbin/awg-mihomo-prepare}"
 MIHOMO_PROVIDER_HELPER="${MIHOMO_PROVIDER_HELPER:-/usr/local/lib/awg-pi/mihomo-provider.py}"
@@ -26,10 +27,7 @@ source "$MIHOMO_ENV_FILE"
 
 MIHOMO_UPDATE_INTERFACE="${MIHOMO_UPDATE_INTERFACE:-}"
 MIHOMO_FETCH_MODE="${MIHOMO_FETCH_MODE:-}"
-MIHOMO_FETCH_ORDER="${MIHOMO_FETCH_ORDER:-mihomo awg router}"
 MIHOMO_PROXY_URL="${MIHOMO_PROXY_URL:-http://127.0.0.1:7890}"
-MIHOMO_AWG_INTERFACE="${MIHOMO_AWG_INTERFACE:-${VPN_IF:-awg0}}"
-MIHOMO_ROUTER_INTERFACE="${MIHOMO_ROUTER_INTERFACE:-${LAN_IF:-eth0}}"
 MIHOMO_UPDATE_SUFFIX="${MIHOMO_UPDATE_SUFFIX:-}"
 MIHOMO_DEVICE_OS="${MIHOMO_DEVICE_OS:-Linux}"
 MIHOMO_DEVICE_VERSION="${MIHOMO_DEVICE_VERSION:-Debian}"
@@ -41,13 +39,12 @@ MIHOMO_PROVIDER_FORMAT="${MIHOMO_PROVIDER_FORMAT:-auto}"
 usage(){
   cat <<'USAGE'
 Usage:
-  awg-mihomo-update [--mode auto|mihomo|awg|router] [--format auto|mihomo|vless|base64]
+  awg-mihomo-update [--mode auto|direct|mihomo|awg] [--format auto|mihomo|vless|base64]
   awg-mihomo-update --file PROFILE [--format auto|mihomo|vless|base64]
-  awg-mihomo-update --cache-only [--mode auto|mihomo|awg|router] [--format auto|mihomo|vless|base64]
+  awg-mihomo-update --cache-only [--mode auto|direct|mihomo|awg] [--format auto|mihomo|vless|base64]
 
-AUTO tries the current Mihomo proxy, then AmneziaWG, then the normal
-router/default path. On the router/default path MikroTik decides whether the
-request is DIRECT or policy-routed through SSTP/another router-side VPN.
+AUTO delegates to awg-fetch: DIRECT first, then the selected healthy backend,
+then other healthy backends. Legacy mode "router" is mapped to DIRECT.
 USAGE
 }
 
@@ -95,13 +92,14 @@ if [[ -z "$MIHOMO_FETCH_MODE" ]]; then
   case "$MIHOMO_UPDATE_INTERFACE" in
     "") MIHOMO_FETCH_MODE=auto ;;
     awg0) MIHOMO_FETCH_MODE=awg ;;
-    direct) MIHOMO_FETCH_MODE=router ;;
+    direct) MIHOMO_FETCH_MODE=direct ;;
     *) MIHOMO_FETCH_MODE=auto ;;
   esac
 fi
 
+[[ "$MIHOMO_FETCH_MODE" == router ]] && MIHOMO_FETCH_MODE=direct
 case "$MIHOMO_FETCH_MODE" in
-  auto|mihomo|awg|router) ;;
+  auto|direct|mihomo|awg) ;;
   *)
     echo "Unsupported MIHOMO_FETCH_MODE: $MIHOMO_FETCH_MODE" >&2
     exit 2
@@ -158,36 +156,6 @@ if [[ -n "$url" && -n "$MIHOMO_UPDATE_SUFFIX" ]]; then
   url="${url%/}/${MIHOMO_UPDATE_SUFFIX#/}"
 fi
 
-fetch_once(){
-  local path="$1"
-  local -a args=("${curl_args[@]}")
-
-  case "$path" in
-    mihomo)
-      args+=(-x "$MIHOMO_PROXY_URL")
-      ;;
-    awg)
-      [[ -n "$MIHOMO_AWG_INTERFACE" ]] || return 1
-      args+=(--interface "$MIHOMO_AWG_INTERFACE")
-      ;;
-    router)
-      # Use the host's normal route. On this hop MikroTik may keep the request
-      # DIRECT or policy-route it through SSTP/another router-side VPN.
-      ;;
-
-    *)
-      return 2
-      ;;
-  esac
-
-  rm -f "$tmp"
-  if "$CURL_BIN" "${args[@]}" "$url" -o "$tmp"; then
-    fetch_path="$path"
-    return 0
-  fi
-  return 1
-}
-
 if [[ -n "$local_file" ]]; then
   [[ -f "$local_file" && -r "$local_file" && ! -L "$local_file" ]] || {
     echo "Local provider profile is not a readable regular file: $local_file" >&2
@@ -195,25 +163,21 @@ if [[ -n "$local_file" ]]; then
   }
   cp -- "$local_file" "$tmp"
   fetch_path=file
-elif [[ "$MIHOMO_FETCH_MODE" == auto ]]; then
-  fetched=0
-  for candidate in $MIHOMO_FETCH_ORDER; do
-    case "$candidate" in
-      mihomo|awg|router) ;;
-      *) continue ;;
-    esac
-    if fetch_once "$candidate"; then
-      fetched=1
-      break
-    fi
-  done
-  (( fetched == 1 )) || {
-    echo "Unable to download Mihomo provider through any bootstrap path" >&2
+else
+  [[ -x "$AWG_FETCH_BIN" ]] || {
+    echo "Bootstrap fetch manager is unavailable: $AWG_FETCH_BIN" >&2
+    exit 2
+  }
+  fetch_output="$(
+    CURL_BIN="$CURL_BIN" MIHOMO_PROXY_URL="$MIHOMO_PROXY_URL" \
+      "$AWG_FETCH_BIN" --mode "$MIHOMO_FETCH_MODE" --url "$url" --output "$tmp" -- "${curl_args[@]}"
+  )" || {
+    echo "Unable to download Mihomo provider through bootstrap manager" >&2
     exit 1
   }
-else
-  fetch_once "$MIHOMO_FETCH_MODE" || {
-    echo "Unable to download Mihomo provider through $MIHOMO_FETCH_MODE" >&2
+  fetch_path="$(awk -F= '$1=="AWG_FETCH_PATH"{print $2}' <<<"$fetch_output" | tail -n1)"
+  [[ "$fetch_path" =~ ^(direct|awg|mihomo)$ ]] || {
+    echo "Bootstrap manager returned an invalid fetch path" >&2
     exit 1
   }
 fi

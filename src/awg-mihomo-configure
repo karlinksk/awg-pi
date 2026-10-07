@@ -244,7 +244,8 @@ provider_url_set_file(){
 
 provider_update(){
   local mode="${1:-auto}"
-  case "$mode" in auto|mihomo|awg|router) ;; *) return 2 ;; esac
+  [[ "$mode" == router ]] && mode=direct
+  case "$mode" in auto|direct|mihomo|awg) ;; *) return 2 ;; esac
   MIHOMO_ENV_FILE="$MIHOMO_ENV_FILE" \
   MIHOMO_PROVIDER_FILE="$MIHOMO_PROVIDER_FILE" \
   MIHOMO_BIN="$MIHOMO_BIN" \

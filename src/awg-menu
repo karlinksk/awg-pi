@@ -428,12 +428,12 @@ mihomo_menu(){
   local choice url path fetch_mode init_tmp url_tmp profile provider_format
   while true; do
     choice="$(dialog --backtitle "$BACKTITLE" --title "Mihomo / Multi-Transport" --item-help --menu \
-      "Управление Mihomo и subscription. AUTO обновляет профиль через доступный bootstrap-канал: текущий Mihomo → AmneziaWG → обычный путь через MikroTik." \
+      "Управление Mihomo и subscription. AUTO: DIRECT → текущий healthy transport → остальные healthy transports. SSTP/router-side VPN не является зависимостью." \
       28 108 12 \
       1 "Состояние Mihomo" "Показывает runtime, provider cache, последний успешный bootstrap-канал и health без вывода секретов." \
       2 "Заменить ссылку подписки" "Вставляет новый URL в скрытом поле. Новый профиль проверяется транзакционно; при ошибке старая ссылка и cache остаются." \
-      3 "Обновить подписку — AUTO" "Пробует текущий Mihomo, затем awg0, затем обычный маршрут через MikroTik. Неудача не удаляет рабочий cache." \
-      4 "Обновить через выбранный канал" "Позволяет вручную выбрать Mihomo, AmneziaWG или router/default для одной загрузки." \
+      3 "Обновить подписку — AUTO" "Сначала DIRECT, затем текущий healthy transport и другие healthy transports. Неудача не удаляет рабочий cache." \
+      4 "Обновить через выбранный канал" "Позволяет вручную выбрать DIRECT, Mihomo или AmneziaWG только для одной загрузки; скрытого fallback нет." \
       5 "Импортировать локальный профиль" "Импортирует с Pi native Mihomo YAML, plain VLESS URI или Base64 VLESS без обращения к сети; формат определяется адаптером." \
       6 "Точка выхода / узел" "Показывает узлы subscription и выполняет защищённую ручную смену после подтверждения MikroTik DIRECT." \
       7 "Переключить транспорт на Mihomo" "Транзакционно проверяет Mihomo и только затем переводит datapath с AWG на mihomo0; при ошибке выполняется rollback." \
@@ -469,9 +469,9 @@ mihomo_menu(){
       4)
         fetch_mode="$(dialog --backtitle "$BACKTITLE" --title "Bootstrap-канал" --item-help --menu \
           "Выберите путь только для этой загрузки subscription." 20 100 6 \
-          mihomo "Текущий Mihomo" "HTTP-запрос идёт через локальный Mihomo proxy 127.0.0.1; работает только если текущий профиль жив." \
-          awg "AmneziaWG" "Запрос привязывается к awg0; используется как независимый bootstrap/fallback." \
-          router "Router/default" "Обычный путь Pi → MikroTik. Уже MikroTik решает: DIRECT, SSTP или другой router-side VPN." \
+          direct "DIRECT" "Запрос выходит через обычный LAN/uplink Pi без SSTP и без другого VPN transport." \
+          mihomo "Mihomo" "HTTP-запрос идёт через локальный Mihomo proxy 127.0.0.1; используйте только если Mihomo healthy." \
+          awg "AmneziaWG" "Запрос принудительно идёт через awg0; используйте только если AWG healthy." \
           0 "Назад" "Не выполнять обновление." 3>&1 1>&2 2>&3)" || continue
         [[ "$fetch_mode" != 0 ]] || continue
         run_interactive "Mihomo provider update — $fetch_mode" "$MIHOMO_CONFIGURE" provider update "$fetch_mode"

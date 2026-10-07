@@ -66,6 +66,7 @@ backup_gateway(){
     usr/local/bin/mihomo \
     usr/local/sbin/awg-route \
     usr/local/sbin/awg-transport \
+    usr/local/sbin/awg-fetch \
     usr/local/sbin/awg-menu \
     usr/local/sbin/awg-opencck-update \
     usr/local/sbin/awg-core-update \
@@ -105,6 +106,7 @@ restore_gateway(){
     /usr/local/bin/mihomo \
     /usr/local/sbin/awg-route \
     /usr/local/sbin/awg-transport \
+    /usr/local/sbin/awg-fetch \
     /usr/local/sbin/awg-menu \
     /usr/local/sbin/awg-opencck-update \
     /usr/local/sbin/awg-core-update \
