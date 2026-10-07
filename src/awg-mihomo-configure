@@ -625,8 +625,8 @@ init_cmd(){
 }
 
 apply_cmd(){
-  local source_file="$1" current tmp_env snapshot rc
-  local service_enabled=0 service_active=0 timer_enabled=0 timer_active=0
+  local source_file="$1" current mode tmp_env snapshot rc
+  local service_enabled=0 service_active=0 timer_enabled=0 timer_active=0 health_was_active=0
   local expected_egress=""
 
   [[ -r "$source_file" ]] || {
@@ -639,10 +639,7 @@ apply_cmd(){
   }
 
   current="$(awg_transport_get)"
-  [[ "$current" != mihomo ]] || {
-    echo "Refusing to reconfigure active Mihomo transport; select AWG first." >&2
-    return 1
-  }
+  mode="$(awg_mode_get)"
 
   exec 9>"$AWG_LOCK_FILE"
   flock -x 9
@@ -699,6 +696,7 @@ apply_cmd(){
   unit_active "$MIHOMO_SERVICE" && service_active=1 || true
   unit_enabled "$MIHOMO_UPDATE_TIMER" && timer_enabled=1 || true
   unit_active "$MIHOMO_UPDATE_TIMER" && timer_active=1 || true
+  unit_active "$HEALTH_SERVICE" && health_was_active=1 || true
 
   rollback(){
     rc=$?
@@ -712,12 +710,24 @@ apply_cmd(){
     "$SYSTEMCTL_BIN" daemon-reload >/dev/null 2>&1 || true
     restore_unit_state "$MIHOMO_SERVICE" "$service_enabled" "$service_active"
     restore_unit_state "$MIHOMO_UPDATE_TIMER" "$timer_enabled" "$timer_active"
+    if [[ "$current" == mihomo && "$health_was_active" == 1 ]]; then
+      "$SYSTEMCTL_BIN" restart "$HEALTH_SERVICE" >/dev/null 2>&1 || true
+    fi
     rm -f "$tmp_env"
     rm -rf "$snapshot"
     echo "Mihomo configuration failed; previous state restored." >&2
     exit "$rc"
   }
   trap rollback ERR
+
+  if [[ "$current" == mihomo ]]; then
+    "$SYSTEMCTL_BIN" stop "$HEALTH_SERVICE" >/dev/null 2>&1 || true
+    case "$mode" in
+      selective) "$AWG_FAILOPEN" >/dev/null 2>&1 || true ;;
+      transit) "$TRANSIT_ROUTING" disable >/dev/null ;;
+      *) echo "Invalid operating mode during Mihomo reconfiguration: $mode" >&2; return 1 ;;
+    esac
+  fi
 
   "$SYSTEMCTL_BIN" stop "$MIHOMO_UPDATE_TIMER" "$MIHOMO_UPDATE_SERVICE" "$MIHOMO_SERVICE" >/dev/null 2>&1 || true
 
@@ -754,6 +764,10 @@ apply_cmd(){
     "$SLEEP_BIN" 0.2
   done
   (( healthy == 1 ))
+
+  if [[ "$current" == mihomo && "$health_was_active" == 1 ]]; then
+    "$SYSTEMCTL_BIN" restart "$HEALTH_SERVICE"
+  fi
 
   trap - ERR
   rm -f "$tmp_env"
