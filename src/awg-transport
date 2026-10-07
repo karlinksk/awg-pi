@@ -118,11 +118,11 @@ preflight_target_transport(){
   if AWG_TRANSPORT_FILE="$tmp" "$TRANSIT_PREFLIGHT"; then
     rm -f "$tmp"
     return 0
+  else
+    rc=$?
+    rm -f "$tmp"
+    return "$rc"
   fi
-
-  rc=$?
-  rm -f "$tmp"
-  return "$rc"
 }
 
 select_transport(){
