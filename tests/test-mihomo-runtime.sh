@@ -176,36 +176,7 @@ if MOCK_PROVIDER_SOURCE="$tmp/new-valid.yaml" MOCK_PREPARE_FAIL=1 run_update >"$
 fi
 cmp -s "$tmp/before-runtime-fail.yaml" "$tmp/state/providers/live.yaml"
 grep -Fq 'provider cache rolled back' "$tmp/err"
-[[ "$(grep -c '^prepare
-cat >"$tmp/bin/render" <<'MOCK'
-#!/usr/bin/env bash
-cat <<'YAML'
-mixed-port: 7890
-allow-lan: false
-rules:
-  - MATCH,DIRECT
-YAML
-MOCK
-chmod +x "$tmp/bin/render"
-sudo env \
-  MIHOMO_BIN="$tmp/bin/mihomo" \
-  MIHOMO_RENDERER="$tmp/bin/render" \
-  MIHOMO_CONFIG_FILE="$tmp/etc/config.yaml" \
-  MIHOMO_STATE_DIR="$tmp/state" \
-  bash "$repo_root/src/awg-mihomo-prepare" >"$tmp/prepare.out"
-sudo grep -Fqx 'allow-lan: false' "$tmp/etc/config.yaml"
-grep -Fqx 'MIHOMO_CONFIG=UPDATED' "$tmp/prepare.out"
-
-echo "=== installer keeps Mihomo passive by default ==="
-if grep -Eq 'systemctl[[:space:]]+(enable|start|restart).*awg-mihomo' "$repo_root/install.sh"; then
-  echo 'FAIL: installer activates Mihomo without explicit configuration' >&2
-  exit 1
-fi
-grep -Fq 'install_project_helper src/awg-mihomo-config' "$repo_root/install.sh"
-grep -Fq 'install_project_unit units/awg-mihomo.service' "$repo_root/install.sh"
-
-echo "mihomo runtime helpers: OK"
- "$tmp/prepare.log")" -ge 2 ]]
+[[ "$(grep -c '^prepare$' "$tmp/prepare.log")" -ge 2 ]]
 
 echo "=== prepare validates and installs config atomically ==="
 cat >"$tmp/bin/render" <<'MOCK'
