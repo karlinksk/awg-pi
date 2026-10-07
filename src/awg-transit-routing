@@ -52,13 +52,13 @@ guard_fail_closed(){
   # A lockdown chain has no accept rules at all and is therefore safe.
   while IFS= read -r line; do
     [[ "$line" == *" accept"* ]] || continue
-    if [[ "$line" == *"iifname \"$VPN_IF\""* &&
+    if [[ "$line" == *"iifname \"$TRANSPORT_IF\""* &&
           "$line" == *"oifname \"$LAN_IF\""* &&
           "$line" == *"ct state established,related"* ]]; then
       continue
     fi
     if [[ "$line" == *"iifname \"$LAN_IF\""* &&
-          "$line" == *"oifname \"$VPN_IF\""* ]]; then
+          "$line" == *"oifname \"$TRANSPORT_IF\""* ]]; then
       continue
     fi
     return 1
@@ -95,7 +95,7 @@ apply_policy(){
     fail "Transit nftables forward guard is not ready/safe"
 
   "$IP_BIN" link show dev "$TRANSPORT_IF" >/dev/null 2>&1 ||
-    fail "AWG interface is unavailable: $VPN_IF"
+    fail "Transport interface is unavailable: $TRANSPORT_IF ($TRANSPORT_ID)"
 
   rule_present && had_rule=1 || true
   old_default="$("$IP_BIN" -4 route show table "$VPN_TABLE" default 2>/dev/null | head -n1 || true)"
