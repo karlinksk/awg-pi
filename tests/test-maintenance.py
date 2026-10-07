@@ -72,6 +72,7 @@ class Maintenance(unittest.TestCase):
             p.start()
             self.addCleanup(p.stop)
         Path(m.CONF_DIR).mkdir()
+        Path(m.MODE).write_text('selective\n')
         self.env = dict(LAN_IF='eth0', PI_IP='192.168.1.2', LAN_CIDR='192.168.1.0/24',
                         ROUTER_IP='192.168.1.1', VPN_IF='awg0', HEALTH_MARK='0x101',
                         HEALTH_TABLE='101', UPSTREAM_DNS='9.9.9.9', VPN_MARK='0x100')
