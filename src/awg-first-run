@@ -1,0 +1,282 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+[[ ${EUID:-$(id -u)} -eq 0 ]] || exec sudo "$0" "$@"
+
+TTY="${AWG_FIRST_RUN_TTY:-/dev/tty}"
+AWG_ROUTE="${AWG_ROUTE_BIN:-/usr/local/sbin/awg-route}"
+AWG_TRANSPORT="${AWG_TRANSPORT_BIN:-/usr/local/sbin/awg-transport}"
+MIHOMO_CONFIGURE="${MIHOMO_CONFIGURE_BIN:-/usr/local/sbin/awg-mihomo-configure}"
+MIHOMO_INSTALLER="${MIHOMO_INSTALLER_BIN:-/usr/local/sbin/awg-mihomo-install}"
+MIHOMO_ENV_FILE="${MIHOMO_ENV_FILE:-/etc/awg-pbr/transports/mihomo/provider.env}"
+MIHOMO_BIN="${MIHOMO_BIN:-/usr/local/bin/mihomo}"
+
+usage(){
+  cat <<'USAGE'
+Usage:
+  awg-first-run wizard
+  awg-first-run awg-file FILE
+  awg-first-run mihomo-url URL [standard|remnawave] [auto|mihomo|vless|base64]
+  awg-first-run mihomo-file FILE [auto|mihomo|vless|base64]
+  awg-first-run status
+
+The wizard configures the first transport backend only. Operating Mode
+(Selective/Transit) is intentionally chosen afterward by the installer/user.
+USAGE
+}
+
+ask(){
+  local prompt="$1" default="${2:-}" value
+  if [[ -n "$default" ]]; then
+    read -r -p "$prompt [$default]: " value <"$TTY"
+    REPLY="${value:-$default}"
+  else
+    read -r -p "$prompt: " value <"$TTY"
+    REPLY="$value"
+  fi
+}
+
+secret_ask(){
+  local prompt="$1" value
+  read -r -s -p "$prompt: " value <"$TTY"
+  printf '\n' >"$TTY"
+  REPLY="$value"
+}
+
+paste_to_temp(){
+  local label="$1" tmp
+  tmp="$(mktemp /run/awg-pbr/first-run.XXXXXX)"
+  chmod 600 "$tmp"
+  printf '%s\n' "$label" >"$TTY"
+  printf '%s\n' 'Завершите отдельной строкой __END__' >"$TTY"
+  : >"$tmp"
+  while IFS= read -r line <"$TTY"; do
+    [[ "$line" == "__END__" ]] && break
+    printf '%s\n' "$line" >>"$tmp"
+  done
+  sed -i 's/\r$//' "$tmp"
+  [[ -s "$tmp" ]] || {
+    rm -f "$tmp"
+    echo "Pasted profile is empty" >&2
+    return 1
+  }
+  printf '%s\n' "$tmp"
+}
+
+transport_state(){
+  "$AWG_TRANSPORT" get 2>/dev/null || echo unconfigured
+}
+
+ensure_fresh_target(){
+  local state
+  state="$(transport_state)"
+  [[ "$state" == unconfigured ]] || {
+    echo "A transport is already selected: $state. Use the normal transport/configuration menus." >&2
+    return 1
+  }
+}
+
+activate_awg_file(){
+  local file="$1"
+  ensure_fresh_target
+  [[ -f "$file" && -r "$file" && ! -L "$file" ]] || {
+    echo "AWG profile is not a readable regular file: $file" >&2
+    return 2
+  }
+  "$AWG_ROUTE" config check "$file"
+  "$AWG_ROUTE" config replace "$file" --yes
+  "$AWG_TRANSPORT" select awg
+  printf 'FIRST_TRANSPORT=awg\n'
+}
+
+prepare_local_mihomo_env(){
+  local format="$1" dir tmp
+  case "$format" in auto|mihomo|vless|base64) ;; *) return 2 ;; esac
+  dir="$(dirname "$MIHOMO_ENV_FILE")"
+  mkdir -p "$dir"
+  chmod 700 "$dir"
+  if [[ ! -e "$MIHOMO_ENV_FILE" ]]; then
+    tmp="$(mktemp "$dir/.first-run-provider.XXXXXX")"
+    {
+      printf 'MIHOMO_PROVIDER_PROFILE=%q\n' standard
+      printf 'MIHOMO_PROVIDER_FORMAT=%q\n' "$format"
+      printf 'MIHOMO_FETCH_MODE=%q\n' auto
+    } >"$tmp"
+    chmod 600 "$tmp"
+    mv -f "$tmp" "$MIHOMO_ENV_FILE"
+  fi
+}
+
+choose_mihomo_node(){
+  local nodes name prepared endpoint
+  nodes="$("$MIHOMO_CONFIGURE" node list)" || return
+  printf '\n=== Доступные Mihomo nodes ===\n%s\n\n' "$nodes" >"$TTY"
+  ask "Введите точное имя первого Mihomo node"
+  name="$REPLY"
+  [[ -n "$name" ]] || {
+    echo "Node name is required" >&2
+    return 2
+  }
+
+  prepared="$("$MIHOMO_CONFIGURE" node prepare "$name")" || return
+  printf '%s\n' "$prepared" >"$TTY"
+  ask "Введите один IPv4 из Resolved IPv4 endpoints"
+  endpoint="$REPLY"
+  [[ -n "$endpoint" ]] || {
+    echo "Endpoint IPv4 is required" >&2
+    return 2
+  }
+
+  "$MIHOMO_CONFIGURE" node select "$name" "$endpoint"
+  "$AWG_TRANSPORT" select mihomo
+  printf 'FIRST_TRANSPORT=mihomo\n'
+}
+
+activate_mihomo_url(){
+  local url="$1" profile="${2:-standard}" format="${3:-auto}" tmp
+  ensure_fresh_target
+  case "$profile" in standard|remnawave) ;; *) echo "Unsupported provider profile: $profile" >&2; return 2 ;; esac
+  case "$format" in auto|mihomo|vless|base64) ;; *) echo "Unsupported provider format: $format" >&2; return 2 ;; esac
+  [[ "$url" =~ ^https?://[^[:space:]]+$ ]] || {
+    echo "Mihomo subscription URL must be http(s) without whitespace" >&2
+    return 2
+  }
+
+  mkdir -p /run/awg-pbr
+  chmod 700 /run/awg-pbr
+  tmp="$(mktemp /run/awg-pbr/first-run-mihomo.XXXXXX)"
+  {
+    printf 'MIHOMO_PROVIDER_URL=%q\n' "$url"
+    printf 'MIHOMO_PROVIDER_PROFILE=%q\n' "$profile"
+    printf 'MIHOMO_PROVIDER_FORMAT=%q\n' "$format"
+  } >"$tmp"
+  chmod 600 "$tmp"
+  if "$MIHOMO_CONFIGURE" init "$tmp"; then
+    rm -f "$tmp"
+  else
+    rc=$?
+    rm -f "$tmp"
+    return "$rc"
+  fi
+  choose_mihomo_node
+}
+
+activate_mihomo_file(){
+  local file="$1" format="${2:-auto}"
+  ensure_fresh_target
+  [[ -f "$file" && -r "$file" && ! -L "$file" ]] || {
+    echo "Mihomo provider is not a readable regular file: $file" >&2
+    return 2
+  }
+  case "$format" in auto|mihomo|vless|base64) ;; *) echo "Unsupported provider format: $format" >&2; return 2 ;; esac
+
+  [[ -x "$MIHOMO_BIN" ]] || "$MIHOMO_INSTALLER"
+  prepare_local_mihomo_env "$format"
+  "$MIHOMO_CONFIGURE" provider import "$file"
+  choose_mihomo_node
+}
+
+wizard(){
+  local choice path tmp profile format url
+  ensure_fresh_target || return
+  cat >"$TTY" <<'TEXT'
+
+=== Первичная настройка transport ===
+Что у вас уже есть?
+
+1) AmneziaWG native .conf — файл
+2) AmneziaWG native .conf — вставить текст
+3) Mihomo / VLESS subscription URL
+4) Mihomo provider/subscription — локальный файл
+5) Mihomo provider/subscription — вставить текст
+6) Пока ничего не настраивать
+
+Transport не выбирается автоматически. После успешной настройки отдельно
+выбирается Operating Mode: Selective или Transit.
+TEXT
+  ask "Выбор" "6"
+  choice="$REPLY"
+
+  case "$choice" in
+    1)
+      ask "Полный путь к AmneziaWG .conf"
+      activate_awg_file "$REPLY"
+      ;;
+    2)
+      tmp="$(paste_to_temp 'Вставьте native AmneziaWG .conf')" || return
+      if activate_awg_file "$tmp"; then
+        rm -f "$tmp"
+      else
+        rc=$?
+        rm -f "$tmp"
+        return "$rc"
+      fi
+      ;;
+    3)
+      secret_ask "Вставьте полный subscription URL"
+      url="$REPLY"
+      printf '%s\n' 'Provider mode: 1=standard/generic, 2=Remnawave-compatible' >"$TTY"
+      ask "Provider mode" "1"
+      case "$REPLY" in
+        1) profile=standard ;;
+        2) profile=remnawave ;;
+        *) echo "Invalid provider mode" >&2; return 2 ;;
+      esac
+      format=auto
+      activate_mihomo_url "$url" "$profile" "$format"
+      unset url
+      ;;
+    4)
+      ask "Полный путь к Mihomo YAML / VLESS / Base64 subscription"
+      path="$REPLY"
+      activate_mihomo_file "$path" auto
+      ;;
+    5)
+      tmp="$(paste_to_temp 'Вставьте Mihomo YAML, VLESS URI(s) или Base64 subscription')" || return
+      if activate_mihomo_file "$tmp" auto; then
+        rm -f "$tmp"
+      else
+        rc=$?
+        rm -f "$tmp"
+        return "$rc"
+      fi
+      ;;
+    6)
+      printf 'FIRST_TRANSPORT=unconfigured\n'
+      ;;
+    *)
+      echo "Invalid first transport choice: $choice" >&2
+      return 2
+      ;;
+  esac
+}
+
+case "${1:-wizard}" in
+  wizard)
+    [[ $# -le 1 ]] || { usage >&2; exit 2; }
+    wizard
+    ;;
+  awg-file)
+    [[ $# -eq 2 ]] || { usage >&2; exit 2; }
+    activate_awg_file "$2"
+    ;;
+  mihomo-url)
+    [[ $# -ge 2 && $# -le 4 ]] || { usage >&2; exit 2; }
+    activate_mihomo_url "$2" "${3:-standard}" "${4:-auto}"
+    ;;
+  mihomo-file)
+    [[ $# -ge 2 && $# -le 3 ]] || { usage >&2; exit 2; }
+    activate_mihomo_file "$2" "${3:-auto}"
+    ;;
+  status)
+    [[ $# -eq 1 ]] || { usage >&2; exit 2; }
+    "$AWG_TRANSPORT" status
+    ;;
+  -h|--help|help)
+    usage
+    ;;
+  *)
+    usage >&2
+    exit 2
+    ;;
+esac
