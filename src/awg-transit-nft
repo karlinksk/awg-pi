@@ -2,14 +2,19 @@
 set -Eeuo pipefail
 
 AWG_ENV_FILE="${AWG_ENV_FILE:-/etc/awg-pbr/env}"
+AWG_COMMON_FILE="${AWG_COMMON_FILE:-/usr/local/lib/awg-pi/common.sh}"
 # shellcheck disable=SC1090
 source "$AWG_ENV_FILE"
+# shellcheck disable=SC1090
+source "$AWG_COMMON_FILE"
 
 : "${LAN_IF:?LAN_IF is required}"
 : "${LAN_CIDR:?LAN_CIDR is required}"
 : "${VPN_IF:?VPN_IF is required}"
 : "${VPN_MARK:?VPN_MARK is required}"
 LOCKDOWN="${AWG_TRANSIT_LOCKDOWN:-0}"
+TRANSPORT_ID="$(awg_transport_get)"
+TRANSPORT_IF="$(awg_transport_device "$TRANSPORT_ID")"
 
 forward_rule=""
 mark_rule=""
@@ -22,9 +27,9 @@ case "$LOCKDOWN" in
       echo "Invalid ROUTER_MAC: $ROUTER_MAC" >&2
       exit 2
     fi
-    forward_rule="    iifname \"$LAN_IF\" ether saddr $ROUTER_MAC ip saddr @transit4 oifname \"$VPN_IF\" accept"
+    forward_rule="    iifname \"$LAN_IF\" ether saddr $ROUTER_MAC ip saddr @transit4 oifname \"$TRANSPORT_IF\" accept"
     mark_rule="    iifname \"$LAN_IF\" ether saddr $ROUTER_MAC ip saddr @transit4 ip daddr != $LAN_CIDR meta mark set $VPN_MARK"
-    nat_rule="    ip saddr @transit4 oifname \"$VPN_IF\" masquerade"
+    nat_rule="    ip saddr @transit4 oifname \"$TRANSPORT_IF\" masquerade"
     ;;
   1)
     # Emergency/boot-safe state: no new forwarded flow is accepted or marked.
@@ -37,7 +42,7 @@ case "$LOCKDOWN" in
 esac
 
 cat <<NFT
-# Transit-mode nftables candidate for AWG Pi Gateway v1.2.
+# Transit-mode nftables candidate for AWG Pi Gateway v1.3 transport backends.
 # This renderer does not apply rules by itself.
 table inet awg_pbr {
   set vpn4 {
@@ -79,9 +84,9 @@ table inet awg_pbr {
     type filter hook forward priority filter; policy drop;
 
     # Return traffic may leave only from AWG back toward LAN.
-    iifname "$VPN_IF" oifname "$LAN_IF" ct state established,related accept
+    iifname "$TRANSPORT_IF" oifname "$LAN_IF" ct state established,related accept
 
-    # Normal Transit accepts only MikroTik-MAC ingress with actual AWG egress.
+    # Normal Transit accepts only MikroTik-MAC ingress with actual active-transport egress.
     # Lockdown emits no new-flow accept rule.
 $forward_rule
   }
