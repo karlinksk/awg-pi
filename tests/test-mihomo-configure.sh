@@ -204,34 +204,34 @@ grep -Fq 'previous state restored' "$tmp/err"
 grep -Fqx awg "$tmp/transport"
 
 echo "=== provider URL change is transactional ==="
-sudo sh -c "cat >'$tmp/etc/provider.env' <<'ENV'
+sudo sh -c "cat >\'$tmp/etc/provider.env\' <<\'ENV\'
 MIHOMO_PROVIDER_URL='https://old.example/profile'
-MIHOMO_NODE_FILTER='^Finland
+MIHOMO_NODE_FILTER='Finland'
 MIHOMO_ENDPOINT_IP='45.86.66.170'
 ENV"
 sudo chmod 600 "$tmp/etc/provider.env"
 : >"$tmp/update.log"
-out="$(run_cli provider-url set 'https://new.example/profile')"
+out="$(run_cli provider-url set \'https://new.example/profile\')"
 sudo grep -Fqx "MIHOMO_PROVIDER_URL=https://new.example/profile" "$tmp/etc/provider.env"
-grep -Fqx 'update --mode auto' "$tmp/update.log"
-grep -Fqx 'MIHOMO_PROVIDER_URL=UPDATED' <<<"$out"
+grep -Fqx \'update --mode auto\' "$tmp/update.log"
+grep -Fqx \'MIHOMO_PROVIDER_URL=UPDATED\' <<<"$out"
 
 echo "=== failed provider URL change restores previous value ==="
-if MOCK_UPDATE_FAIL=1 run_cli provider-url set 'https://broken.example/profile' >"$tmp/out" 2>"$tmp/err"; then
+if MOCK_UPDATE_FAIL=1 run_cli provider-url set \'https://broken.example/profile\' >"$tmp/out" 2>"$tmp/err"; then
   echo 'FAIL: failed provider URL update was accepted' >&2
   exit 1
 fi
-sudo grep -Fq 'old.example\|new.example' "$tmp/etc/provider.env"
-if sudo grep -Fq 'broken.example' "$tmp/etc/provider.env"; then
+sudo grep -Fqx "MIHOMO_PROVIDER_URL=https://new.example/profile" "$tmp/etc/provider.env"
+if sudo grep -Fq \'broken.example\' "$tmp/etc/provider.env"; then
   echo 'FAIL: broken provider URL was not rolled back' >&2
   exit 1
 fi
-grep -Fq 'previous URL restored' "$tmp/err"
+grep -Fq \'previous URL restored\' "$tmp/err"
 
 echo "=== explicit provider update path reaches updater ==="
 : >"$tmp/update.log"
 run_cli provider update awg >/dev/null
-grep -Fqx 'update --mode awg' "$tmp/update.log"
+grep -Fqx \'update --mode awg\' "$tmp/update.log"
 
 echo "=== local provider import reaches updater ==="
 : >"$tmp/update.log"
