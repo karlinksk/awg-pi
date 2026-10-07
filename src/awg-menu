@@ -414,7 +414,7 @@ mihomo_node_menu(){
 }
 
 mihomo_menu(){
-  local choice url path fetch_mode
+  local choice url path fetch_mode init_tmp profile
   while true; do
     choice="$(dialog --backtitle "$BACKTITLE" --title "Mihomo / Multi-Transport" --item-help --menu \
       "Управление Mihomo и subscription. AUTO обновляет профиль через доступный bootstrap-канал: текущий Mihomo → AmneziaWG → обычный путь через MikroTik." \
@@ -427,6 +427,7 @@ mihomo_menu(){
       6 "Точка выхода / узел" "Показывает узлы subscription и выполняет защищённую ручную смену после подтверждения MikroTik DIRECT." \
       7 "Переключить транспорт на Mihomo" "Транзакционно проверяет Mihomo и только затем переводит datapath с AWG на mihomo0; при ошибке выполняется rollback." \
       8 "Переключить транспорт на AmneziaWG" "Возвращает datapath на awg0 с health-check и rollback при ошибке." \
+      9 "Первичная настройка Mihomo" "Для чистой установки: ставит Mihomo, создаёт provider state, скачивает cache через AUTO и затем предлагает выбрать узел." \
       0 "Назад" "Возвращает в меню VPN без изменений." 3>&1 1>&2 2>&3)" || return 0
 
     case "$choice" in
@@ -467,6 +468,37 @@ mihomo_menu(){
       8)
         confirm "Transport → AmneziaWG" "Вернуть datapath на AmneziaWG?\n\nПереключение транзакционное." || continue
         run_interactive "Переключение на AmneziaWG" "$AWG_TRANSPORT" select awg
+        ;;
+      9)
+        profile="$(dialog --backtitle "$BACKTITLE" --title "Тип subscription" --item-help --menu \
+          "Выберите профиль первичной настройки." 19 104 5 \
+          standard "Обычная Mihomo/Clash subscription" "URL используется как есть; HWID не добавляется." \
+          remnawave "Citadel / Remnawave" "Создаётся один стабильный HWID и используется /mihomo profile. HWID сохраняется и не показывается." \
+          0 "Назад" "Не выполнять первичную настройку." 3>&1 1>&2 2>&3)" || continue
+        [[ "$profile" != 0 ]] || continue
+        url="$(secret_input "Первичная настройка Mihomo" "Вставьте полный URL subscription.\n\nДля Citadel/Remnawave можно вставить базовую ссылку: /mihomo будет добавлен автоматически.")" || continue
+        [[ -n "$url" ]] || { msg "Mihomo" "Пустая ссылка не применена."; continue; }
+
+        install -d -m 700 /run/awg-pbr
+        init_tmp="$(mktemp /run/awg-pbr/mihomo-init.XXXXXX)"
+        chmod 600 "$init_tmp"
+        {
+          printf 'MIHOMO_PROVIDER_URL=%q\n' "$url"
+          printf 'MIHOMO_PROVIDER_PROFILE=%q\n' "$profile"
+        } >"$init_tmp"
+        unset url
+
+        title="Первичная настройка Mihomo"
+        if capture "$MIHOMO_CONFIGURE" init "$init_tmp"; then
+          rm -f "$init_tmp"
+          init_tmp=""
+          if confirm "Mihomo provider готов" "Provider cache успешно загружен и проверен. Перейти к выбору точки выхода?"; then
+            mihomo_node_menu
+          fi
+        else
+          rm -f "$init_tmp"
+          init_tmp=""
+        fi
         ;;
       0) return 0 ;;
     esac
