@@ -73,4 +73,21 @@ if grep -Fq 'masquerade' "$tmp/lockdown.nft"; then
 fi
 sudo nft -c -f "$tmp/lockdown.nft"
 
+echo "=== unconfigured transport renders lockdown only ==="
+echo unconfigured >"$tmp/transport"
+AWG_ENV_FILE="$tmp/env" AWG_COMMON_FILE="$repo_root/src/awg-common" AWG_TRANSPORT_FILE="$tmp/transport" AWG_TRANSIT_LOCKDOWN=1 \
+  bash "$repo_root/src/awg-transit-nft" >"$tmp/lockdown-unconfigured.nft"
+grep -Fq 'policy drop;' "$tmp/lockdown-unconfigured.nft"
+if grep -Eq 'oifname "(awg0|mihomo0)"|ether saddr|masquerade' "$tmp/lockdown-unconfigured.nft"; then
+  echo 'FAIL: unconfigured lockdown references a transport path' >&2
+  exit 1
+fi
+if AWG_ENV_FILE="$tmp/env" AWG_COMMON_FILE="$repo_root/src/awg-common" AWG_TRANSPORT_FILE="$tmp/transport" ROUTER_MAC='02:11:22:33:44:55' \
+  bash "$repo_root/src/awg-transit-nft" >"$tmp/out" 2>"$tmp/err"; then
+  echo 'FAIL: normal Transit rules rendered without an active transport' >&2
+  exit 1
+fi
+grep -Fq 'No active transport is configured' "$tmp/err"
+echo awg >"$tmp/transport"
+
 echo "transit nft candidate: OK"
