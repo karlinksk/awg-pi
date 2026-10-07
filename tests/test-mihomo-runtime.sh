@@ -236,6 +236,8 @@ cmp -s "$tmp/before.yaml" "$tmp/state/providers/live.yaml"
 
 echo "=== runtime validation failure restores previous provider cache ==="
 cp "$tmp/state/providers/live.yaml" "$tmp/before-runtime-fail.yaml"
+cp "$tmp/state/last-fetch-path" "$tmp/before-last-fetch"
+cp "$tmp/state/last-provider-format" "$tmp/before-last-format"
 cat >"$tmp/new-valid.yaml" <<'YAML'
 mixed-port: 7890
 proxies:
@@ -252,8 +254,56 @@ if MOCK_PROVIDER_SOURCE="$tmp/new-valid.yaml" MOCK_PREPARE_FAIL=1 run_update >"$
   exit 1
 fi
 cmp -s "$tmp/before-runtime-fail.yaml" "$tmp/state/providers/live.yaml"
+cmp -s "$tmp/before-last-fetch" "$tmp/state/last-fetch-path"
+cmp -s "$tmp/before-last-format" "$tmp/state/last-provider-format"
 grep -Fq 'provider cache rolled back' "$tmp/err"
-[[ "$(grep -c '^prepare$' "$tmp/prepare.log")" -ge 2 ]]
+[[ "$(grep -c '^prepare
+echo "=== prepare validates and installs config atomically ==="
+cat >"$tmp/bin/render" <<'MOCK'
+#!/usr/bin/env bash
+cat <<'YAML'
+mixed-port: 7890
+allow-lan: false
+rules:
+  - MATCH,DIRECT
+YAML
+MOCK
+chmod +x "$tmp/bin/render"
+sudo env \
+  MIHOMO_BIN="$tmp/bin/mihomo" \
+  MIHOMO_RENDERER="$tmp/bin/render" \
+  MIHOMO_CONFIG_FILE="$tmp/etc/config.yaml" \
+  MIHOMO_STATE_DIR="$tmp/state" \
+  bash "$repo_root/src/awg-mihomo-prepare" >"$tmp/prepare.out"
+sudo grep -Fqx 'allow-lan: false' "$tmp/etc/config.yaml"
+grep -Fqx 'MIHOMO_CONFIG=UPDATED' "$tmp/prepare.out"
+
+echo "=== installer keeps Mihomo passive by default ==="
+if grep -Eq 'systemctl[[:space:]]+(enable|start|restart).*awg-mihomo' "$repo_root/install.sh"; then
+  echo 'FAIL: installer activates Mihomo without explicit configuration' >&2
+  exit 1
+fi
+grep -Fq 'install_project_helper src/awg-mihomo-config' "$repo_root/install.sh"
+grep -Fq 'install_project_unit units/awg-mihomo.service' "$repo_root/install.sh"
+grep -Fqx 'install_project_helper src/awg-mihomo-prepare "$MIHOMO_PREPARE_SCRIPT"' "$repo_root/install.sh"
+grep -Fqx 'install_project_helper src/awg-mihomo-configure "$MIHOMO_CONFIGURE_SCRIPT"' "$repo_root/install.sh"
+grep -Fqx 'MIHOMO_PREPARE_SCRIPT="/usr/local/sbin/awg-mihomo-prepare"' "$repo_root/install.sh"
+grep -Fqx 'MIHOMO_CONFIGURE_SCRIPT="/usr/local/sbin/awg-mihomo-configure"' "$repo_root/install.sh"
+if grep -Fq 'MIHOMO_PREPARE_SCRIPT="/usr/local/sbin/awg-mihomo-prepare"\nMIHOMO_CONFIGURE_SCRIPT=' "$repo_root/install.sh"; then
+  echo 'FAIL: installer contains a literal \n between Mihomo path variables' >&2
+  exit 1
+fi
+if grep -Fq '\\ninstall_project_helper src/awg-mihomo-configure' "$repo_root/install.sh"; then
+  echo 'FAIL: installer contains a literal \\n between Mihomo helpers' >&2
+  exit 1
+fi
+
+echo "mihomo runtime helpers: OK"
+ "$tmp/prepare.log")" -ge 2 ]]
+if find "$tmp/state/providers" -maxdepth 1 -type f -name '.subscription.backup.*' | grep -q .; then
+  echo 'FAIL: failed provider update left a backup temp file behind' >&2
+  exit 1
+fi
 
 echo "=== prepare validates and installs config atomically ==="
 cat >"$tmp/bin/render" <<'MOCK'
