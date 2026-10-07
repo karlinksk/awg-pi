@@ -18,6 +18,8 @@ required = [
     '"Обновить подписку — AUTO"',
     '"Обновить через выбранный канал"',
     '"Импортировать локальный профиль"',
+    '"Вставить provider / subscription"',
+    '"Staged provider / candidate"',
     '"Переключить транспорт на Mihomo"',
     '"Переключить транспорт на AmneziaWG"',
     '"Точка выхода / узел"',
@@ -69,12 +71,16 @@ assert "Весь маршрутизируемый трафик будет идт
 assert "SSH и Transit backup" in menu
 
 assert '--passwordbox "$prompt"' in menu
-assert '"$MIHOMO_CONFIGURE" provider-url set-file "$url_tmp"' in menu
+assert '"$MIHOMO_CONFIGURE" provider stage-url-file "$url_tmp"' in menu
+assert '"$MIHOMO_CONFIGURE" provider stage-file "$path" "$source_mode"' in menu
+assert '"$MIHOMO_CONFIGURE" provider candidate commit "$node_name" "$endpoint"' in menu
+assert 'provider-url set-file "$url_tmp"' not in menu
 assert '"$MIHOMO_CONFIGURE" provider update auto' in menu
 assert 'direct "DIRECT"' in menu
 assert 'router "Router/default"' not in menu
 assert "DIRECT → текущий healthy transport → остальные healthy transports" in menu
-assert '"$MIHOMO_CONFIGURE" provider import "$path"' in menu
+assert 'mktemp /run/awg-pbr/mihomo-paste.XXXXXX' in menu
+assert '"$MIHOMO_CONFIGURE" provider stage-file "$PASTE_TMP" "$source_mode"' in menu
 assert '"$AWG_TRANSPORT" select mihomo' in menu
 assert '"$AWG_TRANSPORT" select awg' in menu
 assert '"$MIHOMO_CONFIGURE" node select "$node_name" "$endpoint"' in menu
