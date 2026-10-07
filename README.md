@@ -22,8 +22,9 @@ Current stable release: **v1.2.0**
 v1.3.0 is the current multi-transport development line. It keeps the v1.2
 Selective/Transit semantics and adds a transport abstraction with an optional
 Mihomo backend, transactional AWG <-> Mihomo switching, provider-cache
-bootstrap/rollback, secure first-run onboarding and guarded manual exit-node
-selection.
+bootstrap/rollback, secure first-run onboarding, guarded manual exit-node
+selection, and a provider adapter layer for native Mihomo/Clash YAML, plain
+VLESS URI subscriptions and Base64 VLESS subscriptions.
 
 The v1.2.0 stable tag remains the updater target until the v1.3 hardware gate is
 complete. Do not treat develop/v1.3.0 as a stable installation source without an

@@ -112,6 +112,9 @@ run_update(){
   MOCK_SERVICE_ACTIVE="${MOCK_SERVICE_ACTIVE:-0}" \
   MOCK_FAIL_PATHS="${MOCK_FAIL_PATHS:-}" \
   MIHOMO_LAST_FETCH_FILE="$tmp/state/last-fetch-path" \
+  MIHOMO_LAST_FORMAT_FILE="$tmp/state/last-provider-format" \
+  MIHOMO_PROVIDER_HELPER="$repo_root/src/awg-mihomo-provider.py" \
+  PYTHON_BIN=python3 \
     bash "$repo_root/src/awg-mihomo-update" "$@"
 }
 
@@ -119,7 +122,14 @@ echo "=== provider first update ==="
 : >"$tmp/curl.log"; : >"$tmp/systemctl.log"; : >"$tmp/prepare.log"
 out="$(run_update)"
 grep -Fqx 'MIHOMO_PROVIDER=UPDATED' <<<"$out"
-cmp -s "$tmp/fixture.yaml" "$tmp/state/providers/live.yaml"
+grep -Fqx 'MIHOMO_PROVIDER_FORMAT_DETECTED=mihomo' <<<"$out"
+grep -Fqx 'MIHOMO_PROVIDER_NODE_COUNT=1' <<<"$out"
+grep -Fqx mihomo "$tmp/state/last-provider-format"
+grep -Fq 'proxies:' "$tmp/state/providers/live.yaml"
+if grep -Eq '^(mixed-port|proxy-groups|rules):' "$tmp/state/providers/live.yaml"; then
+  echo 'FAIL: normalized provider retained unrelated full-config sections' >&2
+  exit 1
+fi
 grep -Fqx 'interface=awg0' "$tmp/curl.log"
 grep -Fqx 'header=x-hwid: test-hwid' "$tmp/curl.log"
 grep -Fqx prepare "$tmp/prepare.log"
@@ -199,6 +209,18 @@ if [[ -s "$tmp/curl.log" ]]; then
   exit 1
 fi
 
+echo "=== updater normalizes plain VLESS subscription ==="
+cat >"$tmp/plain-vless.txt" <<'VLESS'
+vless://11111111-1111-1111-1111-111111111111@192.0.2.77:443?encryption=none&security=none&type=tcp#Plain%20VLESS
+VLESS
+out="$(MOCK_PROVIDER_SOURCE="$tmp/plain-vless.txt" run_update --format auto)"
+grep -Fqx 'MIHOMO_PROVIDER_FORMAT_DETECTED=vless' <<<"$out"
+grep -Fqx 'MIHOMO_PROVIDER_NODE_COUNT=1' <<<"$out"
+grep -Fqx vless "$tmp/state/last-provider-format"
+grep -Fq 'name: Plain VLESS' "$tmp/state/providers/live.yaml"
+grep -Fq 'server: 192.0.2.77' "$tmp/state/providers/live.yaml"
+grep -Fq 'uuid: 11111111-1111-1111-1111-111111111111' "$tmp/state/providers/live.yaml"
+
 echo "=== invalid provider never replaces cache ==="
 cp "$tmp/state/providers/live.yaml" "$tmp/before.yaml"
 cat >"$tmp/invalid.yaml" <<'YAML'
@@ -214,6 +236,8 @@ cmp -s "$tmp/before.yaml" "$tmp/state/providers/live.yaml"
 
 echo "=== runtime validation failure restores previous provider cache ==="
 cp "$tmp/state/providers/live.yaml" "$tmp/before-runtime-fail.yaml"
+cp "$tmp/state/last-fetch-path" "$tmp/before-last-fetch"
+cp "$tmp/state/last-provider-format" "$tmp/before-last-format"
 cat >"$tmp/new-valid.yaml" <<'YAML'
 mixed-port: 7890
 proxies:
@@ -230,8 +254,14 @@ if MOCK_PROVIDER_SOURCE="$tmp/new-valid.yaml" MOCK_PREPARE_FAIL=1 run_update >"$
   exit 1
 fi
 cmp -s "$tmp/before-runtime-fail.yaml" "$tmp/state/providers/live.yaml"
+cmp -s "$tmp/before-last-fetch" "$tmp/state/last-fetch-path"
+cmp -s "$tmp/before-last-format" "$tmp/state/last-provider-format"
 grep -Fq 'provider cache rolled back' "$tmp/err"
 [[ "$(grep -c '^prepare$' "$tmp/prepare.log")" -ge 2 ]]
+if find "$tmp/state/providers" -maxdepth 1 -type f -name '.subscription.backup.*' | grep -q .; then
+  echo 'FAIL: failed provider update left a backup temp file behind' >&2
+  exit 1
+fi
 
 echo "=== prepare validates and installs config atomically ==="
 cat >"$tmp/bin/render" <<'MOCK'

@@ -42,6 +42,7 @@ proxies:
     port: 443
 YAML
 printf 'awg\n' >"${MIHOMO_LAST_FETCH_FILE:?}"
+printf 'mihomo\n' >"${MIHOMO_LAST_FORMAT_FILE:?}"
 MOCK
 
 cat >"$tmp/bin/openssl" <<'MOCK'
@@ -80,6 +81,7 @@ run_init(){
     MIHOMO_ENV_FILE="$CASE/etc/provider.env" \
     MIHOMO_PROVIDER_FILE="$CASE/state/providers/subscription.yaml" \
     MIHOMO_LAST_FETCH_FILE="$CASE/state/last-fetch-path" \
+    MIHOMO_LAST_FORMAT_FILE="$CASE/state/last-provider-format" \
     MIHOMO_PROVIDER_HELPER="$repo_root/src/awg-mihomo-provider.py" \
     MIHOMO_INSTALLER="$tmp/bin/installer" \
     MIHOMO_UPDATER="$tmp/bin/updater" \
@@ -98,10 +100,14 @@ write_init standard 'https://subscription.example/profile.yaml'
 out="$(run_init)"
 grep -Fqx 'MIHOMO_INITIALIZED=1' <<<"$out"
 grep -Fqx 'MIHOMO_PROVIDER_PROFILE=standard' <<<"$out"
+grep -Fqx 'MIHOMO_PROVIDER_FORMAT=auto' <<<"$out"
+grep -Fqx 'MIHOMO_PROVIDER_FORMAT_DETECTED=mihomo' <<<"$out"
 grep -Fqx 'MIHOMO_HWID_GENERATED=0' <<<"$out"
 grep -Fqx 'MIHOMO_NODE_COUNT=2' <<<"$out"
-grep -Fqx 'args=--cache-only --mode auto' "$CASE/update.log"
+grep -Fqx 'args=--cache-only --mode auto --format auto' "$CASE/update.log"
 grep -Fqx 'profile=standard' "$CASE/update.log"
+sudo grep -Fqx 'MIHOMO_PROVIDER_FORMAT=auto' "$CASE/etc/provider.env"
+grep -Fqx mihomo "$CASE/state/last-provider-format"
 grep -Fqx 'suffix=' "$CASE/update.log"
 grep -Fqx 'has_hwid=no' "$CASE/update.log"
 if grep -Fq '0123456789abcdef' <<<"$out"; then

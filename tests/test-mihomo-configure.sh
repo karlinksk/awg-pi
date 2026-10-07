@@ -113,6 +113,7 @@ run_cli(){
     MIHOMO_ENDPOINT_IP_FILE="$tmp/etc/endpoint-ip" \
     MIHOMO_EXPECTED_EGRESS_IP_FILE="$tmp/etc/expected-egress-ip" \
     MIHOMO_LAST_FETCH_FILE="$tmp/state/last-fetch-path" \
+    MIHOMO_LAST_FORMAT_FILE="$tmp/state/last-provider-format" \
     MIHOMO_PROVIDER_FILE="$tmp/state/providers/subscription.yaml" \
     MIHOMO_CONFIG_FILE="$tmp/etc/config.yaml" \
     MIHOMO_INSTALLER="$tmp/bin/installer" \
@@ -255,5 +256,26 @@ echo "=== local provider import reaches updater ==="
 : >"$tmp/update.log"
 run_cli provider import "$tmp/input.env" >/dev/null
 grep -Fqx "update --file $tmp/input.env" "$tmp/update.log"
+
+echo "=== provider format change is transactional ==="
+sudo sh -c "printf '%s\n' 'MIHOMO_PROVIDER_URL=https://file.example/private-token' 'MIHOMO_PROVIDER_FORMAT=auto' >'$tmp/etc/provider.env'"
+sudo chmod 600 "$tmp/etc/provider.env"
+: >"$tmp/update.log"
+out="$(run_cli provider format set vless)"
+sudo grep -Fqx 'MIHOMO_PROVIDER_FORMAT=vless' "$tmp/etc/provider.env"
+grep -Fqx 'update --mode auto --format vless' "$tmp/update.log"
+grep -Fqx 'MIHOMO_PROVIDER_FORMAT=vless' <<<"$out"
+
+echo "=== failed provider format change restores previous format ==="
+if MOCK_UPDATE_FAIL=1 run_cli provider format set base64 >"$tmp/out" 2>"$tmp/err"; then
+  echo 'FAIL: failed provider format change was accepted' >&2
+  exit 1
+fi
+sudo grep -Fqx 'MIHOMO_PROVIDER_FORMAT=vless' "$tmp/etc/provider.env"
+if sudo grep -Fq 'MIHOMO_PROVIDER_FORMAT=base64' "$tmp/etc/provider.env"; then
+  echo 'FAIL: failed provider format change was not rolled back' >&2
+  exit 1
+fi
+grep -Fq 'previous format restored' "$tmp/err"
 
 echo "mihomo configure transaction: OK"

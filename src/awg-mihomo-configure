@@ -9,6 +9,7 @@ MIHOMO_ENV_FILE="${MIHOMO_ENV_FILE:-/etc/awg-pbr/transports/mihomo/provider.env}
 MIHOMO_ENDPOINT_IP_FILE="${MIHOMO_ENDPOINT_IP_FILE:-/etc/awg-pbr/transports/mihomo/endpoint-ip}"
 MIHOMO_EXPECTED_EGRESS_IP_FILE="${MIHOMO_EXPECTED_EGRESS_IP_FILE:-/etc/awg-pbr/transports/mihomo/expected-egress-ip}"
 MIHOMO_LAST_FETCH_FILE="${MIHOMO_LAST_FETCH_FILE:-/var/lib/awg-pbr/mihomo/last-fetch-path}"
+MIHOMO_LAST_FORMAT_FILE="${MIHOMO_LAST_FORMAT_FILE:-/var/lib/awg-pbr/mihomo/last-provider-format}"
 MIHOMO_PROVIDER_FILE="${MIHOMO_PROVIDER_FILE:-/var/lib/awg-pbr/mihomo/providers/subscription.yaml}"
 MIHOMO_CONFIG_FILE="${MIHOMO_CONFIG_FILE:-/etc/awg-pbr/transports/mihomo/config.yaml}"
 MIHOMO_INSTALLER="${MIHOMO_INSTALLER:-/usr/local/sbin/awg-mihomo-install}"
@@ -40,6 +41,7 @@ Usage:
   awg-mihomo-configure provider-url set-file FILE
   awg-mihomo-configure provider update [auto|mihomo|awg|router]
   awg-mihomo-configure provider import FILE
+  awg-mihomo-configure provider format set auto|mihomo|vless|base64
   awg-mihomo-configure node list
   awg-mihomo-configure node prepare NAME
   awg-mihomo-configure node select NAME ENDPOINT_IP --direct-confirmed
@@ -48,6 +50,7 @@ For init FILE is a root-trusted environment file. Required:
   MIHOMO_PROVIDER_URL
 Optional:
   MIHOMO_PROVIDER_PROFILE=standard|remnawave
+  MIHOMO_PROVIDER_FORMAT=auto|mihomo|vless|base64
   MIHOMO_PROVIDER_HWID          # reuse an existing stable HWID if available
   MIHOMO_PROVIDER_AUTHORIZATION
 
@@ -123,6 +126,19 @@ restore_unit_state(){
   fi
 }
 
+provider_format_requested(){
+  local value=auto
+  if [[ -r "$MIHOMO_ENV_FILE" ]]; then
+    # shellcheck disable=SC1090
+    source "$MIHOMO_ENV_FILE"
+    value="${MIHOMO_PROVIDER_FORMAT:-auto}"
+  fi
+  case "$value" in
+    auto|mihomo|vless|base64) printf '%s\n' "$value" ;;
+    *) printf '%s\n' invalid ;;
+  esac
+}
+
 provider_url_redacted(){
   local value=""
   if [[ -r "$MIHOMO_ENV_FILE" ]]; then
@@ -142,6 +158,8 @@ provider_url_redacted(){
 status_cmd(){
   printf 'Configured: %s\n' "$([[ -r "$MIHOMO_ENV_FILE" ]] && echo yes || echo no)"
   printf 'Provider URL: %s\n' "$(provider_url_redacted)"
+  printf 'Provider format requested: %s\n' "$(provider_format_requested)"
+  printf 'Provider format detected: %s\n' "$([[ -r "$MIHOMO_LAST_FORMAT_FILE" ]] && cat "$MIHOMO_LAST_FORMAT_FILE" || echo none)"
   printf 'Provider cache: %s\n' "$([[ -r "$MIHOMO_PROVIDER_FILE" ]] && echo ready || echo missing)"
   printf 'Selected node: %s\n' "$([[ -r "$MIHOMO_NODE_NAME_FILE" ]] && cat "$MIHOMO_NODE_NAME_FILE" || echo unknown)"
   printf 'Endpoint: %s\n' "$([[ -r "$MIHOMO_ENDPOINT_IP_FILE" ]] && cat "$MIHOMO_ENDPOINT_IP_FILE" || echo none)"
@@ -189,6 +207,8 @@ provider_url_set(){
        MIHOMO_PROVIDER_FILE="$MIHOMO_PROVIDER_FILE" \
        MIHOMO_BIN="$MIHOMO_BIN" \
        MIHOMO_LAST_FETCH_FILE="$MIHOMO_LAST_FETCH_FILE" \
+       MIHOMO_LAST_FORMAT_FILE="$MIHOMO_LAST_FORMAT_FILE" \
+       MIHOMO_PROVIDER_HELPER="$MIHOMO_PROVIDER_HELPER" \
        "$MIHOMO_UPDATER" --mode auto; then
     if [[ -s "$snapshot" ]]; then
       install -m 600 "$snapshot" "$MIHOMO_ENV_FILE"
@@ -229,6 +249,8 @@ provider_update(){
   MIHOMO_PROVIDER_FILE="$MIHOMO_PROVIDER_FILE" \
   MIHOMO_BIN="$MIHOMO_BIN" \
   MIHOMO_LAST_FETCH_FILE="$MIHOMO_LAST_FETCH_FILE" \
+  MIHOMO_LAST_FORMAT_FILE="$MIHOMO_LAST_FORMAT_FILE" \
+  MIHOMO_PROVIDER_HELPER="$MIHOMO_PROVIDER_HELPER" \
     "$MIHOMO_UPDATER" --mode "$mode"
 }
 
@@ -238,7 +260,45 @@ provider_import(){
   MIHOMO_PROVIDER_FILE="$MIHOMO_PROVIDER_FILE" \
   MIHOMO_BIN="$MIHOMO_BIN" \
   MIHOMO_LAST_FETCH_FILE="$MIHOMO_LAST_FETCH_FILE" \
+  MIHOMO_LAST_FORMAT_FILE="$MIHOMO_LAST_FORMAT_FILE" \
+  MIHOMO_PROVIDER_HELPER="$MIHOMO_PROVIDER_HELPER" \
     "$MIHOMO_UPDATER" --file "$file"
+}
+
+provider_format_set(){
+  local format="$1" snapshot
+  case "$format" in
+    auto|mihomo|vless|base64) ;;
+    *)
+      echo "Unsupported provider format: $format" >&2
+      return 2
+      ;;
+  esac
+
+  [[ -r "$MIHOMO_ENV_FILE" ]] || {
+    echo "Mihomo provider is not initialized" >&2
+    return 1
+  }
+
+  snapshot="$(mktemp)"
+  cp -a "$MIHOMO_ENV_FILE" "$snapshot"
+  write_env_key "$MIHOMO_ENV_FILE" MIHOMO_PROVIDER_FORMAT "$format"
+
+  if ! MIHOMO_ENV_FILE="$MIHOMO_ENV_FILE" \
+       MIHOMO_PROVIDER_FILE="$MIHOMO_PROVIDER_FILE" \
+       MIHOMO_BIN="$MIHOMO_BIN" \
+       MIHOMO_LAST_FETCH_FILE="$MIHOMO_LAST_FETCH_FILE" \
+       MIHOMO_LAST_FORMAT_FILE="$MIHOMO_LAST_FORMAT_FILE" \
+       MIHOMO_PROVIDER_HELPER="$MIHOMO_PROVIDER_HELPER" \
+       "$MIHOMO_UPDATER" --mode auto --format "$format"; then
+    install -m 600 "$snapshot" "$MIHOMO_ENV_FILE"
+    rm -f "$snapshot"
+    echo "Provider format change failed; previous format restored." >&2
+    return 1
+  fi
+
+  rm -f "$snapshot"
+  printf 'MIHOMO_PROVIDER_FORMAT=%s\n' "$format"
 }
 
 remove_env_key(){
@@ -390,7 +450,7 @@ node_select(){
 }
 
 init_cmd(){
-  local source_file="$1" tmp_input tmp_env snapshot rc profile url hwid="" suffix=""
+  local source_file="$1" tmp_input tmp_env snapshot rc profile provider_format url hwid="" suffix=""
   local hwid_generated=0 node_count=0
 
   trusted_config_file "$source_file" || {
@@ -420,6 +480,17 @@ init_cmd(){
   : "${MIHOMO_PROVIDER_URL:?MIHOMO_PROVIDER_URL is required}"
   url="$MIHOMO_PROVIDER_URL"
   profile="${MIHOMO_PROVIDER_PROFILE:-standard}"
+  provider_format="${MIHOMO_PROVIDER_FORMAT:-auto}"
+
+  case "$provider_format" in
+    auto|mihomo|vless|base64) ;;
+    *)
+      echo "Unsupported MIHOMO_PROVIDER_FORMAT: $provider_format" >&2
+      rm -f "$tmp_input" "$tmp_env"
+      rm -rf "$snapshot"
+      return 2
+      ;;
+  esac
 
   [[ "$url" =~ ^https?://[^[:space:]]+$ ]] || {
     echo "MIHOMO_PROVIDER_URL must be an http(s) URL without whitespace" >&2
@@ -458,6 +529,7 @@ init_cmd(){
   {
     printf 'MIHOMO_PROVIDER_URL=%q\n' "$url"
     printf 'MIHOMO_PROVIDER_PROFILE=%q\n' "$profile"
+    printf 'MIHOMO_PROVIDER_FORMAT=%q\n' "$provider_format"
     printf 'MIHOMO_FETCH_MODE=%q\n' auto
     [[ -z "$hwid" ]] || printf 'MIHOMO_PROVIDER_HWID=%q\n' "$hwid"
     [[ -z "$suffix" ]] || printf 'MIHOMO_UPDATE_SUFFIX=%q\n' "$suffix"
@@ -472,6 +544,7 @@ init_cmd(){
   snapshot_path "$MIHOMO_ENV_FILE" env "$snapshot"
   snapshot_path "$MIHOMO_PROVIDER_FILE" provider "$snapshot"
   snapshot_path "$MIHOMO_LAST_FETCH_FILE" fetch "$snapshot"
+  snapshot_path "$MIHOMO_LAST_FORMAT_FILE" format "$snapshot"
 
   rollback_init(){
     rc=$?
@@ -479,6 +552,7 @@ init_cmd(){
     restore_path "$MIHOMO_ENV_FILE" env "$snapshot"
     restore_path "$MIHOMO_PROVIDER_FILE" provider "$snapshot"
     restore_path "$MIHOMO_LAST_FETCH_FILE" fetch "$snapshot"
+    restore_path "$MIHOMO_LAST_FORMAT_FILE" format "$snapshot"
     rm -f "$tmp_input" "$tmp_env"
     rm -rf "$snapshot"
     echo "Mihomo initialization failed; previous provider state restored." >&2
@@ -492,7 +566,13 @@ init_cmd(){
 
   [[ -x "$MIHOMO_BIN" ]] || "$MIHOMO_INSTALLER"
 
-  MIHOMO_ENV_FILE="$MIHOMO_ENV_FILE"   MIHOMO_PROVIDER_FILE="$MIHOMO_PROVIDER_FILE"   MIHOMO_BIN="$MIHOMO_BIN"   MIHOMO_LAST_FETCH_FILE="$MIHOMO_LAST_FETCH_FILE"     "$MIHOMO_UPDATER" --cache-only --mode auto
+  MIHOMO_ENV_FILE="$MIHOMO_ENV_FILE" \
+  MIHOMO_PROVIDER_FILE="$MIHOMO_PROVIDER_FILE" \
+  MIHOMO_BIN="$MIHOMO_BIN" \
+  MIHOMO_LAST_FETCH_FILE="$MIHOMO_LAST_FETCH_FILE" \
+  MIHOMO_LAST_FORMAT_FILE="$MIHOMO_LAST_FORMAT_FILE" \
+  MIHOMO_PROVIDER_HELPER="$MIHOMO_PROVIDER_HELPER" \
+    "$MIHOMO_UPDATER" --cache-only --mode auto --format "$provider_format"
 
   if [[ -r "$MIHOMO_PROVIDER_FILE" && -r "$MIHOMO_PROVIDER_HELPER" ]]; then
     node_count="$("$PYTHON_BIN" "$MIHOMO_PROVIDER_HELPER" list "$MIHOMO_PROVIDER_FILE" 2>/dev/null |
@@ -505,6 +585,8 @@ init_cmd(){
 
   printf 'MIHOMO_INITIALIZED=1\n'
   printf 'MIHOMO_PROVIDER_PROFILE=%s\n' "$profile"
+  printf 'MIHOMO_PROVIDER_FORMAT=%s\n' "$provider_format"
+  printf 'MIHOMO_PROVIDER_FORMAT_DETECTED=%s\n' "$([[ -r "$MIHOMO_LAST_FORMAT_FILE" ]] && cat "$MIHOMO_LAST_FORMAT_FILE" || echo unknown)"
   printf 'MIHOMO_HWID_GENERATED=%s\n' "$hwid_generated"
   printf 'MIHOMO_NODE_COUNT=%s\n' "$node_count"
   printf 'ACTIVE_TRANSPORT=%s\n' "$(awg_transport_get)"
@@ -546,6 +628,14 @@ apply_cmd(){
   : "${MIHOMO_PROVIDER_URL:?MIHOMO_PROVIDER_URL is required}"
   : "${MIHOMO_NODE_FILTER:?MIHOMO_NODE_FILTER is required}"
   : "${MIHOMO_ENDPOINT_IP:?MIHOMO_ENDPOINT_IP is required}"
+
+  case "${MIHOMO_PROVIDER_FORMAT:-auto}" in
+    auto|mihomo|vless|base64) ;;
+    *)
+      echo "Unsupported MIHOMO_PROVIDER_FORMAT: ${MIHOMO_PROVIDER_FORMAT}" >&2
+      return 2
+      ;;
+  esac
 
   [[ "$MIHOMO_PROVIDER_URL" =~ ^https?://[^[:space:]]+$ ]] || {
     echo "MIHOMO_PROVIDER_URL must be an http(s) URL without whitespace" >&2
@@ -703,6 +793,10 @@ case "${1:-}" in
       import)
         [[ $# -eq 3 ]] || { usage >&2; exit 2; }
         provider_import "$3"
+        ;;
+      format)
+        [[ $# -eq 4 && "${3:-}" == set ]] || { usage >&2; exit 2; }
+        provider_format_set "$4"
         ;;
       *)
         usage >&2

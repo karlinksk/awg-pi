@@ -23,6 +23,10 @@ required = [
     '"MikroTik DIRECT обязателен"',
     '"Первичная настройка Mihomo"',
     '"Citadel / Remnawave"',
+    '"Формат подписки"',
+    '"Mihomo / Clash YAML"',
+    '"VLESS URI"',
+    '"Base64 VLESS"',
 ]
 
 for needle in required:
@@ -80,6 +84,9 @@ assert 'mktemp /run/awg-pbr/mihomo-init.XXXXXX' in menu
 assert 'chmod 600 "$init_tmp"' in menu
 assert '"$MIHOMO_CONFIGURE" init "$init_tmp"' in menu
 assert 'MIHOMO_PROVIDER_PROFILE=%q' in menu
+assert 'MIHOMO_PROVIDER_FORMAT=%q' in menu
+assert '"$MIHOMO_CONFIGURE" provider format set "$provider_format"' in menu
+assert 'mihomo_provider_format_dialog' in menu
 
 
 for needle in (
