@@ -414,7 +414,7 @@ mihomo_node_menu(){
 }
 
 mihomo_menu(){
-  local choice url path fetch_mode init_tmp profile
+  local choice url path fetch_mode init_tmp url_tmp profile
   while true; do
     choice="$(dialog --backtitle "$BACKTITLE" --title "Mihomo / Multi-Transport" --item-help --menu \
       "Управление Mihomo и subscription. AUTO обновляет профиль через доступный bootstrap-канал: текущий Mihomo → AmneziaWG → обычный путь через MikroTik." \
@@ -438,9 +438,18 @@ mihomo_menu(){
       2)
         url="$(secret_input "Mihomo subscription" "Вставьте полный URL подписки.\n\nСсылка не будет показана в итоговом статусе.")" || continue
         [[ -n "$url" ]] || { msg "Mihomo" "Пустая ссылка не применена."; continue; }
-        confirm "Mihomo subscription" "Скачать и проверить профиль по новой ссылке через AUTO bootstrap?\n\nПри ошибке текущая ссылка и provider cache останутся без изменений." || continue
-        run_interactive "Обновление ссылки Mihomo" "$MIHOMO_CONFIGURE" provider-url set "$url"
+        if ! confirm "Mihomo subscription" "Скачать и проверить профиль по новой ссылке через AUTO bootstrap?\n\nПри ошибке текущая ссылка и provider cache останутся без изменений."; then
+          unset url
+          continue
+        fi
+        install -d -m 700 /run/awg-pbr
+        url_tmp="$(mktemp /run/awg-pbr/mihomo-url.XXXXXX)"
+        chmod 600 "$url_tmp"
+        printf 'MIHOMO_PROVIDER_URL=%q\n' "$url" >"$url_tmp"
         unset url
+        run_interactive "Обновление ссылки Mihomo" "$MIHOMO_CONFIGURE" provider-url set-file "$url_tmp"
+        rm -f "$url_tmp"
+        url_tmp=""
         ;;
       3)
         run_interactive "Mihomo provider update — AUTO" "$MIHOMO_CONFIGURE" provider update auto
