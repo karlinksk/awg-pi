@@ -188,3 +188,11 @@ awg_transport_label(){
   esac
 }
 
+awg_transport_device(){
+  case "${1:-}" in
+    awg) printf '%s\n' "${VPN_IF:-awg0}" ;;
+    mihomo) printf '%s\n' "${MIHOMO_TUN_IF:-mihomo0}" ;;
+    *) return 1 ;;
+  esac
+}
+
