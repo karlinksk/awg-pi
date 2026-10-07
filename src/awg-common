@@ -162,9 +162,20 @@ awg_transport_valid(){
 }
 
 awg_transport_get(){
-  local transport
+  local transport dir
+  dir="$(dirname "$AWG_TRANSPORT_FILE")"
 
-  if [[ ! -e "$AWG_TRANSPORT_FILE" ]]; then
+  if [[ -e "$AWG_TRANSPORT_FILE" ]]; then
+    if [[ ! -r "$AWG_TRANSPORT_FILE" ]]; then
+      printf 'Transport state requires root: %s\n' "$AWG_TRANSPORT_FILE" >&2
+      return 3
+    fi
+  elif (( ${EUID:-$(id -u)} != 0 )) && [[ -d "$dir" && ! -x "$dir" ]]; then
+    # A root-only parent directory makes -e look like "missing" to an
+    # unprivileged caller. Do not silently fall back to AWG in that case.
+    printf 'Transport state requires root: %s\n' "$AWG_TRANSPORT_FILE" >&2
+    return 3
+  else
     printf '%s\n' awg
     return 0
   fi
