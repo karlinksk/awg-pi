@@ -30,7 +30,7 @@ TRANSPORT_CLI="/usr/local/sbin/awg-transport"
 MIHOMO_CONFIG_SCRIPT="/usr/local/sbin/awg-mihomo-config"
 MIHOMO_UPDATE_SCRIPT="/usr/local/sbin/awg-mihomo-update"
 MIHOMO_INSTALL_SCRIPT="/usr/local/sbin/awg-mihomo-install"
-MIHOMO_PREPARE_SCRIPT="/usr/local/sbin/awg-mihomo-prepare"
+MIHOMO_PREPARE_SCRIPT="/usr/local/sbin/awg-mihomo-prepare"\nMIHOMO_CONFIGURE_SCRIPT="/usr/local/sbin/awg-mihomo-configure"
 UPDATE_SCRIPT="/usr/local/sbin/awg-update"
 SETUP_SERVICE="/etc/systemd/system/awg-pbr-setup.service"
 HEALTH_SERVICE="/etc/systemd/system/awg-pbr-health.service"
@@ -693,7 +693,7 @@ install_project_helper src/awg-transport "$TRANSPORT_CLI"
 install_project_helper src/awg-mihomo-config "$MIHOMO_CONFIG_SCRIPT"
 install_project_helper src/awg-mihomo-update "$MIHOMO_UPDATE_SCRIPT"
 install_project_helper src/awg-mihomo-install "$MIHOMO_INSTALL_SCRIPT"
-install_project_helper src/awg-mihomo-prepare "$MIHOMO_PREPARE_SCRIPT"
+install_project_helper src/awg-mihomo-prepare "$MIHOMO_PREPARE_SCRIPT"\ninstall_project_helper src/awg-mihomo-configure "$MIHOMO_CONFIGURE_SCRIPT"
 install_project_helper src/awg-pbr-setup "$SETUP_SCRIPT"
 install_project_helper src/awg-transit-nft /usr/local/sbin/awg-transit-nft
 install_project_helper src/awg-transit-preflight /usr/local/sbin/awg-transit-preflight
@@ -782,7 +782,7 @@ EOF
 # -----------------------------------------------------------------------------
 STAGE="проверка компонентов управления"
 log "[10/12] Проверка awg-route / awg-menu / awg-update"
-for f in "$ROUTE_CLI" "$TRANSPORT_CLI" "$MIHOMO_CONFIG_SCRIPT" "$MIHOMO_UPDATE_SCRIPT" "$MIHOMO_INSTALL_SCRIPT" "$MIHOMO_PREPARE_SCRIPT" "$SETUP_SCRIPT" /usr/local/sbin/awg-menu /usr/local/sbin/awg-transit-nft /usr/local/sbin/awg-transit-preflight /usr/local/sbin/awg-transit-apply /usr/local/sbin/awg-transit-routing /usr/local/sbin/awg-mode-switch "$HEALTH_SCRIPT" /usr/local/sbin/awg-opencck-update /usr/local/sbin/awg-core-update "$UPDATE_SCRIPT"; do
+for f in "$ROUTE_CLI" "$TRANSPORT_CLI" "$MIHOMO_CONFIG_SCRIPT" "$MIHOMO_UPDATE_SCRIPT" "$MIHOMO_INSTALL_SCRIPT" "$MIHOMO_PREPARE_SCRIPT" "$MIHOMO_CONFIGURE_SCRIPT" "$SETUP_SCRIPT" /usr/local/sbin/awg-menu /usr/local/sbin/awg-transit-nft /usr/local/sbin/awg-transit-preflight /usr/local/sbin/awg-transit-apply /usr/local/sbin/awg-transit-routing /usr/local/sbin/awg-mode-switch "$HEALTH_SCRIPT" /usr/local/sbin/awg-opencck-update /usr/local/sbin/awg-core-update "$UPDATE_SCRIPT"; do
   [[ -x "$f" ]] || die "Не установлен исполняемый компонент: $f"
   bash -n "$f" || die "Синтаксическая проверка компонента не пройдена: $f"
 done

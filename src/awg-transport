@@ -23,6 +23,7 @@ SYSTEMCTL_BIN="${SYSTEMCTL_BIN:-systemctl}"
 AWG_ROUTE_BIN="${AWG_ROUTE_BIN:-/usr/local/sbin/awg-route}"
 HEALTH_SERVICE="${AWG_HEALTH_SERVICE:-awg-pbr-health.service}"
 MIHOMO_SERVICE="${MIHOMO_SERVICE:-awg-mihomo.service}"
+TRANSIT_PREFLIGHT="${AWG_TRANSIT_PREFLIGHT:-/usr/local/sbin/awg-transit-preflight}"
 MAINTENANCE_LOCK="${AWG_LOCK_FILE:-/run/awg-maintenance.lock}"
 SLEEP_BIN="${SLEEP_BIN:-sleep}"
 
@@ -105,8 +106,27 @@ wait_transport_healthy(){
   return 1
 }
 
+preflight_target_transport(){
+  local target="$1" mode tmp rc
+  mode="$(awg_mode_get)"
+  [[ "$mode" == transit ]] || return 0
+
+  tmp="$(mktemp)"
+  printf '%s\n' "$target" >"$tmp"
+  chmod 600 "$tmp"
+
+  if AWG_TRANSPORT_FILE="$tmp" "$TRANSIT_PREFLIGHT"; then
+    rm -f "$tmp"
+    return 0
+  else
+    rc=$?
+    rm -f "$tmp"
+    return "$rc"
+  fi
+}
+
 select_transport(){
-  local target="$1" previous had_state=0 previous_state="" started_mihomo=0 rc
+  local target="$1" previous had_state=0 previous_state="" started_mihomo=0 rc health_was_active=0
 
   awg_transport_valid "$target" || {
     echo "Unsupported transport: $target" >&2
@@ -153,7 +173,15 @@ select_transport(){
     return 1
   fi
 
+  "$SYSTEMCTL_BIN" is-active --quiet "$HEALTH_SERVICE" 2>/dev/null && health_was_active=1 || true
   "$SYSTEMCTL_BIN" stop "$HEALTH_SERVICE" >/dev/null 2>&1 || true
+
+  if ! preflight_target_transport "$target"; then
+    (( health_was_active == 1 )) && "$SYSTEMCTL_BIN" restart "$HEALTH_SERVICE" >/dev/null 2>&1 || true
+    (( started_mihomo == 1 )) && "$SYSTEMCTL_BIN" stop "$MIHOMO_SERVICE" >/dev/null 2>&1 || true
+    printf 'Target transport preflight failed; state unchanged: %s\n' "$target" >&2
+    return 1
+  fi
 
   rollback(){
     rc=$?

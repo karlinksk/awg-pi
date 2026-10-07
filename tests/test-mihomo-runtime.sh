@@ -77,6 +77,7 @@ cat >"$tmp/bin/prepare" <<'MOCK'
 #!/usr/bin/env bash
 set -Eeuo pipefail
 echo prepare >>"${MOCK_PREPARE_LOG:?}"
+[[ "${MOCK_PREPARE_FAIL:-0}" != 1 ]]
 MOCK
 
 chmod +x "$tmp/bin/"*
@@ -98,6 +99,7 @@ run_update(){
   MOCK_CURL_LOG="$tmp/curl.log" \
   MOCK_SYSTEMCTL_LOG="$tmp/systemctl.log" \
   MOCK_PREPARE_LOG="$tmp/prepare.log" \
+  MOCK_PREPARE_FAIL="${MOCK_PREPARE_FAIL:-0}" \
   MOCK_SERVICE_ACTIVE="${MOCK_SERVICE_ACTIVE:-0}" \
     bash "$repo_root/src/awg-mihomo-update"
 }
@@ -154,6 +156,27 @@ if MOCK_PROVIDER_SOURCE="$tmp/invalid.yaml" run_update >"$tmp/out" 2>"$tmp/err";
   exit 1
 fi
 cmp -s "$tmp/before.yaml" "$tmp/state/providers/live.yaml"
+
+echo "=== runtime validation failure restores previous provider cache ==="
+cp "$tmp/state/providers/live.yaml" "$tmp/before-runtime-fail.yaml"
+cat >"$tmp/new-valid.yaml" <<'YAML'
+mixed-port: 7890
+proxies:
+  - name: Different Node
+    type: socks5
+    server: 192.0.2.20
+    port: 1080
+proxy-groups: []
+rules: []
+YAML
+: >"$tmp/prepare.log"
+if MOCK_PROVIDER_SOURCE="$tmp/new-valid.yaml" MOCK_PREPARE_FAIL=1 run_update >"$tmp/out" 2>"$tmp/err"; then
+  echo 'FAIL: provider with failing runtime prepare was accepted' >&2
+  exit 1
+fi
+cmp -s "$tmp/before-runtime-fail.yaml" "$tmp/state/providers/live.yaml"
+grep -Fq 'provider cache rolled back' "$tmp/err"
+[[ "$(grep -c '^prepare$' "$tmp/prepare.log")" -ge 2 ]]
 
 echo "=== prepare validates and installs config atomically ==="
 cat >"$tmp/bin/render" <<'MOCK'
