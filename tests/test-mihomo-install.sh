@@ -19,87 +19,84 @@ chmod +x "$TMP/mock-mihomo"
 gzip -c "$TMP/mock-mihomo" >"$TMP/mihomo.gz"
 SHA="$(sha256sum "$TMP/mihomo.gz" | awk '{print $1}')"
 
-cat >"$TMP/bin/ip" <<'MOCK'
-#!/usr/bin/env bash
-exit 0
-MOCK
-chmod +x "$TMP/bin/ip"
-
-cat >"$TMP/bin/curl" <<'MOCK'
+cat >"$TMP/bin/fetch" <<'MOCK'
 #!/usr/bin/env bash
 set -Eeuo pipefail
-: "${MOCK_CURL_LOG:?}"
+: "${MOCK_FETCH_LOG:?}"
 : "${MOCK_ARCHIVE:?}"
+mode=auto
 out=""
-path=router
 while (($#)); do
   case "$1" in
-    --interface)
-      path=awg
-      printf 'interface=%s\n' "$2" >>"$MOCK_CURL_LOG"
-      shift 2
-      ;;
-    -o)
-      out="$2"
-      shift 2
-      ;;
+    --mode)
+      mode="$2"; shift 2 ;;
+    --output)
+      out="$2"; shift 2 ;;
+    --url)
+      printf 'url=%s\n' "$2" >>"$MOCK_FETCH_LOG"; shift 2 ;;
+    --)
+      break ;;
     *)
-      shift
-      ;;
+      shift ;;
   esac
 done
-printf 'path=%s\n' "$path" >>"$MOCK_CURL_LOG"
-case " ${MOCK_FAIL_PATHS:-} " in
-  *" $path "*) exit 35 ;;
-esac
-[[ -n "$out" ]]
+printf 'mode=%s\n' "$mode" >>"$MOCK_FETCH_LOG"
+[[ "${MOCK_FETCH_FAIL:-0}" != 1 ]] || exit 1
+path="${MOCK_FETCH_PATH:-}"
+if [[ -z "$path" ]]; then
+  case "$mode" in
+    direct|awg|mihomo) path="$mode" ;;
+    auto) path=direct ;;
+    *) exit 2 ;;
+  esac
+fi
 cp "$MOCK_ARCHIVE" "$out"
+printf 'AWG_FETCH_PATH=%s\n' "$path"
 MOCK
-chmod +x "$TMP/bin/curl"
+chmod +x "$TMP/bin/fetch"
 
 run_install(){
   local target="$1"; shift
   sudo env \
-    CURL_BIN="$TMP/bin/curl" \
-    IP_BIN="$TMP/bin/ip" \
+    AWG_FETCH_BIN="$TMP/bin/fetch" \
     MIHOMO_TARGET="$target" \
     MIHOMO_INSTALL_ASSET_URL="https://example.invalid/mihomo.gz" \
     MIHOMO_INSTALL_ASSET_SHA256="$SHA" \
-    MIHOMO_AWG_INTERFACE="awg0" \
     MOCK_ARCHIVE="$TMP/mihomo.gz" \
-    MOCK_CURL_LOG="$TMP/curl.log" \
-    MOCK_FAIL_PATHS="${MOCK_FAIL_PATHS:-}" \
+    MOCK_FETCH_LOG="$TMP/fetch.log" \
+    MOCK_FETCH_PATH="${MOCK_FETCH_PATH:-}" \
+    MOCK_FETCH_FAIL="${MOCK_FETCH_FAIL:-0}" \
     bash "$ROOT/src/awg-mihomo-install" "$@"
 }
 
-echo "=== installer AUTO uses AWG first ==="
-: >"$TMP/curl.log"
-out="$(run_install "$TMP/target-awg")"
-grep -Fqx 'path=awg' "$TMP/curl.log"
+echo "=== installer AUTO delegates to shared manager ==="
+: >"$TMP/fetch.log"
+out="$(MOCK_FETCH_PATH=direct run_install "$TMP/target-direct")"
+grep -Fqx 'mode=auto' "$TMP/fetch.log"
+grep -Fqx 'MIHOMO_BINARY_FETCH_PATH=direct' <<<"$out"
+"$TMP/target-direct" -v | grep -Fqx 'Mihomo Meta v1.19.32'
+
+echo "=== explicit AWG channel is preserved ==="
+: >"$TMP/fetch.log"
+out="$(MOCK_FETCH_PATH=awg run_install "$TMP/target-awg" --mode awg)"
+grep -Fqx 'mode=awg' "$TMP/fetch.log"
 grep -Fqx 'MIHOMO_BINARY_FETCH_PATH=awg' <<<"$out"
 "$TMP/target-awg" -v | grep -Fqx 'Mihomo Meta v1.19.32'
 
-echo "=== installer AUTO falls back to router/default ==="
-: >"$TMP/curl.log"
-out="$(MOCK_FAIL_PATHS=awg run_install "$TMP/target-router")"
-mapfile -t paths < <(grep '^path=' "$TMP/curl.log")
-[[ "${paths[0]}" == "path=awg" ]]
-[[ "${paths[1]}" == "path=router" ]]
-grep -Fqx 'MIHOMO_BINARY_FETCH_PATH=router' <<<"$out"
-"$TMP/target-router" -v | grep -Fqx 'Mihomo Meta v1.19.32'
-
-echo "=== explicit AWG failure does not silently switch paths ==="
-: >"$TMP/curl.log"
-if MOCK_FAIL_PATHS=awg run_install "$TMP/target-fail" --mode awg >"$TMP/out" 2>"$TMP/err"; then
-  echo 'FAIL: explicit AWG mode unexpectedly succeeded' >&2
+echo "=== explicit channel failure does not install partial binary ==="
+: >"$TMP/fetch.log"
+if MOCK_FETCH_FAIL=1 run_install "$TMP/target-fail" --mode direct >"$TMP/out" 2>"$TMP/err"; then
+  echo 'FAIL: explicit DIRECT failure unexpectedly succeeded' >&2
   exit 1
 fi
-grep -Fqx 'path=awg' "$TMP/curl.log"
-if grep -Fq 'path=router' "$TMP/curl.log"; then
-  echo 'FAIL: explicit AWG mode silently used router fallback' >&2
-  exit 1
-fi
+grep -Fqx 'mode=direct' "$TMP/fetch.log"
 [[ ! -e "$TMP/target-fail" ]]
-grep -Fq 'Unable to download Mihomo binary through awg' "$TMP/err"
+grep -Fq 'Unable to download Mihomo binary through bootstrap manager' "$TMP/err"
+
+echo "=== legacy router mode maps to DIRECT ==="
+: >"$TMP/fetch.log"
+out="$(MOCK_FETCH_PATH=direct run_install "$TMP/target-legacy" --mode router)"
+grep -Fqx 'mode=direct' "$TMP/fetch.log"
+grep -Fqx 'MIHOMO_BINARY_FETCH_PATH=direct' <<<"$out"
 
 echo "mihomo installer bootstrap: OK"
