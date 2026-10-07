@@ -1,15 +1,15 @@
-name: v1.2.0 CI
+name: v1.3.0 CI
 
 on:
   push:
     branches:
-      - 'develop/v1.2.0'
-      - 'feature/v1.2-*'
-      - 'rc/v1.2.0-*'
+      - 'develop/v1.3.0'
+      - 'feature/v1.3-*'
+      - 'rc/v1.3.0-*'
   pull_request:
     branches:
       - main
-      - 'develop/v1.2.0'
+      - 'develop/v1.3.0'
 
 jobs:
   shell:
@@ -28,6 +28,7 @@ jobs:
           bash -n install.sh
           bash -n src/awg-common
           bash -n src/awg-route
+          bash -n src/awg-transport
           bash -n src/awg-pbr-setup
           bash -n src/awg-transit-nft
           bash -n src/awg-transit-preflight
@@ -40,6 +41,7 @@ jobs:
           bash -n src/awg-update
           bash -n src/awg-menu
           bash -n tests/test-common.sh
+          bash -n tests/test-transport.sh
           bash -n tests/test-mode.sh
           bash -n tests/test-route-mode.sh
           bash -n tests/test-setup-mode.sh
@@ -58,10 +60,11 @@ jobs:
           bash -n tests/test-redaction.sh
       - name: ShellCheck errors
         run: |
-          shellcheck -S error install.sh src/awg-common src/awg-route src/awg-pbr-setup src/awg-transit-nft src/awg-transit-preflight src/awg-transit-apply src/awg-transit-routing src/awg-mode-switch src/awg-pbr-health src/awg-opencck-update src/awg-core-update src/awg-update src/awg-menu tests/test-common.sh tests/test-mode.sh tests/test-route-mode.sh tests/test-setup-mode.sh tests/test-transit-nft.sh tests/test-transit-preflight.sh tests/test-transit-apply.sh tests/test-transit-routing.sh tests/test-health-mode.sh tests/test-mode-switch.sh tests/test-upgrade-mode.sh tests/test-opencck-updater.sh tests/test-direct-domain-precedence.sh tests/mock-curl.sh tests/test-nft-template.sh
+          shellcheck -S error install.sh src/awg-common src/awg-route src/awg-transport src/awg-pbr-setup src/awg-transit-nft src/awg-transit-preflight src/awg-transit-apply src/awg-transit-routing src/awg-mode-switch src/awg-pbr-health src/awg-opencck-update src/awg-core-update src/awg-update src/awg-menu tests/test-common.sh tests/test-transport.sh tests/test-mode.sh tests/test-route-mode.sh tests/test-setup-mode.sh tests/test-transit-nft.sh tests/test-transit-preflight.sh tests/test-transit-apply.sh tests/test-transit-routing.sh tests/test-health-mode.sh tests/test-mode-switch.sh tests/test-upgrade-mode.sh tests/test-opencck-updater.sh tests/test-direct-domain-precedence.sh tests/mock-curl.sh tests/test-nft-template.sh
       - name: Unit tests
         run: |
           bash tests/test-common.sh
+          bash tests/test-transport.sh
           bash tests/test-mode.sh
           bash tests/test-route-mode.sh
           bash tests/test-setup-mode.sh
