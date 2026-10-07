@@ -175,6 +175,29 @@ sudo grep -Fq 'oifname "mihomo0" accept' "$tmp/active.nft"
 sudo grep -Fq 'oifname "mihomo0" masquerade' "$tmp/active.nft"
 echo awg >"$tmp/transport"
 
+echo "=== selective setup without configured transport ==="
+echo unconfigured >"$tmp/transport"
+echo selective >"$tmp/mode"
+out="$(run_setup)"
+grep -Fqx 'AWG_SETUP_MODE=selective' <<<"$out"
+sudo grep -Fq 'oifname "eth0" accept' "$tmp/active.nft"
+if sudo grep -Eq 'oifname "(awg0|mihomo0)"' "$tmp/active.nft"; then
+  echo 'FAIL: unconfigured Selective setup contains transport egress' >&2
+  exit 1
+fi
+
+echo "=== transit setup without configured transport stays lockdown ==="
+echo transit >"$tmp/mode"
+out="$(run_setup)"
+grep -Fqx 'AWG_SETUP_MODE=transit' <<<"$out"
+grep -Fqx 'TRANSPORT=unconfigured' <<<"$out"
+sudo grep -Fq 'policy drop;' "$tmp/active.nft"
+if sudo grep -Fq 'ether saddr' "$tmp/active.nft"; then
+  echo 'FAIL: unconfigured Transit setup accepted new client forwarding' >&2
+  exit 1
+fi
+echo awg >"$tmp/transport"
+
 echo "=== transit router failure leaves lockdown ==="
 echo transit >"$tmp/mode"
 if MOCK_ROUTER_UP=0 run_setup >"$tmp/out" 2>"$tmp/err"; then
