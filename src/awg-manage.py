@@ -389,16 +389,13 @@ def profile(text):
     if [s[0] for s in sections] != ['Interface', 'Peer']:
         raise ValueError('Нужны ровно [Interface] и один [Peer] для gateway')
     interface, peer = sections[0][1], sections[1][1]
-    # AWG v3 header protection profiles need not contain the legacy H1-H4.
-    # Let the installed core validate AWG combinations and value ranges.
+    # Plain WireGuard and AmneziaWG profiles share this backend. AWG-specific
+    # fields are optional here; the installed core validates their combinations
+    # and value ranges when they are present.
     for section, required in ((interface, ('PrivateKey', 'Address')),
                               (peer, ('PublicKey', 'Endpoint', 'AllowedIPs'))):
         if not all(k in section for k in required):
             raise ValueError('Отсутствуют обязательные native AmneziaWG поля')
-    awg_fields = {'Jc', 'Jmin', 'Jmax', 'S1', 'S2', 'S3', 'S4', 'H1', 'H2', 'H3', 'H4',
-                  'I1', 'I2', 'I3', 'I4', 'I5', 'HeaderProtectionKey'}
-    if not awg_fields.intersection(interface):
-        raise ValueError('В профиле отсутствуют параметры AmneziaWG')
     for section in (interface, peer):
         for key in ('PrivateKey', 'PublicKey', 'PresharedKey', 'HeaderProtectionKey'):
             if key in section:
