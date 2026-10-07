@@ -539,6 +539,7 @@ vpn_menu(){
         2 "Перезапустить awg0 и health monitor" "Перезапускает сам туннель AmneziaWG и его контроль здоровья. Возможен краткий обрыв backup VPN-трафика." \
         3 "Конфигурация AmneziaWG" "Установка нового native .conf текстом/из файла или rollback предыдущего профиля." \
         4 "Mihomo / Multi-Transport" "Subscription, bootstrap, выбор точки выхода и транзакционное переключение AWG ↔ Mihomo." \
+        5 "Первичная настройка transport" "Используется в состоянии unconfigured/recovery: выбрать первый backend из имеющегося AWG профиля или Mihomo subscription/profile." \
         0 "Назад" "Возвращает в главное меню без изменений." 3>&1 1>&2 2>&3)" || return 0
       case "$choice" in
         1)
@@ -552,6 +553,7 @@ vpn_menu(){
           ;;
         3) awg_config_menu ;;
         4) mihomo_menu ;;
+        5) run_interactive "Первичная настройка transport" "$AWG_FIRST_RUN" wizard ;;
         0) return 0 ;;
       esac
       continue
@@ -564,6 +566,7 @@ vpn_menu(){
       3 "Перезапустить awg0 и health monitor" "Перезапускает туннель AmneziaWG и проверку здоровья; VPN-трафик может кратковременно перейти в FAIL-OPEN/DIRECT." \
       4 "Конфигурация AmneziaWG" "Установка нового native .conf текстом/из файла или rollback предыдущего профиля." \
       5 "Mihomo / Multi-Transport" "Subscription, bootstrap-каналы, локальный импорт и транзакционное переключение AWG ↔ Mihomo." \
+      6 "Первичная настройка transport" "Используется в состоянии unconfigured/recovery: выбрать первый backend из имеющегося AWG профиля или Mihomo subscription/profile." \
       0 "Назад" "Возвращает в главное меню без изменений." 3>&1 1>&2 2>&3)" || return 0
     case "$choice" in
       1)
@@ -582,6 +585,7 @@ vpn_menu(){
         ;;
       4) awg_config_menu ;;
       5) mihomo_menu ;;
+      6) run_interactive "Первичная настройка transport" "$AWG_FIRST_RUN" wizard ;;
       0) return 0 ;;
     esac
   done
@@ -727,12 +731,12 @@ while true; do
 
 Стрелки — выбор, Enter — открыть. Внизу показано пояснение выделенного пункта." 32 106 15 \
     1 "Состояние системы" "Сводка режима, health, сервисов, списков и безопасно отредактированного состояния AmneziaWG; ничего не меняет." \
-    2 "VPN-маршрутизация" "Управление VPN policy/Transit, перезапуском awg0 и профилем AmneziaWG." \
+    2 "VPN-маршрутизация" "Управление Selective/Transit, transport backends, AmneziaWG и Mihomo/recovery." \
     3 "Домены VPN" "Ручной список доменов, которые в Selective должны направляться через AmneziaWG." \
     4 "DIRECT-исключения" "Ручной список доменов, которые в Selective всегда должны идти напрямую, даже при пересечении с VPN-правилами." \
     5 "OpenCCK" "Подключение и обслуживание внешних списков доменов/IP/CIDR для Selective-классификации." \
     6 "Клиенты" "Allow-list устройств для Selective PBR. Пустой список означает всех клиентов, использующих Pi как gateway." \
-    7 "Диагностика" "Запускает расширенную проверку сети, сервисов, AWG и fail-open/fail-closed логики; формирует локальный отчёт." \
+    7 "Диагностика" "Запускает расширенную проверку сети, active transport и fail-open/fail-closed логики; формирует локальный отчёт." \
     8 "Обновления" "Проверка и установка стабильных обновлений AWG Pi Gateway и AmneziaWG core." \
     9 "Журналы" "Показывает последние записи systemd для AWG, health monitor, dnsmasq, setup и OpenCCK updater." \
     10 "Системные функции" "Reload, reboot/poweroff, перенастройка LAN/DNS и выбор Operating mode." \
