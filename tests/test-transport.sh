@@ -43,7 +43,15 @@ export DATE_BIN="$TMP/bin/date"
 export CURL_BIN="$TMP/bin/curl"
 export MIHOMO_EXPECTED_EGRESS_IP_FILE="$TMP/expected"
 CLI="$ROOT/src/awg-transport"
-[[ "$($CLI get)" == awg ]]
+[[ "$($CLI get)" == unconfigured ]]
+OUT="$($CLI status)"
+grep -Fq 'Transport ID: unconfigured' <<<"$OUT"
+grep -Fq 'Transport health: not-ready' <<<"$OUT"
+if $CLI check >/dev/null 2>&1; then
+  echo 'unconfigured transport unexpectedly passed health check' >&2
+  exit 1
+fi
+printf '%s\n' awg >"$TMP/transport"
 OUT="$($CLI status)"
 grep -Fq 'Transport ID: awg' <<<"$OUT"
 grep -Fq 'Transport health: healthy' <<<"$OUT"
