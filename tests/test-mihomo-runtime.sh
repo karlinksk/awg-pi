@@ -33,35 +33,48 @@ grep -Fqx "    path: '$tmp/state/providers/subscription.yaml'" "$tmp/rendered.ya
 grep -Fqx "    filter: '^Test Node$'" "$tmp/rendered.yaml"
 grep -Fqx "        - '.server = \"192.0.2.10\"'" "$tmp/rendered.yaml"
 
-cat >"$tmp/bin/curl" <<'MOCK'
+cat >"$tmp/bin/fetch" <<'MOCK'
 #!/usr/bin/env bash
 set -Eeuo pipefail
-out=""
-path=router
-: "${MOCK_CURL_LOG:?}"
+: "${MOCK_FETCH_LOG:?}"
 : "${MOCK_PROVIDER_SOURCE:?}"
+mode=auto
+out=""
 while (($#)); do
   case "$1" in
-    -o)
+    --mode)
+      mode="$2"; shift 2 ;;
+    --output)
       out="$2"; shift 2 ;;
-    --interface)
-      path=awg
-      printf 'interface=%s\n' "$2" >>"$MOCK_CURL_LOG"; shift 2 ;;
-    -x)
-      path=mihomo
-      printf 'proxy=%s\n' "$2" >>"$MOCK_CURL_LOG"; shift 2 ;;
-    -H)
-      printf 'header=%s\n' "$2" >>"$MOCK_CURL_LOG"; shift 2 ;;
+    --url)
+      printf 'url=%s\n' "$2" >>"$MOCK_FETCH_LOG"; shift 2 ;;
+    --)
+      shift
+      while (($#)); do
+        case "$1" in
+          -H)
+            printf 'header=%s\n' "$2" >>"$MOCK_FETCH_LOG"; shift 2 ;;
+          *)
+            shift ;;
+        esac
+      done
+      ;;
     *)
       shift ;;
   esac
 done
-printf 'path=%s\n' "$path" >>"$MOCK_CURL_LOG"
-[[ -n "$out" ]]
-case " ${MOCK_FAIL_PATHS:-} " in
-  *" $path "*) exit 7 ;;
-esac
+path="${MOCK_FETCH_PATH:-}"
+if [[ -z "$path" ]]; then
+  case "$mode" in
+    direct|awg|mihomo) path="$mode" ;;
+    auto) path=direct ;;
+    *) exit 2 ;;
+  esac
+fi
+printf 'mode=%s\npath=%s\n' "$mode" "$path" >>"$MOCK_FETCH_LOG"
+[[ "${MOCK_FETCH_FAIL:-0}" != 1 ]] || exit 1
 cp "$MOCK_PROVIDER_SOURCE" "$out"
+printf 'AWG_FETCH_PATH=%s\n' "$path"
 MOCK
 
 cat >"$tmp/bin/mihomo" <<'MOCK'
@@ -102,15 +115,16 @@ run_update(){
   MIHOMO_BIN="$tmp/bin/mihomo" \
   MIHOMO_PROVIDER_FILE="$tmp/state/providers/live.yaml" \
   MIHOMO_PREPARE="$tmp/bin/prepare" \
-  CURL_BIN="$tmp/bin/curl" \
+  AWG_FETCH_BIN="$tmp/bin/fetch" \
   SYSTEMCTL_BIN="$tmp/bin/systemctl" \
   MOCK_PROVIDER_SOURCE="${MOCK_PROVIDER_SOURCE:-$tmp/fixture.yaml}" \
-  MOCK_CURL_LOG="$tmp/curl.log" \
+  MOCK_FETCH_LOG="$tmp/fetch.log" \
   MOCK_SYSTEMCTL_LOG="$tmp/systemctl.log" \
   MOCK_PREPARE_LOG="$tmp/prepare.log" \
   MOCK_PREPARE_FAIL="${MOCK_PREPARE_FAIL:-0}" \
   MOCK_SERVICE_ACTIVE="${MOCK_SERVICE_ACTIVE:-0}" \
-  MOCK_FAIL_PATHS="${MOCK_FAIL_PATHS:-}" \
+  MOCK_FETCH_PATH="${MOCK_FETCH_PATH:-}" \
+  MOCK_FETCH_FAIL="${MOCK_FETCH_FAIL:-0}" \
   MIHOMO_LAST_FETCH_FILE="$tmp/state/last-fetch-path" \
   MIHOMO_LAST_FORMAT_FILE="$tmp/state/last-provider-format" \
   MIHOMO_PROVIDER_HELPER="$repo_root/src/awg-mihomo-provider.py" \
@@ -119,7 +133,7 @@ run_update(){
 }
 
 echo "=== provider first update ==="
-: >"$tmp/curl.log"; : >"$tmp/systemctl.log"; : >"$tmp/prepare.log"
+: >"$tmp/fetch.log"; : >"$tmp/systemctl.log"; : >"$tmp/prepare.log"
 out="$(run_update)"
 grep -Fqx 'MIHOMO_PROVIDER=UPDATED' <<<"$out"
 grep -Fqx 'MIHOMO_PROVIDER_FORMAT_DETECTED=mihomo' <<<"$out"
@@ -130,8 +144,8 @@ if grep -Eq '^(mixed-port|proxy-groups|rules):' "$tmp/state/providers/live.yaml"
   echo 'FAIL: normalized provider retained unrelated full-config sections' >&2
   exit 1
 fi
-grep -Fqx 'interface=awg0' "$tmp/curl.log"
-grep -Fqx 'header=x-hwid: test-hwid' "$tmp/curl.log"
+grep -Fqx 'mode=awg' "$tmp/fetch.log"
+grep -Fqx 'header=x-hwid: test-hwid' "$tmp/fetch.log"
 grep -Fqx prepare "$tmp/prepare.log"
 
 echo "=== provider unchanged ==="
@@ -154,58 +168,53 @@ if grep -q 'restart awg-mihomo.service' "$tmp/systemctl.log"; then
   exit 1
 fi
 
-echo "=== provider direct fetch omits interface ==="
+echo "=== legacy direct interface maps to explicit DIRECT bootstrap ==="
 cat >"$tmp/provider.env" <<'ENV'
 MIHOMO_PROVIDER_URL='https://subscription.example/token'
 MIHOMO_PROVIDER_HWID='test-hwid'
 MIHOMO_UPDATE_INTERFACE='direct'
 ENV
-: >"$tmp/curl.log"
+: >"$tmp/fetch.log"
 run_update >/dev/null
-if grep -q '^interface=' "$tmp/curl.log"; then
-  echo 'FAIL: direct update unexpectedly used --interface' >&2
-  exit 1
-fi
+grep -Fqx 'mode=direct' "$tmp/fetch.log"
+grep -Fqx 'path=direct' "$tmp/fetch.log"
 
 echo "=== generic provider works without HWID ==="
 cat >"$tmp/provider.env" <<'ENV'
 MIHOMO_PROVIDER_URL='https://subscription.example/profile.yaml'
 MIHOMO_UPDATE_INTERFACE='direct'
 ENV
-: >"$tmp/curl.log"
+: >"$tmp/fetch.log"
 run_update >/dev/null
-if grep -q '^header=x-hwid:' "$tmp/curl.log"; then
+if grep -q '^header=x-hwid:' "$tmp/fetch.log"; then
   echo 'FAIL: generic provider unexpectedly sent x-hwid' >&2
   exit 1
 fi
 
-echo "=== AUTO bootstrap falls back from Mihomo to AWG ==="
+echo "=== AUTO delegates to bootstrap manager and records selected path ==="
 cat >"$tmp/provider.env" <<'ENV'
 MIHOMO_PROVIDER_URL='https://subscription.example/profile.yaml'
 MIHOMO_FETCH_MODE='auto'
-MIHOMO_FETCH_ORDER='mihomo awg router'
 ENV
-: >"$tmp/curl.log"
-out="$(MOCK_FAIL_PATHS='mihomo' run_update)"
-grep -Fqx 'MIHOMO_FETCH_PATH=awg' <<<"$out"
-grep -Fqx awg "$tmp/state/last-fetch-path"
-grep -Fq 'proxy=http://127.0.0.1:7890' "$tmp/curl.log"
-grep -Fq 'interface=awg0' "$tmp/curl.log"
+: >"$tmp/fetch.log"
+out="$(MOCK_FETCH_PATH=mihomo run_update)"
+grep -Fqx 'MIHOMO_FETCH_PATH=mihomo' <<<"$out"
+grep -Fqx mihomo "$tmp/state/last-fetch-path"
+grep -Fqx 'mode=auto' "$tmp/fetch.log"
 
-echo "=== AUTO bootstrap falls back to router/default ==="
-: >"$tmp/curl.log"
-out="$(MOCK_FAIL_PATHS='mihomo awg' run_update)"
-grep -Fqx 'MIHOMO_FETCH_PATH=router' <<<"$out"
-grep -Fqx router "$tmp/state/last-fetch-path"
-grep -Fq 'path=router' "$tmp/curl.log"
+echo "=== explicit AWG channel is passed through without hidden fallback ==="
+: >"$tmp/fetch.log"
+out="$(MOCK_FETCH_PATH=awg run_update --mode awg)"
+grep -Fqx 'MIHOMO_FETCH_PATH=awg' <<<"$out"
+grep -Fqx 'mode=awg' "$tmp/fetch.log"
 
 echo "=== local provider import bypasses network ==="
-: >"$tmp/curl.log"
+: >"$tmp/fetch.log"
 out="$(run_update --file "$tmp/fixture.yaml")"
 grep -Fqx 'MIHOMO_FETCH_PATH=file' <<<"$out"
 grep -Fqx file "$tmp/state/last-fetch-path"
-if [[ -s "$tmp/curl.log" ]]; then
-  echo 'FAIL: local import unexpectedly used curl' >&2
+if [[ -s "$tmp/fetch.log" ]]; then
+  echo 'FAIL: local import unexpectedly used bootstrap manager' >&2
   exit 1
 fi
 
