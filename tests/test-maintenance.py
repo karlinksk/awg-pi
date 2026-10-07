@@ -33,6 +33,18 @@ PublicKey = {KEY}
 Endpoint = 192.0.2.1:51820
 AllowedIPs = 0.0.0.0/0
 '''
+WG_PROFILE = '''[Interface]
+PrivateKey = {key}
+Address = 10.8.0.2/32
+DNS = 8.8.8.8
+Table = auto
+[Peer]
+PublicKey = {key}
+Endpoint = 192.0.2.1:51820
+AllowedIPs = 0.0.0.0/0
+PersistentKeepalive = 25
+'''.format(key=KEY)
+
 V3_PROFILE = PROFILE.replace('S1 = 0', 'S1 = 12').replace('S2 = 0', 'S2 = 12')
 for legacy in ('H1 = 1\n', 'H2 = 2\n', 'H3 = 3\n', 'H4 = 4\n'):
     V3_PROFILE = V3_PROFILE.replace(legacy, '')
@@ -137,12 +149,7 @@ class Maintenance(unittest.TestCase):
         self.assertEqual(endpoint, '192.0.2.55:51820')
 
     def test_plain_wireguard_profile_is_accepted(self):
-        plain = '\n'.join(
-            line for line in PROFILE.splitlines()
-            if not line.startswith(('Jc =', 'Jmin =', 'Jmax =', 'S1 =', 'S2 =',
-                                    'H1 =', 'H2 =', 'H3 =', 'H4 ='))
-        ) + '\n'
-        clean, endpoint = m.profile(plain)
+        clean, endpoint = m.profile(WG_PROFILE)
         self.assertEqual(endpoint, '192.0.2.1:51820')
         self.assertIn('Table = off', clean)
         self.assertNotIn('DNS =', clean)
