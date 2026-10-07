@@ -8,6 +8,7 @@ AWG_LOCK_FILE="${AWG_LOCK_FILE:-/run/awg-maintenance.lock}"
 MIHOMO_ENV_FILE="${MIHOMO_ENV_FILE:-/etc/awg-pbr/transports/mihomo/provider.env}"
 MIHOMO_ENDPOINT_IP_FILE="${MIHOMO_ENDPOINT_IP_FILE:-/etc/awg-pbr/transports/mihomo/endpoint-ip}"
 MIHOMO_EXPECTED_EGRESS_IP_FILE="${MIHOMO_EXPECTED_EGRESS_IP_FILE:-/etc/awg-pbr/transports/mihomo/expected-egress-ip}"
+MIHOMO_LAST_FETCH_FILE="${MIHOMO_LAST_FETCH_FILE:-/var/lib/awg-pbr/mihomo/last-fetch-path}"
 MIHOMO_PROVIDER_FILE="${MIHOMO_PROVIDER_FILE:-/var/lib/awg-pbr/mihomo/providers/subscription.yaml}"
 MIHOMO_CONFIG_FILE="${MIHOMO_CONFIG_FILE:-/etc/awg-pbr/transports/mihomo/config.yaml}"
 MIHOMO_INSTALLER="${MIHOMO_INSTALLER:-/usr/local/sbin/awg-mihomo-install}"
@@ -28,6 +29,9 @@ usage(){
 Usage:
   awg-mihomo-configure apply FILE
   awg-mihomo-configure status
+  awg-mihomo-configure provider-url set URL
+  awg-mihomo-configure provider update [auto|mihomo|awg|router]
+  awg-mihomo-configure provider import FILE
 
 FILE is a root-trusted environment file. Required:
   MIHOMO_PROVIDER_URL
@@ -101,9 +105,27 @@ restore_unit_state(){
   fi
 }
 
+provider_url_redacted(){
+  local value=""
+  if [[ -r "$MIHOMO_ENV_FILE" ]]; then
+    # shellcheck disable=SC1090
+    source "$MIHOMO_ENV_FILE"
+    value="${MIHOMO_PROVIDER_URL:-}"
+  fi
+  if [[ "$value" =~ ^(https?://[^/]+) ]]; then
+    printf '%s/[redacted]\n' "${BASH_REMATCH[1]}"
+  elif [[ -n "$value" ]]; then
+    printf '%s\n' configured-invalid
+  else
+    printf '%s\n' none
+  fi
+}
+
 status_cmd(){
   printf 'Configured: %s\n' "$([[ -r "$MIHOMO_ENV_FILE" ]] && echo yes || echo no)"
+  printf 'Provider URL: %s\n' "$(provider_url_redacted)"
   printf 'Provider cache: %s\n' "$([[ -r "$MIHOMO_PROVIDER_FILE" ]] && echo ready || echo missing)"
+  printf 'Last fetch path: %s\n' "$([[ -r "$MIHOMO_LAST_FETCH_FILE" ]] && cat "$MIHOMO_LAST_FETCH_FILE" || echo none)"
   printf 'Runtime config: %s\n' "$([[ -r "$MIHOMO_CONFIG_FILE" ]] && echo ready || echo missing)"
   printf 'Binary: %s\n' "$([[ -x "$MIHOMO_BIN" ]] && "$MIHOMO_BIN" -v 2>/dev/null | head -n1 || echo missing)"
   printf 'Service: %s\n' "$("$SYSTEMCTL_BIN" is-active "$MIHOMO_SERVICE" 2>/dev/null || true)"
@@ -111,6 +133,62 @@ status_cmd(){
   if [[ -x "$TRANSPORT_CLI" ]]; then
     "$TRANSPORT_CLI" check mihomo 2>/dev/null || true
   fi
+}
+
+write_env_key(){
+  local file="$1" key="$2" value="$3" dir tmp
+  dir="$(dirname "$file")"
+  mkdir -p "$dir"
+  chmod 700 "$dir"
+  tmp="$(mktemp "$dir/.provider-env.XXXXXX")"
+  if [[ -r "$file" ]]; then
+    grep -Ev "^${key}=" "$file" >"$tmp" || true
+  fi
+  printf '%s=%q\n' "$key" "$value" >>"$tmp"
+  chmod 600 "$tmp"
+  mv -f "$tmp" "$file"
+}
+
+provider_url_set(){
+  local url="$1" snapshot
+  [[ "$url" =~ ^https?://[^[:space:]]+$ ]] || {
+    echo "Provider URL must be an http(s) URL without whitespace" >&2
+    return 2
+  }
+
+  snapshot="$(mktemp)"
+  if [[ -r "$MIHOMO_ENV_FILE" ]]; then
+    cp -a "$MIHOMO_ENV_FILE" "$snapshot"
+  else
+    : >"$snapshot"
+  fi
+
+  write_env_key "$MIHOMO_ENV_FILE" MIHOMO_PROVIDER_URL "$url"
+
+  if ! MIHOMO_ENV_FILE="$MIHOMO_ENV_FILE" "$MIHOMO_UPDATER" --mode auto; then
+    if [[ -s "$snapshot" ]]; then
+      install -m 600 "$snapshot" "$MIHOMO_ENV_FILE"
+    else
+      rm -f "$MIHOMO_ENV_FILE"
+    fi
+    rm -f "$snapshot"
+    echo "Provider URL update failed; previous URL restored." >&2
+    return 1
+  fi
+
+  rm -f "$snapshot"
+  printf 'MIHOMO_PROVIDER_URL=UPDATED\n'
+}
+
+provider_update(){
+  local mode="${1:-auto}"
+  case "$mode" in auto|mihomo|awg|router) ;; *) return 2 ;; esac
+  MIHOMO_ENV_FILE="$MIHOMO_ENV_FILE" "$MIHOMO_UPDATER" --mode "$mode"
+}
+
+provider_import(){
+  local file="$1"
+  MIHOMO_ENV_FILE="$MIHOMO_ENV_FILE" "$MIHOMO_UPDATER" --file "$file"
 }
 
 apply_cmd(){
@@ -255,6 +333,26 @@ case "${1:-}" in
   status)
     [[ $# -eq 1 ]] || { usage >&2; exit 2; }
     status_cmd
+    ;;
+  provider-url)
+    [[ $# -eq 3 && "$2" == set ]] || { usage >&2; exit 2; }
+    provider_url_set "$3"
+    ;;
+  provider)
+    case "${2:-}" in
+      update)
+        [[ $# -le 3 ]] || { usage >&2; exit 2; }
+        provider_update "${3:-auto}"
+        ;;
+      import)
+        [[ $# -eq 3 ]] || { usage >&2; exit 2; }
+        provider_import "$3"
+        ;;
+      *)
+        usage >&2
+        exit 2
+        ;;
+    esac
     ;;
   -h|--help|help)
     usage
