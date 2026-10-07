@@ -111,8 +111,11 @@ choose_mihomo_node(){
   local nodes name prepared endpoint
   nodes="$("$MIHOMO_CONFIGURE" node list)" || return
   printf '\n=== Доступные Mihomo nodes ===\n%s\n\n' "$nodes" >"$TTY"
-  ask "Введите точное имя первого Mihomo node"
-  name="$REPLY"
+  name="${AWG_FIRST_RUN_NODE:-}"
+  if [[ -z "$name" ]]; then
+    ask "Введите точное имя первого Mihomo node"
+    name="$REPLY"
+  fi
   [[ -n "$name" ]] || {
     echo "Node name is required" >&2
     return 2
@@ -120,8 +123,11 @@ choose_mihomo_node(){
 
   prepared="$("$MIHOMO_CONFIGURE" node prepare "$name")" || return
   printf '%s\n' "$prepared" >"$TTY"
-  ask "Введите один IPv4 из Resolved IPv4 endpoints"
-  endpoint="$REPLY"
+  endpoint="${AWG_FIRST_RUN_ENDPOINT:-}"
+  if [[ -z "$endpoint" ]]; then
+    ask "Введите один IPv4 из Resolved IPv4 endpoints"
+    endpoint="$REPLY"
+  fi
   [[ -n "$endpoint" ]] || {
     echo "Endpoint IPv4 is required" >&2
     return 2
