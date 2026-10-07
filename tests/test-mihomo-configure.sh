@@ -216,12 +216,30 @@ sudo grep -Fqx "MIHOMO_PROVIDER_URL=https://new.example/profile" "$tmp/etc/provi
 grep -Fqx "update --mode auto" "$tmp/update.log"
 grep -Fqx "MIHOMO_PROVIDER_URL=UPDATED" <<<"$out"
 
+echo "=== provider URL file change keeps URL out of command arguments ==="
+printf "%s\n" "MIHOMO_PROVIDER_URL='https://file.example/private-token'" | sudo tee "$tmp/etc/url-input.env" >/dev/null
+sudo chmod 600 "$tmp/etc/url-input.env"
+: >"$tmp/update.log"
+out="$(run_cli provider-url set-file "$tmp/etc/url-input.env")"
+sudo grep -Fqx "MIHOMO_PROVIDER_URL=https://file.example/private-token" "$tmp/etc/provider.env"
+grep -Fqx "update --mode auto" "$tmp/update.log"
+grep -Fqx "MIHOMO_PROVIDER_URL=UPDATED" <<<"$out"
+
+echo "=== provider URL file must be trusted root 0600 ==="
+sudo chmod 644 "$tmp/etc/url-input.env"
+if run_cli provider-url set-file "$tmp/etc/url-input.env" >"$tmp/out" 2>"$tmp/err"; then
+  echo "FAIL: insecure provider URL file was accepted" >&2
+  exit 1
+fi
+grep -Fq "root-owned mode 0600" "$tmp/err"
+sudo chmod 600 "$tmp/etc/url-input.env"
+
 echo "=== failed provider URL change restores previous value ==="
 if MOCK_UPDATE_FAIL=1 run_cli provider-url set "https://broken.example/profile" >"$tmp/out" 2>"$tmp/err"; then
   echo "FAIL: failed provider URL update was accepted" >&2
   exit 1
 fi
-sudo grep -Fqx "MIHOMO_PROVIDER_URL=https://new.example/profile" "$tmp/etc/provider.env"
+sudo grep -Fqx "MIHOMO_PROVIDER_URL=https://file.example/private-token" "$tmp/etc/provider.env"
 if sudo grep -Fq "broken.example" "$tmp/etc/provider.env"; then
   echo "FAIL: broken provider URL was not rolled back" >&2
   exit 1

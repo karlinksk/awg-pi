@@ -21,6 +21,8 @@ required = [
     '"Переключить транспорт на AmneziaWG"',
     '"Точка выхода / узел"',
     '"MikroTik DIRECT обязателен"',
+    '"Первичная настройка Mihomo"',
+    '"Citadel / Remnawave"',
 ]
 
 for needle in required:
@@ -61,7 +63,7 @@ assert "Весь маршрутизируемый трафик будет идт
 assert "SSH и Transit backup" in menu
 
 assert '--passwordbox "$prompt"' in menu
-assert '"$MIHOMO_CONFIGURE" provider-url set "$url"' in menu
+assert '"$MIHOMO_CONFIGURE" provider-url set-file "$url_tmp"' in menu
 assert '"$MIHOMO_CONFIGURE" provider update auto' in menu
 assert '"$MIHOMO_CONFIGURE" provider import "$path"' in menu
 assert '"$AWG_TRANSPORT" select mihomo' in menu
@@ -70,6 +72,14 @@ assert '"$MIHOMO_CONFIGURE" node select "$node_name" "$endpoint" --direct-confir
 assert '"$MIHOMO_CONFIGURE" node prepare "$node_name"' in menu
 assert 'action=accept' in menu
 assert 'place-before=0' in menu
+assert 'mktemp /run/awg-pbr/mihomo-url.XXXXXX' in menu
+assert 'chmod 600 "$url_tmp"' in menu
+assert 'printf \'MIHOMO_PROVIDER_URL=%q\\n\' "$url" >"$url_tmp"' in menu
+assert 'provider-url set "$url"' not in menu
+assert 'mktemp /run/awg-pbr/mihomo-init.XXXXXX' in menu
+assert 'chmod 600 "$init_tmp"' in menu
+assert '"$MIHOMO_CONFIGURE" init "$init_tmp"' in menu
+assert 'MIHOMO_PROVIDER_PROFILE=%q' in menu
 
 
 for needle in (

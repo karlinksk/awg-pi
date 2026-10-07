@@ -130,6 +130,20 @@ out="$(run_update)"
 grep -Fqx 'MIHOMO_PROVIDER=UNCHANGED' <<<"$out"
 grep -Fqx prepare "$tmp/prepare.log"
 
+echo "=== cache-only bootstrap skips runtime prepare ==="
+: >"$tmp/prepare.log"
+: >"$tmp/systemctl.log"
+out="$(run_update --cache-only --mode awg)"
+grep -Fqx 'MIHOMO_RUNTIME=DEFERRED' <<<"$out"
+if [[ -s "$tmp/prepare.log" ]]; then
+  echo 'FAIL: cache-only update unexpectedly ran runtime prepare' >&2
+  exit 1
+fi
+if grep -q 'restart awg-mihomo.service' "$tmp/systemctl.log"; then
+  echo 'FAIL: cache-only update unexpectedly restarted Mihomo' >&2
+  exit 1
+fi
+
 echo "=== provider direct fetch omits interface ==="
 cat >"$tmp/provider.env" <<'ENV'
 MIHOMO_PROVIDER_URL='https://subscription.example/token'
