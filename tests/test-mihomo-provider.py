@@ -182,6 +182,17 @@ rules:
     assert cp.returncode != 0
     assert "unsupported transport" in cp.stderr
 
+    malformed = td / "malformed.txt"
+    malformed.write_text(
+        "vless://11111111-1111-1111-1111-111111111111@example.com:notaport"
+        "?encryption=none&security=none&type=tcp#BadPort\n",
+        encoding="utf-8",
+    )
+    cp = run("normalize", malformed, td / "malformed.yaml", ok=False)
+    assert cp.returncode != 0
+    assert "invalid server/port" in cp.stderr
+    assert "Traceback" not in cp.stderr
+
     bad = td / "bad.yaml"
     bad.write_text("rules: []\n", encoding="utf-8")
     cp = run("list", bad, ok=False)
