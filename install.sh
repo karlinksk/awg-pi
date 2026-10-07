@@ -662,8 +662,8 @@ dnsmasq --test || die "dnsmasq не принимает подготовленн�
 
 # Runtime helpers are maintained as standalone repository files so routing,
 # health, TUI and source-management behavior can be audited independently.
-STAGE="установка компонентов v1.2.0"
-log "[8b/12] CLI v1.2.0 + Transit + OpenCCK + SSH TUI"
+STAGE="установка компонентов v$AWG_PI_VERSION"
+log "[8b/12] CLI v$AWG_PI_VERSION + Multi-Transport + OpenCCK + SSH TUI"
 install_project_helper(){
   local remote="$1" target="$2" tmp
   tmp="$(mktemp)"
@@ -895,12 +895,16 @@ fi
 # -----------------------------------------------------------------------------
 STAGE="финальная диагностика"
 log "[12/12] Полная диагностика"
-"$ROUTE_CLI" reload
-"$ROUTE_CLI" diagnostics
 
+# Publish the new installed version before diagnostics so the final report
+# reflects the version whose components are actually running. Transactional
+# update rollback restores the previous /etc/awg-pbr tree if this stage fails.
 printf '%s\n' "$AWG_PI_VERSION" >/etc/awg-pbr/version
 chmod 600 /etc/awg-pbr/version
 ok "Версия AWG Pi Gateway зафиксирована: $AWG_PI_VERSION"
+
+"$ROUTE_CLI" reload
+"$ROUTE_CLI" diagnostics
 
 LATEST_DIAG="$(find "$LOG_DIR" -maxdepth 1 -type f -name 'diagnostics-*.txt' -printf '%T@ %p\n' | sort -nr | head -1 | cut -d' ' -f2-)"
 
@@ -919,7 +923,8 @@ printf "\nЛогика:\n"
 if [[ "$FINAL_MODE" == transit ]]; then
   printf "  Operating mode = MikroTik Transit / Backup VPN\n"
   printf "  MikroTik классифицирует и отправляет backup-трафик на Pi\n"
-  printf "  Pi forward/NAT = только через %s; AWG down = FAIL-CLOSED\n" "$VPN_IF"
+  printf "  Active transport after install = awg (AmneziaWG)\n"
+  printf "  Pi forward/NAT = только через active transport; transport down = FAIL-CLOSED\n"
   printf "  management + AWG endpoint = DIRECT через LAN router\n"
   printf "  OpenCCK/VPN/DIRECT/client state сохранён, но не классифицирует Transit\n"
 else
@@ -961,9 +966,9 @@ printf "  sudo awg-update core\n"
 printf "\nПервичная проверка режима:\n"
 if [[ "$FINAL_MODE" == transit ]]; then
   printf "  Клиентам НЕ назначать Pi как gateway/DNS для Transit.\n"
-  printf "  Сначала настройте один тестовый client/prefix на MikroTik по docs/MIKROTIK-TRANSIT-v1.2.0.md.\n"
+  printf "  Сначала настройте один тестовый client/prefix на MikroTik по Transit guide.\n"
   printf "  Проверка Pi: sudo awg-route mode status && sudo awg-route status\n"
-  printf "  IPv6: не использовать в Transit v1.2.0.\n"
+  printf "  IPv6: не использовать в Transit v1.3.0.\n"
 else
   printf "  IPv4:    свободный фиксированный адрес в %s\n" "$LAN_CIDR"
   printf "  Gateway: %s\n" "$PI_IP"
