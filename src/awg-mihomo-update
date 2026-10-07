@@ -2,6 +2,8 @@
 set -Eeuo pipefail
 
 MIHOMO_ENV_FILE="${MIHOMO_ENV_FILE:-/etc/awg-pbr/transports/mihomo/provider.env}"
+AWG_ENV_FILE="${AWG_ENV_FILE:-/etc/awg-pbr/env}"
+MIHOMO_LAST_FETCH_FILE="${MIHOMO_LAST_FETCH_FILE:-/var/lib/awg-pbr/mihomo/last-fetch-path}"
 MIHOMO_BIN="${MIHOMO_BIN:-/usr/local/bin/mihomo}"
 MIHOMO_PROVIDER_FILE="${MIHOMO_PROVIDER_FILE:-/var/lib/awg-pbr/mihomo/providers/subscription.yaml}"
 MIHOMO_SERVICE="${MIHOMO_SERVICE:-awg-mihomo.service}"
@@ -15,16 +17,81 @@ MIHOMO_PREPARE="${MIHOMO_PREPARE:-/usr/local/sbin/awg-mihomo-prepare}"
 }
 # shellcheck disable=SC1090
 source "$MIHOMO_ENV_FILE"
+# shellcheck disable=SC1090
+[[ -r "$AWG_ENV_FILE" ]] && source "$AWG_ENV_FILE"
 
-: "${MIHOMO_PROVIDER_URL:?MIHOMO_PROVIDER_URL is required}"
 
-MIHOMO_UPDATE_INTERFACE="${MIHOMO_UPDATE_INTERFACE:-awg0}"
+MIHOMO_UPDATE_INTERFACE="${MIHOMO_UPDATE_INTERFACE:-}"
+MIHOMO_FETCH_MODE="${MIHOMO_FETCH_MODE:-}"
+MIHOMO_FETCH_ORDER="${MIHOMO_FETCH_ORDER:-mihomo awg router}"
+MIHOMO_PROXY_URL="${MIHOMO_PROXY_URL:-http://127.0.0.1:7890}"
+MIHOMO_AWG_INTERFACE="${MIHOMO_AWG_INTERFACE:-${VPN_IF:-awg0}}"
+MIHOMO_ROUTER_INTERFACE="${MIHOMO_ROUTER_INTERFACE:-${LAN_IF:-eth0}}"
 MIHOMO_UPDATE_SUFFIX="${MIHOMO_UPDATE_SUFFIX:-}"
 MIHOMO_DEVICE_OS="${MIHOMO_DEVICE_OS:-Linux}"
 MIHOMO_DEVICE_VERSION="${MIHOMO_DEVICE_VERSION:-Debian}"
 MIHOMO_DEVICE_MODEL="${MIHOMO_DEVICE_MODEL:-AWG Pi Gateway}"
 MIHOMO_PROVIDER_USER_AGENT="${MIHOMO_PROVIDER_USER_AGENT:-mihomo/1.19.32}"
 MIHOMO_PROVIDER_AUTHORIZATION="${MIHOMO_PROVIDER_AUTHORIZATION:-}"
+
+usage(){
+  cat <<'USAGE'
+Usage:
+  awg-mihomo-update [--mode auto|mihomo|awg|router]
+  awg-mihomo-update --file PROFILE
+
+AUTO tries the current Mihomo proxy, then AmneziaWG, then the normal
+router/default path. On the router/default path MikroTik decides whether the
+request is DIRECT or policy-routed through SSTP/another router-side VPN.
+USAGE
+}
+
+local_file=""
+while (( $# )); do
+  case "$1" in
+    --mode)
+      [[ $# -ge 2 ]] || { usage >&2; exit 2; }
+      MIHOMO_FETCH_MODE="$2"
+      shift 2
+      ;;
+    --file)
+      [[ $# -ge 2 ]] || { usage >&2; exit 2; }
+      local_file="$2"
+      shift 2
+      ;;
+    -h|--help|help)
+      usage
+      exit 0
+      ;;
+    *)
+      echo "Unknown argument: $1" >&2
+      usage >&2
+      exit 2
+      ;;
+  esac
+done
+
+if [[ -z "$local_file" ]]; then
+  : "${MIHOMO_PROVIDER_URL:?MIHOMO_PROVIDER_URL is required}"
+fi
+
+# Backward compatibility with the first v1.3 runtime drafts.
+if [[ -z "$MIHOMO_FETCH_MODE" ]]; then
+  case "$MIHOMO_UPDATE_INTERFACE" in
+    "") MIHOMO_FETCH_MODE=auto ;;
+    awg0) MIHOMO_FETCH_MODE=awg ;;
+    direct) MIHOMO_FETCH_MODE=router ;;
+    *) MIHOMO_FETCH_MODE=auto ;;
+  esac
+fi
+
+case "$MIHOMO_FETCH_MODE" in
+  auto|mihomo|awg|router) ;;
+  *)
+    echo "Unsupported MIHOMO_FETCH_MODE: $MIHOMO_FETCH_MODE" >&2
+    exit 2
+    ;;
+esac
 
 [[ -x "$MIHOMO_BIN" ]] || {
   echo "Mihomo binary is unavailable: $MIHOMO_BIN" >&2
@@ -57,15 +124,71 @@ if [[ -n "$MIHOMO_PROVIDER_AUTHORIZATION" ]]; then
   curl_args+=(-H "Authorization: $MIHOMO_PROVIDER_AUTHORIZATION")
 fi
 
-if [[ -n "$MIHOMO_UPDATE_INTERFACE" && "$MIHOMO_UPDATE_INTERFACE" != direct ]]; then
-  curl_args+=(--interface "$MIHOMO_UPDATE_INTERFACE")
-fi
-
-url="$MIHOMO_PROVIDER_URL"
-if [[ -n "$MIHOMO_UPDATE_SUFFIX" ]]; then
+fetch_path=""
+url="${MIHOMO_PROVIDER_URL:-}"
+if [[ -n "$url" && -n "$MIHOMO_UPDATE_SUFFIX" ]]; then
   url="${url%/}/${MIHOMO_UPDATE_SUFFIX#/}"
 fi
-"$CURL_BIN" "${curl_args[@]}" "$url" -o "$tmp"
+
+fetch_once(){
+  local path="$1"
+  local -a args=("${curl_args[@]}")
+
+  case "$path" in
+    mihomo)
+      args+=(-x "$MIHOMO_PROXY_URL")
+      ;;
+    awg)
+      [[ -n "$MIHOMO_AWG_INTERFACE" ]] || return 1
+      args+=(--interface "$MIHOMO_AWG_INTERFACE")
+      ;;
+    router)
+      # Use the host's normal route. On this hop MikroTik may keep the request
+      # DIRECT or policy-route it through SSTP/another router-side VPN.
+      ;;
+
+    *)
+      return 2
+      ;;
+  esac
+
+  rm -f "$tmp"
+  if "$CURL_BIN" "${args[@]}" "$url" -o "$tmp"; then
+    fetch_path="$path"
+    return 0
+  fi
+  return 1
+}
+
+if [[ -n "$local_file" ]]; then
+  [[ -f "$local_file" && -r "$local_file" && ! -L "$local_file" ]] || {
+    echo "Local provider profile is not a readable regular file: $local_file" >&2
+    exit 2
+  }
+  cp -- "$local_file" "$tmp"
+  fetch_path=file
+elif [[ "$MIHOMO_FETCH_MODE" == auto ]]; then
+  fetched=0
+  for candidate in $MIHOMO_FETCH_ORDER; do
+    case "$candidate" in
+      mihomo|awg|router) ;;
+      *) continue ;;
+    esac
+    if fetch_once "$candidate"; then
+      fetched=1
+      break
+    fi
+  done
+  (( fetched == 1 )) || {
+    echo "Unable to download Mihomo provider through any bootstrap path" >&2
+    exit 1
+  }
+else
+  fetch_once "$MIHOMO_FETCH_MODE" || {
+    echo "Unable to download Mihomo provider through $MIHOMO_FETCH_MODE" >&2
+    exit 1
+  }
+fi
 
 [[ -s "$tmp" ]] || {
   echo "Downloaded Mihomo provider is empty" >&2
@@ -79,6 +202,13 @@ grep -Eq '^[[:space:]]*proxies:[[:space:]]*$' "$tmp" || {
 validate_dir="$(mktemp -d)"
 trap 'rm -f "$tmp"; rm -rf "$validate_dir"' EXIT
 "$MIHOMO_BIN" -t -d "$validate_dir" -f "$tmp" >/dev/null
+
+mkdir -p "$(dirname "$MIHOMO_LAST_FETCH_FILE")"
+fetch_state_tmp="$(mktemp "$(dirname "$MIHOMO_LAST_FETCH_FILE")/.last-fetch.XXXXXX")"
+printf '%s\n' "$fetch_path" >"$fetch_state_tmp"
+chmod 600 "$fetch_state_tmp"
+mv -f "$fetch_state_tmp" "$MIHOMO_LAST_FETCH_FILE"
+printf 'MIHOMO_FETCH_PATH=%s\n' "$fetch_path"
 
 changed=1
 backup=""

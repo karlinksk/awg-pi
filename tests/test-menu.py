@@ -13,6 +13,12 @@ required = [
     '"Вставить конфигурацию текстом"',
     '"Загрузить конфигурацию из файла"',
     '"Откатить предыдущую конфигурацию"',
+    '"Mihomo / Multi-Transport"',
+    '"Заменить ссылку подписки"',
+    '"Обновить подписку — AUTO"',
+    '"Импортировать локальный профиль"',
+    '"Переключить транспорт на Mihomo"',
+    '"Переключить транспорт на AmneziaWG"',
 ]
 
 for needle in required:
@@ -51,6 +57,13 @@ for label in (
 
 assert "Весь маршрутизируемый трафик будет идти DIRECT" in menu
 assert "SSH и Transit backup" in menu
+
+assert '--passwordbox "$prompt"' in menu
+assert '"$MIHOMO_CONFIGURE" provider-url set "$url"' in menu
+assert '"$MIHOMO_CONFIGURE" provider update auto' in menu
+assert '"$MIHOMO_CONFIGURE" provider import "$path"' in menu
+assert '"$AWG_TRANSPORT" select mihomo' in menu
+assert '"$AWG_TRANSPORT" select awg' in menu
 
 
 for needle in (

@@ -82,7 +82,8 @@ MOCK
 cat >"$tmp/bin/updater" <<'MOCK'
 #!/usr/bin/env bash
 set -Eeuo pipefail
-printf '%s\n' update >>"${MOCK_UPDATE_LOG:?}"
+printf 'update %s\n' "$*" >>"${MOCK_UPDATE_LOG:?}"
+[[ "${MOCK_UPDATE_FAIL:-0}" != 1 ]] || exit 1
 mkdir -p "$(dirname "${MIHOMO_PROVIDER_FILE:?}")"
 printf 'new-provider\n' >"$MIHOMO_PROVIDER_FILE"
 printf 'new-config\n' >"${MOCK_CONFIG_FILE:?}"
@@ -103,7 +104,7 @@ MOCK
 
 chmod +x "$tmp/bin/"*
 
-run_configure(){
+run_cli(){
   sudo env \
     AWG_COMMON_FILE="$repo_root/src/awg-common" \
     AWG_TRANSPORT_FILE="$tmp/transport" \
@@ -111,6 +112,7 @@ run_configure(){
     MIHOMO_ENV_FILE="$tmp/etc/provider.env" \
     MIHOMO_ENDPOINT_IP_FILE="$tmp/etc/endpoint-ip" \
     MIHOMO_EXPECTED_EGRESS_IP_FILE="$tmp/etc/expected-egress-ip" \
+    MIHOMO_LAST_FETCH_FILE="$tmp/state/last-fetch-path" \
     MIHOMO_PROVIDER_FILE="$tmp/state/providers/subscription.yaml" \
     MIHOMO_CONFIG_FILE="$tmp/etc/config.yaml" \
     MIHOMO_INSTALLER="$tmp/bin/installer" \
@@ -123,9 +125,14 @@ run_configure(){
     MOCK_SYSTEMCTL_LOG="$tmp/systemctl.log" \
     MOCK_INSTALL_LOG="$tmp/install.log" \
     MOCK_UPDATE_LOG="$tmp/update.log" \
+    MOCK_UPDATE_FAIL="${MOCK_UPDATE_FAIL:-0}" \
     MOCK_CONFIG_FILE="$tmp/etc/config.yaml" \
     MOCK_HEALTH="${MOCK_HEALTH:-up}" \
-    bash "$repo_root/src/awg-mihomo-configure" apply "$tmp/input.env"
+    bash "$repo_root/src/awg-mihomo-configure" "$@"
+}
+
+run_configure(){
+  run_cli apply "$tmp/input.env"
 }
 
 mkdir -p "$tmp/unit-state"
@@ -149,7 +156,7 @@ sudo grep -Fqx '198.51.100.77' "$tmp/etc/expected-egress-ip"
 [[ "$(sudo stat -c '%a' "$tmp/etc/provider.env")" == 600 ]]
 [[ "$(sudo stat -c '%a' "$tmp/etc/endpoint-ip")" == 600 ]]
 grep -Fqx install "$tmp/install.log"
-grep -Fqx update "$tmp/update.log"
+grep -Eq '^update( |$)' "$tmp/update.log"
 sudo test -e "$tmp/unit-state/awg-mihomo.service.enabled"
 sudo test -e "$tmp/unit-state/awg-mihomo.service.active"
 sudo test -e "$tmp/unit-state/awg-mihomo-update.timer.enabled"
@@ -195,5 +202,40 @@ sudo test ! -e "$tmp/unit-state/awg-mihomo-update.timer.enabled"
 sudo test ! -e "$tmp/unit-state/awg-mihomo-update.timer.active"
 grep -Fq 'previous state restored' "$tmp/err"
 grep -Fqx awg "$tmp/transport"
+
+echo "=== provider URL change is transactional ==="
+sudo mkdir -p "$tmp/etc"
+printf "%s\n" \
+  "MIHOMO_PROVIDER_URL='https://old.example/profile'" \
+  "MIHOMO_NODE_FILTER='Finland'" \
+  "MIHOMO_ENDPOINT_IP='45.86.66.170'" | sudo tee "$tmp/etc/provider.env" >/dev/null
+sudo chmod 600 "$tmp/etc/provider.env"
+: >"$tmp/update.log"
+out="$(run_cli provider-url set "https://new.example/profile")"
+sudo grep -Fqx "MIHOMO_PROVIDER_URL=https://new.example/profile" "$tmp/etc/provider.env"
+grep -Fqx "update --mode auto" "$tmp/update.log"
+grep -Fqx "MIHOMO_PROVIDER_URL=UPDATED" <<<"$out"
+
+echo "=== failed provider URL change restores previous value ==="
+if MOCK_UPDATE_FAIL=1 run_cli provider-url set "https://broken.example/profile" >"$tmp/out" 2>"$tmp/err"; then
+  echo "FAIL: failed provider URL update was accepted" >&2
+  exit 1
+fi
+sudo grep -Fqx "MIHOMO_PROVIDER_URL=https://new.example/profile" "$tmp/etc/provider.env"
+if sudo grep -Fq "broken.example" "$tmp/etc/provider.env"; then
+  echo "FAIL: broken provider URL was not rolled back" >&2
+  exit 1
+fi
+grep -Fq "previous URL restored" "$tmp/err"
+
+echo "=== explicit provider update path reaches updater ==="
+: >"$tmp/update.log"
+run_cli provider update awg >/dev/null
+grep -Fqx "update --mode awg" "$tmp/update.log"
+
+echo "=== local provider import reaches updater ==="
+: >"$tmp/update.log"
+run_cli provider import "$tmp/input.env" >/dev/null
+grep -Fqx "update --file $tmp/input.env" "$tmp/update.log"
 
 echo "mihomo configure transaction: OK"

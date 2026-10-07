@@ -13,6 +13,8 @@ fi
 command -v dialog >/dev/null 2>&1 || { echo "Не найден dialog" >&2; exit 1; }
 
 AWG_ROUTE=/usr/local/sbin/awg-route
+AWG_TRANSPORT=/usr/local/sbin/awg-transport
+MIHOMO_CONFIGURE=/usr/local/sbin/awg-mihomo-configure
 AWG_UPDATE=/usr/local/sbin/awg-update
 VERSION="$(cat /etc/awg-pbr/version 2>/dev/null || echo unknown)"
 BASE_BACKTITLE="AWG Pi Gateway v$VERSION"
@@ -74,6 +76,11 @@ input(){
   dialog --backtitle "$BACKTITLE" --title "$title" --inputbox "$prompt" 10 80 "$initial" 3>&1 1>&2 2>&3
 }
 
+secret_input(){
+  local title="$1" prompt="$2"
+  dialog --backtitle "$BACKTITLE" --title "$title" --passwordbox "$prompt" 11 90 3>&1 1>&2 2>&3
+}
+
 capture(){
   local rc
   set +e
@@ -104,11 +111,12 @@ run_interactive(){
 }
 
 quick_summary(){
-  local health policy dns awg_state hs oc pi router mode mode_label mode_badge
+  local health policy dns awg_state hs oc pi router mode mode_label mode_badge transport
   health="$(cat /run/awg-pbr/health.state 2>/dev/null || echo unknown)"
   mode="$(operating_mode_id)"
   mode_label="$(operating_mode_label "$mode")"
   mode_badge="$(operating_mode_badge "$mode")"
+  transport="$("$AWG_TRANSPORT" get 2>/dev/null || echo awg)"
   if ip -4 rule show 2>/dev/null | grep -Eq '(^| )100:.*fwmark (0x100|256).*lookup (100|awgvpn)'; then
     policy=ACTIVE
   elif [[ "$mode" == transit ]]; then
@@ -127,8 +135,8 @@ quick_summary(){
   systemctl is-active --quiet awg-opencck-update.timer && oc=OK || oc=OFF
   pi="${PI_IP:-?}"
   router="${ROUTER_IP:-?}"
-  printf 'РЕЖИМ РАБОТЫ: [%s] %s\nVPN health: %-7s Policy: %-7s DNS: %-4s\nawg0: %-9s Handshake: %-8s OpenCCK: %s\nPi: %-15s Router: %s' \
-    "$mode_badge" "$mode_label" "$health" "$policy" "$dns" "$awg_state" "$hs" "$oc" "$pi" "$router"
+  printf 'РЕЖИМ РАБОТЫ: [%s] %s | Transport: %s\nVPN health: %-7s Policy: %-7s DNS: %-4s\nawg0: %-9s Handshake: %-8s OpenCCK: %s\nPi: %-15s Router: %s' \
+    "$mode_badge" "$mode_label" "$transport" "$health" "$policy" "$dns" "$awg_state" "$hs" "$oc" "$pi" "$router"
 }
 
 status_screen(){
@@ -351,6 +359,64 @@ awg_config_menu(){
   done
 }
 
+mihomo_menu(){
+  local choice url path fetch_mode
+  while true; do
+    choice="$(dialog --backtitle "$BACKTITLE" --title "Mihomo / Multi-Transport" --item-help --menu \
+      "Управление Mihomo и subscription. AUTO обновляет профиль через доступный bootstrap-канал: текущий Mihomo → AmneziaWG → обычный путь через MikroTik." \
+      26 108 11 \
+      1 "Состояние Mihomo" "Показывает runtime, provider cache, последний успешный bootstrap-канал и health без вывода секретов." \
+      2 "Заменить ссылку подписки" "Вставляет новый URL в скрытом поле. Новый профиль проверяется транзакционно; при ошибке старая ссылка и cache остаются." \
+      3 "Обновить подписку — AUTO" "Пробует текущий Mihomo, затем awg0, затем обычный маршрут через MikroTik. Неудача не удаляет рабочий cache." \
+      4 "Обновить через выбранный канал" "Позволяет вручную выбрать Mihomo, AmneziaWG или router/default для одной загрузки." \
+      5 "Импортировать локальный профиль" "Загружает заранее сохранённый Mihomo/Clash YAML с Pi без обращения к сети и с полной проверкой." \
+      6 "Переключить транспорт на Mihomo" "Транзакционно проверяет Mihomo и только затем переводит datapath с AWG на mihomo0; при ошибке выполняется rollback." \
+      7 "Переключить транспорт на AmneziaWG" "Возвращает datapath на awg0 с health-check и rollback при ошибке." \
+      0 "Назад" "Возвращает в меню VPN без изменений." 3>&1 1>&2 2>&3)" || return 0
+
+    case "$choice" in
+      1)
+        title="Mihomo status"
+        capture "$MIHOMO_CONFIGURE" status || true
+        ;;
+      2)
+        url="$(secret_input "Mihomo subscription" "Вставьте полный URL подписки.\n\nСсылка не будет показана в итоговом статусе.")" || continue
+        [[ -n "$url" ]] || { msg "Mihomo" "Пустая ссылка не применена."; continue; }
+        confirm "Mihomo subscription" "Скачать и проверить профиль по новой ссылке через AUTO bootstrap?\n\nПри ошибке текущая ссылка и provider cache останутся без изменений." || continue
+        run_interactive "Обновление ссылки Mihomo" "$MIHOMO_CONFIGURE" provider-url set "$url"
+        unset url
+        ;;
+      3)
+        run_interactive "Mihomo provider update — AUTO" "$MIHOMO_CONFIGURE" provider update auto
+        ;;
+      4)
+        fetch_mode="$(dialog --backtitle "$BACKTITLE" --title "Bootstrap-канал" --item-help --menu \
+          "Выберите путь только для этой загрузки subscription." 20 100 6 \
+          mihomo "Текущий Mihomo" "HTTP-запрос идёт через локальный Mihomo proxy 127.0.0.1; работает только если текущий профиль жив." \
+          awg "AmneziaWG" "Запрос привязывается к awg0; используется как независимый bootstrap/fallback." \
+          router "Router/default" "Обычный путь Pi → MikroTik. Уже MikroTik решает: DIRECT, SSTP или другой router-side VPN." \
+          0 "Назад" "Не выполнять обновление." 3>&1 1>&2 2>&3)" || continue
+        [[ "$fetch_mode" != 0 ]] || continue
+        run_interactive "Mihomo provider update — $fetch_mode" "$MIHOMO_CONFIGURE" provider update "$fetch_mode"
+        ;;
+      5)
+        path="$(input "Mihomo provider" "Полный путь к локальному Mihomo/Clash YAML:")" || continue
+        confirm "Импорт профиля" "Проверить и импортировать локальный профиль?\n\nРабочий cache будет заменён только после успешной проверки." || continue
+        run_interactive "Импорт Mihomo provider" "$MIHOMO_CONFIGURE" provider import "$path"
+        ;;
+      6)
+        confirm "Transport → Mihomo" "Переключить datapath на Mihomo?\n\nСначала выполняются health/preflight. При ошибке останется текущий транспорт." || continue
+        run_interactive "Переключение на Mihomo" "$AWG_TRANSPORT" select mihomo
+        ;;
+      7)
+        confirm "Transport → AmneziaWG" "Вернуть datapath на AmneziaWG?\n\nПереключение транзакционное." || continue
+        run_interactive "Переключение на AmneziaWG" "$AWG_TRANSPORT" select awg
+        ;;
+      0) return 0 ;;
+    esac
+  done
+}
+
 vpn_menu(){
   local choice mode
   while true; do
@@ -374,6 +440,7 @@ vpn_menu(){
           msg "VPN" "Сервисы перезапущены."
           ;;
         3) awg_config_menu ;;
+        4) mihomo_menu ;;
         0) return 0 ;;
       esac
       continue
@@ -385,6 +452,7 @@ vpn_menu(){
       2 "Выключить VPN policy (всё DIRECT)" "Отключает Selective policy: весь маршрутизируемый трафик идёт DIRECT. Сам awg0 не удаляется." \
       3 "Перезапустить awg0 и health monitor" "Перезапускает туннель AmneziaWG и проверку здоровья; VPN-трафик может кратковременно перейти в FAIL-OPEN/DIRECT." \
       4 "Конфигурация AmneziaWG" "Установка нового native .conf текстом/из файла или rollback предыдущего профиля." \
+      5 "Mihomo / Multi-Transport" "Subscription, bootstrap-каналы, локальный импорт и транзакционное переключение AWG ↔ Mihomo." \
       0 "Назад" "Возвращает в главное меню без изменений." 3>&1 1>&2 2>&3)" || return 0
     case "$choice" in
       1)
@@ -402,6 +470,7 @@ vpn_menu(){
         msg "VPN" "Сервисы перезапущены."
         ;;
       4) awg_config_menu ;;
+      5) mihomo_menu ;;
       0) return 0 ;;
     esac
   done
