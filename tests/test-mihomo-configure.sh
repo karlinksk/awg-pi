@@ -211,7 +211,11 @@ printf "%s\n" \
   "MIHOMO_ENDPOINT_IP='45.86.66.170'" | sudo tee "$tmp/etc/provider.env" >/dev/null
 sudo chmod 600 "$tmp/etc/provider.env"
 : >"$tmp/update.log"
-out="$(run_cli provider-url set "https://new.example/profile")"
+if ! out="$(run_cli provider-url set "https://new.example/profile" 2>"$tmp/provider-url.err")"; then
+  cat "$tmp/provider-url.err" >&2
+  echo 'FAIL: provider URL update command failed' >&2
+  exit 1
+fi
 sudo grep -Fqx "MIHOMO_PROVIDER_URL=https://new.example/profile" "$tmp/etc/provider.env"
 grep -Fqx "update --mode auto" "$tmp/update.log"
 grep -Fqx "MIHOMO_PROVIDER_URL=UPDATED" <<<"$out"
