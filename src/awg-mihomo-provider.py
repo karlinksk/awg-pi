@@ -98,8 +98,20 @@ def cmd_list(args):
         item["duplicate_name"] = item["name"] in seen_names
         seen_names.add(item["name"])
         result.append(item)
-    json.dump(result, sys.stdout, ensure_ascii=False, separators=(",", ":"))
-    sys.stdout.write("\n")
+    if args.format == "tsv":
+        for item in result:
+            duplicate = "DUPLICATE" if item["duplicate_name"] else ""
+            print(
+                item["index"],
+                item["name"],
+                item["type"],
+                f'{item["server"]}:{item["port"]}',
+                duplicate,
+                sep="\t",
+            )
+    else:
+        json.dump(result, sys.stdout, ensure_ascii=False, separators=(",", ":"))
+        sys.stdout.write("\n")
 
 
 def cmd_info(args):
@@ -125,6 +137,7 @@ def main():
 
     p_list = sub.add_parser("list")
     p_list.add_argument("provider")
+    p_list.add_argument("--format", choices=("json", "tsv"), default="json")
     p_list.set_defaults(func=cmd_list)
 
     p_info = sub.add_parser("info")
