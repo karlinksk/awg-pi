@@ -128,6 +128,7 @@ run_update(){
   MIHOMO_LAST_FETCH_FILE="$tmp/state/last-fetch-path" \
   MIHOMO_LAST_FORMAT_FILE="$tmp/state/last-provider-format" \
   MIHOMO_CANDIDATE_FILE="$tmp/state/providers/candidate.yaml" \
+  MIHOMO_CANDIDATE_ENV_FILE="$tmp/state/providers/candidate.env" \
   MIHOMO_CANDIDATE_FETCH_FILE="$tmp/state/candidate-fetch-path" \
   MIHOMO_CANDIDATE_FORMAT_FILE="$tmp/state/candidate-provider-format" \
   MIHOMO_PROVIDER_HELPER="$repo_root/src/awg-mihomo-provider.py" \
@@ -262,6 +263,10 @@ if MOCK_PROVIDER_SOURCE="$tmp/invalid.yaml" run_update >"$tmp/out" 2>"$tmp/err";
 fi
 cmp -s "$tmp/before.yaml" "$tmp/state/providers/live.yaml"
 
+echo "=== normal refresh invalidates stale candidate source metadata ==="
+printf '%s\n' 'MIHOMO_PROVIDER_URL=https://stale-candidate.example/token' >"$tmp/state/providers/candidate.env"
+chmod 600 "$tmp/state/providers/candidate.env"
+
 echo "=== runtime validation failure restores previous provider cache ==="
 cp "$tmp/state/providers/live.yaml" "$tmp/before-runtime-fail.yaml"
 cp "$tmp/state/last-fetch-path" "$tmp/before-last-fetch"
@@ -286,6 +291,10 @@ cmp -s "$tmp/before-last-fetch" "$tmp/state/last-fetch-path"
 cmp -s "$tmp/before-last-format" "$tmp/state/last-provider-format"
 grep -Fq 'live provider rolled back and candidate kept' "$tmp/err"
 grep -Fq 'name: Different Node' "$tmp/state/providers/candidate.yaml"
+if [[ -e "$tmp/state/providers/candidate.env" ]]; then
+  echo 'FAIL: normal live refresh kept stale candidate source metadata' >&2
+  exit 1
+fi
 [[ "$(grep -c '^prepare$' "$tmp/prepare.log")" -ge 2 ]]
 if find "$tmp/state/providers" -maxdepth 1 -type f -name '.subscription.backup.*' | grep -q .; then
   echo 'FAIL: failed provider update left a backup temp file behind' >&2
