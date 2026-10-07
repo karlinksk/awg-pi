@@ -131,6 +131,16 @@ run_configure(){
 mkdir -p "$tmp/unit-state"
 : >"$tmp/systemctl.log"; : >"$tmp/install.log"; : >"$tmp/update.log"
 
+echo "=== user-owned configure input is rejected ==="
+if run_configure >"$tmp/out" 2>"$tmp/err"; then
+  echo 'FAIL: user-owned configure input was accepted' >&2
+  exit 1
+fi
+grep -Fq 'root-owned regular file with mode 0600' "$tmp/err"
+
+sudo chown root:root "$tmp/input.env"
+sudo chmod 600 "$tmp/input.env"
+
 echo "=== first-time configuration succeeds without switching datapath ==="
 out="$(run_configure)"
 sudo grep -Fqx "MIHOMO_PROVIDER_URL='https://subscription.example/profile'" "$tmp/etc/provider.env"

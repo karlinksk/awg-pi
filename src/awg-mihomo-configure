@@ -52,6 +52,14 @@ valid_ipv4(){
   done
 }
 
+trusted_config_file(){
+  local path="$1" owner mode
+  [[ -f "$path" && ! -L "$path" ]] || return 1
+  owner="$(stat -c '%u' -- "$path" 2>/dev/null)" || return 1
+  mode="$(stat -c '%a' -- "$path" 2>/dev/null)" || return 1
+  [[ "$owner" == 0 && "$mode" == 600 ]]
+}
+
 snapshot_path(){
   local path="$1" key="$2" snapshot="$3"
   if [[ -e "$path" ]]; then
@@ -112,6 +120,10 @@ apply_cmd(){
 
   [[ -r "$source_file" ]] || {
     echo "Configuration file is not readable: $source_file" >&2
+    return 2
+  }
+  trusted_config_file "$source_file" || {
+    echo "Configuration file must be a root-owned regular file with mode 0600: $source_file" >&2
     return 2
   }
 
