@@ -414,7 +414,7 @@ mihomo_node_menu(){
 }
 
 mihomo_provider_format_dialog(){
-  dialog --backtitle "$BACKTITLE" --title "Формат subscription" --item-help --default-item auto --menu \
+  dialog --backtitle "$BACKTITLE" --title "Формат subscription" --item-help --menu \
     "AUTO рекомендуется по умолчанию. Ручной формат нужен, если autodetect неоднозначен или оператор использует известную обёртку." \
     21 108 7 \
     auto "AUTO" "Автоопределение: native Mihomo/Clash YAML → plain VLESS URI → Base64 VLESS." \
