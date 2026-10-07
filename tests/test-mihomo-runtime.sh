@@ -262,6 +262,12 @@ grep -Fq 'install_project_helper src/awg-mihomo-config' "$repo_root/install.sh"
 grep -Fq 'install_project_unit units/awg-mihomo.service' "$repo_root/install.sh"
 grep -Fqx 'install_project_helper src/awg-mihomo-prepare "$MIHOMO_PREPARE_SCRIPT"' "$repo_root/install.sh"
 grep -Fqx 'install_project_helper src/awg-mihomo-configure "$MIHOMO_CONFIGURE_SCRIPT"' "$repo_root/install.sh"
+grep -Fqx 'MIHOMO_PREPARE_SCRIPT="/usr/local/sbin/awg-mihomo-prepare"' "$repo_root/install.sh"
+grep -Fqx 'MIHOMO_CONFIGURE_SCRIPT="/usr/local/sbin/awg-mihomo-configure"' "$repo_root/install.sh"
+if grep -Fq 'MIHOMO_PREPARE_SCRIPT="/usr/local/sbin/awg-mihomo-prepare"\nMIHOMO_CONFIGURE_SCRIPT=' "$repo_root/install.sh"; then
+  echo 'FAIL: installer contains a literal \n between Mihomo path variables' >&2
+  exit 1
+fi
 if grep -Fq '\\ninstall_project_helper src/awg-mihomo-configure' "$repo_root/install.sh"; then
   echo 'FAIL: installer contains a literal \\n between Mihomo helpers' >&2
   exit 1
