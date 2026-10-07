@@ -26,6 +26,7 @@ SETUP_SCRIPT="/usr/local/sbin/awg-pbr-setup"
 FAILOPEN_SCRIPT="/usr/local/sbin/awg-pbr-failopen"
 HEALTH_SCRIPT="/usr/local/sbin/awg-pbr-health"
 ROUTE_CLI="/usr/local/sbin/awg-route"
+TRANSPORT_CLI="/usr/local/sbin/awg-transport"
 UPDATE_SCRIPT="/usr/local/sbin/awg-update"
 SETUP_SERVICE="/etc/systemd/system/awg-pbr-setup.service"
 HEALTH_SERVICE="/etc/systemd/system/awg-pbr-health.service"
@@ -676,6 +677,7 @@ python3 -c 'import ast,sys; ast.parse(open(sys.argv[1]).read())' "$_manage_tmp" 
 install -m 755 "$_manage_tmp" /usr/local/lib/awg-pi/manage.py
 rm -f "$_manage_tmp"
 install_project_helper src/awg-route "$ROUTE_CLI"
+install_project_helper src/awg-transport "$TRANSPORT_CLI"
 install_project_helper src/awg-pbr-setup "$SETUP_SCRIPT"
 install_project_helper src/awg-transit-nft /usr/local/sbin/awg-transit-nft
 install_project_helper src/awg-transit-preflight /usr/local/sbin/awg-transit-preflight
@@ -901,6 +903,7 @@ printf "  DHCP остаётся на LAN router\n"
 
 printf "\nОсновные команды:\n"
 printf "  sudo awg-route status\n"
+printf "  sudo awg-transport status\n"
 printf "  sudo awg-route mode status\n"
 printf "  sudo awg-route mode selective\n"
 printf "  sudo awg-route mode transit\n"

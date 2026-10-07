@@ -149,3 +149,42 @@ awg_mode_set(){
   chmod 600 "$tmp"
   mv -f "$tmp" "$AWG_MODE_FILE"
 }
+# Persistent transport backend for AWG Pi Gateway v1.3+.
+# The file is intentionally passive in the first v1.3 phase: existing v1.2
+# datapath keeps using AmneziaWG until transport switching is integrated.
+AWG_TRANSPORT_FILE="${AWG_TRANSPORT_FILE:-/etc/awg-pbr/transport}"
+
+awg_transport_valid(){
+  case "${1:-}" in
+    awg|mihomo) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+awg_transport_get(){
+  local transport
+
+  if [[ ! -e "$AWG_TRANSPORT_FILE" ]]; then
+    printf '%s\n' awg
+    return 0
+  fi
+
+  transport="$(tr -d '\r\n' <"$AWG_TRANSPORT_FILE")"
+
+  if ! awg_transport_valid "$transport"; then
+    printf 'Invalid transport in %s: %s\n' \
+      "$AWG_TRANSPORT_FILE" "${transport:-<empty>}" >&2
+    return 1
+  fi
+
+  printf '%s\n' "$transport"
+}
+
+awg_transport_label(){
+  case "${1:-}" in
+    awg) printf '%s\n' 'AmneziaWG' ;;
+    mihomo) printf '%s\n' 'Mihomo' ;;
+    *) return 1 ;;
+  esac
+}
+
