@@ -395,7 +395,7 @@ def profile(text):
     for section, required in ((interface, ('PrivateKey', 'Address')),
                               (peer, ('PublicKey', 'Endpoint', 'AllowedIPs'))):
         if not all(k in section for k in required):
-            raise ValueError('Отсутствуют обязательные native AmneziaWG поля')
+            raise ValueError('Отсутствуют обязательные native WireGuard/AmneziaWG поля')
     for section in (interface, peer):
         for key in ('PrivateKey', 'PublicKey', 'PresharedKey', 'HeaderProtectionKey'):
             if key in section:
