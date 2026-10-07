@@ -268,8 +268,24 @@ candidate_clear(){
   printf 'MIHOMO_PROVIDER_CANDIDATE=CLEARED\n'
 }
 
+snapshot_candidate_state(){
+  local snapshot="$1"
+  snapshot_path "$MIHOMO_CANDIDATE_FILE" provider "$snapshot"
+  snapshot_path "$MIHOMO_CANDIDATE_ENV_FILE" env "$snapshot"
+  snapshot_path "$MIHOMO_CANDIDATE_FETCH_FILE" fetch "$snapshot"
+  snapshot_path "$MIHOMO_CANDIDATE_FORMAT_FILE" format "$snapshot"
+}
+
+restore_candidate_state(){
+  local snapshot="$1"
+  restore_path "$MIHOMO_CANDIDATE_FILE" provider "$snapshot"
+  restore_path "$MIHOMO_CANDIDATE_ENV_FILE" env "$snapshot"
+  restore_path "$MIHOMO_CANDIDATE_FETCH_FILE" fetch "$snapshot"
+  restore_path "$MIHOMO_CANDIDATE_FORMAT_FILE" format "$snapshot"
+}
+
 provider_stage_url_file(){
-  local source_file="$1" MIHOMO_PROVIDER_URL=""
+  local source_file="$1" MIHOMO_PROVIDER_URL="" snapshot rc
   trusted_config_file "$source_file" || {
     echo "Provider URL file must be root-owned mode 0600: $source_file" >&2
     return 2
@@ -281,23 +297,30 @@ provider_stage_url_file(){
     return 2
   }
 
+  snapshot="$(mktemp -d)"
+  chmod 700 "$snapshot"
+  snapshot_candidate_state "$snapshot"
   prepare_candidate_env
   write_env_key "$MIHOMO_CANDIDATE_ENV_FILE" MIHOMO_PROVIDER_URL "$MIHOMO_PROVIDER_URL"
-  if ! MIHOMO_ENV_FILE="$MIHOMO_CANDIDATE_ENV_FILE" \
+  if MIHOMO_ENV_FILE="$MIHOMO_CANDIDATE_ENV_FILE" \
        MIHOMO_PROVIDER_FILE="$MIHOMO_PROVIDER_FILE" \
        MIHOMO_CANDIDATE_FILE="$MIHOMO_CANDIDATE_FILE" \
        MIHOMO_CANDIDATE_FETCH_FILE="$MIHOMO_CANDIDATE_FETCH_FILE" \
        MIHOMO_CANDIDATE_FORMAT_FILE="$MIHOMO_CANDIDATE_FORMAT_FILE" \
        MIHOMO_BIN="$MIHOMO_BIN" MIHOMO_PROVIDER_HELPER="$MIHOMO_PROVIDER_HELPER" \
        "$MIHOMO_UPDATER" --stage-only --mode auto; then
-    rm -f "$MIHOMO_CANDIDATE_ENV_FILE"
-    return 1
+    rc=0
+  else
+    rc=$?
+    restore_candidate_state "$snapshot"
   fi
+  rm -rf "$snapshot"
+  (( rc == 0 )) || return "$rc"
   printf 'MIHOMO_PROVIDER_SOURCE=URL_STAGED\n'
 }
 
 provider_stage_file(){
-  local file="$1" source_mode="${2:-keep-source}" format="${3:-auto}"
+  local file="$1" source_mode="${2:-keep-source}" format="${3:-auto}" snapshot rc
   [[ -f "$file" && -r "$file" && ! -L "$file" ]] || {
     echo "Provider input is not a readable regular file: $file" >&2
     return 2
@@ -305,22 +328,29 @@ provider_stage_file(){
   case "$source_mode" in keep-source|local-only) ;; *) return 2 ;; esac
   case "$format" in auto|mihomo|vless|base64) ;; *) return 2 ;; esac
 
+  snapshot="$(mktemp -d)"
+  chmod 700 "$snapshot"
+  snapshot_candidate_state "$snapshot"
   prepare_candidate_env
   write_env_key "$MIHOMO_CANDIDATE_ENV_FILE" MIHOMO_PROVIDER_FORMAT "$format"
   if [[ "$source_mode" == local-only ]]; then
     remove_env_key "$MIHOMO_CANDIDATE_ENV_FILE" MIHOMO_PROVIDER_URL
     remove_env_key "$MIHOMO_CANDIDATE_ENV_FILE" MIHOMO_UPDATE_SUFFIX
   fi
-  if ! MIHOMO_ENV_FILE="$MIHOMO_CANDIDATE_ENV_FILE" \
+  if MIHOMO_ENV_FILE="$MIHOMO_CANDIDATE_ENV_FILE" \
        MIHOMO_PROVIDER_FILE="$MIHOMO_PROVIDER_FILE" \
        MIHOMO_CANDIDATE_FILE="$MIHOMO_CANDIDATE_FILE" \
        MIHOMO_CANDIDATE_FETCH_FILE="$MIHOMO_CANDIDATE_FETCH_FILE" \
        MIHOMO_CANDIDATE_FORMAT_FILE="$MIHOMO_CANDIDATE_FORMAT_FILE" \
        MIHOMO_BIN="$MIHOMO_BIN" MIHOMO_PROVIDER_HELPER="$MIHOMO_PROVIDER_HELPER" \
        "$MIHOMO_UPDATER" --stage-only --file "$file" --format "$format"; then
-    rm -f "$MIHOMO_CANDIDATE_ENV_FILE"
-    return 1
+    rc=0
+  else
+    rc=$?
+    restore_candidate_state "$snapshot"
   fi
+  rm -rf "$snapshot"
+  (( rc == 0 )) || return "$rc"
   printf 'MIHOMO_PROVIDER_SOURCE=%s\n' "$source_mode"
 }
 
