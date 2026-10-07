@@ -782,7 +782,7 @@ EOF
 # -----------------------------------------------------------------------------
 STAGE="проверка компонентов управления"
 log "[10/12] Проверка awg-route / awg-menu / awg-update"
-for f in "$ROUTE_CLI" "$TRANSPORT_CLI" "$MIHOMO_CONFIG_SCRIPT" "$MIHOMO_UPDATE_SCRIPT" "$MIHOMO_INSTALL_SCRIPT" "$MIHOMO_PREPARE_SCRIPT" "$SETUP_SCRIPT" /usr/local/sbin/awg-menu /usr/local/sbin/awg-transit-nft /usr/local/sbin/awg-transit-preflight /usr/local/sbin/awg-transit-apply /usr/local/sbin/awg-transit-routing /usr/local/sbin/awg-mode-switch "$HEALTH_SCRIPT" /usr/local/sbin/awg-opencck-update /usr/local/sbin/awg-core-update "$UPDATE_SCRIPT"; do
+for f in "$ROUTE_CLI" "$TRANSPORT_CLI" "$MIHOMO_CONFIG_SCRIPT" "$MIHOMO_UPDATE_SCRIPT" "$MIHOMO_INSTALL_SCRIPT" "$MIHOMO_PREPARE_SCRIPT" "$MIHOMO_CONFIGURE_SCRIPT" "$SETUP_SCRIPT" /usr/local/sbin/awg-menu /usr/local/sbin/awg-transit-nft /usr/local/sbin/awg-transit-preflight /usr/local/sbin/awg-transit-apply /usr/local/sbin/awg-transit-routing /usr/local/sbin/awg-mode-switch "$HEALTH_SCRIPT" /usr/local/sbin/awg-opencck-update /usr/local/sbin/awg-core-update "$UPDATE_SCRIPT"; do
   [[ -x "$f" ]] || die "Не установлен исполняемый компонент: $f"
   bash -n "$f" || die "Синтаксическая проверка компонента не пройдена: $f"
 done
