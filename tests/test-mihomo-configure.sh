@@ -85,6 +85,14 @@ cat >"$tmp/bin/updater" <<'MOCK'
 set -Eeuo pipefail
 printf 'update %s\n' "$*" >>"${MOCK_UPDATE_LOG:?}"
 [[ "${MOCK_UPDATE_FAIL:-0}" != 1 ]] || exit 1
+if [[ " $* " == *" --stage-only "* ]]; then
+  mkdir -p "$(dirname "${MIHOMO_CANDIDATE_FILE:?}")"
+  printf 'candidate-provider\n' >"$MIHOMO_CANDIDATE_FILE"
+  printf 'file\n' >"${MIHOMO_CANDIDATE_FETCH_FILE:?}"
+  printf 'mihomo\n' >"${MIHOMO_CANDIDATE_FORMAT_FILE:?}"
+  printf 'MIHOMO_PROVIDER=STAGED\n'
+  exit 0
+fi
 mkdir -p "$(dirname "${MIHOMO_PROVIDER_FILE:?}")"
 printf 'new-provider\n' >"$MIHOMO_PROVIDER_FILE"
 printf 'new-config\n' >"${MOCK_CONFIG_FILE:?}"
@@ -293,6 +301,40 @@ echo "=== local provider import reaches updater ==="
 : >"$tmp/update.log"
 run_cli provider import "$tmp/input.env" >/dev/null
 grep -Fqx "update --file $tmp/input.env" "$tmp/update.log"
+
+echo "=== staged URL changes candidate env only ==="
+sudo sh -c "printf '%s\n' 'MIHOMO_PROVIDER_URL=https://live.example/token' 'MIHOMO_PROVIDER_FORMAT=auto' >'$tmp/etc/provider.env'"
+sudo chmod 600 "$tmp/etc/provider.env"
+printf "%s\n" "MIHOMO_PROVIDER_URL='https://candidate.example/private-token'" | sudo tee "$tmp/etc/stage-url.env" >/dev/null
+sudo chmod 600 "$tmp/etc/stage-url.env"
+: >"$tmp/update.log"
+out="$(run_cli provider stage-url-file "$tmp/etc/stage-url.env")"
+grep -Fqx 'MIHOMO_PROVIDER_SOURCE=URL_STAGED' <<<"$out"
+sudo grep -Fqx 'MIHOMO_PROVIDER_URL=https://live.example/token' "$tmp/etc/provider.env"
+sudo grep -Fqx 'MIHOMO_PROVIDER_URL=https://candidate.example/private-token' "$tmp/state/providers/candidate.env"
+sudo test -e "$tmp/state/providers/candidate.yaml"
+grep -Fq 'update --stage-only --mode auto' "$tmp/update.log"
+
+echo "=== local staged provider can preserve live source URL ==="
+printf 'offline-profile\n' >"$tmp/local-provider.txt"
+: >"$tmp/update.log"
+out="$(run_cli provider stage-file "$tmp/local-provider.txt" keep-source)"
+grep -Fqx 'MIHOMO_PROVIDER_SOURCE=keep-source' <<<"$out"
+sudo grep -Fqx 'MIHOMO_PROVIDER_URL=https://live.example/token' "$tmp/state/providers/candidate.env"
+grep -Fq "update --stage-only --file $tmp/local-provider.txt" "$tmp/update.log"
+
+echo "=== local-only staged provider removes network source ==="
+: >"$tmp/update.log"
+out="$(run_cli provider stage-file "$tmp/local-provider.txt" local-only)"
+grep -Fqx 'MIHOMO_PROVIDER_SOURCE=local-only' <<<"$out"
+if sudo grep -q '^MIHOMO_PROVIDER_URL=' "$tmp/state/providers/candidate.env"; then
+  echo 'FAIL: local-only candidate retained provider URL' >&2
+  exit 1
+fi
+if sudo grep -q '^MIHOMO_UPDATE_SUFFIX=' "$tmp/state/providers/candidate.env"; then
+  echo 'FAIL: local-only candidate retained URL suffix' >&2
+  exit 1
+fi
 
 echo "=== provider format change is transactional ==="
 sudo sh -c "printf '%s\n' 'MIHOMO_PROVIDER_URL=https://file.example/private-token' 'MIHOMO_PROVIDER_FORMAT=auto' >'$tmp/etc/provider.env'"
