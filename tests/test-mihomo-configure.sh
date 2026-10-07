@@ -249,7 +249,7 @@ sudo test ! -e "$tmp/unit-state/awg-mihomo-update.timer.active"
 grep -Fq 'previous state restored' "$tmp/err"
 grep -Fqx awg "$tmp/transport"
 
-echo "=== provider URL change is transactional ==="
+echo "=== legacy provider URL command stages without changing live ==="
 sudo mkdir -p "$tmp/etc"
 printf "%s\n" \
   "MIHOMO_PROVIDER_URL='https://old.example/profile'" \
@@ -258,18 +258,20 @@ printf "%s\n" \
 sudo chmod 600 "$tmp/etc/provider.env"
 : >"$tmp/update.log"
 out="$(run_cli provider-url set "https://new.example/profile")"
-sudo grep -Fqx "MIHOMO_PROVIDER_URL=https://new.example/profile" "$tmp/etc/provider.env"
-grep -Fqx "update --mode auto" "$tmp/update.log"
-grep -Fqx "MIHOMO_PROVIDER_URL=UPDATED" <<<"$out"
+sudo grep -Fqx "MIHOMO_PROVIDER_URL='https://old.example/profile'" "$tmp/etc/provider.env"
+sudo grep -Fqx "MIHOMO_PROVIDER_URL=https://new.example/profile" "$tmp/state/providers/candidate.env"
+grep -Fq "update --stage-only --mode auto" "$tmp/update.log"
+grep -Fqx "MIHOMO_PROVIDER_URL=STAGED" <<<"$out"
 
-echo "=== provider URL file change keeps URL out of command arguments ==="
+echo "=== legacy provider URL file stages and keeps secret out of command arguments ==="
 printf "%s\n" "MIHOMO_PROVIDER_URL='https://file.example/private-token'" | sudo tee "$tmp/etc/url-input.env" >/dev/null
 sudo chmod 600 "$tmp/etc/url-input.env"
 : >"$tmp/update.log"
 out="$(run_cli provider-url set-file "$tmp/etc/url-input.env")"
-sudo grep -Fqx "MIHOMO_PROVIDER_URL=https://file.example/private-token" "$tmp/etc/provider.env"
-grep -Fqx "update --mode auto" "$tmp/update.log"
-grep -Fqx "MIHOMO_PROVIDER_URL=UPDATED" <<<"$out"
+sudo grep -Fqx "MIHOMO_PROVIDER_URL='https://old.example/profile'" "$tmp/etc/provider.env"
+sudo grep -Fqx "MIHOMO_PROVIDER_URL=https://file.example/private-token" "$tmp/state/providers/candidate.env"
+grep -Fq "update --stage-only --mode auto" "$tmp/update.log"
+grep -Fqx "MIHOMO_PROVIDER_URL=STAGED" <<<"$out"
 
 echo "=== provider URL file must be trusted root 0600 ==="
 sudo chmod 644 "$tmp/etc/url-input.env"
@@ -280,27 +282,27 @@ fi
 grep -Fq "root-owned mode 0600" "$tmp/err"
 sudo chmod 600 "$tmp/etc/url-input.env"
 
-echo "=== failed provider URL change restores previous value ==="
+echo "=== failed URL staging preserves live and previous candidate ==="
+sudo cp "$tmp/state/providers/candidate.env" "$tmp/candidate-env.before"
+sudo cp "$tmp/state/providers/candidate.yaml" "$tmp/candidate-provider.before"
 if MOCK_UPDATE_FAIL=1 run_cli provider-url set "https://broken.example/profile" >"$tmp/out" 2>"$tmp/err"; then
-  echo "FAIL: failed provider URL update was accepted" >&2
+  echo "FAIL: failed provider URL staging was accepted" >&2
   exit 1
 fi
-sudo grep -Fqx "MIHOMO_PROVIDER_URL=https://file.example/private-token" "$tmp/etc/provider.env"
-if sudo grep -Fq "broken.example" "$tmp/etc/provider.env"; then
-  echo "FAIL: broken provider URL was not rolled back" >&2
-  exit 1
-fi
-grep -Fq "previous URL restored" "$tmp/err"
+sudo grep -Fqx "MIHOMO_PROVIDER_URL='https://old.example/profile'" "$tmp/etc/provider.env"
+sudo cmp -s "$tmp/candidate-env.before" "$tmp/state/providers/candidate.env"
+sudo cmp -s "$tmp/candidate-provider.before" "$tmp/state/providers/candidate.yaml"
 
 echo "=== explicit provider update path reaches updater ==="
 : >"$tmp/update.log"
 run_cli provider update awg >/dev/null
 grep -Fqx "update --mode awg" "$tmp/update.log"
 
-echo "=== local provider import reaches updater ==="
+echo "=== legacy local provider import stages instead of replacing live ==="
 : >"$tmp/update.log"
-run_cli provider import "$tmp/input.env" >/dev/null
-grep -Fqx "update --file $tmp/input.env" "$tmp/update.log"
+out="$(run_cli provider import "$tmp/input.env")"
+grep -Fq "update --stage-only --file $tmp/input.env --format auto" "$tmp/update.log"
+grep -Fqx 'MIHOMO_PROVIDER_IMPORT=STAGED' <<<"$out"
 
 echo "=== staged URL changes candidate env only ==="
 sudo sh -c "printf '%s\n' 'MIHOMO_PROVIDER_URL=https://live.example/token' 'MIHOMO_PROVIDER_FORMAT=auto' >'$tmp/etc/provider.env'"
@@ -335,6 +337,16 @@ if sudo grep -q '^MIHOMO_UPDATE_SUFFIX=' "$tmp/state/providers/candidate.env"; t
   echo 'FAIL: local-only candidate retained URL suffix' >&2
   exit 1
 fi
+
+echo "=== failed local staging preserves previous candidate ==="
+sudo cp "$tmp/state/providers/candidate.env" "$tmp/candidate-env.before"
+sudo cp "$tmp/state/providers/candidate.yaml" "$tmp/candidate-provider.before"
+if MOCK_UPDATE_FAIL=1 run_cli provider stage-file "$tmp/local-provider.txt" local-only >"$tmp/out" 2>"$tmp/err"; then
+  echo 'FAIL: failed local staging unexpectedly succeeded' >&2
+  exit 1
+fi
+sudo cmp -s "$tmp/candidate-env.before" "$tmp/state/providers/candidate.env"
+sudo cmp -s "$tmp/candidate-provider.before" "$tmp/state/providers/candidate.yaml"
 
 echo "=== provider format change is transactional ==="
 sudo sh -c "printf '%s\n' 'MIHOMO_PROVIDER_URL=https://file.example/private-token' 'MIHOMO_PROVIDER_FORMAT=auto' >'$tmp/etc/provider.env'"
