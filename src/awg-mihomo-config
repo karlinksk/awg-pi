@@ -16,8 +16,27 @@ MIHOMO_PROVIDER_HEALTH_INTERVAL="${MIHOMO_PROVIDER_HEALTH_INTERVAL:-300}"
 MIHOMO_NODE_FILTER="${MIHOMO_NODE_FILTER:-}"
 MIHOMO_ENDPOINT_IP="${MIHOMO_ENDPOINT_IP:-}"
 
+yaml_sq(){
+  local value="$1"
+  value="${value//\'/\'\'}"
+  printf "'%s'" "$value"
+}
+
 [[ "$MIHOMO_MIXED_PORT" =~ ^[0-9]+$ ]] || {
   echo "Invalid MIHOMO_MIXED_PORT: $MIHOMO_MIXED_PORT" >&2
+  exit 2
+}
+(( MIHOMO_MIXED_PORT >= 1 && MIHOMO_MIXED_PORT <= 65535 )) || {
+  echo "MIHOMO_MIXED_PORT out of range" >&2
+  exit 2
+}
+[[ "$MIHOMO_CONTROLLER" =~ ^127\.0\.0\.1:[0-9]+$ ]] || {
+  echo "MIHOMO_CONTROLLER must bind to 127.0.0.1" >&2
+  exit 2
+}
+_controller_port="${MIHOMO_CONTROLLER##*:}"
+(( _controller_port >= 1 && _controller_port <= 65535 )) || {
+  echo "MIHOMO_CONTROLLER port out of range" >&2
   exit 2
 }
 [[ "$MIHOMO_PROVIDER_HEALTH_INTERVAL" =~ ^[0-9]+$ ]] || {
@@ -32,106 +51,11 @@ MIHOMO_ENDPOINT_IP="${MIHOMO_ENDPOINT_IP:-}"
   echo "Invalid MIHOMO_PROVIDER_NAME" >&2
   exit 2
 }
-[[ "$MIHOMO_GROUP_NAME" != *[[ -r "$MIHOMO_PROVIDER_FILE" ]] || {
-  echo "Mihomo provider cache is missing: $MIHOMO_PROVIDER_FILE" >&2
-  exit 1
-}
-
-cat <<YAML
-mixed-port: $MIHOMO_MIXED_PORT
-allow-lan: false
-bind-address: 127.0.0.1
-mode: rule
-log-level: warning
-ipv6: false
-external-controller: $MIHOMO_CONTROLLER
-
-profile:
-  store-selected: true
-  store-fake-ip: false
-
-proxy-providers:
-  $MIHOMO_PROVIDER_NAME:
-    type: file
-    path: $MIHOMO_PROVIDER_FILE
-    filter: '$MIHOMO_NODE_FILTER'
-    override:
-      override-expr:
-        - '.server = "$MIHOMO_ENDPOINT_IP"'
-    health-check:
-      enable: true
-      url: $MIHOMO_PROVIDER_HEALTH_URL
-      interval: $MIHOMO_PROVIDER_HEALTH_INTERVAL
-      lazy: true
-
-proxy-groups:
-  - name: $MIHOMO_GROUP_NAME
-    type: select
-    use:
-      - $MIHOMO_PROVIDER_NAME
-
-rules:
-  - MATCH,$MIHOMO_GROUP_NAME
-
-tun:
-  enable: true
-  device: $MIHOMO_TUN_IF
-  stack: mixed
-  auto-route: false
-  auto-redirect: false
-  auto-detect-interface: true
-YAML
-\n'* ]] || {
+[[ "$MIHOMO_GROUP_NAME" != *$'\n'* && -n "$MIHOMO_GROUP_NAME" ]] || {
   echo "Invalid MIHOMO_GROUP_NAME" >&2
   exit 2
 }
-
-[[ -n "$MIHOMO_NODE_FILTER" && "$MIHOMO_NODE_FILTER" != *[[ -r "$MIHOMO_PROVIDER_FILE" ]] || {
-  echo "Mihomo provider cache is missing: $MIHOMO_PROVIDER_FILE" >&2
-  exit 1
-}
-
-cat <<YAML
-mixed-port: $MIHOMO_MIXED_PORT
-allow-lan: false
-bind-address: 127.0.0.1
-mode: rule
-log-level: warning
-ipv6: false
-external-controller: $MIHOMO_CONTROLLER
-
-profile:
-  store-selected: true
-  store-fake-ip: false
-
-proxy-providers:
-  $MIHOMO_PROVIDER_NAME:
-    type: file
-    path: $MIHOMO_PROVIDER_FILE
-    health-check:
-      enable: true
-      url: $MIHOMO_PROVIDER_HEALTH_URL
-      interval: $MIHOMO_PROVIDER_HEALTH_INTERVAL
-      lazy: true
-
-proxy-groups:
-  - name: $MIHOMO_GROUP_NAME
-    type: select
-    use:
-      - $MIHOMO_PROVIDER_NAME
-
-rules:
-  - MATCH,$MIHOMO_GROUP_NAME
-
-tun:
-  enable: true
-  device: $MIHOMO_TUN_IF
-  stack: mixed
-  auto-route: false
-  auto-redirect: false
-  auto-detect-interface: true
-YAML
-\n'* ]] || {
+[[ -n "$MIHOMO_NODE_FILTER" && "$MIHOMO_NODE_FILTER" != *$'\n'* ]] || {
   echo "MIHOMO_NODE_FILTER is required and must be one line" >&2
   exit 2
 }
@@ -141,7 +65,7 @@ YAML
 }
 IFS=. read -r _a _b _c _d <<<"$MIHOMO_ENDPOINT_IP"
 for _octet in "$_a" "$_b" "$_c" "$_d"; do
-  (( _octet >= 0 && _octet <= 255 )) || {
+  (( 10#$_octet >= 0 && 10#$_octet <= 255 )) || {
     echo "MIHOMO_ENDPOINT_IP has an invalid octet" >&2
     exit 2
   }
@@ -150,6 +74,11 @@ done
   echo "Mihomo provider cache is missing: $MIHOMO_PROVIDER_FILE" >&2
   exit 1
 }
+
+_provider_path_yaml="$(yaml_sq "$MIHOMO_PROVIDER_FILE")"
+_node_filter_yaml="$(yaml_sq "$MIHOMO_NODE_FILTER")"
+_group_name_yaml="$(yaml_sq "$MIHOMO_GROUP_NAME")"
+_health_url_yaml="$(yaml_sq "$MIHOMO_PROVIDER_HEALTH_URL")"
 
 cat <<YAML
 mixed-port: $MIHOMO_MIXED_PORT
@@ -167,21 +96,25 @@ profile:
 proxy-providers:
   $MIHOMO_PROVIDER_NAME:
     type: file
-    path: $MIHOMO_PROVIDER_FILE
+    path: $_provider_path_yaml
+    filter: $_node_filter_yaml
+    override:
+      override-expr:
+        - '.server = "$MIHOMO_ENDPOINT_IP"'
     health-check:
       enable: true
-      url: $MIHOMO_PROVIDER_HEALTH_URL
+      url: $_health_url_yaml
       interval: $MIHOMO_PROVIDER_HEALTH_INTERVAL
       lazy: true
 
 proxy-groups:
-  - name: $MIHOMO_GROUP_NAME
+  - name: $_group_name_yaml
     type: select
     use:
       - $MIHOMO_PROVIDER_NAME
 
 rules:
-  - MATCH,$MIHOMO_GROUP_NAME
+  - MATCH,$_group_name_yaml
 
 tun:
   enable: true
