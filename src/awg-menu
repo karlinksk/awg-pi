@@ -360,20 +360,61 @@ awg_config_menu(){
 }
 
 mihomo_node_menu(){
-  local node_tmp info_tmp choice row node_name node_type node_target endpoint endpoints_raw
-  local previous_transport port direct_cmd rc
-  local -a items endpoint_items
+  local node_name endpoint info_tmp previous_transport rc direct_cmd
 
-  node_tmp="$(mktemp)"
+  title="Доступные Mihomo nodes"
+  capture "$MIHOMO_CONFIGURE" node list || return 0
+
+  node_name="$(input "Точка выхода Mihomo" "Введите ТОЧНОЕ имя узла из списка выше:")" || return 0
+  [[ -n "$node_name" ]] || { msg "Mihomo" "Имя узла не задано."; return 0; }
+
   info_tmp="$(mktemp)"
-  if ! "$MIHOMO_CONFIGURE" node list >"$node_tmp" 2>"$info_tmp"; then
-    dialog --backtitle "$BACKTITLE" --title "Mihomo nodes" --textbox "$info_tmp" 20 100
-    rm -f "$node_tmp" "$info_tmp"
+  if ! "$MIHOMO_CONFIGURE" node prepare "$node_name" >"$info_tmp" 2>&1; then
+    dialog --backtitle "$BACKTITLE" --title "Подготовка узла" --textbox "$info_tmp" 24 108
+    rm -f "$info_tmp"
     return 0
   fi
 
-  items=()
-  while IFS=  local choice url path fetch_mode
+  dialog --backtitle "$BACKTITLE" --title "Подготовка узла" --textbox "$info_tmp" 24 108
+  endpoint="$(input "Endpoint IPv4" "Введите один IPv4 из строки Resolved IPv4 endpoints:")" || {
+    rm -f "$info_tmp"
+    return 0
+  }
+  rm -f "$info_tmp"
+
+  [[ -n "$endpoint" ]] || { msg "Mihomo" "Endpoint не задан."; return 0; }
+
+  direct_cmd="/ip firewall mangle add chain=prerouting action=accept src-address=${PI_IP:-192.168.112.34} dst-address=$endpoint place-before=0 comment=\"MIHOMO-DIRECT\""
+  msg "MikroTik DIRECT обязателен" "Перед применением endpoint должен обходить SSTP и остальные VPN-policy на MikroTik.\n\nEndpoint: $endpoint\nУзел: $node_name\n\nУниверсальное правило для выбранного endpoint (лучше добавлять в Safe Mode):\n\n$direct_cmd\n\nОно ограничено трафиком Pi → один endpoint и подходит для разных transport protocols."
+
+  confirm "DIRECT подтверждён?" "Вы уже добавили/проверили раннее mangle action=accept для Pi → $endpoint и убедились, что endpoint не попадает в SSTP/VPN policy?\n\nБез подтверждения узел НЕ будет применён." || return 0
+
+  previous_transport="$("$AWG_TRANSPORT" get 2>/dev/null || echo awg)"
+  if [[ "$previous_transport" == mihomo ]]; then
+    confirm "Временный переход на AWG" "Для безопасной смены Mihomo endpoint временно переключить datapath на AmneziaWG?\n\nПосле успешной проверки нового узла будет предложено вернуться на Mihomo." || return 0
+    title="Mihomo node: временно AWG"
+    capture "$AWG_TRANSPORT" select awg || return 0
+  fi
+
+  title="Mihomo node select"
+  if capture "$MIHOMO_CONFIGURE" node select "$node_name" "$endpoint" --direct-confirmed; then
+    rc=0
+  else
+    rc=$?
+  fi
+
+  if (( rc == 0 )) && [[ "$previous_transport" == mihomo ]]; then
+    if confirm "Вернуться на Mihomo?" "Новый узел healthy. Вернуть datapath с AWG на Mihomo сейчас?"; then
+      title="Transport → Mihomo"
+      capture "$AWG_TRANSPORT" select mihomo || true
+    fi
+  elif (( rc != 0 )) && [[ "$previous_transport" == mihomo ]]; then
+    msg "Mihomo node" "Новый узел не применён; конфигурация откатилась. Datapath оставлен на AWG как безопасный вариант."
+  fi
+}
+
+mihomo_menu(){
+  local choice url path fetch_mode
   while true; do
     choice="$(dialog --backtitle "$BACKTITLE" --title "Mihomo / Multi-Transport" --item-help --menu \
       "Управление Mihomo и subscription. AUTO обновляет профиль через доступный bootstrap-канал: текущий Mihomo → AmneziaWG → обычный путь через MikroTik." \
