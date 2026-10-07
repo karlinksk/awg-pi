@@ -37,6 +37,7 @@ Usage:
   awg-mihomo-configure apply FILE
   awg-mihomo-configure status
   awg-mihomo-configure provider-url set URL
+  awg-mihomo-configure provider-url set-file FILE
   awg-mihomo-configure provider update [auto|mihomo|awg|router]
   awg-mihomo-configure provider import FILE
   awg-mihomo-configure node list
@@ -201,6 +202,24 @@ provider_url_set(){
 
   rm -f "$snapshot"
   printf 'MIHOMO_PROVIDER_URL=UPDATED\n'
+}
+
+provider_url_set_file(){
+  local source_file="$1"
+  local MIHOMO_PROVIDER_URL=""
+
+  trusted_config_file "$source_file" || {
+    echo "Provider URL file must be root-owned mode 0600: $source_file" >&2
+    return 2
+  }
+
+  # shellcheck disable=SC1090
+  source "$source_file"
+  [[ -n "$MIHOMO_PROVIDER_URL" ]] || {
+    echo "Provider URL file does not define MIHOMO_PROVIDER_URL" >&2
+    return 2
+  }
+  provider_url_set "$MIHOMO_PROVIDER_URL"
 }
 
 provider_update(){
@@ -640,8 +659,20 @@ case "${1:-}" in
     status_cmd
     ;;
   provider-url)
-    [[ $# -eq 3 && "$2" == set ]] || { usage >&2; exit 2; }
-    provider_url_set "$3"
+    case "${2:-}" in
+      set)
+        [[ $# -eq 3 ]] || { usage >&2; exit 2; }
+        provider_url_set "$3"
+        ;;
+      set-file)
+        [[ $# -eq 3 ]] || { usage >&2; exit 2; }
+        provider_url_set_file "$3"
+        ;;
+      *)
+        usage >&2
+        exit 2
+        ;;
+    esac
     ;;
   node)
     case "${2:-}" in
