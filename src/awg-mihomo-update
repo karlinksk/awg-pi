@@ -224,6 +224,36 @@ validate_dir="$(mktemp -d)"
 trap 'rm -f "$tmp"; rm -rf "$validate_dir"' EXIT
 "$MIHOMO_BIN" -t -d "$validate_dir" -f "$tmp" >/dev/null
 
+write_state_file(){
+  local path="$1" value="$2" dir state_tmp
+  dir="$(dirname "$path")"
+  mkdir -p "$dir"
+  chmod 700 "$dir"
+  state_tmp="$(mktemp "$dir/.state.XXXXXX")"
+  printf '%s\n' "$value" >"$state_tmp"
+  chmod 600 "$state_tmp"
+  mv -f "$state_tmp" "$path"
+}
+
+stage_candidate(){
+  install -m 600 "$tmp" "$MIHOMO_CANDIDATE_FILE"
+  write_state_file "$MIHOMO_CANDIDATE_FETCH_FILE" "$fetch_path"
+  write_state_file "$MIHOMO_CANDIDATE_FORMAT_FILE" "$detected_format"
+  printf 'MIHOMO_PROVIDER=STAGED\n'
+  printf 'MIHOMO_CANDIDATE_NODE_COUNT=%s\n' "$node_count"
+  printf 'MIHOMO_CANDIDATE_FORMAT=%s\n' "$detected_format"
+  printf 'MIHOMO_CANDIDATE_FETCH_PATH=%s\n' "$fetch_path"
+}
+
+clear_candidate(){
+  rm -f "$MIHOMO_CANDIDATE_FILE" "$MIHOMO_CANDIDATE_FETCH_FILE" "$MIHOMO_CANDIDATE_FORMAT_FILE"
+}
+
+if (( stage_only == 1 )); then
+  stage_candidate
+  exit 0
+fi
+
 changed=1
 backup=""
 if [[ -r "$MIHOMO_PROVIDER_FILE" ]] && cmp -s "$tmp" "$MIHOMO_PROVIDER_FILE"; then
