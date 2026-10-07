@@ -14,7 +14,13 @@ source "$AWG_COMMON_FILE"
 : "${VPN_MARK:?VPN_MARK is required}"
 LOCKDOWN="${AWG_TRANSIT_LOCKDOWN:-0}"
 TRANSPORT_ID="$(awg_transport_get)"
-TRANSPORT_IF="$(awg_transport_device "$TRANSPORT_ID")"
+TRANSPORT_IF=""
+if awg_transport_backend_valid "$TRANSPORT_ID"; then
+  TRANSPORT_IF="$(awg_transport_device "$TRANSPORT_ID")"
+elif [[ "$LOCKDOWN" != 1 ]]; then
+  echo "No active transport is configured; only Transit lockdown can be rendered." >&2
+  exit 1
+fi
 
 forward_rule=""
 mark_rule=""
@@ -83,8 +89,8 @@ table inet awg_pbr {
   chain forward_guard {
     type filter hook forward priority filter; policy drop;
 
-    # Return traffic may leave only from AWG back toward LAN.
-    iifname "$TRANSPORT_IF" oifname "$LAN_IF" ct state established,related accept
+    # Return traffic may leave only from the active transport back toward LAN.
+${TRANSPORT_IF:+    iifname "$TRANSPORT_IF" oifname "$LAN_IF" ct state established,related accept}
 
     # Normal Transit accepts only MikroTik-MAC ingress with actual active-transport egress.
     # Lockdown emits no new-flow accept rule.
@@ -95,7 +101,7 @@ $forward_rule
     type filter hook prerouting priority mangle; policy accept;
 
     # Normal Transit marks trusted MikroTik-forwarded Internet traffic.
-    # Lockdown emits no mark rule, so no new client flow can enter AWG policy.
+    # Lockdown emits no mark rule, so no new client flow can enter transport policy.
 $mark_rule
   }
 
