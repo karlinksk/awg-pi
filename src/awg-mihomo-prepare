@@ -1,0 +1,35 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+[[ ${EUID:-$(id -u)} -eq 0 ]] || exec sudo "$0" "$@"
+
+MIHOMO_BIN="${MIHOMO_BIN:-/usr/local/bin/mihomo}"
+MIHOMO_RENDERER="${MIHOMO_RENDERER:-/usr/local/sbin/awg-mihomo-config}"
+MIHOMO_CONFIG_FILE="${MIHOMO_CONFIG_FILE:-/etc/awg-pbr/transports/mihomo/config.yaml}"
+MIHOMO_STATE_DIR="${MIHOMO_STATE_DIR:-/var/lib/awg-pbr/mihomo}"
+
+[[ -x "$MIHOMO_BIN" ]] || {
+  echo "Mihomo binary is unavailable: $MIHOMO_BIN" >&2
+  exit 2
+}
+[[ -x "$MIHOMO_RENDERER" ]] || {
+  echo "Mihomo config renderer is unavailable: $MIHOMO_RENDERER" >&2
+  exit 2
+}
+
+mkdir -p "$(dirname "$MIHOMO_CONFIG_FILE")" "$MIHOMO_STATE_DIR"
+chmod 700 "$(dirname "$MIHOMO_CONFIG_FILE")" "$MIHOMO_STATE_DIR"
+
+tmp="$(mktemp "$(dirname "$MIHOMO_CONFIG_FILE")/.config.XXXXXX")"
+trap 'rm -f "$tmp"' EXIT
+
+"$MIHOMO_RENDERER" >"$tmp"
+"$MIHOMO_BIN" -t -d "$MIHOMO_STATE_DIR" -f "$tmp" >/dev/null
+
+if [[ -r "$MIHOMO_CONFIG_FILE" ]] && cmp -s "$tmp" "$MIHOMO_CONFIG_FILE"; then
+  echo "MIHOMO_CONFIG=UNCHANGED"
+  exit 0
+fi
+
+install -m 600 "$tmp" "$MIHOMO_CONFIG_FILE"
+echo "MIHOMO_CONFIG=UPDATED"

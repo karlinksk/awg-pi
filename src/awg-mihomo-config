@@ -1,0 +1,125 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+MIHOMO_ENV_FILE="${MIHOMO_ENV_FILE:-/etc/awg-pbr/transports/mihomo/provider.env}"
+MIHOMO_PROVIDER_FILE="${MIHOMO_PROVIDER_FILE:-/var/lib/awg-pbr/mihomo/providers/subscription.yaml}"
+
+[[ -r "$MIHOMO_ENV_FILE" ]] && source "$MIHOMO_ENV_FILE"
+
+MIHOMO_MIXED_PORT="${MIHOMO_MIXED_PORT:-7890}"
+MIHOMO_CONTROLLER="${MIHOMO_CONTROLLER:-127.0.0.1:9090}"
+MIHOMO_TUN_IF="${MIHOMO_TUN_IF:-mihomo0}"
+MIHOMO_PROVIDER_NAME="${MIHOMO_PROVIDER_NAME:-subscription}"
+MIHOMO_GROUP_NAME="${MIHOMO_GROUP_NAME:-AWG-MIHOMO}"
+MIHOMO_PROVIDER_HEALTH_URL="${MIHOMO_PROVIDER_HEALTH_URL:-https://www.gstatic.com/generate_204}"
+MIHOMO_PROVIDER_HEALTH_INTERVAL="${MIHOMO_PROVIDER_HEALTH_INTERVAL:-300}"
+MIHOMO_NODE_FILTER="${MIHOMO_NODE_FILTER:-}"
+MIHOMO_ENDPOINT_IP="${MIHOMO_ENDPOINT_IP:-}"
+
+yaml_sq(){
+  local value="$1"
+  value="${value//\'/\'\'}"
+  printf "'%s'" "$value"
+}
+
+[[ "$MIHOMO_MIXED_PORT" =~ ^[0-9]+$ ]] || {
+  echo "Invalid MIHOMO_MIXED_PORT: $MIHOMO_MIXED_PORT" >&2
+  exit 2
+}
+(( MIHOMO_MIXED_PORT >= 1 && MIHOMO_MIXED_PORT <= 65535 )) || {
+  echo "MIHOMO_MIXED_PORT out of range" >&2
+  exit 2
+}
+[[ "$MIHOMO_CONTROLLER" =~ ^127\.0\.0\.1:[0-9]+$ ]] || {
+  echo "MIHOMO_CONTROLLER must bind to 127.0.0.1" >&2
+  exit 2
+}
+_controller_port="${MIHOMO_CONTROLLER##*:}"
+(( _controller_port >= 1 && _controller_port <= 65535 )) || {
+  echo "MIHOMO_CONTROLLER port out of range" >&2
+  exit 2
+}
+[[ "$MIHOMO_PROVIDER_HEALTH_INTERVAL" =~ ^[0-9]+$ ]] || {
+  echo "Invalid MIHOMO_PROVIDER_HEALTH_INTERVAL: $MIHOMO_PROVIDER_HEALTH_INTERVAL" >&2
+  exit 2
+}
+[[ "$MIHOMO_TUN_IF" =~ ^[A-Za-z0-9_.-]{1,15}$ ]] || {
+  echo "Invalid MIHOMO_TUN_IF: $MIHOMO_TUN_IF" >&2
+  exit 2
+}
+[[ "$MIHOMO_PROVIDER_NAME" =~ ^[A-Za-z0-9_.-]+$ ]] || {
+  echo "Invalid MIHOMO_PROVIDER_NAME" >&2
+  exit 2
+}
+[[ "$MIHOMO_GROUP_NAME" =~ ^[A-Za-z0-9_.-]+$ ]] || {
+  echo "Invalid MIHOMO_GROUP_NAME" >&2
+  exit 2
+}
+[[ -n "$MIHOMO_NODE_FILTER" && "$MIHOMO_NODE_FILTER" != *$'\n'* ]] || {
+  echo "MIHOMO_NODE_FILTER is required and must be one line" >&2
+  exit 2
+}
+[[ "$MIHOMO_ENDPOINT_IP" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]] || {
+  echo "MIHOMO_ENDPOINT_IP must be an IPv4 address" >&2
+  exit 2
+}
+IFS=. read -r _a _b _c _d <<<"$MIHOMO_ENDPOINT_IP"
+for _octet in "$_a" "$_b" "$_c" "$_d"; do
+  (( 10#$_octet >= 0 && 10#$_octet <= 255 )) || {
+    echo "MIHOMO_ENDPOINT_IP has an invalid octet" >&2
+    exit 2
+  }
+done
+[[ -r "$MIHOMO_PROVIDER_FILE" ]] || {
+  echo "Mihomo provider cache is missing: $MIHOMO_PROVIDER_FILE" >&2
+  exit 1
+}
+
+_provider_path_yaml="$(yaml_sq "$MIHOMO_PROVIDER_FILE")"
+_node_filter_yaml="$(yaml_sq "$MIHOMO_NODE_FILTER")"
+_health_url_yaml="$(yaml_sq "$MIHOMO_PROVIDER_HEALTH_URL")"
+
+cat <<YAML
+mixed-port: $MIHOMO_MIXED_PORT
+allow-lan: false
+bind-address: 127.0.0.1
+mode: rule
+log-level: warning
+ipv6: false
+external-controller: $MIHOMO_CONTROLLER
+
+profile:
+  store-selected: true
+  store-fake-ip: false
+
+proxy-providers:
+  $MIHOMO_PROVIDER_NAME:
+    type: file
+    path: $_provider_path_yaml
+    filter: $_node_filter_yaml
+    override:
+      override-expr:
+        - '.server = "$MIHOMO_ENDPOINT_IP"'
+    health-check:
+      enable: true
+      url: $_health_url_yaml
+      interval: $MIHOMO_PROVIDER_HEALTH_INTERVAL
+      lazy: true
+
+proxy-groups:
+  - name: $MIHOMO_GROUP_NAME
+    type: select
+    use:
+      - $MIHOMO_PROVIDER_NAME
+
+rules:
+  - MATCH,$MIHOMO_GROUP_NAME
+
+tun:
+  enable: true
+  device: $MIHOMO_TUN_IF
+  stack: mixed
+  auto-route: false
+  auto-redirect: false
+  auto-detect-interface: true
+YAML

@@ -1,0 +1,32 @@
+[Unit]
+Description=AWG Pi Gateway Mihomo transport backend
+Wants=network-online.target
+After=network-online.target
+ConditionPathExists=/usr/local/bin/mihomo
+ConditionPathExists=/var/lib/awg-pbr/mihomo/providers/subscription.yaml
+
+[Service]
+Type=simple
+ExecStartPre=/usr/local/sbin/awg-mihomo-prepare
+ExecStart=/usr/local/bin/mihomo -d /var/lib/awg-pbr/mihomo -f /etc/awg-pbr/transports/mihomo/config.yaml
+Restart=on-failure
+RestartSec=2
+UMask=0077
+NoNewPrivileges=true
+CapabilityBoundingSet=CAP_NET_ADMIN
+AmbientCapabilities=CAP_NET_ADMIN
+DevicePolicy=closed
+DeviceAllow=/dev/net/tun rw
+ProtectSystem=strict
+ReadWritePaths=/var/lib/awg-pbr/mihomo /etc/awg-pbr/transports/mihomo /run
+ProtectHome=true
+PrivateTmp=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictRealtime=true
+LockPersonality=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX AF_NETLINK
+
+[Install]
+WantedBy=multi-user.target

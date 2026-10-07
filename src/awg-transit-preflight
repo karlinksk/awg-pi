@@ -4,7 +4,7 @@ set -Eeuo pipefail
 AWG_ENV_FILE="${AWG_ENV_FILE:-/etc/awg-pbr/env}"
 AWG_COMMON_FILE="${AWG_COMMON_FILE:-/usr/local/lib/awg-pi/common.sh}"
 TRANSPORT_CLI="${AWG_TRANSPORT_CLI:-/usr/local/sbin/awg-transport}"
-MIHOMO_EXPECTED_IP_FILE="${MIHOMO_EXPECTED_IP_FILE:-/etc/awg-pbr/transports/mihomo.expected-ip}"
+MIHOMO_ENDPOINT_IP_FILE="${MIHOMO_ENDPOINT_IP_FILE:-/etc/awg-pbr/transports/mihomo/endpoint-ip}"
 # shellcheck disable=SC1090
 source "$AWG_ENV_FILE"
 # shellcheck disable=SC1090
@@ -125,11 +125,11 @@ case "$TRANSPORT_ID" in
       fail "Mihomo transport health check failed"
     ok "Mihomo TUN transport is usable"
 
-    [[ -r "$MIHOMO_EXPECTED_IP_FILE" ]] ||
-      fail "Mihomo expected endpoint file is missing: $MIHOMO_EXPECTED_IP_FILE"
-    mihomo_endpoint="$(tr -d '\r\n[:space:]' <"$MIHOMO_EXPECTED_IP_FILE")"
+    [[ -r "$MIHOMO_ENDPOINT_IP_FILE" ]] ||
+      fail "Mihomo endpoint file is missing: $MIHOMO_ENDPOINT_IP_FILE"
+    mihomo_endpoint="$(tr -d '\r\n[:space:]' <"$MIHOMO_ENDPOINT_IP_FILE")"
     [[ "$mihomo_endpoint" =~ ^[0-9]+(\.[0-9]+){3}$ ]] ||
-      fail "Mihomo expected endpoint is not IPv4: $mihomo_endpoint"
+      fail "Mihomo endpoint is not IPv4: $mihomo_endpoint"
     route_uses_lan_router "$mihomo_endpoint" ||
       fail "Mihomo endpoint $mihomo_endpoint is not DIRECT via $ROUTER_IP on $LAN_IF"
     ok "Mihomo endpoint stays DIRECT: $mihomo_endpoint via $ROUTER_IP on $LAN_IF"

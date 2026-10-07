@@ -27,6 +27,10 @@ FAILOPEN_SCRIPT="/usr/local/sbin/awg-pbr-failopen"
 HEALTH_SCRIPT="/usr/local/sbin/awg-pbr-health"
 ROUTE_CLI="/usr/local/sbin/awg-route"
 TRANSPORT_CLI="/usr/local/sbin/awg-transport"
+MIHOMO_CONFIG_SCRIPT="/usr/local/sbin/awg-mihomo-config"
+MIHOMO_UPDATE_SCRIPT="/usr/local/sbin/awg-mihomo-update"
+MIHOMO_INSTALL_SCRIPT="/usr/local/sbin/awg-mihomo-install"
+MIHOMO_PREPARE_SCRIPT="/usr/local/sbin/awg-mihomo-prepare"
 UPDATE_SCRIPT="/usr/local/sbin/awg-update"
 SETUP_SERVICE="/etc/systemd/system/awg-pbr-setup.service"
 HEALTH_SERVICE="/etc/systemd/system/awg-pbr-health.service"
@@ -668,6 +672,14 @@ install_project_helper(){
   install -m 755 "$tmp" "$target"
   rm -f "$tmp"
 }
+install_project_unit(){
+  local remote="$1" target="$2" tmp
+  tmp="$(mktemp)"
+  curl -4fLsS --retry 3 --connect-timeout 8 --max-time 45 "$PROJECT_RAW_BASE/$remote" -o "$tmp" \
+    || die "Не удалось загрузить $remote из проекта ($PROJECT_REF)"
+  install -m 644 "$tmp" "$target"
+  rm -f "$tmp"
+}
 mkdir -p /usr/local/lib/awg-pi
 install_project_helper src/awg-common /usr/local/lib/awg-pi/common.sh
 chmod 644 /usr/local/lib/awg-pi/common.sh
@@ -678,6 +690,10 @@ install -m 755 "$_manage_tmp" /usr/local/lib/awg-pi/manage.py
 rm -f "$_manage_tmp"
 install_project_helper src/awg-route "$ROUTE_CLI"
 install_project_helper src/awg-transport "$TRANSPORT_CLI"
+install_project_helper src/awg-mihomo-config "$MIHOMO_CONFIG_SCRIPT"
+install_project_helper src/awg-mihomo-update "$MIHOMO_UPDATE_SCRIPT"
+install_project_helper src/awg-mihomo-install "$MIHOMO_INSTALL_SCRIPT"
+install_project_helper src/awg-mihomo-prepare "$MIHOMO_PREPARE_SCRIPT"
 install_project_helper src/awg-pbr-setup "$SETUP_SCRIPT"
 install_project_helper src/awg-transit-nft /usr/local/sbin/awg-transit-nft
 install_project_helper src/awg-transit-preflight /usr/local/sbin/awg-transit-preflight
@@ -691,7 +707,12 @@ install_project_helper src/awg-update "$UPDATE_SCRIPT"
 install_project_helper src/awg-menu /usr/local/sbin/awg-menu
 
 mkdir -p /etc/awg-pbr/sources/opencck/metadata
+mkdir -p /etc/awg-pbr/transports/mihomo /var/lib/awg-pbr/mihomo/providers
 chmod 700 /etc/awg-pbr/sources /etc/awg-pbr/sources/opencck /etc/awg-pbr/sources/opencck/metadata
+chmod 700 /etc/awg-pbr/transports /etc/awg-pbr/transports/mihomo /var/lib/awg-pbr/mihomo /var/lib/awg-pbr/mihomo/providers
+install_project_unit units/awg-mihomo.service /etc/systemd/system/awg-mihomo.service
+install_project_unit units/awg-mihomo-update.service /etc/systemd/system/awg-mihomo-update.service
+install_project_unit units/awg-mihomo-update.timer /etc/systemd/system/awg-mihomo-update.timer
 cat >/etc/systemd/system/awg-opencck-update.service <<'EOF'
 [Unit]
 Description=AWG Pi Gateway OpenCCK source updater
@@ -761,7 +782,7 @@ EOF
 # -----------------------------------------------------------------------------
 STAGE="проверка компонентов управления"
 log "[10/12] Проверка awg-route / awg-menu / awg-update"
-for f in "$ROUTE_CLI" "$SETUP_SCRIPT" /usr/local/sbin/awg-menu /usr/local/sbin/awg-transit-nft /usr/local/sbin/awg-transit-preflight /usr/local/sbin/awg-transit-apply /usr/local/sbin/awg-transit-routing /usr/local/sbin/awg-mode-switch "$HEALTH_SCRIPT" /usr/local/sbin/awg-opencck-update /usr/local/sbin/awg-core-update "$UPDATE_SCRIPT"; do
+for f in "$ROUTE_CLI" "$TRANSPORT_CLI" "$MIHOMO_CONFIG_SCRIPT" "$MIHOMO_UPDATE_SCRIPT" "$MIHOMO_INSTALL_SCRIPT" "$MIHOMO_PREPARE_SCRIPT" "$SETUP_SCRIPT" /usr/local/sbin/awg-menu /usr/local/sbin/awg-transit-nft /usr/local/sbin/awg-transit-preflight /usr/local/sbin/awg-transit-apply /usr/local/sbin/awg-transit-routing /usr/local/sbin/awg-mode-switch "$HEALTH_SCRIPT" /usr/local/sbin/awg-opencck-update /usr/local/sbin/awg-core-update "$UPDATE_SCRIPT"; do
   [[ -x "$f" ]] || die "Не установлен исполняемый компонент: $f"
   bash -n "$f" || die "Синтаксическая проверка компонента не пройдена: $f"
 done

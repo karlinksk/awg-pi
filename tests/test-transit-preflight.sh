@@ -6,7 +6,7 @@ tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 mkdir -p "$tmp/bin"
 echo awg >"$tmp/transport"
-echo 45.86.66.170 >"$tmp/mihomo.expected-ip"
+echo 45.86.66.170 >"$tmp/mihomo.endpoint-ip"
 
 cat >"$tmp/env" <<'EOF'
 LAN_IF='eth0'
@@ -110,7 +110,7 @@ chmod +x "$tmp/bin/"* "$tmp/transport-cli"
 run_preflight(){
   PATH="$tmp/bin:$PATH" AWG_ENV_FILE="$tmp/env" AWG_COMMON_FILE="$repo_root/src/awg-common" \
     AWG_TRANSPORT_FILE="$tmp/transport" AWG_TRANSPORT_CLI="$tmp/transport-cli" \
-    MIHOMO_EXPECTED_IP_FILE="$tmp/mihomo.expected-ip" MOCK_IP_LOG="$tmp/ip.log" \
+    MIHOMO_ENDPOINT_IP_FILE="$tmp/mihomo.endpoint-ip" MOCK_IP_LOG="$tmp/ip.log" \
     MOCK_MIHOMO_HEALTH="${MOCK_MIHOMO_HEALTH:-up}" \
     bash "$repo_root/src/awg-transit-preflight"
 }

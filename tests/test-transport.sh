@@ -41,7 +41,7 @@ export IP_BIN="$TMP/bin/ip"
 export AWG_BIN="$TMP/bin/awg"
 export DATE_BIN="$TMP/bin/date"
 export CURL_BIN="$TMP/bin/curl"
-export MIHOMO_EXPECTED_IP_FILE="$TMP/expected"
+export MIHOMO_EXPECTED_EGRESS_IP_FILE="$TMP/expected"
 CLI="$ROOT/src/awg-transport"
 [[ "$($CLI get)" == awg ]]
 OUT="$($CLI status)"
