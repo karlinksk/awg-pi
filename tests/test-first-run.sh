@@ -124,9 +124,9 @@ grep -Fq "mihomo:provider import $TMP/provider.txt" "$TMP/log"
 grep -Fqx 'mihomo:node select Finland 45.86.66.170' "$TMP/log"
 grep -Fqx 'transport-select:mihomo' "$TMP/log"
 grep -Fqx mihomo "$TMP/transport"
-grep -Fqx 'MIHOMO_PROVIDER_PROFILE=standard' "$TMP/etc/provider.env"
-grep -Fqx 'MIHOMO_PROVIDER_FORMAT=auto' "$TMP/etc/provider.env"
-if grep -q '^MIHOMO_PROVIDER_URL=' "$TMP/etc/provider.env"; then
+sudo grep -Fqx 'MIHOMO_PROVIDER_PROFILE=standard' "$TMP/etc/provider.env"
+sudo grep -Fqx 'MIHOMO_PROVIDER_FORMAT=auto' "$TMP/etc/provider.env"
+if sudo grep -q '^MIHOMO_PROVIDER_URL=' "$TMP/etc/provider.env"; then
   echo 'FAIL: local-only provider unexpectedly gained a network URL' >&2
   exit 1
 fi
