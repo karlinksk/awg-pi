@@ -107,6 +107,40 @@ Required checks:
 - failed refresh leaves the last valid provider cache intact.
 - Last fetch path reflects the successful bootstrap path.
 
+### Provider adapter independence gate
+
+v1.3.0 must not depend on Citadel/Remnawave or on one subscription encoding.
+Every raw provider input is normalized into the same internal Mihomo
+`proxies:` provider before node selection or runtime preparation.
+
+Required adapter formats for v1.3.0:
+
+- native Mihomo/Clash YAML with a non-empty `proxies:` list;
+- plain `vless://` URI subscriptions;
+- Base64 or URL-safe Base64 containing a VLESS URI subscription.
+
+AUTO format detection is the default. The operator must also be able to force
+`mihomo`, `vless` or `base64` manually when autodetection is ambiguous.
+
+For VLESS URI conversion the supported release baseline is:
+
+- transport: TCP, WebSocket, gRPC;
+- security: none, TLS, Reality;
+- common SNI, fingerprint, flow, ALPN, Reality public-key/short-id and
+  WebSocket/gRPC options.
+
+Unknown transport/security modes must fail closed at the adapter: they must not
+silently drop URI parameters or replace the last known-good provider cache.
+
+Before stable release, hardware/release evidence must include at least:
+
+1. one native Mihomo YAML provider path (Citadel/Remnawave is acceptable here);
+2. one **non-Citadel provider format** using plain VLESS URI or Base64 VLESS;
+3. both inputs normalize to a safe provider cache and expose nodes through the
+   same `node list / node prepare / node select` workflow;
+4. a format mismatch or unsupported VLESS mode is rejected without changing the
+   working cache.
+
 ## 5. Provider/node discovery
 
 After a valid provider cache exists:
@@ -245,6 +279,7 @@ A v1.3.0 RC is acceptable only after all of the following are true:
 - AWG remains unchanged immediately after upgrade.
 - first-run Mihomo onboarding succeeds.
 - blocked provider download succeeds through AUTO bootstrap.
+- provider adapters pass native Mihomo YAML plus at least one non-Citadel VLESS/base64 format.
 - manual node selection succeeds with MikroTik DIRECT protection.
 - AWG -> Mihomo switch succeeds.
 - Mihomo -> AWG switch succeeds.
