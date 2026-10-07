@@ -16,6 +16,7 @@ MIHOMO_UPDATER="${MIHOMO_UPDATER:-/usr/local/sbin/awg-mihomo-update}"
 MIHOMO_PREPARE="${MIHOMO_PREPARE:-/usr/local/sbin/awg-mihomo-prepare}"
 MIHOMO_PROVIDER_HELPER="${MIHOMO_PROVIDER_HELPER:-/usr/local/lib/awg-pi/mihomo-provider.py}"
 MIHOMO_DIRECT_CONFIRMED_FILE="${MIHOMO_DIRECT_CONFIRMED_FILE:-/etc/awg-pbr/transports/mihomo/direct-confirmed-endpoint}"
+MIHOMO_NODE_NAME_FILE="${MIHOMO_NODE_NAME_FILE:-/etc/awg-pbr/transports/mihomo/node-name}"
 PYTHON_BIN="${PYTHON_BIN:-python3}"
 TRANSPORT_CLI="${AWG_TRANSPORT_CLI:-/usr/local/sbin/awg-transport}"
 SYSTEMCTL_BIN="${SYSTEMCTL_BIN:-systemctl}"
@@ -132,6 +133,8 @@ status_cmd(){
   printf 'Configured: %s\n' "$([[ -r "$MIHOMO_ENV_FILE" ]] && echo yes || echo no)"
   printf 'Provider URL: %s\n' "$(provider_url_redacted)"
   printf 'Provider cache: %s\n' "$([[ -r "$MIHOMO_PROVIDER_FILE" ]] && echo ready || echo missing)"
+  printf 'Selected node: %s\n' "$([[ -r "$MIHOMO_NODE_NAME_FILE" ]] && cat "$MIHOMO_NODE_NAME_FILE" || echo unknown)"
+  printf 'Endpoint: %s\n' "$([[ -r "$MIHOMO_ENDPOINT_IP_FILE" ]] && cat "$MIHOMO_ENDPOINT_IP_FILE" || echo none)"
   printf 'Last fetch path: %s\n' "$([[ -r "$MIHOMO_LAST_FETCH_FILE" ]] && cat "$MIHOMO_LAST_FETCH_FILE" || echo none)"
   printf 'Runtime config: %s\n' "$([[ -r "$MIHOMO_CONFIG_FILE" ]] && echo ready || echo missing)"
   printf 'Binary: %s\n' "$([[ -x "$MIHOMO_BIN" ]] && "$MIHOMO_BIN" -v 2>/dev/null | head -n1 || echo missing)"
@@ -294,6 +297,7 @@ node_select(){
   snapshot_path "$MIHOMO_ENDPOINT_IP_FILE" endpoint "$snapshot"
   snapshot_path "$MIHOMO_EXPECTED_EGRESS_IP_FILE" egress "$snapshot"
   snapshot_path "$MIHOMO_DIRECT_CONFIRMED_FILE" direct "$snapshot"
+  snapshot_path "$MIHOMO_NODE_NAME_FILE" node "$snapshot"
   snapshot_path "$MIHOMO_CONFIG_FILE" config "$snapshot"
 
   unit_enabled "$MIHOMO_SERVICE" && service_enabled=1 || true
@@ -307,6 +311,7 @@ node_select(){
     restore_path "$MIHOMO_ENDPOINT_IP_FILE" endpoint "$snapshot"
     restore_path "$MIHOMO_EXPECTED_EGRESS_IP_FILE" egress "$snapshot"
     restore_path "$MIHOMO_DIRECT_CONFIRMED_FILE" direct "$snapshot"
+    restore_path "$MIHOMO_NODE_NAME_FILE" node "$snapshot"
     restore_path "$MIHOMO_CONFIG_FILE" config "$snapshot"
     "$SYSTEMCTL_BIN" daemon-reload >/dev/null 2>&1 || true
     restore_unit_state "$MIHOMO_SERVICE" "$service_enabled" "$service_active"
@@ -325,6 +330,8 @@ node_select(){
   chmod 600 "$MIHOMO_ENDPOINT_IP_FILE"
   printf '%s\n' "$endpoint" >"$MIHOMO_DIRECT_CONFIRMED_FILE"
   chmod 600 "$MIHOMO_DIRECT_CONFIRMED_FILE"
+  printf '%s\n' "$name" >"$MIHOMO_NODE_NAME_FILE"
+  chmod 600 "$MIHOMO_NODE_NAME_FILE"
   rm -f "$MIHOMO_EXPECTED_EGRESS_IP_FILE"
 
   MIHOMO_ENV_FILE="$MIHOMO_ENV_FILE"   MIHOMO_PROVIDER_FILE="$MIHOMO_PROVIDER_FILE"   MIHOMO_CONFIG_FILE="$MIHOMO_CONFIG_FILE"   MIHOMO_BIN="$MIHOMO_BIN"     "$MIHOMO_PREPARE"
