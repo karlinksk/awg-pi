@@ -11,6 +11,10 @@ MIHOMO_EXPECTED_EGRESS_IP_FILE="${MIHOMO_EXPECTED_EGRESS_IP_FILE:-/etc/awg-pbr/t
 MIHOMO_LAST_FETCH_FILE="${MIHOMO_LAST_FETCH_FILE:-/var/lib/awg-pbr/mihomo/last-fetch-path}"
 MIHOMO_LAST_FORMAT_FILE="${MIHOMO_LAST_FORMAT_FILE:-/var/lib/awg-pbr/mihomo/last-provider-format}"
 MIHOMO_PROVIDER_FILE="${MIHOMO_PROVIDER_FILE:-/var/lib/awg-pbr/mihomo/providers/subscription.yaml}"
+MIHOMO_CANDIDATE_FILE="${MIHOMO_CANDIDATE_FILE:-/var/lib/awg-pbr/mihomo/providers/candidate.yaml}"
+MIHOMO_CANDIDATE_ENV_FILE="${MIHOMO_CANDIDATE_ENV_FILE:-/var/lib/awg-pbr/mihomo/providers/candidate.env}"
+MIHOMO_CANDIDATE_FETCH_FILE="${MIHOMO_CANDIDATE_FETCH_FILE:-/var/lib/awg-pbr/mihomo/candidate-fetch-path}"
+MIHOMO_CANDIDATE_FORMAT_FILE="${MIHOMO_CANDIDATE_FORMAT_FILE:-/var/lib/awg-pbr/mihomo/candidate-provider-format}"
 MIHOMO_CONFIG_FILE="${MIHOMO_CONFIG_FILE:-/etc/awg-pbr/transports/mihomo/config.yaml}"
 MIHOMO_INSTALLER="${MIHOMO_INSTALLER:-/usr/local/sbin/awg-mihomo-install}"
 MIHOMO_UPDATER="${MIHOMO_UPDATER:-/usr/local/sbin/awg-mihomo-update}"
@@ -43,6 +47,12 @@ Usage:
   awg-mihomo-configure provider-url set-file FILE
   awg-mihomo-configure provider update [auto|mihomo|awg|router]
   awg-mihomo-configure provider import FILE
+  awg-mihomo-configure provider stage-url-file FILE
+  awg-mihomo-configure provider stage-file FILE [keep-source|local-only]
+  awg-mihomo-configure provider candidate list
+  awg-mihomo-configure provider candidate prepare NAME
+  awg-mihomo-configure provider candidate commit NAME ENDPOINT_IP
+  awg-mihomo-configure provider candidate clear
   awg-mihomo-configure provider format set auto|mihomo|vless|base64
   awg-mihomo-configure node list
   awg-mihomo-configure node prepare NAME
@@ -163,6 +173,7 @@ status_cmd(){
   printf 'Provider format requested: %s\n' "$(provider_format_requested)"
   printf 'Provider format detected: %s\n' "$([[ -r "$MIHOMO_LAST_FORMAT_FILE" ]] && cat "$MIHOMO_LAST_FORMAT_FILE" || echo none)"
   printf 'Provider cache: %s\n' "$([[ -r "$MIHOMO_PROVIDER_FILE" ]] && echo ready || echo missing)"
+  printf 'Provider candidate: %s\n' "$([[ -r "$MIHOMO_CANDIDATE_FILE" ]] && echo staged || echo none)"
   printf 'Selected node: %s\n' "$([[ -r "$MIHOMO_NODE_NAME_FILE" ]] && cat "$MIHOMO_NODE_NAME_FILE" || echo unknown)"
   printf 'Endpoint: %s\n' "$([[ -r "$MIHOMO_ENDPOINT_IP_FILE" ]] && cat "$MIHOMO_ENDPOINT_IP_FILE" || echo none)"
   printf 'Last fetch path: %s\n' "$([[ -r "$MIHOMO_LAST_FETCH_FILE" ]] && cat "$MIHOMO_LAST_FETCH_FILE" || echo none)"
