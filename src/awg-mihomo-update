@@ -14,6 +14,9 @@ MIHOMO_PREPARE="${MIHOMO_PREPARE:-/usr/local/sbin/awg-mihomo-prepare}"
 MIHOMO_PROVIDER_HELPER="${MIHOMO_PROVIDER_HELPER:-/usr/local/lib/awg-pi/mihomo-provider.py}"
 PYTHON_BIN="${PYTHON_BIN:-python3}"
 MIHOMO_LAST_FORMAT_FILE="${MIHOMO_LAST_FORMAT_FILE:-/var/lib/awg-pbr/mihomo/last-provider-format}"
+MIHOMO_CANDIDATE_FILE="${MIHOMO_CANDIDATE_FILE:-/var/lib/awg-pbr/mihomo/providers/candidate.yaml}"
+MIHOMO_CANDIDATE_FETCH_FILE="${MIHOMO_CANDIDATE_FETCH_FILE:-/var/lib/awg-pbr/mihomo/candidate-fetch-path}"
+MIHOMO_CANDIDATE_FORMAT_FILE="${MIHOMO_CANDIDATE_FORMAT_FILE:-/var/lib/awg-pbr/mihomo/candidate-provider-format}"
 
 [[ -r "$MIHOMO_ENV_FILE" ]] || {
   echo "Missing Mihomo provider environment: $MIHOMO_ENV_FILE" >&2
@@ -42,7 +45,9 @@ Usage:
   awg-mihomo-update [--mode auto|direct|mihomo|awg] [--format auto|mihomo|vless|base64]
   awg-mihomo-update --file PROFILE [--format auto|mihomo|vless|base64]
   awg-mihomo-update --cache-only [--mode auto|direct|mihomo|awg] [--format auto|mihomo|vless|base64]
+  awg-mihomo-update --stage-only [--file PROFILE] [--mode auto|direct|mihomo|awg] [--format auto|mihomo|vless|base64]
 
+--stage-only validates a candidate provider without changing live state.
 AUTO delegates to awg-fetch: DIRECT first, then the selected healthy backend,
 then other healthy backends. Legacy mode "router" is mapped to DIRECT.
 USAGE
@@ -50,6 +55,7 @@ USAGE
 
 local_file=""
 cache_only=0
+stage_only=0
 while (( $# )); do
   case "$1" in
     --mode)
@@ -69,6 +75,10 @@ while (( $# )); do
       ;;
     --cache-only)
       cache_only=1
+      shift
+      ;;
+    --stage-only)
+      stage_only=1
       shift
       ;;
     -h|--help|help)
@@ -125,8 +135,9 @@ esac
 }
 
 provider_dir="$(dirname "$MIHOMO_PROVIDER_FILE")"
-mkdir -p "$provider_dir"
-chmod 700 "$provider_dir"
+candidate_dir="$(dirname "$MIHOMO_CANDIDATE_FILE")"
+mkdir -p "$provider_dir" "$candidate_dir"
+chmod 700 "$provider_dir" "$candidate_dir"
 
 tmp="$(mktemp "$provider_dir/.subscription.XXXXXX")"
 trap 'rm -f "$tmp"' EXIT
