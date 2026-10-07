@@ -5,6 +5,7 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 tmp="$(mktemp -d)"
 trap 'sudo rm -rf "$tmp"' EXIT
 mkdir -p "$tmp/bin" "$tmp/state"
+echo awg >"$tmp/transport"
 
 cat >"$tmp/env" <<'EOF'
 VPN_IF='awg0'
@@ -16,17 +17,16 @@ HEALTH_INTERVAL='1'
 HANDSHAKE_MAX_AGE='180'
 EOF
 
-cat >"$tmp/common" <<'EOF'
-awg_mode_get(){ cat "${AWG_MODE_FILE}"; }
-EOF
-
 cat >"$tmp/bin/ip" <<'EOF'
 #!/usr/bin/env bash
 set -Eeuo pipefail
+echo "$*" >>"${MOCK_IP_LOG}"
 case "$*" in
-  "link show awg0") exit 0 ;;
+  "link show awg0"|"link show mihomo0") exit 0 ;;
   "-4 route replace default dev awg0 table 101") exit 0 ;;
   "-4 route replace default dev awg0 table 100") exit 0 ;;
+  "-4 route replace default dev mihomo0 table 101") exit 0 ;;
+  "-4 route replace default dev mihomo0 table 100") exit 0 ;;
   "-4 rule show")
     [[ -e "${MOCK_RULE_FILE}" ]] && echo '100: from all fwmark 0x100 lookup 100'
     ;;
@@ -59,6 +59,13 @@ cat >"$tmp/bin/logger" <<'EOF'
 exit 0
 EOF
 
+cat >"$tmp/transport-cli" <<'EOF'
+#!/usr/bin/env bash
+set -Eeuo pipefail
+[[ "$*" == "check mihomo" ]] || exit 2
+[[ "${MOCK_MIHOMO_HEALTH:-up}" == up ]]
+EOF
+
 cat >"$tmp/transit-routing" <<'EOF'
 #!/usr/bin/env bash
 set -Eeuo pipefail
@@ -70,19 +77,23 @@ case "$1" in
 esac
 EOF
 
-chmod +x "$tmp/bin/"* "$tmp/transit-routing"
+chmod +x "$tmp/bin/"* "$tmp/transit-routing" "$tmp/transport-cli"
 echo 1 >"$tmp/vpn-enabled"
 
 run_health(){
   sudo env \
     AWG_ENV_FILE="$tmp/env" \
-    AWG_COMMON_FILE="$tmp/common" \
+    AWG_COMMON_FILE="$repo_root/src/awg-common" \
     AWG_MODE_FILE="$tmp/mode" \
+    AWG_TRANSPORT_FILE="$tmp/transport" \
     AWG_VPN_ENABLED_FILE="$tmp/vpn-enabled" \
     AWG_STATE_DIR="$tmp/state" \
     AWG_TRANSIT_ROUTING="$tmp/transit-routing" \
+    AWG_TRANSPORT_CLI="$tmp/transport-cli" \
+    MIHOMO_TUN_IF=mihomo0 \
     IP_BIN="$tmp/bin/ip" AWG_BIN="$tmp/bin/awg" PING_BIN="$tmp/bin/ping" LOGGER_BIN="$tmp/bin/logger" \
-    MOCK_RULE_FILE="$tmp/rule" MOCK_TRANSIT_LOG="$tmp/transit.log" MOCK_HEALTH="${MOCK_HEALTH:-up}" \
+    MOCK_RULE_FILE="$tmp/rule" MOCK_TRANSIT_LOG="$tmp/transit.log" MOCK_IP_LOG="$tmp/ip.log" \
+    MOCK_HEALTH="${MOCK_HEALTH:-up}" MOCK_MIHOMO_HEALTH="${MOCK_MIHOMO_HEALTH:-up}" \
     AWG_HEALTH_ONCE=1 \
     bash "$repo_root/src/awg-pbr-health"
 }
@@ -111,5 +122,36 @@ echo "=== transit unhealthy is fail-closed ==="
 MOCK_HEALTH=down run_health
 grep -Fqx disable "$tmp/transit.log"
 grep -Fqx down "$tmp/state/health.state"
+
+echo "=== selective Mihomo healthy ==="
+echo mihomo >"$tmp/transport"
+echo selective >"$tmp/mode"
+rm -f "$tmp/rule"
+: >"$tmp/ip.log"
+MOCK_MIHOMO_HEALTH=up run_health
+sudo test -e "$tmp/rule"
+grep -Fq -- '-4 route replace default dev mihomo0 table 101' "$tmp/ip.log"
+grep -Fq -- '-4 route replace default dev mihomo0 table 100' "$tmp/ip.log"
+grep -Fqx up "$tmp/state/health.state"
+
+echo "=== selective Mihomo unhealthy is fail-open ==="
+MOCK_MIHOMO_HEALTH=down run_health
+sudo test ! -e "$tmp/rule"
+grep -Fqx down "$tmp/state/health.state"
+
+echo "=== transit Mihomo healthy ==="
+echo transit >"$tmp/mode"
+: >"$tmp/transit.log"
+MOCK_MIHOMO_HEALTH=up run_health
+grep -Fqx apply "$tmp/transit.log"
+grep -Fqx up "$tmp/state/health.state"
+
+echo "=== transit Mihomo unhealthy is fail-closed ==="
+: >"$tmp/transit.log"
+MOCK_MIHOMO_HEALTH=down run_health
+grep -Fqx disable "$tmp/transit.log"
+grep -Fqx down "$tmp/state/health.state"
+
+echo awg >"$tmp/transport"
 
 echo "mode-aware health monitor: OK"
