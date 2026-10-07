@@ -47,7 +47,7 @@ Usage:
   awg-mihomo-configure provider-url set-file FILE
   awg-mihomo-configure provider update [auto|mihomo|awg|router]
   awg-mihomo-configure provider import FILE
-  awg-mihomo-configure provider stage-url-file FILE
+  awg-mihomo-configure provider stage-url-file FILE [auto|mihomo|vless|base64]
   awg-mihomo-configure provider stage-file FILE [keep-source|local-only] [auto|mihomo|vless|base64]
   awg-mihomo-configure provider candidate list
   awg-mihomo-configure provider candidate prepare NAME
@@ -285,7 +285,7 @@ restore_candidate_state(){
 }
 
 provider_stage_url_file(){
-  local source_file="$1" MIHOMO_PROVIDER_URL="" snapshot rc
+  local source_file="$1" format_override="${2:-}" MIHOMO_PROVIDER_URL="" snapshot rc
   trusted_config_file "$source_file" || {
     echo "Provider URL file must be root-owned mode 0600: $source_file" >&2
     return 2
@@ -296,12 +296,18 @@ provider_stage_url_file(){
     echo "Provider URL file does not contain a valid MIHOMO_PROVIDER_URL" >&2
     return 2
   }
+  if [[ -n "$format_override" ]]; then
+    case "$format_override" in auto|mihomo|vless|base64) ;; *) return 2 ;; esac
+  fi
 
   snapshot="$(mktemp -d)"
   chmod 700 "$snapshot"
   snapshot_candidate_state "$snapshot"
   prepare_candidate_env
   write_env_key "$MIHOMO_CANDIDATE_ENV_FILE" MIHOMO_PROVIDER_URL "$MIHOMO_PROVIDER_URL"
+  if [[ -n "$format_override" ]]; then
+    write_env_key "$MIHOMO_CANDIDATE_ENV_FILE" MIHOMO_PROVIDER_FORMAT "$format_override"
+  fi
   if MIHOMO_ENV_FILE="$MIHOMO_CANDIDATE_ENV_FILE" \
        MIHOMO_PROVIDER_FILE="$MIHOMO_PROVIDER_FILE" \
        MIHOMO_CANDIDATE_FILE="$MIHOMO_CANDIDATE_FILE" \
@@ -500,7 +506,7 @@ candidate_commit(){
 }
 
 provider_format_set(){
-  local format="$1" snapshot
+  local format="$1" MIHOMO_PROVIDER_URL="" tmp rc
   case "$format" in
     auto|mihomo|vless|base64) ;;
     *)
@@ -514,25 +520,26 @@ provider_format_set(){
     return 1
   }
 
-  snapshot="$(mktemp)"
-  cp -a "$MIHOMO_ENV_FILE" "$snapshot"
-  write_env_key "$MIHOMO_ENV_FILE" MIHOMO_PROVIDER_FORMAT "$format"
-
-  if ! MIHOMO_ENV_FILE="$MIHOMO_ENV_FILE" \
-       MIHOMO_PROVIDER_FILE="$MIHOMO_PROVIDER_FILE" \
-       MIHOMO_BIN="$MIHOMO_BIN" \
-       MIHOMO_LAST_FETCH_FILE="$MIHOMO_LAST_FETCH_FILE" \
-       MIHOMO_LAST_FORMAT_FILE="$MIHOMO_LAST_FORMAT_FILE" \
-       MIHOMO_PROVIDER_HELPER="$MIHOMO_PROVIDER_HELPER" \
-       "$MIHOMO_UPDATER" --mode auto --format "$format"; then
-    install -m 600 "$snapshot" "$MIHOMO_ENV_FILE"
-    rm -f "$snapshot"
-    echo "Provider format change failed; previous format restored." >&2
+  # shellcheck disable=SC1090
+  source "$MIHOMO_ENV_FILE"
+  [[ "$MIHOMO_PROVIDER_URL" =~ ^https?://[^[:space:]]+$ ]] || {
+    echo "Current provider has no network URL; choose the format when staging the next local file/paste." >&2
     return 1
-  fi
+  }
 
-  rm -f "$snapshot"
-  printf 'MIHOMO_PROVIDER_FORMAT=%s\n' "$format"
+  tmp="$(mktemp)"
+  chmod 600 "$tmp"
+  printf 'MIHOMO_PROVIDER_URL=%q\n' "$MIHOMO_PROVIDER_URL" >"$tmp"
+  if provider_stage_url_file "$tmp" "$format"; then
+    rc=0
+  else
+    rc=$?
+  fi
+  rm -f "$tmp"
+  (( rc == 0 )) || return "$rc"
+
+  printf 'MIHOMO_PROVIDER_FORMAT=%s-STAGED\n' "$format"
+  printf 'NEXT=awg-mihomo-configure provider candidate list\n'
 }
 
 remove_env_key(){
@@ -1069,8 +1076,8 @@ case "${1:-}" in
         provider_import "$3"
         ;;
       stage-url-file)
-        [[ $# -eq 3 ]] || { usage >&2; exit 2; }
-        provider_stage_url_file "$3"
+        [[ $# -ge 3 && $# -le 4 ]] || { usage >&2; exit 2; }
+        provider_stage_url_file "$3" "${4:-}"
         ;;
       stage-file)
         [[ $# -ge 3 && $# -le 5 ]] || { usage >&2; exit 2; }
