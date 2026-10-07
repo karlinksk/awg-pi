@@ -51,6 +51,7 @@ jobs:
           bash -n tests/test-transport-switch.sh
           bash -n tests/test-mihomo-runtime.sh
           bash -n tests/test-mihomo-configure.sh
+          bash -n tests/test-mihomo-node-select.sh
           bash -n tests/test-mode.sh
           bash -n tests/test-route-mode.sh
           bash -n tests/test-setup-mode.sh
@@ -69,7 +70,7 @@ jobs:
           bash -n tests/test-redaction.sh
       - name: ShellCheck errors
         run: |
-          shellcheck -S error install.sh src/awg-common src/awg-route src/awg-transport src/awg-pbr-setup src/awg-transit-nft src/awg-transit-preflight src/awg-transit-apply src/awg-transit-routing src/awg-mode-switch src/awg-pbr-health src/awg-opencck-update src/awg-core-update src/awg-update src/awg-menu src/awg-mihomo-config src/awg-mihomo-update src/awg-mihomo-install src/awg-mihomo-prepare src/awg-mihomo-configure tests/test-common.sh tests/test-transport.sh tests/test-transport-switch.sh tests/test-mihomo-runtime.sh tests/test-mihomo-configure.sh tests/test-mode.sh tests/test-route-mode.sh tests/test-setup-mode.sh tests/test-transit-nft.sh tests/test-transit-preflight.sh tests/test-transit-apply.sh tests/test-transit-routing.sh tests/test-health-mode.sh tests/test-mode-switch.sh tests/test-upgrade-mode.sh tests/test-opencck-updater.sh tests/test-direct-domain-precedence.sh tests/mock-curl.sh tests/test-nft-template.sh
+          shellcheck -S error install.sh src/awg-common src/awg-route src/awg-transport src/awg-pbr-setup src/awg-transit-nft src/awg-transit-preflight src/awg-transit-apply src/awg-transit-routing src/awg-mode-switch src/awg-pbr-health src/awg-opencck-update src/awg-core-update src/awg-update src/awg-menu src/awg-mihomo-config src/awg-mihomo-update src/awg-mihomo-install src/awg-mihomo-prepare src/awg-mihomo-configure tests/test-common.sh tests/test-transport.sh tests/test-transport-switch.sh tests/test-mihomo-runtime.sh tests/test-mihomo-configure.sh tests/test-mihomo-node-select.sh tests/test-mode.sh tests/test-route-mode.sh tests/test-setup-mode.sh tests/test-transit-nft.sh tests/test-transit-preflight.sh tests/test-transit-apply.sh tests/test-transit-routing.sh tests/test-health-mode.sh tests/test-mode-switch.sh tests/test-upgrade-mode.sh tests/test-opencck-updater.sh tests/test-direct-domain-precedence.sh tests/mock-curl.sh tests/test-nft-template.sh
       - name: Unit tests
         run: |
           bash tests/test-common.sh
@@ -77,6 +78,7 @@ jobs:
           bash tests/test-transport-switch.sh
           bash tests/test-mihomo-runtime.sh
           bash tests/test-mihomo-configure.sh
+          bash tests/test-mihomo-node-select.sh
           bash tests/test-mode.sh
           bash tests/test-route-mode.sh
           bash tests/test-setup-mode.sh
