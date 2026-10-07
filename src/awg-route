@@ -476,7 +476,7 @@ source_counts(){
 }
 
 show_status(){
-  local age enabled sc_total sc_enabled sc_entries mode mode_label
+  local age enabled sc_total sc_enabled sc_entries mode mode_label transport_id
   enabled="$(cat "$VE" 2>/dev/null || echo 1)"
   age="$(handshake_age)"
   read -r sc_total sc_enabled sc_entries < <(source_counts)
@@ -486,12 +486,15 @@ show_status(){
     mode=invalid
     mode_label="INVALID / corrupt state"
   fi
+  transport_id="$(awg_transport_get 2>/dev/null || echo unconfigured)"
   /usr/local/lib/awg-pi/manage.py network status || true
   echo "=== Gateway ==="
   printf 'Operating mode: %s\n' "$mode_label"
   printf 'Mode ID: %s\n' "$mode"
   printf 'LAN: %s  Pi: %s  Router: %s  Network: %s\n' "$LAN_IF" "$PI_IP" "$ROUTER_IP" "$LAN_CIDR"
   printf 'Health state: %s\n' "$(health_state)"
+  printf 'Active transport: %s\n' "$transport_id"
+  [[ -x "$TRANSPORT_CLI" ]] && "$TRANSPORT_CLI" status 2>/dev/null || true
   if [[ "$mode" == transit ]]; then
     printf 'Selective classification: INACTIVE (state preserved)\n'
     printf 'Transit policy: %s\n' "$(policy_present && echo ACTIVE || echo FAIL-CLOSED)"
@@ -500,10 +503,12 @@ show_status(){
     printf 'VPN policy requested: %s\n' "$([[ "$enabled" == 1 ]] && echo ON || echo OFF)"
     printf 'Policy rule: %s\n' "$(policy_present && echo ACTIVE || echo FAIL-OPEN/DIRECT)"
   fi
-  if (( age >= 0 )); then printf 'Latest handshake age: %ss\n' "$age"; else echo 'Latest handshake: отсутствует'; fi
+  if [[ "$transport_id" == awg ]]; then
+    if (( age >= 0 )); then printf 'Latest AWG handshake age: %ss\n' "$age"; else echo 'Latest AWG handshake: отсутствует'; fi
+  fi
   echo
   echo "=== Services ==="
-  for s in awg-pbr-setup.service dnsmasq.service "awg-quick@$VPN_IF.service" awg-pbr-health.service awg-opencck-update.timer; do
+  for s in awg-pbr-setup.service dnsmasq.service "awg-quick@$VPN_IF.service" awg-mihomo.service awg-pbr-health.service awg-opencck-update.timer awg-mihomo-update.timer; do
     printf '%-30s %s\n' "$s" "$(systemctl is-active "$s" 2>/dev/null || true)"
   done
   echo
@@ -513,7 +518,7 @@ show_status(){
   printf 'Client allow-list: %s\n' "$(grep -Evc '^\s*(#|$)' "$CF" 2>/dev/null || true)"
   printf 'OpenCCK sources: %s total / %s enabled / %s cached entries\n' "$sc_total" "$sc_enabled" "$sc_entries"
   echo
-  echo "=== AWG ==="
+  echo "=== AmneziaWG backend ==="
   awg_safe_show "$VPN_IF" || echo "awg0 недоступен"
 }
 
@@ -574,7 +579,7 @@ run_diagnostics(){
   # Resolve mode before the tee pipeline. The brace group below executes in a
   # pipeline subshell, so assigning diag_mode inside it would be lost before
   # the FAIL-OPEN / FAIL-CLOSED verification that follows under set -u.
-  transport_id="$(awg_transport_get 2>/dev/null || echo awg)"
+  transport_id="$(awg_transport_get 2>/dev/null || echo unconfigured)"
 
   if diag_mode="$(awg_mode_get 2>/dev/null)"; then
     diag_mode_label="$(awg_mode_label "$diag_mode" 2>/dev/null || echo unknown)"
@@ -663,15 +668,15 @@ run_diagnostics(){
       printf '%s type=%s enabled=%s entries=%s last=%s\n' "$SOURCE_NAME" "$SOURCE_TYPE" "$ENABLED" "${ENTRY_COUNT:-0}" "${LAST_SUCCESS:-never}"
     done < <(source_meta_files)
     echo
-    echo "--- VPN transport health ---"
-    if ip link show "$VPN_IF" >/dev/null 2>&1; then
-      ip -4 route replace default dev "$VPN_IF" table "$HEALTH_TABLE" 2>/dev/null || true
-      if ! ip -4 rule show | grep -Eq '(^| )90:.*fwmark (0x101|257).*lookup (101|awghealth)'; then
-        ip -4 rule add priority 90 fwmark "$HEALTH_MARK" lookup "$HEALTH_TABLE" 2>/dev/null || true
-      fi
-      if ping -4 -n -m "$((HEALTH_MARK))" -c1 -W3 9.9.9.9 >/dev/null 2>&1 || ping -4 -n -m "$((HEALTH_MARK))" -c1 -W3 1.1.1.1 >/dev/null 2>&1; then health_ok=yes; fi
+    echo "--- Active transport health ---"
+    if [[ "$transport_id" == unconfigured ]]; then
+      echo "Transport health: not-ready"
+    elif [[ -x "$TRANSPORT_CLI" ]] && "$TRANSPORT_CLI" check "$transport_id" >/dev/null 2>&1; then
+      health_ok=yes
+      echo "Transport health: healthy"
+    else
+      echo "Transport health: down"
     fi
-    echo "VPN transport ping: $health_ok"
   } | tee "$report"
 
   echo | tee -a "$report"
@@ -686,7 +691,95 @@ run_diagnostics(){
     transit_status="$("$TRANSIT_ROUTING" status 2>&1 || true)"
     printf '%s\n' "$transit_status" | tee -a "$report"
 
-    if ! policy_present && grep -Fqx 'Transit guard: SAFE' <<<"$transit_status"; then
+    if ! policy_present && grep -Eq '^Transit guard: (SAFE|LOCKDOWN)
+      echo "FAIL-CLOSED: OK" | tee -a "$report"
+    else
+      echo "FAIL-CLOSED: FAIL" | tee -a "$report"
+      diag_rc=1
+    fi
+
+    if [[ "$prev_health_active" == yes ]]; then
+      systemctl start "$HEALTH_SERVICE" >/dev/null 2>&1 || true
+      for _ in $(seq 1 15); do
+        restore_status="$("$TRANSIT_ROUTING" status 2>&1 || true)"
+        if policy_present && grep -Fqx 'Transit guard: SAFE' <<<"$restore_status"; then
+          restore_ok=yes
+          break
+        fi
+        sleep 1
+      done
+      if [[ "$restore_ok" == yes ]]; then
+        echo "Transit restore: OK" | tee -a "$report"
+      else
+        echo "Transit restore: FAIL" | tee -a "$report"
+        printf '%s\n' "$restore_status" | tee -a "$report"
+        diag_rc=1
+      fi
+    else
+      echo "Transit restore: skipped (health monitor was not active)" | tee -a "$report"
+    fi
+  else
+    echo "--- FAIL-OPEN simulation ---" | tee -a "$report"
+    [[ "$prev_health_active" == yes ]] && systemctl stop "$HEALTH_SERVICE" >/dev/null 2>&1 || true
+    "$FAILOPEN" >/dev/null 2>&1 || true
+    failroute="$(ip -4 route get 1.1.1.1 mark "$VPN_MARK" 2>&1 | head -1 || true)"
+    echo "Route after policy removal: $failroute" | tee -a "$report"
+    if grep -q "dev $LAN_IF" <<<"$failroute"; then
+      echo "FAIL-OPEN: OK" | tee -a "$report"
+    else
+      echo "FAIL-OPEN: FAIL" | tee -a "$report"
+      diag_rc=1
+    fi
+    [[ "$prev_health_active" == yes ]] && systemctl start "$HEALTH_SERVICE" >/dev/null 2>&1 || true
+    [[ "$manual" == 0 ]] && "$FAILOPEN" >/dev/null 2>&1 || true
+  fi
+
+  echo "Report: $report" | tee -a "$report"
+  chmod 600 "$report"; prune_reports
+  return "$diag_rc"
+}
+
+cmd="${1:-}"; action="${2:-}"; val="${3:-}"
+case "$cmd" in
+  vpn)
+    case "$action" in
+      add|del) [[ -n "$val" ]] || { usage; exit 2; }; "${action}_domain" vpn "$val" ;;
+      import) shift 2; import_domains vpn "$@" ;;
+      export) [[ -n "$val" ]] || { usage; exit 2; }; export_domains vpn "$val" ;;
+      on|off) vpn_switch "$action" ;;
+      *) usage; exit 2 ;;
+    esac
+    ;;
+  direct)
+    case "$action" in
+      add|del) [[ -n "$val" ]] || { usage; exit 2; }; "${action}_domain" direct "$val" ;;
+      import) shift 2; import_domains direct "$@" ;;
+      export) [[ -n "$val" ]] || { usage; exit 2; }; export_domains direct "$val" ;;
+      *) usage; exit 2 ;;
+    esac
+    ;;
+  network|config|dns) exec /usr/local/lib/awg-pi/manage.py "$@" ;;
+  source) shift; source_cmd "$@" ;;
+  client) client_cmd "$action" "$val" ;;
+  mode) mode_cmd "$action" ;;
+  list)
+    echo "=== VPN domains ==="; cat "$VD" 2>/dev/null || true
+    echo; echo "=== DIRECT exceptions ==="; cat "$DD" 2>/dev/null || true
+    echo; source_cmd list
+    echo; echo "=== Client allow-list ==="
+    if grep -Ev '^\s*(#|$)' "$CF" 2>/dev/null | grep -q .; then cat "$CF"; else echo "(пусто = все Pi-gateway clients)"; fi
+    ;;
+  status) show_status ;;
+  test) [[ -n "$action" ]] || { usage; exit 2; }; test_domain "$action" ;;
+  reload) reload_all; echo "OK: configuration reloaded" ;;
+  diagnostics) run_diagnostics ;;
+  logs)
+    n="${action:-150}"; [[ "$n" =~ ^[0-9]+$ ]] || n=150
+    journalctl --no-pager -n "$n" -u "awg-quick@$VPN_IF.service" -u awg-pbr-health.service -u dnsmasq.service -u awg-pbr-setup.service -u awg-opencck-update.service
+    ;;
+  *) usage; exit 2 ;;
+esac
+ <<<"$transit_status"; then
       echo "FAIL-CLOSED: OK" | tee -a "$report"
     else
       echo "FAIL-CLOSED: FAIL" | tee -a "$report"
