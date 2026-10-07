@@ -96,24 +96,6 @@ activate_awg_file(){
   printf 'FIRST_TRANSPORT=awg\n'
 }
 
-prepare_local_mihomo_env(){
-  local format="$1" dir tmp
-  case "$format" in auto|mihomo|vless|base64) ;; *) return 2 ;; esac
-  dir="$(dirname "$MIHOMO_ENV_FILE")"
-  mkdir -p "$dir"
-  chmod 700 "$dir"
-  if [[ ! -e "$MIHOMO_ENV_FILE" ]]; then
-    tmp="$(mktemp "$dir/.first-run-provider.XXXXXX")"
-    {
-      printf 'MIHOMO_PROVIDER_PROFILE=%q\n' standard
-      printf 'MIHOMO_PROVIDER_FORMAT=%q\n' "$format"
-      printf 'MIHOMO_FETCH_MODE=%q\n' auto
-    } >"$tmp"
-    chmod 600 "$tmp"
-    mv -f "$tmp" "$MIHOMO_ENV_FILE"
-  fi
-}
-
 choose_mihomo_node(){
   local source="${1:-live}" nodes name prepared endpoint
   case "$source" in
