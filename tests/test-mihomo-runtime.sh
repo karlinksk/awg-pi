@@ -257,7 +257,12 @@ cmp -s "$tmp/before-runtime-fail.yaml" "$tmp/state/providers/live.yaml"
 cmp -s "$tmp/before-last-fetch" "$tmp/state/last-fetch-path"
 cmp -s "$tmp/before-last-format" "$tmp/state/last-provider-format"
 grep -Fq 'provider cache rolled back' "$tmp/err"
-[[ "$(grep -c '^prepare
+[[ "$(grep -c '^prepare$' "$tmp/prepare.log")" -ge 2 ]]
+if find "$tmp/state/providers" -maxdepth 1 -type f -name '.subscription.backup.*' | grep -q .; then
+  echo 'FAIL: failed provider update left a backup temp file behind' >&2
+  exit 1
+fi
+
 echo "=== prepare validates and installs config atomically ==="
 cat >"$tmp/bin/render" <<'MOCK'
 #!/usr/bin/env bash
