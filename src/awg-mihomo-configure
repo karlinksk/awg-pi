@@ -25,6 +25,7 @@ MIHOMO_UPDATE_SERVICE="${MIHOMO_UPDATE_SERVICE:-awg-mihomo-update.service}"
 MIHOMO_UPDATE_TIMER="${MIHOMO_UPDATE_TIMER:-awg-mihomo-update.timer}"
 MIHOMO_BIN="${MIHOMO_BIN:-/usr/local/bin/mihomo}"
 SLEEP_BIN="${SLEEP_BIN:-sleep}"
+OPENSSL_BIN="${OPENSSL_BIN:-openssl}"
 
 # shellcheck disable=SC1090
 source "$AWG_COMMON_FILE"
@@ -32,6 +33,7 @@ source "$AWG_COMMON_FILE"
 usage(){
   cat <<'USAGE'
 Usage:
+  awg-mihomo-configure init FILE
   awg-mihomo-configure apply FILE
   awg-mihomo-configure status
   awg-mihomo-configure provider-url set URL
@@ -41,7 +43,14 @@ Usage:
   awg-mihomo-configure node prepare NAME
   awg-mihomo-configure node select NAME ENDPOINT_IP --direct-confirmed
 
-FILE is a root-trusted environment file. Required:
+For init FILE is a root-trusted environment file. Required:
+  MIHOMO_PROVIDER_URL
+Optional:
+  MIHOMO_PROVIDER_PROFILE=standard|remnawave
+  MIHOMO_PROVIDER_HWID          # reuse an existing stable HWID if available
+  MIHOMO_PROVIDER_AUTHORIZATION
+
+For apply FILE is a root-trusted environment file. Required:
   MIHOMO_PROVIDER_URL
   MIHOMO_NODE_FILTER
   MIHOMO_ENDPOINT_IP
@@ -351,12 +360,136 @@ node_select(){
   trap - ERR
   rm -rf "$snapshot"
 
+  "$SYSTEMCTL_BIN" enable --now "$MIHOMO_UPDATE_TIMER" >/dev/null 2>&1 || true
+
   printf 'MIHOMO_NODE=%s\n' "$name"
   printf 'MIHOMO_ENDPOINT_IP=%s\n' "$endpoint"
   printf 'DIRECT_CONFIRMED=1\n'
   printf 'MIHOMO_HEALTH=healthy\n'
   printf 'ACTIVE_TRANSPORT=%s\n' "$(awg_transport_get)"
   printf 'NEXT=awg-transport select mihomo\n'
+}
+
+init_cmd(){
+  local source_file="$1" tmp_input tmp_env snapshot rc profile url hwid="" suffix=""
+  local hwid_generated=0 node_count=0
+
+  trusted_config_file "$source_file" || {
+    echo "Init file must be a root-owned regular file with mode 0600: $source_file" >&2
+    return 2
+  }
+
+  [[ "$(awg_transport_get)" != mihomo ]] || {
+    echo "Refusing initial Mihomo setup while Mihomo is the active transport" >&2
+    return 1
+  }
+
+  if [[ -r "$MIHOMO_ENV_FILE" || -r "$MIHOMO_PROVIDER_FILE" ]]; then
+    echo "Mihomo provider is already initialized; use provider-url/provider update instead." >&2
+    return 1
+  fi
+
+  tmp_input="$(mktemp)"
+  tmp_env="$(mktemp)"
+  snapshot="$(mktemp -d)"
+  chmod 700 "$snapshot"
+  install -m 600 "$source_file" "$tmp_input"
+
+  # shellcheck disable=SC1090
+  source "$tmp_input"
+
+  : "${MIHOMO_PROVIDER_URL:?MIHOMO_PROVIDER_URL is required}"
+  url="$MIHOMO_PROVIDER_URL"
+  profile="${MIHOMO_PROVIDER_PROFILE:-standard}"
+
+  [[ "$url" =~ ^https?://[^[:space:]]+$ ]] || {
+    echo "MIHOMO_PROVIDER_URL must be an http(s) URL without whitespace" >&2
+    rm -f "$tmp_input" "$tmp_env"
+    rm -rf "$snapshot"
+    return 2
+  }
+
+  case "$profile" in
+    standard)
+      ;;
+    remnawave)
+      hwid="${MIHOMO_PROVIDER_HWID:-}"
+      if [[ -z "$hwid" ]]; then
+        hwid="$("$OPENSSL_BIN" rand -hex 16)"
+        hwid_generated=1
+      fi
+      [[ "$hwid" =~ ^[A-Za-z0-9._:-]{8,128}$ ]] || {
+        echo "MIHOMO_PROVIDER_HWID has an invalid format" >&2
+        rm -f "$tmp_input" "$tmp_env"
+        rm -rf "$snapshot"
+        return 2
+      }
+      if [[ "${url%/}" != */mihomo ]]; then
+        suffix=mihomo
+      fi
+      ;;
+    *)
+      echo "Unsupported MIHOMO_PROVIDER_PROFILE: $profile" >&2
+      rm -f "$tmp_input" "$tmp_env"
+      rm -rf "$snapshot"
+      return 2
+      ;;
+  esac
+
+  {
+    printf 'MIHOMO_PROVIDER_URL=%q\n' "$url"
+    printf 'MIHOMO_PROVIDER_PROFILE=%q\n' "$profile"
+    printf 'MIHOMO_FETCH_MODE=%q\n' auto
+    [[ -z "$hwid" ]] || printf 'MIHOMO_PROVIDER_HWID=%q\n' "$hwid"
+    [[ -z "$suffix" ]] || printf 'MIHOMO_UPDATE_SUFFIX=%q\n' "$suffix"
+    [[ -z "${MIHOMO_PROVIDER_AUTHORIZATION:-}" ]] ||       printf 'MIHOMO_PROVIDER_AUTHORIZATION=%q\n' "$MIHOMO_PROVIDER_AUTHORIZATION"
+    [[ -z "${MIHOMO_PROVIDER_USER_AGENT:-}" ]] ||       printf 'MIHOMO_PROVIDER_USER_AGENT=%q\n' "$MIHOMO_PROVIDER_USER_AGENT"
+  } >"$tmp_env"
+  chmod 600 "$tmp_env"
+
+  exec 9>"$AWG_LOCK_FILE"
+  flock -x 9
+
+  snapshot_path "$MIHOMO_ENV_FILE" env "$snapshot"
+  snapshot_path "$MIHOMO_PROVIDER_FILE" provider "$snapshot"
+  snapshot_path "$MIHOMO_LAST_FETCH_FILE" fetch "$snapshot"
+
+  rollback_init(){
+    rc=$?
+    trap - ERR
+    restore_path "$MIHOMO_ENV_FILE" env "$snapshot"
+    restore_path "$MIHOMO_PROVIDER_FILE" provider "$snapshot"
+    restore_path "$MIHOMO_LAST_FETCH_FILE" fetch "$snapshot"
+    rm -f "$tmp_input" "$tmp_env"
+    rm -rf "$snapshot"
+    echo "Mihomo initialization failed; previous provider state restored." >&2
+    exit "$rc"
+  }
+  trap rollback_init ERR
+
+  mkdir -p "$(dirname "$MIHOMO_ENV_FILE")" "$(dirname "$MIHOMO_PROVIDER_FILE")"
+  chmod 700 "$(dirname "$MIHOMO_ENV_FILE")" "$(dirname "$MIHOMO_PROVIDER_FILE")"
+  install -m 600 "$tmp_env" "$MIHOMO_ENV_FILE"
+
+  [[ -x "$MIHOMO_BIN" ]] || "$MIHOMO_INSTALLER"
+
+  MIHOMO_ENV_FILE="$MIHOMO_ENV_FILE"   MIHOMO_PROVIDER_FILE="$MIHOMO_PROVIDER_FILE"   MIHOMO_BIN="$MIHOMO_BIN"   MIHOMO_LAST_FETCH_FILE="$MIHOMO_LAST_FETCH_FILE"     "$MIHOMO_UPDATER" --cache-only --mode auto
+
+  if [[ -r "$MIHOMO_PROVIDER_FILE" && -r "$MIHOMO_PROVIDER_HELPER" ]]; then
+    node_count="$("$PYTHON_BIN" "$MIHOMO_PROVIDER_HELPER" list "$MIHOMO_PROVIDER_FILE" 2>/dev/null |
+      jq 'length' 2>/dev/null || echo 0)"
+  fi
+
+  trap - ERR
+  rm -f "$tmp_input" "$tmp_env"
+  rm -rf "$snapshot"
+
+  printf 'MIHOMO_INITIALIZED=1\n'
+  printf 'MIHOMO_PROVIDER_PROFILE=%s\n' "$profile"
+  printf 'MIHOMO_HWID_GENERATED=%s\n' "$hwid_generated"
+  printf 'MIHOMO_NODE_COUNT=%s\n' "$node_count"
+  printf 'ACTIVE_TRANSPORT=%s\n' "$(awg_transport_get)"
+  printf 'NEXT=awg-mihomo-configure node list\n'
 }
 
 apply_cmd(){
@@ -494,6 +627,10 @@ apply_cmd(){
 }
 
 case "${1:-}" in
+  init)
+    [[ $# -eq 2 ]] || { usage >&2; exit 2; }
+    init_cmd "$2"
+    ;;
   apply)
     [[ $# -eq 2 ]] || { usage >&2; exit 2; }
     apply_cmd "$2"
