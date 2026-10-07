@@ -2,7 +2,7 @@
 set -Eeuo pipefail
 
 grep -Fq 'AWG_PI_VERSION="1.3.0"' install.sh
-grep -Fq 'ACTIVATE_TRANSIT_AFTER_INSTALL=1' install.sh
+grep -Fq 'ACTIVATE_TRANSIT_AFTER_INSTALL=0' install.sh
 grep -Fq '[[ "$EXISTING_VERSION" == 1.1.0 && "$MODE_PREEXISTED" == 0 ]]' install.sh
 grep -Fq 'ACTIVATE_TRANSIT_AFTER_INSTALL=1' install.sh
 grep -Fq 'AUTO_TRANSIT="${AWG_PI_UPGRADE_TRANSIT:-}"' install.sh
@@ -12,7 +12,8 @@ grep -Fq '"$ROUTE_CLI" mode transit' install.sh
 grep -Fq '"$ROUTE_CLI" mode selective' install.sh
 grep -Fq 'TRANSPORT_FILE="$PBR_DIR/transport"' install.sh
 grep -Fq "printf '%s\\n' unconfigured >\"\$TRANSPORT_FILE\"" install.sh
-grep -Fq '3) пропустить — настроить AWG позже' install.sh
+grep -Fq 'FIRST_RUN_CLI="/usr/local/sbin/awg-first-run"' install.sh
+grep -Fq '"$FIRST_RUN_CLI" wizard' install.sh
 grep -Fq 'Active transport не настроен. Это допустимое recovery-состояние' install.sh
 
 # Fresh installs stage in Selective + unconfigured. Transit is attempted only
@@ -38,6 +39,7 @@ for needle in \
   'var/lib/awg-pbr/mihomo' \
   'usr/local/bin/mihomo' \
   'usr/local/sbin/awg-transport' \
+  'usr/local/sbin/awg-first-run' \
   'usr/local/sbin/awg-mihomo-config' \
   'usr/local/sbin/awg-mihomo-update' \
   'usr/local/sbin/awg-mihomo-install' \
