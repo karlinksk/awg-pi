@@ -201,58 +201,29 @@ write_env_key(){
 }
 
 provider_url_set(){
-  local url="$1" snapshot
+  local url="$1" tmp rc
   [[ "$url" =~ ^https?://[^[:space:]]+$ ]] || {
     echo "Provider URL must be an http(s) URL without whitespace" >&2
     return 2
   }
-
-  snapshot="$(mktemp)"
-  if [[ -r "$MIHOMO_ENV_FILE" ]]; then
-    cp -a "$MIHOMO_ENV_FILE" "$snapshot"
+  tmp="$(mktemp)"
+  chmod 600 "$tmp"
+  printf 'MIHOMO_PROVIDER_URL=%q\n' "$url" >"$tmp"
+  if provider_stage_url_file "$tmp"; then
+    rc=0
   else
-    : >"$snapshot"
+    rc=$?
   fi
-
-  write_env_key "$MIHOMO_ENV_FILE" MIHOMO_PROVIDER_URL "$url"
-
-  if ! MIHOMO_ENV_FILE="$MIHOMO_ENV_FILE" \
-       MIHOMO_PROVIDER_FILE="$MIHOMO_PROVIDER_FILE" \
-       MIHOMO_BIN="$MIHOMO_BIN" \
-       MIHOMO_LAST_FETCH_FILE="$MIHOMO_LAST_FETCH_FILE" \
-       MIHOMO_LAST_FORMAT_FILE="$MIHOMO_LAST_FORMAT_FILE" \
-       MIHOMO_PROVIDER_HELPER="$MIHOMO_PROVIDER_HELPER" \
-       "$MIHOMO_UPDATER" --mode auto; then
-    if [[ -s "$snapshot" ]]; then
-      install -m 600 "$snapshot" "$MIHOMO_ENV_FILE"
-    else
-      rm -f "$MIHOMO_ENV_FILE"
-    fi
-    rm -f "$snapshot"
-    echo "Provider URL update failed; previous URL restored." >&2
-    return 1
-  fi
-
-  rm -f "$snapshot"
-  printf 'MIHOMO_PROVIDER_URL=UPDATED\n'
+  rm -f "$tmp"
+  (( rc == 0 )) || return "$rc"
+  printf 'MIHOMO_PROVIDER_URL=STAGED\n'
+  printf 'NEXT=awg-mihomo-configure provider candidate list\n'
 }
 
 provider_url_set_file(){
-  local source_file="$1"
-  local MIHOMO_PROVIDER_URL=""
-
-  trusted_config_file "$source_file" || {
-    echo "Provider URL file must be root-owned mode 0600: $source_file" >&2
-    return 2
-  }
-
-  # shellcheck disable=SC1090
-  source "$source_file"
-  [[ -n "$MIHOMO_PROVIDER_URL" ]] || {
-    echo "Provider URL file does not define MIHOMO_PROVIDER_URL" >&2
-    return 2
-  }
-  provider_url_set "$MIHOMO_PROVIDER_URL"
+  provider_stage_url_file "$1"
+  printf 'MIHOMO_PROVIDER_URL=STAGED\n'
+  printf 'NEXT=awg-mihomo-configure provider candidate list\n'
 }
 
 provider_update(){
@@ -269,14 +240,9 @@ provider_update(){
 }
 
 provider_import(){
-  local file="$1"
-  MIHOMO_ENV_FILE="$MIHOMO_ENV_FILE" \
-  MIHOMO_PROVIDER_FILE="$MIHOMO_PROVIDER_FILE" \
-  MIHOMO_BIN="$MIHOMO_BIN" \
-  MIHOMO_LAST_FETCH_FILE="$MIHOMO_LAST_FETCH_FILE" \
-  MIHOMO_LAST_FORMAT_FILE="$MIHOMO_LAST_FORMAT_FILE" \
-  MIHOMO_PROVIDER_HELPER="$MIHOMO_PROVIDER_HELPER" \
-    "$MIHOMO_UPDATER" --file "$file"
+  provider_stage_file "$1" keep-source auto
+  printf 'MIHOMO_PROVIDER_IMPORT=STAGED\n'
+  printf 'NEXT=awg-mihomo-configure provider candidate list\n'
 }
 
 prepare_candidate_env(){
