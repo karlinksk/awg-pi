@@ -17,13 +17,14 @@ MIHOMO_PREPARE="${MIHOMO_PREPARE:-/usr/local/sbin/awg-mihomo-prepare}"
 source "$MIHOMO_ENV_FILE"
 
 : "${MIHOMO_PROVIDER_URL:?MIHOMO_PROVIDER_URL is required}"
-: "${MIHOMO_PROVIDER_HWID:?MIHOMO_PROVIDER_HWID is required}"
 
 MIHOMO_UPDATE_INTERFACE="${MIHOMO_UPDATE_INTERFACE:-awg0}"
-MIHOMO_UPDATE_SUFFIX="${MIHOMO_UPDATE_SUFFIX:-mihomo}"
+MIHOMO_UPDATE_SUFFIX="${MIHOMO_UPDATE_SUFFIX:-}"
 MIHOMO_DEVICE_OS="${MIHOMO_DEVICE_OS:-Linux}"
 MIHOMO_DEVICE_VERSION="${MIHOMO_DEVICE_VERSION:-Debian}"
 MIHOMO_DEVICE_MODEL="${MIHOMO_DEVICE_MODEL:-AWG Pi Gateway}"
+MIHOMO_PROVIDER_USER_AGENT="${MIHOMO_PROVIDER_USER_AGENT:-mihomo/1.19.32}"
+MIHOMO_PROVIDER_AUTHORIZATION="${MIHOMO_PROVIDER_AUTHORIZATION:-}"
 
 [[ -x "$MIHOMO_BIN" ]] || {
   echo "Mihomo binary is unavailable: $MIHOMO_BIN" >&2
@@ -40,18 +41,30 @@ trap 'rm -f "$tmp"' EXIT
 curl_args=(
   -4 --http1.1 -fsSL
   --connect-timeout 10 --max-time 45
-  -A 'mihomo/1.19.32'
-  -H "x-hwid: $MIHOMO_PROVIDER_HWID"
-  -H "x-device-os: $MIHOMO_DEVICE_OS"
-  -H "x-ver-os: $MIHOMO_DEVICE_VERSION"
-  -H "x-device-model: $MIHOMO_DEVICE_MODEL"
+  -A "$MIHOMO_PROVIDER_USER_AGENT"
 )
+
+if [[ -n "${MIHOMO_PROVIDER_HWID:-}" ]]; then
+  curl_args+=(
+    -H "x-hwid: $MIHOMO_PROVIDER_HWID"
+    -H "x-device-os: $MIHOMO_DEVICE_OS"
+    -H "x-ver-os: $MIHOMO_DEVICE_VERSION"
+    -H "x-device-model: $MIHOMO_DEVICE_MODEL"
+  )
+fi
+
+if [[ -n "$MIHOMO_PROVIDER_AUTHORIZATION" ]]; then
+  curl_args+=(-H "Authorization: $MIHOMO_PROVIDER_AUTHORIZATION")
+fi
 
 if [[ -n "$MIHOMO_UPDATE_INTERFACE" && "$MIHOMO_UPDATE_INTERFACE" != direct ]]; then
   curl_args+=(--interface "$MIHOMO_UPDATE_INTERFACE")
 fi
 
-url="${MIHOMO_PROVIDER_URL%/}/${MIHOMO_UPDATE_SUFFIX#/}"
+url="$MIHOMO_PROVIDER_URL"
+if [[ -n "$MIHOMO_UPDATE_SUFFIX" ]]; then
+  url="${url%/}/${MIHOMO_UPDATE_SUFFIX#/}"
+fi
 "$CURL_BIN" "${curl_args[@]}" "$url" -o "$tmp"
 
 [[ -s "$tmp" ]] || {
