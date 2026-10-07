@@ -6,6 +6,7 @@ set -Eeuo pipefail
 MIHOMO_VERSION="${MIHOMO_VERSION:-1.19.32}"
 MIHOMO_TARGET="${MIHOMO_TARGET:-/usr/local/bin/mihomo}"
 CURL_BIN="${CURL_BIN:-curl}"
+IP_BIN="${IP_BIN:-ip}"
 AWG_ENV_FILE="${AWG_ENV_FILE:-/etc/awg-pbr/env}"
 MIHOMO_INSTALL_FETCH_MODE="${MIHOMO_INSTALL_FETCH_MODE:-auto}"
 MIHOMO_INSTALL_FETCH_ORDER="${MIHOMO_INSTALL_FETCH_ORDER:-awg router}"
@@ -99,7 +100,7 @@ download_once(){
   case "$path" in
     awg)
       [[ -n "$MIHOMO_AWG_INTERFACE" ]] || return 1
-      ip link show "$MIHOMO_AWG_INTERFACE" >/dev/null 2>&1 || return 1
+      "$IP_BIN" link show "$MIHOMO_AWG_INTERFACE" >/dev/null 2>&1 || return 1
       args+=(--interface "$MIHOMO_AWG_INTERFACE")
       ;;
     router)
