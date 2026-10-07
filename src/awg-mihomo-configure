@@ -1,0 +1,252 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+[[ ${EUID:-$(id -u)} -eq 0 ]] || exec sudo "$0" "$@"
+
+AWG_COMMON_FILE="${AWG_COMMON_FILE:-/usr/local/lib/awg-pi/common.sh}"
+AWG_LOCK_FILE="${AWG_LOCK_FILE:-/run/awg-maintenance.lock}"
+MIHOMO_ENV_FILE="${MIHOMO_ENV_FILE:-/etc/awg-pbr/transports/mihomo/provider.env}"
+MIHOMO_ENDPOINT_IP_FILE="${MIHOMO_ENDPOINT_IP_FILE:-/etc/awg-pbr/transports/mihomo/endpoint-ip}"
+MIHOMO_EXPECTED_EGRESS_IP_FILE="${MIHOMO_EXPECTED_EGRESS_IP_FILE:-/etc/awg-pbr/transports/mihomo/expected-egress-ip}"
+MIHOMO_PROVIDER_FILE="${MIHOMO_PROVIDER_FILE:-/var/lib/awg-pbr/mihomo/providers/subscription.yaml}"
+MIHOMO_CONFIG_FILE="${MIHOMO_CONFIG_FILE:-/etc/awg-pbr/transports/mihomo/config.yaml}"
+MIHOMO_INSTALLER="${MIHOMO_INSTALLER:-/usr/local/sbin/awg-mihomo-install}"
+MIHOMO_UPDATER="${MIHOMO_UPDATER:-/usr/local/sbin/awg-mihomo-update}"
+TRANSPORT_CLI="${AWG_TRANSPORT_CLI:-/usr/local/sbin/awg-transport}"
+SYSTEMCTL_BIN="${SYSTEMCTL_BIN:-systemctl}"
+MIHOMO_SERVICE="${MIHOMO_SERVICE:-awg-mihomo.service}"
+MIHOMO_UPDATE_SERVICE="${MIHOMO_UPDATE_SERVICE:-awg-mihomo-update.service}"
+MIHOMO_UPDATE_TIMER="${MIHOMO_UPDATE_TIMER:-awg-mihomo-update.timer}"
+MIHOMO_BIN="${MIHOMO_BIN:-/usr/local/bin/mihomo}"
+SLEEP_BIN="${SLEEP_BIN:-sleep}"
+
+# shellcheck disable=SC1090
+source "$AWG_COMMON_FILE"
+
+usage(){
+  cat <<'USAGE'
+Usage:
+  awg-mihomo-configure apply FILE
+  awg-mihomo-configure status
+
+FILE is a root-trusted environment file. Required:
+  MIHOMO_PROVIDER_URL
+  MIHOMO_NODE_FILTER
+  MIHOMO_ENDPOINT_IP
+
+Optional:
+  MIHOMO_EXPECTED_EGRESS_IP
+  MIHOMO_PROVIDER_HWID
+  MIHOMO_UPDATE_INTERFACE
+  MIHOMO_UPDATE_SUFFIX
+  MIHOMO_PROVIDER_AUTHORIZATION
+USAGE
+}
+
+valid_ipv4(){
+  local ip="$1" a b c d octet
+  [[ "$ip" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]] || return 1
+  IFS=. read -r a b c d <<<"$ip"
+  for octet in "$a" "$b" "$c" "$d"; do
+    (( 10#$octet >= 0 && 10#$octet <= 255 )) || return 1
+  done
+}
+
+snapshot_path(){
+  local path="$1" key="$2" snapshot="$3"
+  if [[ -e "$path" ]]; then
+    cp -a "$path" "$snapshot/$key"
+    : >"$snapshot/$key.exists"
+  fi
+}
+
+restore_path(){
+  local path="$1" key="$2" snapshot="$3"
+  if [[ -e "$snapshot/$key.exists" ]]; then
+    mkdir -p "$(dirname "$path")"
+    rm -f "$path"
+    cp -a "$snapshot/$key" "$path"
+  else
+    rm -f "$path"
+  fi
+}
+
+unit_enabled(){
+  "$SYSTEMCTL_BIN" is-enabled --quiet "$1" >/dev/null 2>&1
+}
+
+unit_active(){
+  "$SYSTEMCTL_BIN" is-active --quiet "$1" >/dev/null 2>&1
+}
+
+restore_unit_state(){
+  local unit="$1" was_enabled="$2" was_active="$3"
+  if [[ "$was_enabled" == 1 ]]; then
+    "$SYSTEMCTL_BIN" enable "$unit" >/dev/null 2>&1 || true
+  else
+    "$SYSTEMCTL_BIN" disable "$unit" >/dev/null 2>&1 || true
+  fi
+  if [[ "$was_active" == 1 ]]; then
+    "$SYSTEMCTL_BIN" start "$unit" >/dev/null 2>&1 || true
+  else
+    "$SYSTEMCTL_BIN" stop "$unit" >/dev/null 2>&1 || true
+  fi
+}
+
+status_cmd(){
+  printf 'Configured: %s\n' "$([[ -r "$MIHOMO_ENV_FILE" ]] && echo yes || echo no)"
+  printf 'Provider cache: %s\n' "$([[ -r "$MIHOMO_PROVIDER_FILE" ]] && echo ready || echo missing)"
+  printf 'Runtime config: %s\n' "$([[ -r "$MIHOMO_CONFIG_FILE" ]] && echo ready || echo missing)"
+  printf 'Binary: %s\n' "$([[ -x "$MIHOMO_BIN" ]] && "$MIHOMO_BIN" -v 2>/dev/null | head -n1 || echo missing)"
+  printf 'Service: %s\n' "$("$SYSTEMCTL_BIN" is-active "$MIHOMO_SERVICE" 2>/dev/null || true)"
+  printf 'Update timer: %s\n' "$("$SYSTEMCTL_BIN" is-active "$MIHOMO_UPDATE_TIMER" 2>/dev/null || true)"
+  if [[ -x "$TRANSPORT_CLI" ]]; then
+    "$TRANSPORT_CLI" check mihomo 2>/dev/null || true
+  fi
+}
+
+apply_cmd(){
+  local source_file="$1" current tmp_env snapshot rc
+  local service_enabled=0 service_active=0 timer_enabled=0 timer_active=0
+  local expected_egress=""
+
+  [[ -r "$source_file" ]] || {
+    echo "Configuration file is not readable: $source_file" >&2
+    return 2
+  }
+
+  current="$(awg_transport_get)"
+  [[ "$current" != mihomo ]] || {
+    echo "Refusing to reconfigure active Mihomo transport; select AWG first." >&2
+    return 1
+  }
+
+  exec 9>"$AWG_LOCK_FILE"
+  flock -x 9
+
+  tmp_env="$(mktemp)"
+  snapshot="$(mktemp -d)"
+  chmod 700 "$snapshot"
+  install -m 600 "$source_file" "$tmp_env"
+
+  # shellcheck disable=SC1090
+  source "$tmp_env"
+
+  : "${MIHOMO_PROVIDER_URL:?MIHOMO_PROVIDER_URL is required}"
+  : "${MIHOMO_NODE_FILTER:?MIHOMO_NODE_FILTER is required}"
+  : "${MIHOMO_ENDPOINT_IP:?MIHOMO_ENDPOINT_IP is required}"
+
+  [[ "$MIHOMO_PROVIDER_URL" =~ ^https?://[^[:space:]]+$ ]] || {
+    echo "MIHOMO_PROVIDER_URL must be an http(s) URL without whitespace" >&2
+    return 2
+  }
+  [[ "$MIHOMO_NODE_FILTER" != *$'\n'* ]] || {
+    echo "MIHOMO_NODE_FILTER must be one line" >&2
+    return 2
+  }
+  valid_ipv4 "$MIHOMO_ENDPOINT_IP" || {
+    echo "MIHOMO_ENDPOINT_IP must be a valid IPv4 address" >&2
+    return 2
+  }
+
+  expected_egress="${MIHOMO_EXPECTED_EGRESS_IP:-}"
+  if [[ -n "$expected_egress" ]]; then
+    valid_ipv4 "$expected_egress" || {
+      echo "MIHOMO_EXPECTED_EGRESS_IP must be a valid IPv4 address" >&2
+      return 2
+    }
+  fi
+
+  snapshot_path "$MIHOMO_ENV_FILE" env "$snapshot"
+  snapshot_path "$MIHOMO_ENDPOINT_IP_FILE" endpoint "$snapshot"
+  snapshot_path "$MIHOMO_EXPECTED_EGRESS_IP_FILE" egress "$snapshot"
+  snapshot_path "$MIHOMO_PROVIDER_FILE" provider "$snapshot"
+  snapshot_path "$MIHOMO_CONFIG_FILE" config "$snapshot"
+
+  unit_enabled "$MIHOMO_SERVICE" && service_enabled=1 || true
+  unit_active "$MIHOMO_SERVICE" && service_active=1 || true
+  unit_enabled "$MIHOMO_UPDATE_TIMER" && timer_enabled=1 || true
+  unit_active "$MIHOMO_UPDATE_TIMER" && timer_active=1 || true
+
+  rollback(){
+    rc=$?
+    trap - ERR
+    "$SYSTEMCTL_BIN" stop "$MIHOMO_UPDATE_TIMER" "$MIHOMO_UPDATE_SERVICE" "$MIHOMO_SERVICE" >/dev/null 2>&1 || true
+    restore_path "$MIHOMO_ENV_FILE" env "$snapshot"
+    restore_path "$MIHOMO_ENDPOINT_IP_FILE" endpoint "$snapshot"
+    restore_path "$MIHOMO_EXPECTED_EGRESS_IP_FILE" egress "$snapshot"
+    restore_path "$MIHOMO_PROVIDER_FILE" provider "$snapshot"
+    restore_path "$MIHOMO_CONFIG_FILE" config "$snapshot"
+    "$SYSTEMCTL_BIN" daemon-reload >/dev/null 2>&1 || true
+    restore_unit_state "$MIHOMO_SERVICE" "$service_enabled" "$service_active"
+    restore_unit_state "$MIHOMO_UPDATE_TIMER" "$timer_enabled" "$timer_active"
+    rm -f "$tmp_env"
+    rm -rf "$snapshot"
+    echo "Mihomo configuration failed; previous state restored." >&2
+    exit "$rc"
+  }
+  trap rollback ERR
+
+  "$SYSTEMCTL_BIN" stop "$MIHOMO_UPDATE_TIMER" "$MIHOMO_UPDATE_SERVICE" "$MIHOMO_SERVICE" >/dev/null 2>&1 || true
+
+  mkdir -p "$(dirname "$MIHOMO_ENV_FILE")" "$(dirname "$MIHOMO_PROVIDER_FILE")"
+  chmod 700 "$(dirname "$MIHOMO_ENV_FILE")" "$(dirname "$MIHOMO_PROVIDER_FILE")"
+  install -m 600 "$tmp_env" "$MIHOMO_ENV_FILE"
+  printf '%s\n' "$MIHOMO_ENDPOINT_IP" >"$MIHOMO_ENDPOINT_IP_FILE"
+  chmod 600 "$MIHOMO_ENDPOINT_IP_FILE"
+
+  if [[ -n "$expected_egress" ]]; then
+    printf '%s\n' "$expected_egress" >"$MIHOMO_EXPECTED_EGRESS_IP_FILE"
+    chmod 600 "$MIHOMO_EXPECTED_EGRESS_IP_FILE"
+  else
+    rm -f "$MIHOMO_EXPECTED_EGRESS_IP_FILE"
+  fi
+
+  [[ -x "$MIHOMO_BIN" ]] || "$MIHOMO_INSTALLER"
+
+  MIHOMO_ENV_FILE="$MIHOMO_ENV_FILE" \
+  MIHOMO_PROVIDER_FILE="$MIHOMO_PROVIDER_FILE" \
+  MIHOMO_BIN="$MIHOMO_BIN" \
+    "$MIHOMO_UPDATER"
+
+  "$SYSTEMCTL_BIN" daemon-reload
+  "$SYSTEMCTL_BIN" enable --now "$MIHOMO_SERVICE"
+  "$SYSTEMCTL_BIN" enable --now "$MIHOMO_UPDATE_TIMER"
+
+  healthy=0
+  for _ in $(seq 1 30); do
+    if "$TRANSPORT_CLI" check mihomo >/dev/null 2>&1; then
+      healthy=1
+      break
+    fi
+    "$SLEEP_BIN" 0.2
+  done
+  (( healthy == 1 ))
+
+  trap - ERR
+  rm -f "$tmp_env"
+  rm -rf "$snapshot"
+
+  printf 'MIHOMO_CONFIGURED=1\n'
+  printf 'MIHOMO_HEALTH=healthy\n'
+  printf 'ACTIVE_TRANSPORT=%s\n' "$(awg_transport_get)"
+  printf 'NEXT=awg-transport select mihomo\n'
+}
+
+case "${1:-}" in
+  apply)
+    [[ $# -eq 2 ]] || { usage >&2; exit 2; }
+    apply_cmd "$2"
+    ;;
+  status)
+    [[ $# -eq 1 ]] || { usage >&2; exit 2; }
+    status_cmd
+    ;;
+  -h|--help|help)
+    usage
+    ;;
+  *)
+    usage >&2
+    exit 2
+    ;;
+esac
