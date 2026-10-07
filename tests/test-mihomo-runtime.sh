@@ -175,4 +175,12 @@ sudo env \
 sudo grep -Fqx 'allow-lan: false' "$tmp/etc/config.yaml"
 grep -Fqx 'MIHOMO_CONFIG=UPDATED' "$tmp/prepare.out"
 
+echo "=== installer keeps Mihomo passive by default ==="
+if grep -Eq 'systemctl[[:space:]]+(enable|start|restart).*awg-mihomo' "$repo_root/install.sh"; then
+  echo 'FAIL: installer activates Mihomo without explicit configuration' >&2
+  exit 1
+fi
+grep -Fq 'install_project_helper src/awg-mihomo-config' "$repo_root/install.sh"
+grep -Fq 'install_project_unit units/awg-mihomo.service' "$repo_root/install.sh"
+
 echo "mihomo runtime helpers: OK"
