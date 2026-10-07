@@ -242,6 +242,32 @@ class Maintenance(unittest.TestCase):
             m.network_status(self.env)
         self.assertEqual(out.getvalue(), '')
 
+    def test_first_awg_profile_install_uses_same_validation_path(self):
+        self.active.unlink()
+        self.previous.unlink(missing_ok=True)
+        m.replace_config(self.args(), self.env)
+        self.assertIn('192.0.2.2:', self.active.read_text())
+        self.assertIn('Table = off', self.active.read_text())
+        self.assertFalse(self.previous.exists())
+        self.preflight.assert_called_once()
+        self.assertEqual(
+            sum(call == ('systemctl', 'start', 'awg-quick@awg0.service') for call in self.calls),
+            1,
+        )
+
+    def test_failed_first_awg_profile_returns_to_no_profile(self):
+        self.active.unlink()
+        self.previous.unlink(missing_ok=True)
+        self.health.return_value = False
+        with self.assertRaises(RuntimeError):
+            m.replace_config(self.args(), self.env)
+        self.assertFalse(self.active.exists())
+        self.assertFalse(self.previous.exists())
+        self.assertEqual(
+            sum(call == ('systemctl', 'start', 'awg-quick@awg0.service') for call in self.calls),
+            1,
+        )
+
     def test_config_success_and_manual_rollback(self):
         before = {f: Path(f).read_bytes() for f in [m.ENV, m.DNS, m.NFT, m.CLIENTS, m.DOMAINS]}
         m.replace_config(self.args(), self.env)
