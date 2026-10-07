@@ -204,6 +204,7 @@ grep -Fq 'previous state restored' "$tmp/err"
 grep -Fqx awg "$tmp/transport"
 
 echo "=== provider URL change is transactional ==="
+sudo mkdir -p "$tmp/etc"
 sudo sh -c "cat >\'$tmp/etc/provider.env\' <<\'ENV\'
 MIHOMO_PROVIDER_URL='https://old.example/profile'
 MIHOMO_NODE_FILTER='Finland'
