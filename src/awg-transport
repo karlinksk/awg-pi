@@ -7,6 +7,7 @@ MIHOMO_API="${MIHOMO_API:-http://127.0.0.1:9090}"
 MIHOMO_PROXY="${MIHOMO_PROXY:-http://127.0.0.1:7890}"
 MIHOMO_PROBE_URL="${MIHOMO_PROBE_URL:-https://api.ipify.org}"
 MIHOMO_EXPECTED_IP_FILE="${MIHOMO_EXPECTED_IP_FILE:-/etc/awg-pbr/transports/mihomo.expected-ip}"
+MIHOMO_TUN_IF="${MIHOMO_TUN_IF:-mihomo0}"
 
 [[ -r "$AWG_ENV_FILE" ]] && source "$AWG_ENV_FILE"
 # shellcheck disable=SC1090
@@ -40,6 +41,7 @@ check_awg(){
 
 check_mihomo(){
   local egress expected
+  "$IP_BIN" link show "$MIHOMO_TUN_IF" >/dev/null 2>&1 || return 1
   "$CURL_BIN" -fsS --max-time 2 "$MIHOMO_API/version" >/dev/null 2>&1 || return 1
   egress="$("$CURL_BIN" -4fsS -x "$MIHOMO_PROXY" --connect-timeout 5 --max-time 10 "$MIHOMO_PROBE_URL" 2>/dev/null)" || return 1
   [[ -n "$egress" ]] || return 1
