@@ -79,6 +79,7 @@ EOF
 
 chmod +x "$tmp/bin/"* "$tmp/transit-routing" "$tmp/transport-cli"
 echo 1 >"$tmp/vpn-enabled"
+: >"$tmp/ip.log"
 
 run_health(){
   sudo env \
