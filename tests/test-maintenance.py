@@ -67,7 +67,7 @@ class Maintenance(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
         self.root = Path(self.tmp.name)
-        for key in ('ENV', 'DNS', 'NFT', 'CLIENTS', 'DOMAINS', 'BACKUPS', 'CONF_DIR'):
+        for key in ('ENV', 'DNS', 'NFT', 'CLIENTS', 'DOMAINS', 'BACKUPS', 'CONF_DIR', 'MODE'):
             p = patch.object(m, key, str(self.root / key))
             p.start()
             self.addCleanup(p.stop)
@@ -80,6 +80,7 @@ class Maintenance(unittest.TestCase):
         Path(m.NFT).write_text('old nft\n')
         Path(m.CLIENTS).write_text('192.168.1.28\n')
         Path(m.DOMAINS).write_text('old domains\n')
+        Path(m.MODE).write_text('selective\n')
         self.active = Path(m.CONF_DIR) / 'awg0.conf'
         self.active.write_text(PROFILE)
         self.previous = self.active.with_suffix('.conf.previous')
