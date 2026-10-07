@@ -19,6 +19,8 @@ required = [
     '"Импортировать локальный профиль"',
     '"Переключить транспорт на Mihomo"',
     '"Переключить транспорт на AmneziaWG"',
+    '"Точка выхода / узел"',
+    '"MikroTik DIRECT обязателен"',
 ]
 
 for needle in required:
@@ -64,6 +66,10 @@ assert '"$MIHOMO_CONFIGURE" provider update auto' in menu
 assert '"$MIHOMO_CONFIGURE" provider import "$path"' in menu
 assert '"$AWG_TRANSPORT" select mihomo' in menu
 assert '"$AWG_TRANSPORT" select awg' in menu
+assert '"$MIHOMO_CONFIGURE" node select "$node_name" "$endpoint" --direct-confirmed' in menu
+assert '"$MIHOMO_CONFIGURE" node prepare "$node_name"' in menu
+assert 'action=accept' in menu
+assert 'place-before=0' in menu
 
 
 for needle in (

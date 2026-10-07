@@ -223,7 +223,7 @@ apt-get update
 apt-get install -y --no-install-recommends \
   ca-certificates curl git jq build-essential make pkg-config \
   iproute2 iputils-ping iputils-arping dnsutils nftables dnsmasq procps \
-  python3-minimal openssl dialog
+  python3-minimal python3-yaml openssl dialog
 
 command -v nft >/dev/null || die "nft не установлен"
 command -v dnsmasq >/dev/null || die "dnsmasq не установлен"
@@ -688,12 +688,20 @@ curl -4fLsS --retry 3 --connect-timeout 8 --max-time 45 "$PROJECT_RAW_BASE/src/a
 python3 -c 'import ast,sys; ast.parse(open(sys.argv[1]).read())' "$_manage_tmp" || die "Ошибка синтаксиса awg-manage.py"
 install -m 755 "$_manage_tmp" /usr/local/lib/awg-pi/manage.py
 rm -f "$_manage_tmp"
+
+_mihomo_provider_tmp="$(mktemp)"
+curl -4fLsS --retry 3 --connect-timeout 8 --max-time 45 "$PROJECT_RAW_BASE/src/awg-mihomo-provider.py" -o "$_mihomo_provider_tmp" \
+  || die "Не удалось загрузить awg-mihomo-provider.py"
+python3 -m py_compile "$_mihomo_provider_tmp" || die "Ошибка синтаксиса awg-mihomo-provider.py"
+install -m 755 "$_mihomo_provider_tmp" /usr/local/lib/awg-pi/mihomo-provider.py
+rm -f "$_mihomo_provider_tmp"
 install_project_helper src/awg-route "$ROUTE_CLI"
 install_project_helper src/awg-transport "$TRANSPORT_CLI"
 install_project_helper src/awg-mihomo-config "$MIHOMO_CONFIG_SCRIPT"
 install_project_helper src/awg-mihomo-update "$MIHOMO_UPDATE_SCRIPT"
 install_project_helper src/awg-mihomo-install "$MIHOMO_INSTALL_SCRIPT"
-install_project_helper src/awg-mihomo-prepare "$MIHOMO_PREPARE_SCRIPT"\ninstall_project_helper src/awg-mihomo-configure "$MIHOMO_CONFIGURE_SCRIPT"
+install_project_helper src/awg-mihomo-prepare "$MIHOMO_PREPARE_SCRIPT"
+install_project_helper src/awg-mihomo-configure "$MIHOMO_CONFIGURE_SCRIPT"
 install_project_helper src/awg-pbr-setup "$SETUP_SCRIPT"
 install_project_helper src/awg-transit-nft /usr/local/sbin/awg-transit-nft
 install_project_helper src/awg-transit-preflight /usr/local/sbin/awg-transit-preflight
