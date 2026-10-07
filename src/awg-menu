@@ -15,6 +15,7 @@ command -v dialog >/dev/null 2>&1 || { echo "Не найден dialog" >&2; exit
 AWG_ROUTE=/usr/local/sbin/awg-route
 AWG_TRANSPORT=/usr/local/sbin/awg-transport
 MIHOMO_CONFIGURE=/usr/local/sbin/awg-mihomo-configure
+AWG_FIRST_RUN=/usr/local/sbin/awg-first-run
 AWG_UPDATE=/usr/local/sbin/awg-update
 VERSION="$(cat /etc/awg-pbr/version 2>/dev/null || echo unknown)"
 BASE_BACKTITLE="AWG Pi Gateway v$VERSION"
@@ -116,7 +117,7 @@ quick_summary(){
   mode="$(operating_mode_id)"
   mode_label="$(operating_mode_label "$mode")"
   mode_badge="$(operating_mode_badge "$mode")"
-  transport="$("$AWG_TRANSPORT" get 2>/dev/null || echo awg)"
+  transport="$("$AWG_TRANSPORT" get 2>/dev/null || echo unconfigured)"
   if ip -4 rule show 2>/dev/null | grep -Eq '(^| )100:.*fwmark (0x100|256).*lookup (100|awgvpn)'; then
     policy=ACTIVE
   elif [[ "$mode" == transit ]]; then
@@ -360,7 +361,7 @@ awg_config_menu(){
 }
 
 mihomo_node_menu(){
-  local node_name endpoint info_tmp previous_transport rc direct_cmd
+  local node_name endpoint info_tmp current rc
 
   title="Доступные Mihomo nodes"
   capture "$MIHOMO_CONFIGURE" node list || return 0
@@ -384,32 +385,23 @@ mihomo_node_menu(){
 
   [[ -n "$endpoint" ]] || { msg "Mihomo" "Endpoint не задан."; return 0; }
 
-  direct_cmd="/ip firewall mangle add chain=prerouting action=accept src-address=${PI_IP:-192.168.112.34} dst-address=$endpoint place-before=0 comment=\"MIHOMO-DIRECT\""
-  msg "MikroTik DIRECT обязателен" "Перед применением endpoint должен обходить SSTP и остальные VPN-policy на MikroTik.\n\nEndpoint: $endpoint\nУзел: $node_name\n\nУниверсальное правило для выбранного endpoint (лучше добавлять в Safe Mode):\n\n$direct_cmd\n\nОно ограничено трафиком Pi → один endpoint и подходит для разных transport protocols."
+  confirm "Применить Mihomo node?"     "Узел: $node_name\nEndpoint: $endpoint\n\nОтдельное MikroTik правило для этого IP больше НЕ требуется. На роутере должен быть один постоянный gateway-wide DIRECT bypass для исходящего трафика Pi.\n\nЕсли Mihomo сейчас активен, клиентский datapath будет безопасно приостановлен и восстановлен без зависимости от AWG." || return 0
 
-  confirm "DIRECT подтверждён?" "Вы уже добавили/проверили раннее mangle action=accept для Pi → $endpoint и убедились, что endpoint не попадает в SSTP/VPN policy?\n\nБез подтверждения узел НЕ будет применён." || return 0
-
-  previous_transport="$("$AWG_TRANSPORT" get 2>/dev/null || echo awg)"
-  if [[ "$previous_transport" == mihomo ]]; then
-    confirm "Временный переход на AWG" "Для безопасной смены Mihomo endpoint временно переключить datapath на AmneziaWG?\n\nПосле успешной проверки нового узла будет предложено вернуться на Mihomo." || return 0
-    title="Mihomo node: временно AWG"
-    capture "$AWG_TRANSPORT" select awg || return 0
-  fi
-
+  current="$("$AWG_TRANSPORT" get 2>/dev/null || echo unconfigured)"
   title="Mihomo node select"
-  if capture "$MIHOMO_CONFIGURE" node select "$node_name" "$endpoint" --direct-confirmed; then
+  if capture "$MIHOMO_CONFIGURE" node select "$node_name" "$endpoint"; then
     rc=0
   else
     rc=$?
   fi
 
-  if (( rc == 0 )) && [[ "$previous_transport" == mihomo ]]; then
-    if confirm "Вернуться на Mihomo?" "Новый узел healthy. Вернуть datapath с AWG на Mihomo сейчас?"; then
+  if (( rc == 0 )) && [[ "$current" != mihomo ]]; then
+    if confirm "Активировать Mihomo?" "Новый node healthy. Сделать Mihomo активным transport сейчас?"; then
       title="Transport → Mihomo"
       capture "$AWG_TRANSPORT" select mihomo || true
     fi
-  elif (( rc != 0 )) && [[ "$previous_transport" == mihomo ]]; then
-    msg "Mihomo node" "Новый узел не применён; конфигурация откатилась. Datapath оставлен на AWG как безопасный вариант."
+  elif (( rc != 0 )); then
+    msg "Mihomo node" "Новый узел не применён; предыдущая конфигурация сохранена/восстановлена."
   fi
 }
 
@@ -435,7 +427,7 @@ mihomo_menu(){
       3 "Обновить подписку — AUTO" "Сначала DIRECT, затем текущий healthy transport и другие healthy transports. Неудача не удаляет рабочий cache." \
       4 "Обновить через выбранный канал" "Позволяет вручную выбрать DIRECT, Mihomo или AmneziaWG только для одной загрузки; скрытого fallback нет." \
       5 "Импортировать локальный профиль" "Импортирует с Pi native Mihomo YAML, plain VLESS URI или Base64 VLESS без обращения к сети; формат определяется адаптером." \
-      6 "Точка выхода / узел" "Показывает узлы subscription и выполняет защищённую ручную смену после подтверждения MikroTik DIRECT." \
+      6 "Точка выхода / узел" "Показывает узлы subscription и безопасно меняет node без зависимости от AWG и без per-IP MikroTik правил." \
       7 "Переключить транспорт на Mihomo" "Транзакционно проверяет Mihomo и только затем переводит datapath с AWG на mihomo0; при ошибке выполняется rollback." \
       8 "Переключить транспорт на AmneziaWG" "Возвращает datapath на awg0 с health-check и rollback при ошибке." \
       9 "Первичная настройка Mihomo" "Для чистой установки: ставит Mihomo, создаёт provider state, нормализует subscription и затем предлагает выбрать узел." \
@@ -673,8 +665,8 @@ operating_mode_menu(){
     choice="$(dialog --backtitle "$BACKTITLE" --title "Operating mode [$(operating_mode_badge "$current_id")]" --item-help --menu \
       "Текущий режим: $current\n\nВыберите архитектуру маршрутизации. Сохранённые Selective-списки не удаляются при Transit." \
       21 100 6 \
-      1 "$selective_label" "Raspberry Pi сама классифицирует VPN/DIRECT/OpenCCK/client трафик и применяет FAIL-OPEN при отказе AWG." \
-      2 "$transit_label" "MikroTik выбирает трафик; Pi принимает его только от доверенного роутера и отправляет через AWG с FAIL-CLOSED." \
+      1 "$selective_label" "Raspberry Pi сама классифицирует VPN/DIRECT/OpenCCK/client трафик и применяет FAIL-OPEN при отказе active transport." \
+      2 "$transit_label" "MikroTik выбирает трафик; Pi принимает его только от доверенного роутера и отправляет через active transport с FAIL-CLOSED/LOCKDOWN." \
       0 "Назад" "Возвращает в системное меню без изменения режима." 3>&1 1>&2 2>&3)" || return 0
     case "$choice" in
       1)
@@ -684,7 +676,7 @@ operating_mode_menu(){
         refresh_backtitle
         ;;
       2)
-        confirm "MikroTik Transit" "Переключить Pi в Transit?\n\nПеред включением будет проверен AWG, DIRECT-маршрут endpoint и MikroTik. При ошибке выполнится rollback.\n\nMikroTik должен быть настроен отдельно как источник backup-трафика." || continue
+        confirm "MikroTik Transit" "Переключить Pi в Transit?\n\nПри готовом transport выполняются health/DIRECT/preflight. Если transport ещё не настроен, Transit войдёт в безопасный LOCKDOWN.\n\nMikroTik должен быть настроен отдельно как источник backup-трафика." || continue
         title="Operating mode"
         capture "$AWG_ROUTE" mode transit || true
         refresh_backtitle
