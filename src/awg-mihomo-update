@@ -7,6 +7,7 @@ MIHOMO_PROVIDER_FILE="${MIHOMO_PROVIDER_FILE:-/var/lib/awg-pbr/mihomo/providers/
 MIHOMO_SERVICE="${MIHOMO_SERVICE:-awg-mihomo.service}"
 CURL_BIN="${CURL_BIN:-curl}"
 SYSTEMCTL_BIN="${SYSTEMCTL_BIN:-systemctl}"
+MIHOMO_PREPARE="${MIHOMO_PREPARE:-/usr/local/sbin/awg-mihomo-prepare}"
 
 [[ -r "$MIHOMO_ENV_FILE" ]] || {
   echo "Missing Mihomo provider environment: $MIHOMO_ENV_FILE" >&2
@@ -66,15 +67,20 @@ validate_dir="$(mktemp -d)"
 trap 'rm -f "$tmp"; rm -rf "$validate_dir"' EXIT
 "$MIHOMO_BIN" -t -d "$validate_dir" -f "$tmp" >/dev/null
 
+changed=1
 if [[ -r "$MIHOMO_PROVIDER_FILE" ]] && cmp -s "$tmp" "$MIHOMO_PROVIDER_FILE"; then
+  changed=0
   echo "MIHOMO_PROVIDER=UNCHANGED"
-  exit 0
+else
+  install -m 600 "$tmp" "$MIHOMO_PROVIDER_FILE"
+  echo "MIHOMO_PROVIDER=UPDATED"
 fi
 
-install -m 600 "$tmp" "$MIHOMO_PROVIDER_FILE"
-echo "MIHOMO_PROVIDER=UPDATED"
+if [[ -x "$MIHOMO_PREPARE" ]]; then
+  "$MIHOMO_PREPARE"
+fi
 
-if "$SYSTEMCTL_BIN" is-active --quiet "$MIHOMO_SERVICE" 2>/dev/null; then
+if (( changed == 1 )) && "$SYSTEMCTL_BIN" is-active --quiet "$MIHOMO_SERVICE" 2>/dev/null; then
   "$SYSTEMCTL_BIN" restart "$MIHOMO_SERVICE"
   echo "MIHOMO_SERVICE=RESTARTED"
 fi
