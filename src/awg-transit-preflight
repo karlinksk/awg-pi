@@ -18,6 +18,8 @@ source "$AWG_COMMON_FILE"
 : "${HEALTH_TABLE:?HEALTH_TABLE is required}"
 HANDSHAKE_MAX_AGE="${HANDSHAKE_MAX_AGE:-180}"
 TRANSPORT_ID="$(awg_transport_get)"
+awg_transport_backend_valid "$TRANSPORT_ID" ||
+  fail "no active transport is configured"
 TRANSPORT_IF="$(awg_transport_device "$TRANSPORT_ID")"
 
 fail(){
@@ -139,5 +141,7 @@ case "$TRANSPORT_ID" in
     ;;
 esac
 
+printf 'TRANSPORT_ID=%s\n' "$TRANSPORT_ID"
+printf 'TRANSPORT_IF=%s\n' "$TRANSPORT_IF"
 printf 'ROUTER_MAC=%s\n' "$router_mac"
 printf 'TRANSIT_PREFLIGHT=OK\n'
