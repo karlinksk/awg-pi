@@ -155,6 +155,21 @@ grep -Fq 'Transit nftables forward guard is not ready/safe' "$tmp/err"
 out="$(MOCK_GUARD_STATE=lockdown run_route disable)"
 grep -Fqx 'TRANSIT_POLICY=DISABLED_FAIL_CLOSED' <<<"$out"
 
+echo "=== unconfigured transport supports lockdown status/disable only ==="
+echo unconfigured >"$tmp/transport"
+out="$(MOCK_GUARD_STATE=lockdown run_route status)"
+grep -Fqx 'Transit guard: LOCKDOWN' <<<"$out"
+grep -Fqx 'Transit policy rule: INACTIVE' <<<"$out"
+grep -Fqx 'Transit VPN table: NOT_READY' <<<"$out"
+out="$(MOCK_GUARD_STATE=lockdown run_route disable)"
+grep -Fqx 'TRANSIT_POLICY=DISABLED_FAIL_CLOSED' <<<"$out"
+if MOCK_GUARD_STATE=lockdown run_route apply >"$tmp/out" 2>"$tmp/err"; then
+  echo 'FAIL: unconfigured transport was accepted for Transit apply' >&2
+  exit 1
+fi
+grep -Fq 'No active transport is configured' "$tmp/err"
+echo awg >"$tmp/transport"
+
 echo "=== unsafe forward guard is rejected ==="
 if MOCK_GUARD_STATE=unsafe run_route apply >"$tmp/out" 2>"$tmp/err"; then
   echo 'FAIL: unsafe Transit guard was accepted' >&2
