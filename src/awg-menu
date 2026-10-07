@@ -413,21 +413,33 @@ mihomo_node_menu(){
   fi
 }
 
+mihomo_provider_format_dialog(){
+  dialog --backtitle "$BACKTITLE" --title "Формат subscription" --item-help --default-item auto --menu \
+    "AUTO рекомендуется по умолчанию. Ручной формат нужен, если autodetect неоднозначен или оператор использует известную обёртку." \
+    21 108 7 \
+    auto "AUTO" "Автоопределение: native Mihomo/Clash YAML → plain VLESS URI → Base64 VLESS." \
+    mihomo "Mihomo / Clash YAML" "Требует YAML с непустым proxies:. Остальные секции full-config будут отброшены при нормализации." \
+    vless "VLESS URI" "Plain список vless:// ссылок. Поддерживаются tcp/ws/grpc и none/tls/reality." \
+    base64 "Base64 VLESS" "Base64/URL-safe Base64, содержащий список vless:// ссылок." \
+    0 "Назад" "Не менять формат." 3>&1 1>&2 2>&3
+}
+
 mihomo_menu(){
-  local choice url path fetch_mode init_tmp url_tmp profile
+  local choice url path fetch_mode init_tmp url_tmp profile provider_format
   while true; do
     choice="$(dialog --backtitle "$BACKTITLE" --title "Mihomo / Multi-Transport" --item-help --menu \
       "Управление Mihomo и subscription. AUTO обновляет профиль через доступный bootstrap-канал: текущий Mihomo → AmneziaWG → обычный путь через MikroTik." \
-      26 108 11 \
+      28 108 12 \
       1 "Состояние Mihomo" "Показывает runtime, provider cache, последний успешный bootstrap-канал и health без вывода секретов." \
       2 "Заменить ссылку подписки" "Вставляет новый URL в скрытом поле. Новый профиль проверяется транзакционно; при ошибке старая ссылка и cache остаются." \
       3 "Обновить подписку — AUTO" "Пробует текущий Mihomo, затем awg0, затем обычный маршрут через MikroTik. Неудача не удаляет рабочий cache." \
       4 "Обновить через выбранный канал" "Позволяет вручную выбрать Mihomo, AmneziaWG или router/default для одной загрузки." \
-      5 "Импортировать локальный профиль" "Загружает заранее сохранённый Mihomo/Clash YAML с Pi без обращения к сети и с полной проверкой." \
+      5 "Импортировать локальный профиль" "Импортирует с Pi native Mihomo YAML, plain VLESS URI или Base64 VLESS без обращения к сети; формат определяется адаптером." \
       6 "Точка выхода / узел" "Показывает узлы subscription и выполняет защищённую ручную смену после подтверждения MikroTik DIRECT." \
       7 "Переключить транспорт на Mihomo" "Транзакционно проверяет Mihomo и только затем переводит datapath с AWG на mihomo0; при ошибке выполняется rollback." \
       8 "Переключить транспорт на AmneziaWG" "Возвращает datapath на awg0 с health-check и rollback при ошибке." \
-      9 "Первичная настройка Mihomo" "Для чистой установки: ставит Mihomo, создаёт provider state, скачивает cache через AUTO и затем предлагает выбрать узел." \
+      9 "Первичная настройка Mihomo" "Для чистой установки: ставит Mihomo, создаёт provider state, нормализует subscription и затем предлагает выбрать узел." \
+      10 "Формат подписки" "AUTO по умолчанию; вручную можно зафиксировать Mihomo YAML, VLESS URI или Base64 VLESS. Изменение транзакционное." \
       0 "Назад" "Возвращает в меню VPN без изменений." 3>&1 1>&2 2>&3)" || return 0
 
     case "$choice" in
@@ -465,7 +477,7 @@ mihomo_menu(){
         run_interactive "Mihomo provider update — $fetch_mode" "$MIHOMO_CONFIGURE" provider update "$fetch_mode"
         ;;
       5)
-        path="$(input "Mihomo provider" "Полный путь к локальному Mihomo/Clash YAML:")" || continue
+        path="$(input "Mihomo provider" "Полный путь к локальному provider-файлу (Mihomo YAML / VLESS URI / Base64 VLESS):")" || continue
         confirm "Импорт профиля" "Проверить и импортировать локальный профиль?\n\nРабочий cache будет заменён только после успешной проверки." || continue
         run_interactive "Импорт Mihomo provider" "$MIHOMO_CONFIGURE" provider import "$path"
         ;;
@@ -485,6 +497,8 @@ mihomo_menu(){
           remnawave "Citadel / Remnawave" "Создаётся один стабильный HWID и используется /mihomo profile. HWID сохраняется и не показывается." \
           0 "Назад" "Не выполнять первичную настройку." 3>&1 1>&2 2>&3)" || continue
         [[ "$profile" != 0 ]] || continue
+        provider_format="$(mihomo_provider_format_dialog)" || continue
+        [[ "$provider_format" != 0 ]] || continue
         url="$(secret_input "Первичная настройка Mihomo" "Вставьте полный URL subscription.\n\nДля Citadel/Remnawave можно вставить базовую ссылку: /mihomo будет добавлен автоматически.")" || continue
         [[ -n "$url" ]] || { msg "Mihomo" "Пустая ссылка не применена."; continue; }
 
@@ -494,6 +508,7 @@ mihomo_menu(){
         {
           printf 'MIHOMO_PROVIDER_URL=%q\n' "$url"
           printf 'MIHOMO_PROVIDER_PROFILE=%q\n' "$profile"
+          printf 'MIHOMO_PROVIDER_FORMAT=%q\n' "$provider_format"
         } >"$init_tmp"
         unset url
 
@@ -509,6 +524,11 @@ mihomo_menu(){
           init_tmp=""
         fi
         ;;
+      10)
+        provider_format="$(mihomo_provider_format_dialog)" || continue
+        [[ "$provider_format" != 0 ]] || continue
+        confirm "Формат subscription" "Проверить текущую subscription в формате '$provider_format' и применить его только при успешной нормализации?" || continue
+        run_interactive "Формат Mihomo provider" "$MIHOMO_CONFIGURE" provider format set "$provider_format"
       0) return 0 ;;
     esac
   done
