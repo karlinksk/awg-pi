@@ -26,9 +26,13 @@ USAGE
 }
 
 check_awg(){
-  local hs now
+  local raw hs now
   "$IP_BIN" link show "$VPN_IF" >/dev/null 2>&1 || return 1
-  hs="$("$AWG_BIN" show "$VPN_IF" latest-handshakes 2>/dev/null | awk '$2>m{m=$2}END{print m+0}')"
+  if ! raw="$("$AWG_BIN" show "$VPN_IF" latest-handshakes 2>/dev/null)"; then
+    (( ${EUID:-$(id -u)} != 0 )) && return 3
+    return 1
+  fi
+  hs="$(awk '$2>m{m=$2}END{print m+0}' <<<"$raw")"
   [[ "$hs" -gt 0 ]] || return 1
   now="$("$DATE_BIN" +%s)"
   (( now - hs <= HANDSHAKE_MAX_AGE ))
@@ -54,7 +58,17 @@ check_transport(){
 }
 
 health_word(){
-  if check_transport "$1"; then printf '%s\n' healthy; else printf '%s\n' down; fi
+  local rc
+  if check_transport "$1"; then
+    printf '%s\n' healthy
+    return 0
+  fi
+  rc=$?
+  if (( rc == 3 )); then
+    printf '%s\n' requires-root
+  else
+    printf '%s\n' down
+  fi
 }
 
 cmd="${1:-status}"
@@ -68,6 +82,11 @@ case "$cmd" in
     if check_transport "$transport"; then
       echo healthy
     else
+      rc=$?
+      if (( rc == 3 )); then
+        echo requires-root
+        exit 3
+      fi
       echo down
       exit 1
     fi
