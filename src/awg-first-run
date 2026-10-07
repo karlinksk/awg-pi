@@ -10,6 +10,7 @@ MIHOMO_CONFIGURE="${MIHOMO_CONFIGURE_BIN:-/usr/local/sbin/awg-mihomo-configure}"
 MIHOMO_INSTALLER="${MIHOMO_INSTALLER_BIN:-/usr/local/sbin/awg-mihomo-install}"
 MIHOMO_ENV_FILE="${MIHOMO_ENV_FILE:-/etc/awg-pbr/transports/mihomo/provider.env}"
 MIHOMO_BIN="${MIHOMO_BIN:-/usr/local/bin/mihomo}"
+export MIHOMO_ENV_FILE MIHOMO_BIN
 
 usage(){
   cat <<'USAGE'
@@ -139,7 +140,7 @@ choose_mihomo_node(){
 }
 
 activate_mihomo_url(){
-  local url="$1" profile="${2:-standard}" format="${3:-auto}" tmp
+  local url="$1" profile="${2:-standard}" format="${3:-auto}" tmp rc
   ensure_fresh_target
   case "$profile" in standard|remnawave) ;; *) echo "Unsupported provider profile: $profile" >&2; return 2 ;; esac
   case "$format" in auto|mihomo|vless|base64) ;; *) echo "Unsupported provider format: $format" >&2; return 2 ;; esac
@@ -183,7 +184,7 @@ activate_mihomo_file(){
 }
 
 wizard(){
-  local choice path tmp profile format url
+  local choice path tmp profile format url rc
   ensure_fresh_target || return
   cat >"$TTY" <<'TEXT'
 
