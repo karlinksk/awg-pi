@@ -21,6 +21,8 @@ required = [
     '"Переключить транспорт на AmneziaWG"',
     '"Точка выхода / узел"',
     '"MikroTik DIRECT обязателен"',
+    '"Первичная настройка Mihomo"',
+    '"Citadel / Remnawave"',
 ]
 
 for needle in required:
@@ -70,6 +72,10 @@ assert '"$MIHOMO_CONFIGURE" node select "$node_name" "$endpoint" --direct-confir
 assert '"$MIHOMO_CONFIGURE" node prepare "$node_name"' in menu
 assert 'action=accept' in menu
 assert 'place-before=0' in menu
+assert 'mktemp /run/awg-pbr/mihomo-init.XXXXXX' in menu
+assert 'chmod 600 "$init_tmp"' in menu
+assert '"$MIHOMO_CONFIGURE" init "$init_tmp"' in menu
+assert 'MIHOMO_PROVIDER_PROFILE=%q' in menu
 
 
 for needle in (
