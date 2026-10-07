@@ -618,8 +618,11 @@ mihomo_menu(){
       10)
         provider_format="$(mihomo_provider_format_dialog)" || continue
         [[ "$provider_format" != 0 ]] || continue
-        confirm "Формат subscription" "Проверить текущую subscription в формате '$provider_format' и применить его только при успешной нормализации?" || continue
-        run_interactive "Формат Mihomo provider" "$MIHOMO_CONFIGURE" provider format set "$provider_format"
+        confirm "Формат subscription" "Загрузить текущий URL в формате '$provider_format' как staged candidate?\n\nLive provider не изменится до выбора candidate node и успешного health-check." || continue
+        title="Stage формата Mihomo provider"
+        if capture "$MIHOMO_CONFIGURE" provider format set "$provider_format"; then
+          mihomo_candidate_menu
+        fi
         ;;
       11)
         paste_mihomo_provider
