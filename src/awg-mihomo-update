@@ -39,6 +39,7 @@ usage(){
 Usage:
   awg-mihomo-update [--mode auto|mihomo|awg|router]
   awg-mihomo-update --file PROFILE
+  awg-mihomo-update --cache-only [--mode auto|mihomo|awg|router]
 
 AUTO tries the current Mihomo proxy, then AmneziaWG, then the normal
 router/default path. On the router/default path MikroTik decides whether the
@@ -47,6 +48,7 @@ USAGE
 }
 
 local_file=""
+cache_only=0
 while (( $# )); do
   case "$1" in
     --mode)
@@ -58,6 +60,10 @@ while (( $# )); do
       [[ $# -ge 2 ]] || { usage >&2; exit 2; }
       local_file="$2"
       shift 2
+      ;;
+    --cache-only)
+      cache_only=1
+      shift
       ;;
     -h|--help|help)
       usage
@@ -224,7 +230,7 @@ else
   echo "MIHOMO_PROVIDER=UPDATED"
 fi
 
-if [[ -x "$MIHOMO_PREPARE" ]]; then
+if (( cache_only == 0 )) && [[ -x "$MIHOMO_PREPARE" ]]; then
   if ! "$MIHOMO_PREPARE"; then
     if (( changed == 1 )); then
       if [[ -n "$backup" && -r "$backup" ]]; then
@@ -241,7 +247,11 @@ fi
 
 [[ -z "$backup" ]] || rm -f "$backup"
 
-if (( changed == 1 )) && "$SYSTEMCTL_BIN" is-active --quiet "$MIHOMO_SERVICE" 2>/dev/null; then
+if (( cache_only == 1 )); then
+  echo "MIHOMO_RUNTIME=DEFERRED"
+fi
+
+if (( cache_only == 0 && changed == 1 )) && "$SYSTEMCTL_BIN" is-active --quiet "$MIHOMO_SERVICE" 2>/dev/null; then
   "$SYSTEMCTL_BIN" restart "$MIHOMO_SERVICE"
   echo "MIHOMO_SERVICE=RESTARTED"
 fi
