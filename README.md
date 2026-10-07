@@ -17,6 +17,20 @@ unavailable.
 
 Current stable release: **v1.2.0**
 
+## v1.3.0 development track
+
+v1.3.0 is the current multi-transport development line. It keeps the v1.2
+Selective/Transit semantics and adds a transport abstraction with an optional
+Mihomo backend, transactional AWG <-> Mihomo switching, provider-cache
+bootstrap/rollback, secure first-run onboarding and guarded manual exit-node
+selection.
+
+The v1.2.0 stable tag remains the updater target until the v1.3 hardware gate is
+complete. Do not treat develop/v1.3.0 as a stable installation source without an
+explicit ref and rollback plan.
+
+Release/hardware gate: [TESTING-v1.3.0.md](docs/TESTING-v1.3.0.md)
+
 ## Install / upgrade
 
 Use the stable tag for both a fresh install and an upgrade from an existing
