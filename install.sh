@@ -941,25 +941,33 @@ printf "Raspberry Pi:    %s\n" "$PI_IP"
 printf "MAC (%s):       %s\n" "$LAN_IF" "$LAN_MAC"
 printf "LAN router:      %s\n" "$ROUTER_IP"
 printf "LAN:             %s\n" "$LAN_CIDR"
-printf "VPN interface:   %s\n" "$VPN_IF"
+printf "AWG interface:   %s\n" "$VPN_IF"
 printf "AWG tags:        go=%s tools=%s\n" "$GO_TAG" "$TOOLS_TAG"
 printf "Install report:  %s\n" "$INSTALL_REPORT"
 printf "Diagnostics:     %s\n" "${LATEST_DIAG:-см. $LOG_DIR}"
 
 FINAL_MODE="$(cat "$MODE_FILE" 2>/dev/null || echo selective)"
+FINAL_TRANSPORT="$(cat "$TRANSPORT_FILE" 2>/dev/null || echo unconfigured)"
+case "$FINAL_TRANSPORT" in
+  awg) FINAL_TRANSPORT_LABEL="AmneziaWG" ;;
+  mihomo) FINAL_TRANSPORT_LABEL="Mihomo" ;;
+  unconfigured) FINAL_TRANSPORT_LABEL="Not configured / recovery" ;;
+  *) FINAL_TRANSPORT_LABEL="INVALID" ;;
+esac
+printf "Active transport: %s (%s)\n" "$FINAL_TRANSPORT_LABEL" "$FINAL_TRANSPORT"
 printf "\nЛогика:\n"
 if [[ "$FINAL_MODE" == transit ]]; then
   printf "  Operating mode = MikroTik Transit / Backup VPN\n"
   printf "  MikroTik классифицирует и отправляет backup-трафик на Pi\n"
-  printf "  Active transport after install = awg (AmneziaWG)\n"
-  printf "  Pi forward/NAT = только через active transport; transport down = FAIL-CLOSED\n"
-  printf "  management + AWG endpoint = DIRECT через LAN router\n"
+  printf "  Active transport = %s\n" "$FINAL_TRANSPORT_LABEL"
+  printf "  Pi forward/NAT = только через active transport; transport down/not-ready = FAIL-CLOSED\n"
+  printf "  management/control plane + transport endpoints = DIRECT через LAN router\n"
   printf "  OpenCCK/VPN/DIRECT/client state сохранён, но не классифицирует Transit\n"
 else
   printf "  Operating mode = Selective Gateway\n"
   printf "  обычный трафик = DIRECT через LAN router\n"
-  printf "  VPN-list = через AmneziaWG\n"
-  printf "  VPN упал = автоматический FAIL-OPEN DIRECT\n"
+  printf "  VPN-list = через выбранный active transport\n"
+  printf "  transport down/not-ready = автоматический FAIL-OPEN DIRECT\n"
   printf "  DNS клиентов PBR = %s (dnsmasq -> независимые upstream DNS)\n" "$PI_IP"
 fi
 printf "  DHCP остаётся на LAN router\n"
@@ -1002,7 +1010,11 @@ else
   printf "  Gateway: %s\n" "$PI_IP"
   printf "  DNS:     %s\n" "$PI_IP"
   printf "  IPv6:    не использовать\n"
-  printf "  Сначала проверьте DIRECT, затем добавьте один тестовый домен в VPN-list.\n"
+  if [[ "$FINAL_TRANSPORT" == unconfigured ]]; then
+    printf "  Сначала настройте AWG или Mihomo через sudo awg-menu; DIRECT/control plane уже доступны.\n"
+  else
+    printf "  Сначала проверьте DIRECT, затем добавьте один тестовый домен в VPN-list.\n"
+  fi
 fi
 
 printf "\n%bВАЖНО:%b IP оборудования выбирайте вне конфликтов с DHCP либо закрепите его на LAN router.\n" "$Y" "$R"
