@@ -127,6 +127,7 @@ apply_cmd(){
   tmp_env="$(mktemp)"
   snapshot="$(mktemp -d)"
   chmod 700 "$snapshot"
+  trap "$(printf 'rm -f -- %q; rm -rf -- %q' "$tmp_env" "$snapshot")" EXIT
   install -m 600 "$source_file" "$tmp_env"
 
   # shellcheck disable=SC1090
@@ -226,6 +227,7 @@ apply_cmd(){
   trap - ERR
   rm -f "$tmp_env"
   rm -rf "$snapshot"
+  trap - EXIT
 
   printf 'MIHOMO_CONFIGURED=1\n'
   printf 'MIHOMO_HEALTH=healthy\n'
