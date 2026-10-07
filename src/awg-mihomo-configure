@@ -1067,6 +1067,38 @@ case "${1:-}" in
         [[ $# -eq 3 ]] || { usage >&2; exit 2; }
         provider_import "$3"
         ;;
+      stage-url-file)
+        [[ $# -eq 3 ]] || { usage >&2; exit 2; }
+        provider_stage_url_file "$3"
+        ;;
+      stage-file)
+        [[ $# -ge 3 && $# -le 4 ]] || { usage >&2; exit 2; }
+        provider_stage_file "$3" "${4:-keep-source}"
+        ;;
+      candidate)
+        case "${3:-}" in
+          list)
+            [[ $# -eq 3 ]] || { usage >&2; exit 2; }
+            candidate_list
+            ;;
+          prepare)
+            [[ $# -eq 4 ]] || { usage >&2; exit 2; }
+            candidate_prepare "$4"
+            ;;
+          commit)
+            [[ $# -eq 5 ]] || { usage >&2; exit 2; }
+            candidate_commit "$4" "$5"
+            ;;
+          clear)
+            [[ $# -eq 3 ]] || { usage >&2; exit 2; }
+            candidate_clear
+            ;;
+          *)
+            usage >&2
+            exit 2
+            ;;
+        esac
+        ;;
       format)
         [[ $# -eq 4 && "${3:-}" == set ]] || { usage >&2; exit 2; }
         provider_format_set "$4"
