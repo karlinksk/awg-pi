@@ -61,13 +61,13 @@ health_word(){
   local rc
   if check_transport "$1"; then
     printf '%s\n' healthy
-    return 0
-  fi
-  rc=$?
-  if (( rc == 3 )); then
-    printf '%s\n' requires-root
   else
-    printf '%s\n' down
+    rc=$?
+    if (( rc == 3 )); then
+      printf '%s\n' requires-root
+    else
+      printf '%s\n' down
+    fi
   fi
 }
 
