@@ -111,15 +111,16 @@ run_select(){
 echo "=== AWG -> Mihomo ==="
 : >"$tmp/systemctl.log"; : >"$tmp/route.log"; rm -f "$tmp/mihomo.active" "$tmp/reload-failed-once"
 out="$(run_select mihomo)"
-grep -Fqx mihomo "$tmp/transport"
+sudo grep -Fqx mihomo "$tmp/transport"
 grep -Fqx 'start awg-mihomo.service' "$tmp/systemctl.log"
 grep -Fqx reload "$tmp/route.log"
 grep -Fqx 'Transport ID: mihomo' <<<"$out"
+[[ "$(sudo stat -c '%a' "$tmp/transport")" == 600 ]]
 
 echo "=== Mihomo -> AWG ==="
 : >"$tmp/systemctl.log"; : >"$tmp/route.log"
 out="$(run_select awg)"
-grep -Fqx awg "$tmp/transport"
+sudo grep -Fqx awg "$tmp/transport"
 grep -Fqx 'start awg-quick@awg0.service' "$tmp/systemctl.log"
 grep -Fqx 'stop awg-mihomo.service' "$tmp/systemctl.log"
 grep -Fqx reload "$tmp/route.log"
@@ -131,7 +132,7 @@ if MOCK_MIHOMO_HEALTH=down run_select mihomo >"$tmp/out" 2>"$tmp/err"; then
   echo 'FAIL: unhealthy Mihomo transport was selected' >&2
   exit 1
 fi
-grep -Fqx awg "$tmp/transport"
+sudo grep -Fqx awg "$tmp/transport"
 [[ ! -s "$tmp/route.log" ]]
 [[ ! -e "$tmp/mihomo.active" ]]
 grep -Fq 'Target transport is unhealthy; state unchanged: mihomo' "$tmp/err"
@@ -142,7 +143,7 @@ if MOCK_RELOAD_FAIL_ONCE=1 run_select mihomo >"$tmp/out" 2>"$tmp/err"; then
   echo 'FAIL: switch unexpectedly succeeded after reload failure' >&2
   exit 1
 fi
-grep -Fqx awg "$tmp/transport"
+sudo grep -Fqx awg "$tmp/transport"
 [[ ! -e "$tmp/mihomo.active" ]]
 [[ "$(grep -c '^reload$' "$tmp/route.log")" -eq 2 ]]
 grep -Fq 'rollback restored awg' "$tmp/err"
