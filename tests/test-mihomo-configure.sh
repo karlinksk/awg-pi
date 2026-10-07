@@ -135,6 +135,7 @@ run_cli(){
     MIHOMO_ENV_FILE="$tmp/etc/provider.env" \
     MIHOMO_ENDPOINT_IP_FILE="$tmp/etc/endpoint-ip" \
     MIHOMO_EXPECTED_EGRESS_IP_FILE="$tmp/etc/expected-egress-ip" \
+    MIHOMO_NODE_NAME_FILE="$tmp/etc/node-name" \
     MIHOMO_LAST_FETCH_FILE="$tmp/state/last-fetch-path" \
     MIHOMO_LAST_FORMAT_FILE="$tmp/state/last-provider-format" \
     MIHOMO_PROVIDER_FILE="$tmp/state/providers/subscription.yaml" \
