@@ -19,10 +19,21 @@ IP_BIN="${IP_BIN:-ip}"
 AWG_BIN="${AWG_BIN:-awg}"
 CURL_BIN="${CURL_BIN:-curl}"
 DATE_BIN="${DATE_BIN:-date}"
+SYSTEMCTL_BIN="${SYSTEMCTL_BIN:-systemctl}"
+AWG_ROUTE_BIN="${AWG_ROUTE_BIN:-/usr/local/sbin/awg-route}"
+HEALTH_SERVICE="${AWG_HEALTH_SERVICE:-awg-pbr-health.service}"
+MIHOMO_SERVICE="${MIHOMO_SERVICE:-awg-mihomo.service}"
+MAINTENANCE_LOCK="${AWG_LOCK_FILE:-/run/awg-maintenance.lock}"
+SLEEP_BIN="${SLEEP_BIN:-sleep}"
 
 usage(){
   cat <<'USAGE'
-Usage: awg-transport get|status|list|check [awg|mihomo]
+Usage:
+  awg-transport get
+  awg-transport status
+  awg-transport list
+  awg-transport check [awg|mihomo]
+  awg-transport select awg|mihomo
 USAGE
 }
 
@@ -73,6 +84,109 @@ health_word(){
   fi
 }
 
+atomic_transport_set(){
+  local transport="$1" dir tmp
+  dir="$(dirname "$AWG_TRANSPORT_FILE")"
+  mkdir -p "$dir"
+  tmp="$(mktemp "$dir/.transport.XXXXXX")"
+  printf '%s\n' "$transport" >"$tmp"
+  chmod 600 "$tmp"
+  mv -f "$tmp" "$AWG_TRANSPORT_FILE"
+}
+
+wait_transport_healthy(){
+  local transport="$1" _
+  for _ in $(seq 1 25); do
+    if check_transport "$transport"; then
+      return 0
+    fi
+    "$SLEEP_BIN" 0.2
+  done
+  return 1
+}
+
+select_transport(){
+  local target="$1" previous had_state=0 previous_state="" started_mihomo=0 rc
+
+  awg_transport_valid "$target" || {
+    echo "Unsupported transport: $target" >&2
+    return 2
+  }
+
+  if (( ${EUID:-$(id -u)} != 0 )); then
+    exec sudo "$0" select "$target"
+  fi
+
+  exec 9>"$MAINTENANCE_LOCK"
+  flock -x 9
+
+  previous="$(awg_transport_get)"
+  if [[ -e "$AWG_TRANSPORT_FILE" ]]; then
+    had_state=1
+    previous_state="$(cat "$AWG_TRANSPORT_FILE")"
+  fi
+
+  if [[ "$target" == "$previous" ]]; then
+    if check_transport "$target"; then
+      printf 'Transport already selected: %s\n' "$(awg_transport_label "$target")"
+      return 0
+    fi
+    printf 'Selected transport is unhealthy: %s\n' "$target" >&2
+    return 1
+  fi
+
+  case "$target" in
+    awg)
+      "$SYSTEMCTL_BIN" start "awg-quick@$VPN_IF.service"
+      ;;
+    mihomo)
+      if ! "$SYSTEMCTL_BIN" is-active --quiet "$MIHOMO_SERVICE" 2>/dev/null; then
+        "$SYSTEMCTL_BIN" start "$MIHOMO_SERVICE"
+        started_mihomo=1
+      fi
+      ;;
+  esac
+
+  if ! wait_transport_healthy "$target"; then
+    (( started_mihomo == 1 )) && "$SYSTEMCTL_BIN" stop "$MIHOMO_SERVICE" >/dev/null 2>&1 || true
+    printf 'Target transport is unhealthy; state unchanged: %s\n' "$target" >&2
+    return 1
+  fi
+
+  "$SYSTEMCTL_BIN" stop "$HEALTH_SERVICE" >/dev/null 2>&1 || true
+
+  rollback(){
+    rc=$?
+    trap - ERR
+    "$SYSTEMCTL_BIN" stop "$HEALTH_SERVICE" >/dev/null 2>&1 || true
+    if (( had_state == 1 )); then
+      printf '%s\n' "$previous_state" >"$AWG_TRANSPORT_FILE"
+      chmod 600 "$AWG_TRANSPORT_FILE"
+    else
+      rm -f "$AWG_TRANSPORT_FILE"
+    fi
+    AWG_MAINTENANCE=1 "$AWG_ROUTE_BIN" reload >/dev/null 2>&1 || true
+    (( started_mihomo == 1 )) && "$SYSTEMCTL_BIN" stop "$MIHOMO_SERVICE" >/dev/null 2>&1 || true
+    printf 'Transport switch failed; rollback restored %s.\n' "$previous" >&2
+    exit "$rc"
+  }
+  trap rollback ERR
+
+  atomic_transport_set "$target"
+  AWG_MAINTENANCE=1 "$AWG_ROUTE_BIN" reload
+  wait_transport_healthy "$target"
+  "$SYSTEMCTL_BIN" is-active --quiet "$HEALTH_SERVICE"
+
+  trap - ERR
+
+  if [[ "$target" == awg && "$previous" == mihomo ]]; then
+    "$SYSTEMCTL_BIN" stop "$MIHOMO_SERVICE" >/dev/null 2>&1 || true
+  fi
+
+  printf 'Transport activated: %s\n' "$(awg_transport_label "$target")"
+  printf 'Transport ID: %s\n' "$target"
+}
+
 cmd="${1:-status}"
 case "$cmd" in
   get)
@@ -103,6 +217,10 @@ case "$cmd" in
     for transport in awg mihomo; do
       printf '%-8s %-12s %s\n' "$transport" "$(awg_transport_label "$transport")" "$(health_word "$transport")"
     done
+    ;;
+  select)
+    [[ $# -eq 2 ]] || { usage >&2; exit 2; }
+    select_transport "$2"
     ;;
   -h|--help|help)
     usage
