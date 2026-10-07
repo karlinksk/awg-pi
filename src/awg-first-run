@@ -12,6 +12,14 @@ MIHOMO_ENV_FILE="${MIHOMO_ENV_FILE:-/etc/awg-pbr/transports/mihomo/provider.env}
 MIHOMO_BIN="${MIHOMO_BIN:-/usr/local/bin/mihomo}"
 export MIHOMO_ENV_FILE MIHOMO_BIN
 
+ui_print(){
+  if [[ -w "$TTY" ]]; then
+    printf '%s\n' "$*" >"$TTY"
+  else
+    printf '%s\n' "$*"
+  fi
+}
+
 usage(){
   cat <<'USAGE'
 Usage:
@@ -111,7 +119,7 @@ prepare_local_mihomo_env(){
 choose_mihomo_node(){
   local nodes name prepared endpoint
   nodes="$("$MIHOMO_CONFIGURE" node list)" || return
-  printf '\n=== Доступные Mihomo nodes ===\n%s\n\n' "$nodes" >"$TTY"
+  ui_print "$(printf '\n=== Доступные Mihomo nodes ===\n%s\n' "$nodes")"
   name="${AWG_FIRST_RUN_NODE:-}"
   if [[ -z "$name" ]]; then
     ask "Введите точное имя первого Mihomo node"
@@ -123,7 +131,7 @@ choose_mihomo_node(){
   }
 
   prepared="$("$MIHOMO_CONFIGURE" node prepare "$name")" || return
-  printf '%s\n' "$prepared" >"$TTY"
+  ui_print "$prepared"
   endpoint="${AWG_FIRST_RUN_ENDPOINT:-}"
   if [[ -z "$endpoint" ]]; then
     ask "Введите один IPv4 из Resolved IPv4 endpoints"
