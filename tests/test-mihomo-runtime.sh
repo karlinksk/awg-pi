@@ -37,6 +37,7 @@ cat >"$tmp/bin/curl" <<'MOCK'
 #!/usr/bin/env bash
 set -Eeuo pipefail
 out=""
+path=router
 : "${MOCK_CURL_LOG:?}"
 : "${MOCK_PROVIDER_SOURCE:?}"
 while (($#)); do
@@ -44,14 +45,22 @@ while (($#)); do
     -o)
       out="$2"; shift 2 ;;
     --interface)
+      path=awg
       printf 'interface=%s\n' "$2" >>"$MOCK_CURL_LOG"; shift 2 ;;
+    -x)
+      path=mihomo
+      printf 'proxy=%s\n' "$2" >>"$MOCK_CURL_LOG"; shift 2 ;;
     -H)
       printf 'header=%s\n' "$2" >>"$MOCK_CURL_LOG"; shift 2 ;;
     *)
       shift ;;
   esac
 done
+printf 'path=%s\n' "$path" >>"$MOCK_CURL_LOG"
 [[ -n "$out" ]]
+case " ${MOCK_FAIL_PATHS:-} " in
+  *" $path "*) exit 7 ;;
+esac
 cp "$MOCK_PROVIDER_SOURCE" "$out"
 MOCK
 
@@ -101,7 +110,9 @@ run_update(){
   MOCK_PREPARE_LOG="$tmp/prepare.log" \
   MOCK_PREPARE_FAIL="${MOCK_PREPARE_FAIL:-0}" \
   MOCK_SERVICE_ACTIVE="${MOCK_SERVICE_ACTIVE:-0}" \
-    bash "$repo_root/src/awg-mihomo-update"
+  MOCK_FAIL_PATHS="${MOCK_FAIL_PATHS:-}" \
+  MIHOMO_LAST_FETCH_FILE="$tmp/state/last-fetch-path" \
+    bash "$repo_root/src/awg-mihomo-update" "$@"
 }
 
 echo "=== provider first update ==="
@@ -141,6 +152,36 @@ ENV
 run_update >/dev/null
 if grep -q '^header=x-hwid:' "$tmp/curl.log"; then
   echo 'FAIL: generic provider unexpectedly sent x-hwid' >&2
+  exit 1
+fi
+
+echo "=== AUTO bootstrap falls back from Mihomo to AWG ==="
+cat >"$tmp/provider.env" <<'ENV'
+MIHOMO_PROVIDER_URL='https://subscription.example/profile.yaml'
+MIHOMO_FETCH_MODE='auto'
+MIHOMO_FETCH_ORDER='mihomo awg router'
+ENV
+: >"$tmp/curl.log"
+out="$(MOCK_FAIL_PATHS='mihomo' run_update)"
+grep -Fqx 'MIHOMO_FETCH_PATH=awg' <<<"$out"
+grep -Fqx awg "$tmp/state/last-fetch-path"
+grep -Fq 'proxy=http://127.0.0.1:7890' "$tmp/curl.log"
+grep -Fq 'interface=awg0' "$tmp/curl.log"
+
+echo "=== AUTO bootstrap falls back to router/default ==="
+: >"$tmp/curl.log"
+out="$(MOCK_FAIL_PATHS='mihomo awg' run_update)"
+grep -Fqx 'MIHOMO_FETCH_PATH=router' <<<"$out"
+grep -Fqx router "$tmp/state/last-fetch-path"
+grep -Fq 'path=router' "$tmp/curl.log"
+
+echo "=== local provider import bypasses network ==="
+: >"$tmp/curl.log"
+out="$(run_update --file "$tmp/fixture.yaml")"
+grep -Fqx 'MIHOMO_FETCH_PATH=file' <<<"$out"
+grep -Fqx file "$tmp/state/last-fetch-path"
+if [[ -s "$tmp/curl.log" ]]; then
+  echo 'FAIL: local import unexpectedly used curl' >&2
   exit 1
 fi
 
