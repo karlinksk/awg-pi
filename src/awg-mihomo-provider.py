@@ -130,7 +130,12 @@ def parse_vless_uri(uri: str, index: int):
         die(f"Invalid VLESS URI #{index}: {exc}")
     if parts.scheme.lower() != "vless":
         die(f"Unsupported subscription URI scheme in item #{index}: {parts.scheme or 'missing'}")
-    if not parts.username or not parts.hostname or parts.port is None:
+    try:
+        host = parts.hostname
+        port = parts.port
+    except ValueError:
+        die(f"VLESS URI #{index} has an invalid server/port")
+    if not parts.username or parts.password is not None or not host or port is None:
         die(f"VLESS URI #{index} must include UUID, server and port")
 
     raw_uuid = unquote(parts.username)
@@ -140,7 +145,7 @@ def parse_vless_uri(uri: str, index: int):
         die(f"VLESS URI #{index} has an invalid UUID")
 
     try:
-        port = int(parts.port)
+        port = int(port)
     except (TypeError, ValueError):
         die(f"VLESS URI #{index} has an invalid port")
     if not (1 <= port <= 65535):
@@ -163,14 +168,14 @@ def parse_vless_uri(uri: str, index: int):
     if security not in ("none", "tls", "reality"):
         die(f"VLESS URI #{index} uses unsupported security={security!r}")
 
-    name = unquote(parts.fragment).strip() or f"VLESS {parts.hostname}:{port}"
+    name = unquote(parts.fragment).strip() or f"VLESS {host}:{port}"
     if any(ch in name for ch in "\r\n\t"):
         die(f"VLESS URI #{index} has an invalid display name")
 
     proxy = {
         "name": name,
         "type": "vless",
-        "server": parts.hostname,
+        "server": host,
         "port": port,
         "uuid": parsed_uuid,
         "network": network,
