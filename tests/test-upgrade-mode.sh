@@ -16,12 +16,13 @@ grep -Fq 'FIRST_RUN_CLI="/usr/local/sbin/awg-first-run"' install.sh
 grep -Fq '"$FIRST_RUN_CLI" wizard' install.sh
 grep -Fq 'Active transport не настроен. Это допустимое recovery-состояние' install.sh
 
-# Fresh installs stage in Selective + unconfigured. Transit is attempted only
-# after a real backend is selected and passes health/preflight. Legacy systems
-# without a transport state are migrated to AWG only when an AWG config exists.
+# Fresh installs stage in Selective + unconfigured, configure/recover the
+# first transport, then choose Operating Mode explicitly.
 grep -Fq "printf '%s\\n' selective >\"\$MODE_FILE\"" install.sh
-grep -Fq 'ACTIVATE_TRANSIT_AFTER_INSTALL=1' install.sh
-grep -Fq 'if (( ACTIVATE_TRANSIT_AFTER_INSTALL == 1 )); then' install.sh
+grep -Fq 'log "[11a/12] First transport wizard"' install.sh
+grep -Fq 'log "[11b/12] Operating Mode selection"' install.sh
+grep -Fq '2) MikroTik Transit / Backup VPN — transport DOWN/not-ready => FAIL-CLOSED/LOCKDOWN' install.sh
+grep -Fq 'elif (( ACTIVATE_TRANSIT_AFTER_INSTALL == 1 )); then' install.sh
 
 # Existing v1.2+ mode and v1.3 transport state are preserved during upgrade.
 grep -Fq '[[ -f "$MODE_FILE" ]] || printf' install.sh
