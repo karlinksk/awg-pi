@@ -13,6 +13,10 @@ grep -Fq '"$ROUTE_CLI" mode selective' install.sh
 grep -Fq 'TRANSPORT_FILE="$PBR_DIR/transport"' install.sh
 grep -Fq "printf '%s\\n' unconfigured >\"\$TRANSPORT_FILE\"" install.sh
 grep -Fq 'FIRST_RUN_CLI="/usr/local/sbin/awg-first-run"' install.sh
+grep -Fq 'AWG_ENGINE_INSTALL_SCRIPT="/usr/local/sbin/awg-engine-install"' install.sh
+grep -Fq 'AWG/WG engine отложен до выбора первого transport' install.sh
+grep -Fq 'stage_project_file()' install.sh
+grep -Fq 'Fresh install не требует AWG/WG engine до first-run wizard' install.sh
 grep -Fq '"$FIRST_RUN_CLI" wizard' install.sh
 grep -Fq 'Active transport не настроен. Это допустимое recovery-состояние' install.sh
 
@@ -41,6 +45,7 @@ for needle in \
   'usr/local/bin/mihomo' \
   'usr/local/sbin/awg-transport' \
   'usr/local/sbin/awg-first-run' \
+  'usr/local/sbin/awg-engine-install' \
   'usr/local/sbin/awg-mihomo-config' \
   'usr/local/sbin/awg-mihomo-update' \
   'usr/local/sbin/awg-mihomo-install' \
