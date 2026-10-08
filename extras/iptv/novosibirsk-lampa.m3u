@@ -8,7 +8,7 @@ https://rt-sib-nsk-htlive.cdn.ngenix.net/hls/CH_R01_OTT_SIB_NSK_8CHANNEL/variant
 #EXTINF:-1 tvg-id="Afontovo.ru@SD" group-title="01 Новосибирск",Афонтово
 https://stream.afontovo.ru/hd.m3u8
 #EXTINF:-1 tvg-id="ChannelOne.ru@HD" group-title="02 Федеральные",Первый канал
-https://stream8.cinerama.uz/1214/tracks-v1a1/mono.m3u8
+http://45.153.24.78/1TV/index.m3u8
 #EXTINF:-1 tvg-id="Russia1.ru@HD" group-title="02 Федеральные",Россия 1
 https://stream.smotrim.ru/hls2/russia_hd/playlist_6.m3u8
 #EXTINF:-1 tvg-id="NTV.ru@HD" group-title="02 Федеральные",НТВ
