@@ -43,6 +43,7 @@ for needle in \
   'usr/local/sbin/awg-first-run' \
   'usr/local/sbin/awg-selection' \
   'usr/local/sbin/awg-selection-monitor' \
+  'usr/local/sbin/awg-mihomo-node-policy' \
   'usr/local/sbin/awg-mihomo-config' \
   'usr/local/sbin/awg-mihomo-update' \
   'usr/local/sbin/awg-mihomo-install' \
@@ -62,3 +63,5 @@ grep -Fq 'awg-mihomo-update.timer \' src/awg-update
 grep -Fq 'awg-mihomo.service \' src/awg-update
 
 echo "v1.3 upgrade/rollback policy: OK"
+
+grep -Fq 'install_project_helper src/awg-mihomo-node-policy "$MIHOMO_NODE_POLICY_CLI"' install.sh
