@@ -31,6 +31,7 @@ TRANSIT_ROUTING="${AWG_TRANSIT_ROUTING:-/usr/local/sbin/awg-transit-routing}"
 TRANSPORT_CLI="${AWG_TRANSPORT_CLI:-/usr/local/sbin/awg-transport}"
 SELECTION_CLI="${AWG_SELECTION_CLI:-/usr/local/sbin/awg-selection}"
 MIHOMO_CONFIGURE="${MIHOMO_CONFIGURE_BIN:-/usr/local/sbin/awg-mihomo-configure}"
+MIHOMO_NODE_POLICY="${MIHOMO_NODE_POLICY_BIN:-/usr/local/sbin/awg-mihomo-node-policy}"
 MIHOMO_ENDPOINT_IP_FILE="${MIHOMO_ENDPOINT_IP_FILE:-/etc/awg-pbr/transports/mihomo/endpoint-ip}"
 OPENCCK_UPDATE="${AWG_OPENCCK_UPDATE:-/usr/local/sbin/awg-opencck-update}"
 SOURCE_ROOT="${SOURCE_ROOT:-/etc/awg-pbr/sources}"
@@ -524,6 +525,11 @@ show_status(){
     echo "=== Selection Policy ==="
     "$SELECTION_CLI" status 2>/dev/null || true
   fi
+  if [[ -x "$MIHOMO_NODE_POLICY" ]]; then
+    echo
+    echo "=== Mihomo Node Policy ==="
+    "$MIHOMO_NODE_POLICY" status 2>/dev/null || true
+  fi
   echo
   echo "=== Services ==="
   for s in awg-pbr-setup.service dnsmasq.service "awg-quick@$VPN_IF.service" awg-mihomo.service awg-pbr-health.service awg-selection-monitor.service awg-opencck-update.timer awg-mihomo-update.timer; do
@@ -682,6 +688,11 @@ run_diagnostics(){
       echo
       echo "--- Selection Policy ---"
       "$SELECTION_CLI" status 2>&1 || true
+    fi
+    if [[ -x "$MIHOMO_NODE_POLICY" ]]; then
+      echo
+      echo "--- Mihomo Node Policy ---"
+      "$MIHOMO_NODE_POLICY" status 2>&1 || true
     fi
     echo
     if [[ "$diag_mode" == transit ]]; then
