@@ -16,6 +16,7 @@ AWG_ROUTE=/usr/local/sbin/awg-route
 AWG_TRANSPORT=/usr/local/sbin/awg-transport
 MIHOMO_CONFIGURE=/usr/local/sbin/awg-mihomo-configure
 MIHOMO_INSTALLER=/usr/local/sbin/awg-mihomo-install
+MIHOMO_NODE_POLICY=/usr/local/sbin/awg-mihomo-node-policy
 AWG_FIRST_RUN=/usr/local/sbin/awg-first-run
 AWG_SELECTION=/usr/local/sbin/awg-selection
 AWG_UPDATE=/usr/local/sbin/awg-update
@@ -505,12 +506,53 @@ mihomo_provider_format_dialog(){
     0 "Назад" "Не менять формат." 3>&1 1>&2 2>&3
 }
 
+mihomo_node_policy_menu(){
+  local choice primary fallback
+  while true; do
+    choice="$(dialog --backtitle "$BACKTITLE" --title "Mihomo Node Failover" --item-help --menu \
+      "MANUAL по умолчанию. FIXED переключает только между точными именами узлов, которые вы явно разрешили. Страна из имени НЕ определяется и скрыто не меняется." \
+      22 110 7 \
+      1 "Показать policy" "Показывает текущий node, режим и точный allow-list fallback-узлов." \
+      2 "MANUAL" "Отключает автоматическую смену Mihomo node." \
+      3 "FIXED: primary → fallback" "Задаёт точные имена primary и одного fallback из текущего live provider. Другие nodes никогда не выбираются автоматически." \
+      4 "Показать доступные nodes" "Безопасно показывает name/type/server:port без UUID/ключей." \
+      0 "Назад" "Не менять node policy." 3>&1 1>&2 2>&3)" || return 0
+    case "$choice" in
+      1)
+        title="Mihomo Node Failover"
+        capture "$MIHOMO_NODE_POLICY" status || true
+        ;;
+      2)
+        confirm "Mihomo Node Failover" "Перейти в MANUAL и удалить automatic node fallback allow-list?" || continue
+        title="Mihomo node policy → MANUAL"
+        capture "$MIHOMO_NODE_POLICY" mode manual || true
+        ;;
+      3)
+        title="Доступные Mihomo nodes"
+        capture "$MIHOMO_CONFIGURE" node list || true
+        primary="$(input "Mihomo primary node" "Введите ТОЧНОЕ имя primary node из списка:")" || continue
+        [[ -n "$primary" ]] || continue
+        fallback="$(input "Mihomo fallback node" "Введите ТОЧНОЕ имя fallback node из списка:")" || continue
+        [[ -n "$fallback" ]] || continue
+        confirm "FIXED node failover" "Разрешить automatic node failover только: '$primary' → '$fallback'?\n\nСтрана автоматически не определяется: если nodes из разных стран, это ваше явное разрешение на такую смену." || continue
+        title="Mihomo node policy → FIXED"
+        capture "$MIHOMO_NODE_POLICY" mode fixed "$primary" "$fallback" || true
+        ;;
+      4)
+        title="Доступные Mihomo nodes"
+        capture "$MIHOMO_CONFIGURE" node list || true
+        ;;
+      0) return 0 ;;
+    esac
+  done
+}
+
 mihomo_menu(){
   local choice url path fetch_mode init_tmp url_tmp profile provider_format source_mode
   while true; do
     choice="$(dialog --backtitle "$BACKTITLE" --title "Mihomo / Multi-Transport" --item-help --menu \
       "Управление Mihomo и subscription. AUTO: DIRECT → текущий healthy transport → остальные healthy transports. SSTP/router-side VPN не является зависимостью." \
-      31 110 14 \
+      33 110 15 \
       1 "Состояние Mihomo" "Показывает runtime, provider cache, последний успешный bootstrap-канал и health без вывода секретов." \
       2 "Заменить ссылку подписки" "Новый URL сначала загружается в staged candidate. Live provider/URL меняются только после выбора candidate node и успешного health-check." \
       3 "Обновить подписку — AUTO" "Скачивает и проверяет новый provider как candidate: DIRECT → healthy transports. Live не меняется до выбора node и commit." \
@@ -524,6 +566,7 @@ mihomo_menu(){
       11 "Вставить provider / subscription" "Вставка Mihomo YAML, VLESS URI(s) или Base64 из буфера. Сначала staged validation, затем выбор node и commit." \
       12 "Staged provider / candidate" "Открывает уже подготовленный candidate: выбрать node/endpoint и commit либо вернуться без изменения live." \
       13 "Установить Mihomo engine из локального .gz" "Offline recovery: принимает только pinned asset текущей версии/архитектуры, проверяет SHA256 и версию перед установкой." \
+      14 "Mihomo Node Failover" "MANUAL или FIXED exact-node fallback. Автоматически выбираются только явно разрешённые имена nodes; страна не выводится из имени." \
       0 "Назад" "Возвращает в меню VPN без изменений." 3>&1 1>&2 2>&3)" || return 0
 
     case "$choice" in
@@ -644,6 +687,7 @@ mihomo_menu(){
         [[ -n "$path" ]] || continue
         run_interactive "Установка Mihomo engine из локального файла" "$MIHOMO_INSTALLER" --file "$path"
         ;;
+      14) mihomo_node_policy_menu ;;
       0) return 0 ;;
     esac
   done
