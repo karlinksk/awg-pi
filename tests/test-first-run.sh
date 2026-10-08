@@ -66,10 +66,17 @@ OUT
 esac
 MOCK
 
+cat >"$TMP/bin/awg-engine-install" <<'MOCK'
+#!/usr/bin/env bash
+set -Eeuo pipefail
+printf 'awg-engine:%s\n' "$*" >>"${MOCK_LOG:?}"
+exit 0
+MOCK
+
 cat >"$TMP/bin/mihomo-install" <<'MOCK'
 #!/usr/bin/env bash
 set -Eeuo pipefail
-printf 'mihomo-install\n' >>"${MOCK_LOG:?}"
+printf 'mihomo-install:%s\n' "$*" >>"${MOCK_LOG:?}"
 cat >"${MIHOMO_BIN:?}" <<'BIN'
 #!/usr/bin/env bash
 exit 0
@@ -80,7 +87,7 @@ MOCK
 chmod +x "$TMP/bin/"*
 
 run_first(){
-  sudo env     AWG_ROUTE_BIN="$TMP/bin/route"     AWG_TRANSPORT_BIN="$TMP/bin/transport"     MIHOMO_CONFIGURE_BIN="$TMP/bin/mihomo-configure"     MIHOMO_INSTALLER_BIN="$TMP/bin/mihomo-install"     MIHOMO_ENV_FILE="$TMP/etc/provider.env"     MIHOMO_BIN="$TMP/bin/mihomo"     AWG_FIRST_RUN_NODE=Finland     AWG_FIRST_RUN_ENDPOINT=45.86.66.170     MOCK_TRANSPORT_STATE="$TMP/transport"     MOCK_LOG="$TMP/log"     bash "$ROOT/src/awg-first-run" "$@"
+  sudo env     AWG_ROUTE_BIN="$TMP/bin/route"     AWG_TRANSPORT_BIN="$TMP/bin/transport"     AWG_ENGINE_INSTALLER_BIN="$TMP/bin/awg-engine-install"     MIHOMO_CONFIGURE_BIN="$TMP/bin/mihomo-configure"     MIHOMO_INSTALLER_BIN="$TMP/bin/mihomo-install"     MIHOMO_ENV_FILE="$TMP/etc/provider.env"     MIHOMO_BIN="$TMP/bin/mihomo"     AWG_FIRST_RUN_NODE=Finland     AWG_FIRST_RUN_ENDPOINT=45.86.66.170     AWG_FIRST_RUN_AWG_BUNDLE="${AWG_FIRST_RUN_AWG_BUNDLE:-}"     AWG_FIRST_RUN_MIHOMO_ARCHIVE="${AWG_FIRST_RUN_MIHOMO_ARCHIVE:-}"     MOCK_TRANSPORT_STATE="$TMP/transport"     MOCK_LOG="$TMP/log"     bash "$ROOT/src/awg-first-run" "$@"
 }
 
 echo "=== AWG first transport ==="
@@ -89,10 +96,18 @@ printf '%s\n' unconfigured >"$TMP/transport"
 printf 'dummy-awg-profile\n' >"$TMP/awg.conf"
 out="$(run_first awg-file "$TMP/awg.conf")"
 grep -Fqx 'FIRST_TRANSPORT=awg' <<<"$out"
+grep -Fqx 'awg-engine:' "$TMP/log"
 grep -Fq "route:config check $TMP/awg.conf" "$TMP/log"
 grep -Fq "route:config replace $TMP/awg.conf --yes" "$TMP/log"
 grep -Fqx 'transport-select:awg' "$TMP/log"
 grep -Fqx awg "$TMP/transport"
+
+echo "=== AWG offline bundle is passed to engine installer ==="
+printf '%s\n' unconfigured >"$TMP/transport"
+: >"$TMP/log"
+out="$(AWG_FIRST_RUN_AWG_BUNDLE="$TMP/offline-awg" run_first awg-file "$TMP/awg.conf")"
+grep -Fqx 'FIRST_TRANSPORT=awg' <<<"$out"
+grep -Fqx "awg-engine:--bundle $TMP/offline-awg" "$TMP/log"
 
 echo "=== existing transport is never silently replaced ==="
 if run_first mihomo-file "$TMP/awg.conf" >"$TMP/out" 2>"$TMP/err"; then
@@ -119,7 +134,7 @@ rm -f "$TMP/bin/mihomo" "$TMP/etc/provider.env"
 printf 'vless://example\n' >"$TMP/provider.txt"
 out="$(run_first mihomo-file "$TMP/provider.txt" auto)"
 grep -Fqx 'FIRST_TRANSPORT=mihomo' <<<"$out"
-grep -Fqx 'mihomo-install' "$TMP/log"
+grep -Fqx 'mihomo-install:' "$TMP/log"
 grep -Fq "mihomo:provider import $TMP/provider.txt" "$TMP/log"
 grep -Fqx 'mihomo:node select Finland 45.86.66.170' "$TMP/log"
 grep -Fqx 'transport-select:mihomo' "$TMP/log"
@@ -130,6 +145,15 @@ if sudo grep -q '^MIHOMO_PROVIDER_URL=' "$TMP/etc/provider.env"; then
   echo 'FAIL: local-only provider unexpectedly gained a network URL' >&2
   exit 1
 fi
+
+echo "=== Mihomo offline archive is passed to engine installer ==="
+printf '%s\n' unconfigured >"$TMP/transport"
+rm -f "$TMP/bin/mihomo" "$TMP/etc/provider.env"
+: >"$TMP/log"
+printf 'offline-engine\n' >"$TMP/offline-mihomo.gz"
+out="$(AWG_FIRST_RUN_MIHOMO_ARCHIVE="$TMP/offline-mihomo.gz" run_first mihomo-file "$TMP/provider.txt" auto)"
+grep -Fqx 'FIRST_TRANSPORT=mihomo' <<<"$out"
+grep -Fqx "mihomo-install:--file $TMP/offline-mihomo.gz" "$TMP/log"
 
 echo "=== installer orders first transport before Operating Mode ==="
 first_line="$(grep -n -F '"$FIRST_RUN_CLI" wizard' "$ROOT/install.sh" | head -1 | cut -d: -f1)"
