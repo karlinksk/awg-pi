@@ -37,6 +37,7 @@ MIHOMO_CONFIGURE_SCRIPT="/usr/local/sbin/awg-mihomo-configure"
 FIRST_RUN_CLI="/usr/local/sbin/awg-first-run"
 SELECTION_CLI="/usr/local/sbin/awg-selection"
 SELECTION_MONITOR="/usr/local/sbin/awg-selection-monitor"
+MIHOMO_NODE_POLICY_CLI="/usr/local/sbin/awg-mihomo-node-policy"
 UPDATE_SCRIPT="/usr/local/sbin/awg-update"
 SETUP_SERVICE="/etc/systemd/system/awg-pbr-setup.service"
 HEALTH_SERVICE="/etc/systemd/system/awg-pbr-health.service"
@@ -656,6 +657,7 @@ install_project_helper src/awg-mihomo-configure "$MIHOMO_CONFIGURE_SCRIPT"
 install_project_helper src/awg-first-run "$FIRST_RUN_CLI"
 install_project_helper src/awg-selection "$SELECTION_CLI"
 install_project_helper src/awg-selection-monitor "$SELECTION_MONITOR"
+install_project_helper src/awg-mihomo-node-policy "$MIHOMO_NODE_POLICY_CLI"
 install_project_helper src/awg-pbr-setup "$SETUP_SCRIPT"
 install_project_helper src/awg-transit-nft /usr/local/sbin/awg-transit-nft
 install_project_helper src/awg-transit-preflight /usr/local/sbin/awg-transit-preflight
@@ -745,7 +747,7 @@ EOF
 # -----------------------------------------------------------------------------
 STAGE="проверка компонентов управления"
 log "[10/12] Проверка awg-route / awg-menu / awg-update"
-for f in "$ROUTE_CLI" "$TRANSPORT_CLI" "$FETCH_CLI" "$MIHOMO_CONFIG_SCRIPT" "$MIHOMO_UPDATE_SCRIPT" "$MIHOMO_INSTALL_SCRIPT" "$MIHOMO_PREPARE_SCRIPT" "$MIHOMO_CONFIGURE_SCRIPT" "$FIRST_RUN_CLI" "$SETUP_SCRIPT" /usr/local/sbin/awg-menu /usr/local/sbin/awg-transit-nft /usr/local/sbin/awg-transit-preflight /usr/local/sbin/awg-transit-apply /usr/local/sbin/awg-transit-routing /usr/local/sbin/awg-mode-switch "$HEALTH_SCRIPT" /usr/local/sbin/awg-opencck-update /usr/local/sbin/awg-core-update "$UPDATE_SCRIPT"; do
+for f in "$ROUTE_CLI" "$TRANSPORT_CLI" "$FETCH_CLI" "$MIHOMO_CONFIG_SCRIPT" "$MIHOMO_UPDATE_SCRIPT" "$MIHOMO_INSTALL_SCRIPT" "$MIHOMO_PREPARE_SCRIPT" "$MIHOMO_CONFIGURE_SCRIPT" "$FIRST_RUN_CLI" "$SELECTION_CLI" "$SELECTION_MONITOR" "$MIHOMO_NODE_POLICY_CLI" "$SETUP_SCRIPT" /usr/local/sbin/awg-menu /usr/local/sbin/awg-transit-nft /usr/local/sbin/awg-transit-preflight /usr/local/sbin/awg-transit-apply /usr/local/sbin/awg-transit-routing /usr/local/sbin/awg-mode-switch "$HEALTH_SCRIPT" /usr/local/sbin/awg-opencck-update /usr/local/sbin/awg-core-update "$UPDATE_SCRIPT"; do
   [[ -x "$f" ]] || die "Не установлен исполняемый компонент: $f"
   bash -n "$f" || die "Синтаксическая проверка компонента не пройдена: $f"
 done
