@@ -12,9 +12,12 @@ PERSIST_INTERVAL="${AWG_TRAFFIC_PERSIST_INTERVAL:-21600}"
 AWG_IF="${AWG_TRAFFIC_AWG_IF:-awg0}"
 MIHOMO_IF="${AWG_TRAFFIC_MIHOMO_IF:-mihomo0}"
 BOOT_ID_FILE="${AWG_TRAFFIC_BOOT_ID_FILE:-/proc/sys/kernel/random/boot_id}"
+PUBLIC_STATE="${AWG_TRAFFIC_PUBLIC_STATE:-/run/awg-traffic-status.env}"
 
-mkdir -p "$RUNTIME_DIR" "$PERSIST_DIR"
-chmod 700 "$RUNTIME_DIR" "$PERSIST_DIR"
+prepare_state_dirs(){
+  mkdir -p "$RUNTIME_DIR" "$PERSIST_DIR"
+  chmod 700 "$RUNTIME_DIR" "$PERSIST_DIR"
+}
 
 zero_state(){
   INITIALIZED=0
@@ -77,6 +80,49 @@ LAST_PERSIST_EPOCH=$LAST_PERSIST_EPOCH
 EOF
   chmod 600 "$tmp"
   mv -f "$tmp" "$path"
+}
+
+public_state_write(){
+  local dir tmp
+  dir="$(dirname "$PUBLIC_STATE")"
+  mkdir -p "$dir"
+  tmp="$(mktemp "$dir/.awg-traffic-public.XXXXXX")"
+  cat >"$tmp" <<EOF
+INITIALIZED=1
+DAY_KEY=$(printf %q "$DAY_KEY")
+MONTH_KEY=$(printf %q "$MONTH_KEY")
+DAY_AWG_RX=$DAY_AWG_RX
+DAY_AWG_TX=$DAY_AWG_TX
+DAY_MIHOMO_RX=$DAY_MIHOMO_RX
+DAY_MIHOMO_TX=$DAY_MIHOMO_TX
+MONTH_AWG_RX=$MONTH_AWG_RX
+MONTH_AWG_TX=$MONTH_AWG_TX
+MONTH_MIHOMO_RX=$MONTH_MIHOMO_RX
+MONTH_MIHOMO_TX=$MONTH_MIHOMO_TX
+EOF
+  chmod 644 "$tmp"
+  mv -f "$tmp" "$PUBLIC_STATE"
+}
+
+load_status_state(){
+  zero_state
+  local source=""
+  if [[ -r "$PUBLIC_STATE" ]]; then
+    source="$PUBLIC_STATE"
+  elif [[ -r "$RUNTIME_STATE" ]]; then
+    source="$RUNTIME_STATE"
+  elif [[ -r "$PERSIST_STATE" ]]; then
+    source="$PERSIST_STATE"
+  fi
+  if [[ -n "$source" ]]; then
+    # shellcheck disable=SC1090
+    . "$source"
+    : "${INITIALIZED:=1}"
+  fi
+  : "${INITIALIZED:=0}"
+  : "${DAY_KEY:=}" "${MONTH_KEY:=}"
+  : "${DAY_AWG_RX:=0}" "${DAY_AWG_TX:=0}" "${DAY_MIHOMO_RX:=0}" "${DAY_MIHOMO_TX:=0}"
+  : "${MONTH_AWG_RX:=0}" "${MONTH_AWG_TX:=0}" "${MONTH_MIHOMO_RX:=0}" "${MONTH_MIHOMO_TX:=0}"
 }
 
 counter(){
@@ -150,6 +196,7 @@ sample_locked(){
     LAST_PERSIST_EPOCH="$now"
     state_write "$RUNTIME_STATE"
     state_write "$PERSIST_STATE"
+    public_state_write
     return 0
   fi
 
@@ -180,9 +227,11 @@ sample_locked(){
     state_write "$RUNTIME_STATE"
     state_write "$PERSIST_STATE"
   fi
+  public_state_write
 }
 
 sample(){
+  prepare_state_dirs
   exec 9>"$LOCK_FILE"
   flock -x 9
   sample_locked
@@ -191,12 +240,14 @@ sample(){
 }
 
 persist(){
+  prepare_state_dirs
   exec 9>"$LOCK_FILE"
   flock -x 9
   load_state
   LAST_PERSIST_EPOCH="$(now_epoch)"
   state_write "$RUNTIME_STATE"
   state_write "$PERSIST_STATE"
+  public_state_write
   flock -u 9
   exec 9>&-
 }
@@ -211,9 +262,7 @@ human_bytes(){
 }
 
 status(){
-  exec 9>"$LOCK_FILE"
-  flock -s 9
-  load_state
+  load_status_state
   local d_awg d_mihomo m_awg m_mihomo d_total m_total
   d_awg=$((DAY_AWG_RX+DAY_AWG_TX))
   d_mihomo=$((DAY_MIHOMO_RX+DAY_MIHOMO_TX))
@@ -235,10 +284,8 @@ status(){
       printf '  Mihomo: приём %s  передача %s  всего %s\n' "$(human_bytes "$MONTH_MIHOMO_RX")" "$(human_bytes "$MONTH_MIHOMO_TX")" "$(human_bytes "$m_mihomo")"
       printf 'Интервал записи состояния на диск: %s с (промежуточные отсчёты хранятся в RAM)\n' "$PERSIST_INTERVAL"
       ;;
-    *) flock -u 9; exec 9>&-; return 2 ;;
+    *) return 2 ;;
   esac
-  flock -u 9
-  exec 9>&-
 }
 
 daemon(){

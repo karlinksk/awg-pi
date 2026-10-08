@@ -15,7 +15,7 @@ setidx(){
 }
 
 run_traffic(){
-  env     AWG_TRAFFIC_RUNTIME_DIR="$TMP/run"     AWG_TRAFFIC_PERSIST_DIR="$TMP/persist"     AWG_TRAFFIC_SYSFS_ROOT="$TMP/sys"     AWG_TRAFFIC_BOOT_ID_FILE="$TMP/boot-id"     AWG_TRAFFIC_NOW_EPOCH="$NOW"     AWG_TRAFFIC_PERSIST_INTERVAL=21600     bash "$ROOT/src/awg-traffic" "$@"
+  env     AWG_TRAFFIC_RUNTIME_DIR="$TMP/run"     AWG_TRAFFIC_PERSIST_DIR="$TMP/persist"     AWG_TRAFFIC_SYSFS_ROOT="$TMP/sys"     AWG_TRAFFIC_BOOT_ID_FILE="$TMP/boot-id"     AWG_TRAFFIC_PUBLIC_STATE="$TMP/public.env"     AWG_TRAFFIC_NOW_EPOCH="$NOW"     AWG_TRAFFIC_PERSIST_INTERVAL=21600     bash "$ROOT/src/awg-traffic" "$@"
 }
 
 echo "=== first sample establishes baseline without inventing historical traffic ==="
@@ -36,6 +36,10 @@ run_traffic sample
 [[ "$LAST_MIHOMO_RX" == 300 && "$LAST_MIHOMO_TX" == 700 ]]
 grep -Fq 'INITIALIZED=1' "$TMP/persist/state.env"
 grep -Fq 'LAST_BOOT_ID=boot-A' "$TMP/persist/state.env"
+[[ "$(stat -c %a "$TMP/public.env")" == 644 ]]
+grep -Fq 'DAY_AWG_RX=0' "$TMP/public.env"
+! grep -Fq 'LAST_BOOT_ID' "$TMP/public.env"
+! grep -Fq 'IFINDEX' "$TMP/public.env"
 
 echo "=== second sample adds deltas only ==="
 NOW=$((NOW+60))
@@ -105,6 +109,18 @@ grep -Fq 'приём' <<<"$full"
 grep -Fq 'передача' <<<"$full"
 grep -Fq '21600 с' <<<"$full"
 
+echo "=== status is read-only and does not require private state directories ==="
+readonly_status="$(env \
+  AWG_TRAFFIC_RUNTIME_DIR="/proc/awg-traffic-private-runtime-test" \
+  AWG_TRAFFIC_PERSIST_DIR="/proc/awg-traffic-private-persist-test" \
+  AWG_TRAFFIC_LOCK_FILE="/proc/awg-traffic-private-runtime-test/lock" \
+  AWG_TRAFFIC_PUBLIC_STATE="$TMP/public.env" \
+  bash "$ROOT/src/awg-traffic" status compact)"
+grep -Fq 'Сегодня:' <<<"$readonly_status"
+grep -Fq 'Месяц:' <<<"$readonly_status"
+[[ ! -e /proc/awg-traffic-private-runtime-test ]]
+[[ ! -e /proc/awg-traffic-private-persist-test ]]
+
 echo "=== daemon releases lock so status remains readable ==="
 NOW="$(date -d '2026-11-01 00:02:00 UTC' +%s)"
 env \
@@ -112,6 +128,7 @@ env \
   AWG_TRAFFIC_PERSIST_DIR="$TMP/persist" \
   AWG_TRAFFIC_SYSFS_ROOT="$TMP/sys" \
   AWG_TRAFFIC_BOOT_ID_FILE="$TMP/boot-id" \
+  AWG_TRAFFIC_PUBLIC_STATE="$TMP/public.env" \
   AWG_TRAFFIC_NOW_EPOCH="$NOW" \
   AWG_TRAFFIC_INTERVAL=30 \
   AWG_TRAFFIC_PERSIST_INTERVAL=21600 \
@@ -123,6 +140,7 @@ timeout 2 env \
   AWG_TRAFFIC_PERSIST_DIR="$TMP/persist" \
   AWG_TRAFFIC_SYSFS_ROOT="$TMP/sys" \
   AWG_TRAFFIC_BOOT_ID_FILE="$TMP/boot-id" \
+  AWG_TRAFFIC_PUBLIC_STATE="$TMP/public.env" \
   AWG_TRAFFIC_NOW_EPOCH="$NOW" \
   bash "$ROOT/src/awg-traffic" status compact >/dev/null
 kill -TERM "$daemon_pid"
