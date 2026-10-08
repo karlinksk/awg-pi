@@ -114,6 +114,6 @@ if run_install "$TMP/target-keep" --file "$TMP/bad.gz" >"$TMP/out" 2>"$TMP/err";
   exit 1
 fi
 "$TMP/target-keep" -v | grep -Fqx 'Mihomo Meta v1.19.32'
-grep -Fq 'FAILED' "$TMP/err"
+grep -Fq 'FAILED' "$TMP/out"
 
 echo "mihomo installer bootstrap: OK"
