@@ -98,7 +98,7 @@ echo "=== AUTO is availability-only and obeys explicit allowed order ==="
 run_policy mode auto awg mihomo >/dev/null
 printf '%s\n' awg >"$TMP/transport"
 : >"$TMP/log"
-printf '2\n' >"$TMP/run/failures"
+printf '2\n' | sudo tee "$TMP/run/failures" >/dev/null
 out="$(MOCK_AWG_HEALTH=down MOCK_MIHOMO_HEALTH=up run_monitor)"
 grep -Fqx 'FAILOVER=awg->mihomo' <<<"$out"
 grep -Fqx mihomo "$TMP/transport"
@@ -127,7 +127,7 @@ echo "=== manual disables automatic switching immediately ==="
 run_policy mode manual >/dev/null
 printf '%s\n' awg >"$TMP/transport"
 : >"$TMP/log"
-printf '3\n' >"$TMP/run/failures"
+printf '3\n' | sudo tee "$TMP/run/failures" >/dev/null
 MOCK_AWG_HEALTH=down MOCK_MIHOMO_HEALTH=up run_monitor
 [[ ! -s "$TMP/log" ]]
 grep -Fqx awg "$TMP/transport"
