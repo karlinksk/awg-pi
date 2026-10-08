@@ -11,15 +11,18 @@ AWG_FETCH_BIN="${AWG_FETCH_BIN:-/usr/local/sbin/awg-fetch}"
 MIHOMO_INSTALL_FETCH_MODE="${MIHOMO_INSTALL_FETCH_MODE:-auto}"
 MIHOMO_INSTALL_ASSET_URL="${MIHOMO_INSTALL_ASSET_URL:-}"
 MIHOMO_INSTALL_ASSET_SHA256="${MIHOMO_INSTALL_ASSET_SHA256:-}"
+MIHOMO_LOCAL_ARCHIVE=""
 
 
 usage(){
   cat <<'USAGE'
 Usage:
   awg-mihomo-install [--mode auto|direct|awg|mihomo]
+  awg-mihomo-install --file PINNED_MIHOMO_GZ
 
 AUTO delegates to the bootstrap manager: DIRECT first, then the selected
-healthy transport, then other healthy transports. Legacy "router" maps to DIRECT.
+healthy transport, then other healthy transports. --file is offline recovery
+and still requires the pinned SHA256/version to match. Legacy "router" maps to DIRECT.
 USAGE
 }
 
@@ -28,6 +31,11 @@ while (( $# )); do
     --mode)
       [[ $# -ge 2 ]] || { usage >&2; exit 2; }
       MIHOMO_INSTALL_FETCH_MODE="$2"
+      shift 2
+      ;;
+    --file)
+      [[ $# -ge 2 ]] || { usage >&2; exit 2; }
+      MIHOMO_LOCAL_ARCHIVE="$2"
       shift 2
       ;;
     -h|--help|help)
@@ -84,23 +92,33 @@ curl_args=(
   -H 'User-Agent: AWG-Pi-Gateway-v1.3'
 )
 
-[[ -x "$AWG_FETCH_BIN" ]] || {
-  echo "Bootstrap fetch manager is unavailable: $AWG_FETCH_BIN" >&2
-  exit 2
-}
+fetch_path=""
+if [[ -n "$MIHOMO_LOCAL_ARCHIVE" ]]; then
+  [[ -f "$MIHOMO_LOCAL_ARCHIVE" && -r "$MIHOMO_LOCAL_ARCHIVE" && ! -L "$MIHOMO_LOCAL_ARCHIVE" ]] || {
+    echo "Local Mihomo archive is not a readable regular file: $MIHOMO_LOCAL_ARCHIVE" >&2
+    exit 2
+  }
+  cp -- "$MIHOMO_LOCAL_ARCHIVE" "$archive"
+  fetch_path=file
+else
+  [[ -x "$AWG_FETCH_BIN" ]] || {
+    echo "Bootstrap fetch manager is unavailable: $AWG_FETCH_BIN" >&2
+    exit 2
+  }
 
-fetch_output="$(
-  AWG_ENV_FILE="$AWG_ENV_FILE" CURL_BIN="$CURL_BIN" \
-    "$AWG_FETCH_BIN" --mode "$MIHOMO_INSTALL_FETCH_MODE" --url "$api_url" --output "$archive" -- "${curl_args[@]}"
-)" || {
-  echo "Unable to download Mihomo binary through bootstrap manager" >&2
-  exit 1
-}
-fetch_path="$(awk -F= '$1=="AWG_FETCH_PATH"{print $2}' <<<"$fetch_output" | tail -n1)"
-[[ "$fetch_path" =~ ^(direct|awg|mihomo)$ ]] || {
-  echo "Bootstrap manager returned an invalid binary fetch path" >&2
-  exit 1
-}
+  fetch_output="$(
+    AWG_ENV_FILE="$AWG_ENV_FILE" CURL_BIN="$CURL_BIN" \
+      "$AWG_FETCH_BIN" --mode "$MIHOMO_INSTALL_FETCH_MODE" --url "$api_url" --output "$archive" -- "${curl_args[@]}"
+  )" || {
+    echo "Unable to download Mihomo binary through bootstrap manager" >&2
+    exit 1
+  }
+  fetch_path="$(awk -F= '$1=="AWG_FETCH_PATH"{print $2}' <<<"$fetch_output" | tail -n1)"
+  [[ "$fetch_path" =~ ^(direct|awg|mihomo)$ ]] || {
+    echo "Bootstrap manager returned an invalid binary fetch path" >&2
+    exit 1
+  }
+fi
 
 printf '%s  %s\n' "$sha256" "$archive" | sha256sum -c -
 gzip -dc "$archive" >"$binary"
