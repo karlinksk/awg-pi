@@ -99,4 +99,21 @@ out="$(MOCK_FETCH_PATH=direct run_install "$TMP/target-legacy" --mode router)"
 grep -Fqx 'mode=direct' "$TMP/fetch.log"
 grep -Fqx 'MIHOMO_BINARY_FETCH_PATH=direct' <<<"$out"
 
+echo "=== offline pinned archive bypasses bootstrap manager ==="
+: >"$TMP/fetch.log"
+out="$(run_install "$TMP/target-local" --file "$TMP/mihomo.gz")"
+grep -Fqx 'MIHOMO_BINARY_FETCH_PATH=file' <<<"$out"
+[[ ! -s "$TMP/fetch.log" ]]
+"$TMP/target-local" -v | grep -Fqx 'Mihomo Meta v1.19.32'
+
+echo "=== bad offline archive never replaces target ==="
+cp "$TMP/target-local" "$TMP/target-keep"
+printf 'corrupted-archive\n' >"$TMP/bad.gz"
+if run_install "$TMP/target-keep" --file "$TMP/bad.gz" >"$TMP/out" 2>"$TMP/err"; then
+  echo 'FAIL: corrupted local Mihomo archive unexpectedly succeeded' >&2
+  exit 1
+fi
+"$TMP/target-keep" -v | grep -Fqx 'Mihomo Meta v1.19.32'
+grep -Fq 'FAILED' "$TMP/err"
+
 echo "mihomo installer bootstrap: OK"
