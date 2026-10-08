@@ -20,6 +20,7 @@ required = [
     '"Импортировать локальный профиль"',
     '"Вставить provider / subscription"',
     '"Staged provider / candidate"',
+    '"Установить Mihomo engine из локального .gz"',
     '"Переключить транспорт на Mihomo"',
     '"Переключить транспорт на AmneziaWG"',
     '"Точка выхода / узел"',
@@ -90,6 +91,8 @@ assert '"$MIHOMO_CONFIGURE" node prepare "$node_name"' in menu
 assert 'Отдельное MikroTik правило для этого IP больше НЕ требуется' in menu
 assert 'gateway-wide DIRECT bypass' in menu
 assert '"$AWG_FIRST_RUN" wizard' in menu
+assert 'MIHOMO_INSTALLER=/usr/local/sbin/awg-mihomo-install' in menu
+assert '"$MIHOMO_INSTALLER" --file "$path"' in menu
 assert 'mktemp /run/awg-pbr/mihomo-url.XXXXXX' in menu
 assert 'chmod 600 "$url_tmp"' in menu
 assert 'printf \'MIHOMO_PROVIDER_URL=%q\\n\' "$url" >"$url_tmp"' in menu
