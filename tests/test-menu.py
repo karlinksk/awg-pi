@@ -174,6 +174,14 @@ assert 'Активный транспорт:' in menu
 assert 'URL подписки:' in menu
 assert '"$MIHOMO_INSTALLER" --file "$path"' in menu
 
+# Replacing a URL before Mihomo is configured must go through the initial
+# source-profile wizard so Citadel/Remnawave cannot be staged as a generic URL.
+assert "status=\"$(\"$MIHOMO_CONFIGURE\" status 2>/dev/null || true)\"" in menu
+assert "grep -Fqx 'Configured: no'" in menu
+assert '"$MIHOMO_CONFIGURE" provider candidate clear' in menu
+assert 'mihomo_initial_setup_flow secondary' in menu
+assert 'Citadel / Remnawave' in menu
+
 # Secret URL entry remains masked but gives visible feedback for typing/paste.
 assert '--insecure --passwordbox "$prompt"' in menu
 assert 'Введённые символы отображаются как *' in menu

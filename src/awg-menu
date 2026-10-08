@@ -943,7 +943,19 @@ secondary_transport_setup(){
 }
 
 mihomo_replace_subscription(){
-  local url url_tmp
+  local url url_tmp status
+  status="$("$MIHOMO_CONFIGURE" status 2>/dev/null || true)"
+  if grep -Fqx 'Configured: no' <<<"$status"; then
+    if grep -Fqx 'Provider candidate: staged' <<<"$status"; then
+      confirm "Первичная настройка Mihomo" "Mihomo ещё не настроен, но есть подготовленный профиль.\n\nДля первой настройки нужно выбрать тип источника (обычный или Citadel / Remnawave). Текущий подготовленный профиль будет удалён и мастер запустится заново. Продолжить?" || return 0
+      "$MIHOMO_CONFIGURE" provider candidate clear >/dev/null 2>&1 || true
+    else
+      msg "Первичная настройка Mihomo" "Mihomo ещё не настроен. Сейчас откроется мастер первичной настройки, где можно выбрать тип источника: обычный или Citadel / Remnawave."
+    fi
+    mihomo_initial_setup_flow secondary
+    return 0
+  fi
+
   url="$(secret_input "Подписка Mihomo" "Вставьте полный URL подписки.\n\nВведённые символы отображаются как *; сама ссылка не будет показана в итоговом статусе.")" || return 0
   [[ -n "$url" ]] || { msg "Mihomo" "Пустая ссылка не применена."; return 0; }
   if ! confirm "Подписка Mihomo" "Скачать и проверить профиль по новой ссылке через AUTO?\n\nПри ошибке текущая ссылка и кэш профиля останутся без изменений."; then
