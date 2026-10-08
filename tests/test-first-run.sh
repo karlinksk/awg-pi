@@ -47,7 +47,26 @@ set -Eeuo pipefail
 printf 'mihomo:%s\n' "$*" >>"${MOCK_LOG:?}"
 case "$*" in
   "init "*) exit 0 ;;
-  "provider import "*) exit 0 ;;
+  "provider stage-file "*)
+    exit 0
+    ;;
+  "provider candidate list")
+    printf 'Finland\tvless\t45.86.66.170:443\n'
+    ;;
+  "provider candidate prepare Finland")
+    cat <<'OUT'
+Candidate node: Finland
+Type: vless
+Resolved IPv4 endpoints:
+  - 45.86.66.170
+OUT
+    ;;
+  "provider candidate commit Finland 45.86.66.170")
+    mkdir -p "$(dirname "${MIHOMO_ENV_FILE:?}")"
+    printf '%s\n' 'MIHOMO_PROVIDER_PROFILE=standard' 'MIHOMO_PROVIDER_FORMAT=auto' >"$MIHOMO_ENV_FILE"
+    chmod 600 "$MIHOMO_ENV_FILE"
+    printf 'MIHOMO_HEALTH=healthy\n'
+    ;;
   "node list")
     printf 'Finland\tvless\t45.86.66.170:443\n'
     ;;
@@ -120,8 +139,10 @@ printf 'vless://example\n' >"$TMP/provider.txt"
 out="$(run_first mihomo-file "$TMP/provider.txt" auto)"
 grep -Fqx 'FIRST_TRANSPORT=mihomo' <<<"$out"
 grep -Fqx 'mihomo-install' "$TMP/log"
-grep -Fq "mihomo:provider import $TMP/provider.txt" "$TMP/log"
-grep -Fqx 'mihomo:node select Finland 45.86.66.170' "$TMP/log"
+grep -Fq "mihomo:provider stage-file $TMP/provider.txt local-only auto" "$TMP/log"
+grep -Fqx 'mihomo:provider candidate list' "$TMP/log"
+grep -Fqx 'mihomo:provider candidate prepare Finland' "$TMP/log"
+grep -Fqx 'mihomo:provider candidate commit Finland 45.86.66.170' "$TMP/log"
 grep -Fqx 'transport-select:mihomo' "$TMP/log"
 grep -Fqx mihomo "$TMP/transport"
 sudo grep -Fqx 'MIHOMO_PROVIDER_PROFILE=standard' "$TMP/etc/provider.env"
