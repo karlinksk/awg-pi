@@ -16,7 +16,8 @@ Usage:
   awg-mihomo-node-policy mode fixed NODE [FALLBACK_NODE...]
 
 FIXED uses exact node names from the current live provider. The first name is
-the preferred/primary node; later names are explicitly allowed fallbacks.
+the preferred/primary node; later names form an explicit one-way fallback chain.
+Only nodes after the current node may be tried automatically; there is no wrap-back.
 A healthy current allowed node is sticky. No automatic return for performance.
 
 This policy never infers country from a node name and never adds an unlisted
@@ -137,20 +138,24 @@ failover(){
   current="$(cat "$MIHOMO_NODE_NAME_FILE" 2>/dev/null || true)"
   [[ -n "$current" ]] || return 1
 
-  # Only act if the current node itself belongs to the explicitly allowed set.
+  # FIXED is an ordered one-way failover chain. Only nodes after the current
+  # exact node may be tried automatically. Earlier nodes are never revisited;
+  # if the tail is exhausted, transport-level failover gets the next chance.
   while IFS= read -r node || [[ -n "$node" ]]; do
     [[ -n "$node" ]] || continue
-    [[ "$node" == "$current" ]] && found_current=1
-  done <"$MIHOMO_NODE_POLICY_ORDER_FILE"
-  (( found_current == 1 )) || return 1
-
-  while IFS= read -r node || [[ -n "$node" ]]; do
-    [[ -n "$node" && "$node" != "$current" ]] || continue
+    if (( found_current == 0 )); then
+      if [[ "$node" == "$current" ]]; then
+        found_current=1
+      fi
+      continue
+    fi
     if "$MIHOMO_CONFIGURE" node select-auto "$node" >/dev/null; then
       printf 'MIHOMO_NODE_FAILOVER=%s->%s\n' "$current" "$node"
       return 0
     fi
   done <"$MIHOMO_NODE_POLICY_ORDER_FILE"
+
+  (( found_current == 1 )) || return 1
   return 1
 }
 
