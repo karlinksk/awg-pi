@@ -208,6 +208,16 @@ assert '6 "Активный транспорт"' in vpn_block
 assert '7 "Активный транспорт"' in vpn_block
 assert '6) active_transport_menu' in vpn_block
 assert '7) active_transport_menu' in vpn_block
+
+# Restart action is transport-aware and safe in fresh/recovery installs.
+assert 'restart_active_transport(){' in menu
+assert menu.count('"Перезапустить активный транспорт и монитор состояния"') == 2
+assert 'service="awg-quick@awg0.service"' in menu
+assert 'service="awg-mihomo.service"' in menu
+assert 'Активный транспорт пока не настроен.' in menu
+assert 'Сначала используйте «Добавить / настроить транспорт».' in menu
+assert 'systemctl restart awg-quick@awg0.service awg-pbr-health.service' not in vpn_block
+assert 'Перезапустить awg0 и монитор состояния' not in vpn_block
 assert '7 "Политика выбора транспорта"' in vpn_block
 assert '8 "Политика выбора транспорта"' in vpn_block
 
