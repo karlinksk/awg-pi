@@ -126,11 +126,8 @@ echo "=== Mihomo bootstrap path is inherited by Go module build ==="
 rm -rf "$TMP/src"; mkdir -p "$TMP/src"
 : >"$TMP/log"; : >"$TMP/fetch.log"
 out="$(MOCK_FETCH_PATH=mihomo run_engine --mode auto)"
-printf '%s\n' "$out"
-grep '^proxy:' "$TMP/log" || true
-grep '^mode=' "$TMP/fetch.log" || true
 grep -Fqx 'AWG_ENGINE_FETCH_PATHS=mihomo mihomo mihomo' <<<"$out"
-grep -Fq 'proxy=http://127.0.0.1:7890' "$TMP/log"
+grep -Fq 'proxy:http://127.0.0.1:7890' "$TMP/log"
 
 echo "=== offline bundle must contain all pinned archives ==="
 rm -f "$TMP/bundle/amneziawg-tools-v3.1.20260812.tar.gz"
