@@ -122,10 +122,19 @@ else
   }
 fi
 
-printf '%s  %s\n' "$sha256" "$archive" | sha256sum -c -
-gzip -dc "$archive" >"$binary"
+if ! printf '%s  %s\n' "$sha256" "$archive" | sha256sum -c - >/dev/null; then
+  echo "Mihomo asset SHA256 mismatch; refusing installation" >&2
+  exit 1
+fi
+if ! gzip -dc "$archive" >"$binary"; then
+  echo "Mihomo asset is not a valid gzip archive" >&2
+  exit 1
+fi
 chmod 755 "$binary"
-"$binary" -v | grep -Fq "Mihomo Meta v${MIHOMO_VERSION}"
+if ! "$binary" -v | grep -Fq "Mihomo Meta v${MIHOMO_VERSION}"; then
+  echo "Mihomo binary version mismatch; expected v${MIHOMO_VERSION}" >&2
+  exit 1
+fi
 
 install -m 755 "$binary" "$MIHOMO_TARGET"
 printf 'MIHOMO_VERSION=%s\n' "$MIHOMO_VERSION"
