@@ -15,6 +15,7 @@ command -v dialog >/dev/null 2>&1 || { echo "Не найден dialog" >&2; exit
 AWG_ROUTE=/usr/local/sbin/awg-route
 AWG_TRANSPORT=/usr/local/sbin/awg-transport
 MIHOMO_CONFIGURE=/usr/local/sbin/awg-mihomo-configure
+MIHOMO_INSTALL=/usr/local/sbin/awg-mihomo-install
 AWG_FIRST_RUN=/usr/local/sbin/awg-first-run
 AWG_UPDATE=/usr/local/sbin/awg-update
 VERSION="$(cat /etc/awg-pbr/version 2>/dev/null || echo unknown)"
@@ -503,12 +504,33 @@ mihomo_provider_format_dialog(){
     0 "Назад" "Не менять формат." 3>&1 1>&2 2>&3
 }
 
+mihomo_engine_menu(){
+  local source path
+  source="$(dialog --backtitle "$BACKTITLE" --title "Mihomo engine" --item-help --menu \
+    "Установка/восстановление Mihomo v1.19.32. Локальный archive принимается только при совпадении pinned SHA256 и версии." \
+    20 108 5 \
+    auto "AUTO bootstrap" "DIRECT → current healthy transport → other healthy transports." \
+    file "Локальный официальный .gz" "Offline recovery: проверяется pinned SHA256 для текущей архитектуры и версия после распаковки." \
+    0 "Назад" "Ничего не менять." 3>&1 1>&2 2>&3)" || return 0
+  case "$source" in
+    auto)
+      run_interactive "Установка Mihomo engine — AUTO" "$MIHOMO_INSTALL"
+      ;;
+    file)
+      path="$(input "Mihomo engine" "Полный путь к официальному release .gz:")" || return 0
+      [[ -n "$path" ]] || return 0
+      run_interactive "Установка Mihomo engine — local" "$MIHOMO_INSTALL" --file "$path"
+      ;;
+    0) return 0 ;;
+  esac
+}
+
 mihomo_menu(){
   local choice url path fetch_mode init_tmp url_tmp profile provider_format source_mode
   while true; do
     choice="$(dialog --backtitle "$BACKTITLE" --title "Mihomo / Multi-Transport" --item-help --menu \
       "Управление Mihomo и subscription. AUTO: DIRECT → текущий healthy transport → остальные healthy transports. SSTP/router-side VPN не является зависимостью." \
-      31 110 14 \
+      33 110 15 \
       1 "Состояние Mihomo" "Показывает runtime, provider cache, последний успешный bootstrap-канал и health без вывода секретов." \
       2 "Заменить ссылку подписки" "Новый URL сначала загружается в staged candidate. Live provider/URL меняются только после выбора candidate node и успешного health-check." \
       3 "Обновить подписку — AUTO" "Скачивает и проверяет новый provider как candidate: DIRECT → healthy transports. Live не меняется до выбора node и commit." \
@@ -521,6 +543,7 @@ mihomo_menu(){
       10 "Формат подписки" "AUTO по умолчанию; вручную можно зафиксировать Mihomo YAML, VLESS URI или Base64 VLESS. Изменение транзакционное." \
       11 "Вставить provider / subscription" "Вставка Mihomo YAML, VLESS URI(s) или Base64 из буфера. Сначала staged validation, затем выбор node и commit." \
       12 "Staged provider / candidate" "Открывает уже подготовленный candidate: выбрать node/endpoint и commit либо вернуться без изменения live." \
+      13 "Mihomo engine / recovery" "Установить движок через AUTO bootstrap или из локального официального .gz с pinned SHA256/version verification." \
       0 "Назад" "Возвращает в меню VPN без изменений." 3>&1 1>&2 2>&3)" || return 0
 
     case "$choice" in
@@ -635,6 +658,9 @@ mihomo_menu(){
         ;;
       12)
         mihomo_candidate_menu
+        ;;
+      13)
+        mihomo_engine_menu
         ;;
       0) return 0 ;;
     esac
