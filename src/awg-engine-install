@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-[[ ${EUID:-$(id -u)} -eq 0 ]] || exec sudo "$0" "$@"
+[[ ${EUID:-$(id -u)} -eq 0 ]] || exec sudo bash "$0" "$@"
 
 AWG_FETCH_BIN="${AWG_FETCH_BIN:-/usr/local/sbin/awg-fetch}"
 AWG_ENV_FILE="${AWG_ENV_FILE:-/etc/awg-pbr/env}"
