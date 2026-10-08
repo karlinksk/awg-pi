@@ -343,4 +343,13 @@ if grep -Fq '\\ninstall_project_helper src/awg-mihomo-configure' "$repo_root/ins
   exit 1
 fi
 
+echo "=== scheduled provider refresh is staged and backend-neutral ==="
+unit="$repo_root/units/awg-mihomo-update.service"
+grep -Fqx 'After=network-online.target' "$unit"
+if grep -Fq 'awg-quick@awg0.service' "$unit"; then
+  echo 'FAIL: Mihomo updater unit still depends on AWG' >&2
+  exit 1
+fi
+grep -Fqx 'ExecStart=/usr/local/sbin/awg-mihomo-update --stage-only' "$unit"
+
 echo "mihomo runtime helpers: OK"
