@@ -102,8 +102,9 @@ prune_reports(){
 }
 handshake_age(){
   local hs now
-  hs="$(awg show "$VPN_IF" latest-handshakes 2>/dev/null | awk '$2>m{m=$2}END{print m+0}')"
-  [[ "$hs" -gt 0 ]] || { echo -1; return; }
+  command -v awg >/dev/null 2>&1 || { echo -1; return 0; }
+  hs="$(awg show "$VPN_IF" latest-handshakes 2>/dev/null | awk '$2>m{m=$2}END{print m+0}' || true)"
+  [[ "$hs" -gt 0 ]] || { echo -1; return 0; }
   now="$(date +%s)"; echo $((now-hs))
 }
 policy_present(){ ip -4 rule show | grep -Eq '(^| )100:.*fwmark (0x100|256).*lookup (100|awgvpn)'; }
@@ -478,7 +479,7 @@ source_counts(){
 show_status(){
   local age enabled sc_total sc_enabled sc_entries mode mode_label transport_id
   enabled="$(cat "$VE" 2>/dev/null || echo 1)"
-  age="$(handshake_age)"
+  age=-1
   read -r sc_total sc_enabled sc_entries < <(source_counts)
   if mode="$(awg_mode_get 2>/dev/null)"; then
     mode_label="$(awg_mode_label "$mode")"
@@ -487,6 +488,7 @@ show_status(){
     mode_label="INVALID / corrupt state"
   fi
   transport_id="$(awg_transport_get 2>/dev/null || echo unconfigured)"
+  [[ "$transport_id" == awg ]] && age="$(handshake_age)"
   /usr/local/lib/awg-pi/manage.py network status || true
   echo "=== Gateway ==="
   printf 'Operating mode: %s\n' "$mode_label"
@@ -518,8 +520,12 @@ show_status(){
   printf 'Client allow-list: %s\n' "$(grep -Evc '^\s*(#|$)' "$CF" 2>/dev/null || true)"
   printf 'OpenCCK sources: %s total / %s enabled / %s cached entries\n' "$sc_total" "$sc_enabled" "$sc_entries"
   echo
-  echo "=== AmneziaWG backend ==="
-  awg_safe_show "$VPN_IF" || echo "awg0 недоступен"
+  echo "=== AWG/WG backend ==="
+  if command -v awg >/dev/null 2>&1; then
+    awg_safe_show "$VPN_IF" || echo "awg0 недоступен"
+  else
+    echo "engine not installed"
+  fi
 }
 
 domain_source(){
@@ -571,7 +577,7 @@ test_domain(){
 run_diagnostics(){
   local report age direct_ip="" health_ok=no mark_test="" prev_health_active=no manual m diag_mode diag_mode_label
   local endpoint endpoint_host router_mac transit_status="" restore_status="" restore_ok=no
-  local diag_rc=0 transport_id
+  local diag_rc=0 transport_id transport_ready=no
   report="$LOG_DIR/diagnostics-$(date +%Y%m%d-%H%M%S).txt"
   manual="$(cat "$VE" 2>/dev/null || echo 1)"
   systemctl is-active --quiet "$HEALTH_SERVICE" && prev_health_active=yes || true
@@ -580,6 +586,10 @@ run_diagnostics(){
   # pipeline subshell, so assigning diag_mode inside it would be lost before
   # the FAIL-OPEN / FAIL-CLOSED verification that follows under set -u.
   transport_id="$(awg_transport_get 2>/dev/null || echo unconfigured)"
+  if [[ "$transport_id" != unconfigured && -x "$TRANSPORT_CLI" ]] &&
+     "$TRANSPORT_CLI" check "$transport_id" >/dev/null 2>&1; then
+    transport_ready=yes
+  fi
 
   if diag_mode="$(awg_mode_get 2>/dev/null)"; then
     diag_mode_label="$(awg_mode_label "$diag_mode" 2>/dev/null || echo unknown)"
@@ -641,16 +651,20 @@ run_diagnostics(){
         awk '{for(i=1;i<=NF;i++) if($i=="lladdr"){print $(i+1); exit}}')"
       echo "Router MAC: ${router_mac:-unresolved}"
       echo "Selective classification: INACTIVE (state preserved)"
-      while IFS= read -r endpoint; do
-        [[ -n "$endpoint" && "$endpoint" != "(none)" ]] || continue
-        if [[ "$endpoint" == \[* ]]; then
-          echo "AWG endpoint: $endpoint (IPv6 is not supported by the current IPv4 Transit datapath)"
-          continue
-        fi
-        endpoint_host="${endpoint%:*}"
-        echo "AWG endpoint: $endpoint"
-        echo "Endpoint route: $(ip -4 route get "$endpoint_host" 2>&1 | head -1 || true)"
-      done < <(awg show "$VPN_IF" endpoints 2>/dev/null | awk 'NF>=2{print $2}')
+      if [[ "$transport_id" == awg ]] && command -v awg >/dev/null 2>&1; then
+        while IFS= read -r endpoint; do
+          [[ -n "$endpoint" && "$endpoint" != "(none)" ]] || continue
+          if [[ "$endpoint" == \[* ]]; then
+            echo "AWG endpoint: $endpoint (IPv6 is not supported by the current IPv4 Transit datapath)"
+            continue
+          fi
+          endpoint_host="${endpoint%:*}"
+          echo "AWG endpoint: $endpoint"
+          echo "Endpoint route: $(ip -4 route get "$endpoint_host" 2>&1 | head -1 || true)"
+        done < <(awg show "$VPN_IF" endpoints 2>/dev/null | awk 'NF>=2{print $2}' || true)
+      else
+        echo "AWG endpoint: not applicable"
+      fi
       echo
     fi
     echo "--- Policy routing ---"; ip -4 rule show; ip -4 route show table "$VPN_TABLE" 2>/dev/null || true
@@ -702,14 +716,90 @@ run_diagnostics(){
       systemctl start "$HEALTH_SERVICE" >/dev/null 2>&1 || true
       for _ in $(seq 1 15); do
         restore_status="$("$TRANSIT_ROUTING" status 2>&1 || true)"
-        if policy_present && grep -Fqx 'Transit guard: SAFE' <<<"$restore_status"; then
-          restore_ok=yes
-          break
+        if [[ "$transport_ready" == yes ]]; then
+          if policy_present && grep -Fqx 'Transit guard: SAFE' <<<"$restore_status"; then
+            restore_ok=yes
+            break
+          fi
+        else
+          if ! policy_present && grep -Eq '^Transit guard: (SAFE|LOCKDOWN)
+    else
+      echo "Transit restore: skipped (health monitor was not active)" | tee -a "$report"
+    fi
+  else
+    echo "--- FAIL-OPEN simulation ---" | tee -a "$report"
+    [[ "$prev_health_active" == yes ]] && systemctl stop "$HEALTH_SERVICE" >/dev/null 2>&1 || true
+    "$FAILOPEN" >/dev/null 2>&1 || true
+    failroute="$(ip -4 route get 1.1.1.1 mark "$VPN_MARK" 2>&1 | head -1 || true)"
+    echo "Route after policy removal: $failroute" | tee -a "$report"
+    if grep -q "dev $LAN_IF" <<<"$failroute"; then
+      echo "FAIL-OPEN: OK" | tee -a "$report"
+    else
+      echo "FAIL-OPEN: FAIL" | tee -a "$report"
+      diag_rc=1
+    fi
+    [[ "$prev_health_active" == yes ]] && systemctl start "$HEALTH_SERVICE" >/dev/null 2>&1 || true
+    [[ "$manual" == 0 ]] && "$FAILOPEN" >/dev/null 2>&1 || true
+  fi
+
+  echo "Report: $report" | tee -a "$report"
+  chmod 600 "$report"; prune_reports
+  return "$diag_rc"
+}
+
+cmd="${1:-}"; action="${2:-}"; val="${3:-}"
+case "$cmd" in
+  vpn)
+    case "$action" in
+      add|del) [[ -n "$val" ]] || { usage; exit 2; }; "${action}_domain" vpn "$val" ;;
+      import) shift 2; import_domains vpn "$@" ;;
+      export) [[ -n "$val" ]] || { usage; exit 2; }; export_domains vpn "$val" ;;
+      on|off) vpn_switch "$action" ;;
+      *) usage; exit 2 ;;
+    esac
+    ;;
+  direct)
+    case "$action" in
+      add|del) [[ -n "$val" ]] || { usage; exit 2; }; "${action}_domain" direct "$val" ;;
+      import) shift 2; import_domains direct "$@" ;;
+      export) [[ -n "$val" ]] || { usage; exit 2; }; export_domains direct "$val" ;;
+      *) usage; exit 2 ;;
+    esac
+    ;;
+  network|config|dns) exec /usr/local/lib/awg-pi/manage.py "$@" ;;
+  source) shift; source_cmd "$@" ;;
+  client) client_cmd "$action" "$val" ;;
+  mode) mode_cmd "$action" ;;
+  list)
+    echo "=== VPN domains ==="; cat "$VD" 2>/dev/null || true
+    echo; echo "=== DIRECT exceptions ==="; cat "$DD" 2>/dev/null || true
+    echo; source_cmd list
+    echo; echo "=== Client allow-list ==="
+    if grep -Ev '^\s*(#|$)' "$CF" 2>/dev/null | grep -q .; then cat "$CF"; else echo "(пусто = все Pi-gateway clients)"; fi
+    ;;
+  status) show_status ;;
+  test) [[ -n "$action" ]] || { usage; exit 2; }; test_domain "$action" ;;
+  reload) reload_all; echo "OK: configuration reloaded" ;;
+  diagnostics) run_diagnostics ;;
+  logs)
+    n="${action:-150}"; [[ "$n" =~ ^[0-9]+$ ]] || n=150
+    journalctl --no-pager -n "$n" -u "awg-quick@$VPN_IF.service" -u awg-pbr-health.service -u dnsmasq.service -u awg-pbr-setup.service -u awg-opencck-update.service
+    ;;
+  *) usage; exit 2 ;;
+esac
+ <<<"$restore_status"; then
+            restore_ok=yes
+            break
+          fi
         fi
         sleep 1
       done
       if [[ "$restore_ok" == yes ]]; then
-        echo "Transit restore: OK" | tee -a "$report"
+        if [[ "$transport_ready" == yes ]]; then
+          echo "Transit restore: OK (active transport)" | tee -a "$report"
+        else
+          echo "Transit restore: OK (expected FAIL-CLOSED/not-ready)" | tee -a "$report"
+        fi
       else
         echo "Transit restore: FAIL" | tee -a "$report"
         printf '%s\n' "$restore_status" | tee -a "$report"
