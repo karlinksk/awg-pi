@@ -118,7 +118,7 @@ if run_first mihomo-file "$TMP/awg.conf" >"$TMP/out" 2>"$TMP/err"; then
   echo 'FAIL: first-run replaced an already selected transport' >&2
   exit 1
 fi
-grep -Fq 'already selected' "$TMP/err"
+grep -Fq 'Транспорт уже выбран:' "$TMP/err"
 
 echo "=== Mihomo URL first transport ==="
 printf '%s\n' unconfigured >"$TMP/transport"
