@@ -25,6 +25,7 @@ Usage:
   awg-first-run awg-file FILE
   awg-first-run mihomo-url URL [standard|remnawave] [auto|mihomo|vless|base64]
   awg-first-run mihomo-file FILE [auto|mihomo|vless|base64]
+  awg-first-run mihomo-engine-file PINNED_ASSET.gz
   awg-first-run status
 
 The wizard configures the first transport backend only. Operating Mode
@@ -145,9 +146,27 @@ choose_mihomo_node(){
   printf 'FIRST_TRANSPORT=mihomo\n'
 }
 
+ensure_mihomo_binary(){
+  local interactive="${1:-0}" path rc
+  [[ -x "$MIHOMO_BIN" ]] && return 0
+
+  if "$MIHOMO_INSTALLER"; then
+    return 0
+  fi
+  rc=$?
+  (( interactive == 1 )) || return "$rc"
+
+  ui_print "AUTO-загрузка Mihomo не удалась. Можно указать локальный pinned .gz этой версии."
+  ask "Полный путь к локальному Mihomo .gz (пусто = отменить)" ""
+  path="$REPLY"
+  [[ -n "$path" ]] || return "$rc"
+  "$MIHOMO_INSTALLER" --file "$path"
+}
+
 activate_mihomo_url(){
   local url="$1" profile="${2:-standard}" format="${3:-auto}" tmp rc
   ensure_fresh_target
+  ensure_mihomo_binary "${AWG_FIRST_RUN_INTERACTIVE:-0}"
   case "$profile" in standard|remnawave) ;; *) echo "Unsupported provider profile: $profile" >&2; return 2 ;; esac
   case "$format" in auto|mihomo|vless|base64) ;; *) echo "Unsupported provider format: $format" >&2; return 2 ;; esac
   [[ "$url" =~ ^https?://[^[:space:]]+$ ]] || {
@@ -183,13 +202,14 @@ activate_mihomo_file(){
   }
   case "$format" in auto|mihomo|vless|base64) ;; *) echo "Unsupported provider format: $format" >&2; return 2 ;; esac
 
-  [[ -x "$MIHOMO_BIN" ]] || "$MIHOMO_INSTALLER"
+  ensure_mihomo_binary "${AWG_FIRST_RUN_INTERACTIVE:-0}"
   "$MIHOMO_CONFIGURE" provider stage-file "$file" local-only "$format"
   choose_mihomo_node candidate
 }
 
 wizard(){
   local choice path tmp profile format url rc
+  export AWG_FIRST_RUN_INTERACTIVE=1
   ensure_fresh_target || return
   cat >"$TTY" <<'TEXT'
 
@@ -279,6 +299,10 @@ case "${1:-wizard}" in
   mihomo-file)
     [[ $# -ge 2 && $# -le 3 ]] || { usage >&2; exit 2; }
     activate_mihomo_file "$2" "${3:-auto}"
+    ;;
+  mihomo-engine-file)
+    [[ $# -eq 2 ]] || { usage >&2; exit 2; }
+    "$MIHOMO_INSTALLER" --file "$2"
     ;;
   status)
     [[ $# -eq 1 ]] || { usage >&2; exit 2; }
