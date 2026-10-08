@@ -161,6 +161,8 @@ run_cli(){
     SYSTEMCTL_BIN="$tmp/bin/systemctl" \
     MIHOMO_BIN="$tmp/bin/mihomo" \
     SLEEP_BIN=/bin/true \
+    MIHOMO_HEALTH_ATTEMPTS=3 \
+    MIHOMO_HEALTH_SLEEP=0 \
     MOCK_UNIT_STATE="$tmp/unit-state" \
     MOCK_SYSTEMCTL_LOG="$tmp/systemctl.log" \
     MOCK_DATAPLANE_LOG="$tmp/dataplane.log" \
@@ -420,5 +422,6 @@ sudo cmp -s "$tmp/live-env.before" "$tmp/etc/provider.env"
 sudo cmp -s "$tmp/live-endpoint.before" "$tmp/etc/endpoint-ip"
 sudo test -e "$tmp/state/providers/candidate.yaml"
 grep -Fq 'candidate preserved' "$tmp/err"
+grep -Fq 'Mihomo health-check failed after 3 attempts.' "$tmp/err"
 
 echo "mihomo configure transaction: OK"

@@ -33,6 +33,8 @@ MIHOMO_UPDATE_TIMER="${MIHOMO_UPDATE_TIMER:-awg-mihomo-update.timer}"
 MIHOMO_BIN="${MIHOMO_BIN:-/usr/local/bin/mihomo}"
 SLEEP_BIN="${SLEEP_BIN:-sleep}"
 OPENSSL_BIN="${OPENSSL_BIN:-openssl}"
+MIHOMO_HEALTH_ATTEMPTS="${MIHOMO_HEALTH_ATTEMPTS:-5}"
+MIHOMO_HEALTH_SLEEP="${MIHOMO_HEALTH_SLEEP:-0.5}"
 
 # shellcheck disable=SC1090
 source "$AWG_COMMON_FILE"
@@ -123,6 +125,22 @@ unit_enabled(){
 
 unit_active(){
   "$SYSTEMCTL_BIN" is-active --quiet "$1" >/dev/null 2>&1
+}
+
+wait_mihomo_healthy(){
+  local attempt
+  for attempt in $(seq 1 "$MIHOMO_HEALTH_ATTEMPTS"); do
+    printf 'Mihomo health-check: %d/%d\n' "$attempt" "$MIHOMO_HEALTH_ATTEMPTS"
+    if "$TRANSPORT_CLI" check mihomo >/dev/null 2>&1; then
+      printf 'Mihomo health-check: OK\n'
+      return 0
+    fi
+    if (( attempt < MIHOMO_HEALTH_ATTEMPTS )); then
+      "$SLEEP_BIN" "$MIHOMO_HEALTH_SLEEP"
+    fi
+  done
+  printf 'Mihomo health-check failed after %d attempts.\n' "$MIHOMO_HEALTH_ATTEMPTS" >&2
+  return 1
 }
 
 restore_unit_state(){
@@ -482,11 +500,7 @@ candidate_commit(){
   "$SYSTEMCTL_BIN" daemon-reload
   "$SYSTEMCTL_BIN" enable --now "$MIHOMO_SERVICE"
 
-  for _ in $(seq 1 30); do
-    if "$TRANSPORT_CLI" check mihomo >/dev/null 2>&1; then healthy=1; break; fi
-    "$SLEEP_BIN" 0.2
-  done
-  (( healthy == 1 ))
+  wait_mihomo_healthy
 
   # shellcheck disable=SC1090
   source "$MIHOMO_ENV_FILE"
@@ -684,14 +698,7 @@ node_select(){
   "$SYSTEMCTL_BIN" daemon-reload
   "$SYSTEMCTL_BIN" enable --now "$MIHOMO_SERVICE"
 
-  for _ in $(seq 1 30); do
-    if "$TRANSPORT_CLI" check mihomo >/dev/null 2>&1; then
-      healthy=1
-      break
-    fi
-    "$SLEEP_BIN" 0.2
-  done
-  (( healthy == 1 ))
+  wait_mihomo_healthy
 
   if grep -q '^MIHOMO_PROVIDER_URL=' "$MIHOMO_ENV_FILE" 2>/dev/null; then
     provider_has_url=1
@@ -1004,14 +1011,7 @@ apply_cmd(){
   "$SYSTEMCTL_BIN" enable --now "$MIHOMO_UPDATE_TIMER"
 
   healthy=0
-  for _ in $(seq 1 30); do
-    if "$TRANSPORT_CLI" check mihomo >/dev/null 2>&1; then
-      healthy=1
-      break
-    fi
-    "$SLEEP_BIN" 0.2
-  done
-  (( healthy == 1 ))
+  wait_mihomo_healthy
 
   if [[ "$current" == mihomo && "$health_was_active" == 1 ]]; then
     "$SYSTEMCTL_BIN" restart "$HEALTH_SERVICE"
