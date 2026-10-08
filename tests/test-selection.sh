@@ -71,7 +71,7 @@ run_policy(){
 }
 
 run_monitor(){
-  sudo env     AWG_COMMON_FILE="$ROOT/src/awg-common"     AWG_TRANSPORT_FILE="$TMP/transport"     AWG_SELECTION_FILE="$TMP/selection.env"     AWG_TRANSPORT_CLI="$TMP/bin/transport"     MIHOMO_NODE_POLICY_CLI="$TMP/bin/node-policy"     AWG_SELECTION_STATE_DIR="$TMP/run"     AWG_SELECTION_FAILURES="$TMP/run/failures"     AWG_SELECTION_FAILURE_THRESHOLD=3     AWG_SELECTION_ONCE=1     LOGGER_BIN="$TMP/bin/logger"     MOCK_TRANSPORT_STATE="$TMP/transport"     MOCK_TRANSPORT_LOG="$TMP/log"     MOCK_AWG_HEALTH="${MOCK_AWG_HEALTH:-up}"     MOCK_MIHOMO_HEALTH="${MOCK_MIHOMO_HEALTH:-up}"     bash "$ROOT/src/awg-selection-monitor"
+  sudo env     AWG_COMMON_FILE="$ROOT/src/awg-common"     AWG_TRANSPORT_FILE="$TMP/transport"     AWG_SELECTION_FILE="$TMP/selection.env"     AWG_TRANSPORT_CLI="$TMP/bin/transport"     MIHOMO_NODE_POLICY_CLI="$TMP/bin/node-policy"     AWG_SELECTION_STATE_DIR="$TMP/run"     AWG_SELECTION_FAILURES="$TMP/run/failures"     AWG_SELECTION_FAILURE_THRESHOLD=3     AWG_SELECTION_ONCE=1     LOGGER_BIN="$TMP/bin/logger"     MOCK_TRANSPORT_STATE="$TMP/transport"     MOCK_TRANSPORT_LOG="$TMP/log"     MOCK_NODE_POLICY_LOG="$TMP/node-policy.log"     MOCK_NODE_POLICY_ENABLED="${MOCK_NODE_POLICY_ENABLED:-0}"     MOCK_NODE_FAILOVER_OK="${MOCK_NODE_FAILOVER_OK:-0}"     MOCK_AWG_HEALTH="${MOCK_AWG_HEALTH:-up}"     MOCK_MIHOMO_HEALTH="${MOCK_MIHOMO_HEALTH:-up}"     bash "$ROOT/src/awg-selection-monitor"
 }
 
 echo "=== manual is the safe default ==="
