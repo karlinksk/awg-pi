@@ -20,17 +20,18 @@ required = [
     '"Статистика traffic"',
     '"Проверить / восстановить Mihomo engine"',
     '"VPN-сервисы / домены"',
-    '"Заменить ссылку подписки"',
-    '"Обновить подписку — AUTO"',
+    '"Subscription / Provider"',
+    '"Заменить URL subscription"',
+    '"Обновить subscription — AUTO"',
+    '"Импорт provider / subscription"',
+    '"Импортировать из файла"',
+    '"Вставить текстом"',
     '"Обновить через выбранный канал"',
-    '"Импортировать локальный профиль"',
-    '"Вставить provider / subscription"',
     '"Staged provider / candidate"',
-    '"Установить Mihomo engine из локального .gz"',
-    '"Переключить транспорт на Mihomo"',
-    '"Переключить транспорт на AmneziaWG"',
+    '"Offline engine recovery (.gz)"',
     '"Точка выхода / узел"',
-    '"Добавить / первично настроить Mihomo"',
+    '"Активный transport"',
+    '"Расширенные / Recovery"',
     '"Добавить / настроить transport"',
     '"Transport Selection Policy"',
     '"Citadel / Remnawave"',
@@ -173,6 +174,58 @@ assert 'MIHOMO_PROVIDER_PROFILE=%q' in menu
 assert 'MIHOMO_PROVIDER_FORMAT=%q' in menu
 assert '"$MIHOMO_CONFIGURE" provider format set "$provider_format"' in menu
 assert 'mihomo_provider_format_dialog' in menu
+assert 'mihomo_subscription_menu' in menu
+assert 'mihomo_import_menu' in menu
+assert 'mihomo_active_transport_menu' in menu
+assert 'mihomo_advanced_menu' in menu
+
+# The top-level Mihomo menu is intentionally compact. Technical/recovery
+# operations remain available only through their dedicated submenus.
+mihomo_start = menu.index('mihomo_menu(){')
+mihomo_end = menu.index('selection_policy_menu(){', mihomo_start)
+mihomo_block = menu[mihomo_start:mihomo_end]
+for label in (
+    '1 "Состояние Mihomo"',
+    '2 "Subscription / Provider"',
+    '3 "Точка выхода / узел"',
+    '4 "Mihomo Node Failover"',
+    '5 "Активный transport"',
+    '6 "Расширенные / Recovery"',
+):
+    assert label in mihomo_block, f"missing compact Mihomo item: {label}"
+
+for old_top_level in (
+    '"Заменить ссылку подписки"',
+    '"Обновить подписку — AUTO"',
+    '"Импортировать локальный профиль"',
+    '"Переключить транспорт на Mihomo"',
+    '"Переключить транспорт на AmneziaWG"',
+    '"Добавить / первично настроить Mihomo"',
+    '"Формат подписки"',
+    '"Staged provider / candidate"',
+    '"Установить Mihomo engine из локального .gz"',
+):
+    assert old_top_level not in mihomo_block, (
+        f"legacy/advanced item leaked into top-level Mihomo menu: {old_top_level}"
+    )
+
+subscription_start = menu.index('mihomo_subscription_menu(){')
+subscription_end = menu.index('mihomo_active_transport_menu(){', subscription_start)
+subscription_block = menu[subscription_start:subscription_end]
+assert '"Заменить URL subscription"' in subscription_block
+assert '"Обновить subscription — AUTO"' in subscription_block
+assert '"Импорт provider / subscription"' in subscription_block
+
+advanced_start = menu.index('mihomo_advanced_menu(){')
+advanced_end = menu.index('mihomo_menu(){', advanced_start)
+advanced_block = menu[advanced_start:advanced_end]
+assert '"Обновить через выбранный канал"' in advanced_block
+assert '"Формат подписки"' in advanced_block
+assert '"Staged provider / candidate"' in advanced_block
+assert '"Offline engine recovery (.gz)"' in advanced_block
+
+assert 'mihomo_initial_setup_flow secondary' in menu
+assert '"Добавить / первично настроить Mihomo"' not in mihomo_block
 
 
 for needle in (

@@ -817,94 +817,147 @@ secondary_transport_setup(){
   esac
 }
 
-mihomo_menu(){
-  local choice url path fetch_mode url_tmp provider_format source_mode
+mihomo_replace_subscription(){
+  local url url_tmp
+  url="$(secret_input "Mihomo subscription" "Вставьте полный URL подписки.\n\nСсылка не будет показана в итоговом статусе.")" || return 0
+  [[ -n "$url" ]] || { msg "Mihomo" "Пустая ссылка не применена."; return 0; }
+  if ! confirm "Mihomo subscription" "Скачать и проверить профиль по новой ссылке через AUTO bootstrap?\n\nПри ошибке текущая ссылка и provider cache останутся без изменений."; then
+    unset url
+    return 0
+  fi
+  install -d -m 700 /run/awg-pbr
+  url_tmp="$(mktemp /run/awg-pbr/mihomo-url.XXXXXX)"
+  chmod 600 "$url_tmp"
+  printf 'MIHOMO_PROVIDER_URL=%q\n' "$url" >"$url_tmp"
+  unset url
+  title="Stage нового Mihomo URL"
+  if capture "$MIHOMO_CONFIGURE" provider stage-url-file "$url_tmp"; then
+    rm -f "$url_tmp"
+    mihomo_candidate_menu
+  else
+    rm -f "$url_tmp"
+  fi
+}
+
+mihomo_update_auto(){
+  title="Mihomo provider update — AUTO"
+  if capture "$MIHOMO_CONFIGURE" provider update auto; then
+    mihomo_candidate_menu
+  fi
+}
+
+mihomo_update_selected_channel(){
+  local fetch_mode
+  fetch_mode="$(dialog --backtitle "$BACKTITLE" --title "Bootstrap-канал" --item-help --menu \
+    "Выберите путь только для этой загрузки subscription." 20 100 6 \
+    direct "DIRECT" "Запрос выходит через обычный LAN/uplink Pi без SSTP и без другого VPN transport." \
+    mihomo "Mihomo" "HTTP-запрос идёт через локальный Mihomo proxy 127.0.0.1; используйте только если Mihomo healthy." \
+    awg "AmneziaWG" "Запрос принудительно идёт через awg0; используйте только если AWG healthy." \
+    0 "Назад" "Не выполнять обновление." 3>&1 1>&2 2>&3)" || return 0
+  [[ "$fetch_mode" != 0 ]] || return 0
+  title="Mihomo provider update — $fetch_mode"
+  if capture "$MIHOMO_CONFIGURE" provider update "$fetch_mode"; then
+    mihomo_candidate_menu
+  fi
+}
+
+mihomo_import_file(){
+  local path source_mode
+  path="$(input "Mihomo provider" "Полный путь к локальному provider-файлу (Mihomo YAML / VLESS URI / Base64 VLESS):")" || return 0
+  [[ -n "$path" ]] || return 0
+  source_mode="$(mihomo_local_source_mode)" || return 0
+  [[ "$source_mode" != 0 ]] || return 0
+  title="Stage локального Mihomo provider"
+  if capture "$MIHOMO_CONFIGURE" provider stage-file "$path" "$source_mode"; then
+    mihomo_candidate_menu
+  fi
+}
+
+mihomo_import_menu(){
+  local choice
   while true; do
-    choice="$(dialog --backtitle "$BACKTITLE" --title "Mihomo / Multi-Transport" --item-help --menu \
-      "Управление Mihomo и subscription. AUTO: DIRECT → текущий healthy transport → остальные healthy transports. SSTP/router-side VPN не является зависимостью." \
-      33 110 15 \
-      1 "Состояние Mihomo" "Показывает runtime, provider cache, последний успешный bootstrap-канал и health без вывода секретов." \
-      2 "Заменить ссылку подписки" "Новый URL сначала загружается в staged candidate. Live provider/URL меняются только после выбора candidate node и успешного health-check." \
-      3 "Обновить подписку — AUTO" "Скачивает и проверяет новый provider как candidate: DIRECT → healthy transports. Live не меняется до выбора node и commit." \
-      4 "Обновить через выбранный канал" "Ставит candidate через выбранный DIRECT/Mihomo/AWG без скрытого fallback. Live не меняется до commit." \
-      5 "Импортировать локальный профиль" "Файл проходит adapter + mihomo -t и попадает в staged candidate. Live не меняется до commit выбранного node." \
-      6 "Точка выхода / узел" "Показывает узлы subscription и безопасно меняет node без зависимости от AWG и без per-IP MikroTik правил." \
-      7 "Переключить транспорт на Mihomo" "Транзакционно проверяет Mihomo и только затем переводит datapath с AWG на mihomo0; при ошибке выполняется rollback." \
-      8 "Переключить транспорт на AmneziaWG" "Возвращает datapath на awg0 с health-check и rollback при ошибке." \
-      9 "Добавить / первично настроить Mihomo" "Настраивает subscription → primary node → optional ordered fallback-chain. Active transport сам не меняет." \
-      10 "Формат подписки" "AUTO по умолчанию; вручную можно зафиксировать Mihomo YAML, VLESS URI или Base64 VLESS. Изменение транзакционное." \
-      11 "Вставить provider / subscription" "Вставка Mihomo YAML, VLESS URI(s) или Base64 из буфера. Сначала staged validation, затем выбор node и commit." \
-      12 "Staged provider / candidate" "Открывает уже подготовленный candidate: выбрать node/endpoint и commit либо вернуться без изменения live." \
-      13 "Установить Mihomo engine из локального .gz" "Offline recovery: принимает только pinned asset текущей версии/архитектуры, проверяет SHA256 и версию перед установкой." \
-      14 "Mihomo Node Failover" "MANUAL или FIXED exact-node fallback. Автоматически выбираются только явно разрешённые имена nodes; страна не выводится из имени." \
-      0 "Назад" "Возвращает в меню VPN без изменений." 3>&1 1>&2 2>&3)" || return 0
+    choice="$(dialog --backtitle "$BACKTITLE" --title "Импорт provider / subscription" --item-help --menu \
+      "Оба варианта проходят adapter, validation и staged candidate до изменения live provider." 20 108 5 \
+      1 "Импортировать из файла" "Mihomo YAML, plain VLESS URI(s) или Base64 VLESS из локального файла." \
+      2 "Вставить текстом" "Вставить Mihomo YAML, VLESS URI(s) или Base64 непосредственно в защищённый editor." \
+      0 "Назад" "Не импортировать provider." 3>&1 1>&2 2>&3)" || return 0
+    case "$choice" in
+      1) mihomo_import_file ;;
+      2) paste_mihomo_provider ;;
+      0) return 0 ;;
+    esac
+  done
+}
+
+mihomo_subscription_menu(){
+  local choice
+  while true; do
+    choice="$(dialog --backtitle "$BACKTITLE" --title "Subscription / Provider" --item-help --menu \
+      "Повседневное управление источником Mihomo. AUTO: DIRECT → текущий healthy transport → остальные healthy transports. Все изменения сначала staged; live меняется только после node commit." 23 110 7 \
+      1 "Заменить URL subscription" "Новый URL загружается через AUTO bootstrap и проверяется как staged candidate; текущий provider сохраняется до commit." \
+      2 "Обновить subscription — AUTO" "Перечитывает текущий URL: DIRECT → healthy transports. Live не меняется до выбора node и commit." \
+      3 "Импорт provider / subscription" "Единый импорт из локального файла или вставленного текста: YAML / VLESS URI / Base64 VLESS." \
+      0 "Назад" "Вернуться в Mihomo / Multi-Transport." 3>&1 1>&2 2>&3)" || return 0
+    case "$choice" in
+      1) mihomo_replace_subscription ;;
+      2) mihomo_update_auto ;;
+      3) mihomo_import_menu ;;
+      0) return 0 ;;
+    esac
+  done
+}
+
+mihomo_active_transport_menu(){
+  local choice current mihomo_label awg_label
+  while true; do
+    current="$("$AWG_TRANSPORT" get 2>/dev/null || echo unconfigured)"
+    mihomo_label="Mihomo"
+    awg_label="AmneziaWG"
+    [[ "$current" == mihomo ]] && mihomo_label="Mihomo [ACTIVE]"
+    [[ "$current" == awg ]] && awg_label="AmneziaWG [ACTIVE]"
+
+    choice="$(dialog --backtitle "$BACKTITLE" --title "Активный transport [$current]" --item-help --menu \
+      "Ручное транзакционное переключение datapath. Transport Selection Policy настраивается уровнем выше." 21 108 6 \
+      1 "$mihomo_label" "Сделать Mihomo активным transport после health/preflight; при ошибке текущий transport сохраняется." \
+      2 "$awg_label" "Сделать AmneziaWG активным transport после health/preflight; при ошибке текущий transport сохраняется." \
+      0 "Назад" "Не менять active transport." 3>&1 1>&2 2>&3)" || return 0
 
     case "$choice" in
       1)
-        title="Mihomo status"
-        capture "$MIHOMO_CONFIGURE" status || true
-        ;;
-      2)
-        url="$(secret_input "Mihomo subscription" "Вставьте полный URL подписки.\n\nСсылка не будет показана в итоговом статусе.")" || continue
-        [[ -n "$url" ]] || { msg "Mihomo" "Пустая ссылка не применена."; continue; }
-        if ! confirm "Mihomo subscription" "Скачать и проверить профиль по новой ссылке через AUTO bootstrap?\n\nПри ошибке текущая ссылка и provider cache останутся без изменений."; then
-          unset url
+        if [[ "$current" == mihomo ]]; then
+          msg "Active transport" "Mihomo уже является активным transport."
           continue
         fi
-        install -d -m 700 /run/awg-pbr
-        url_tmp="$(mktemp /run/awg-pbr/mihomo-url.XXXXXX)"
-        chmod 600 "$url_tmp"
-        printf 'MIHOMO_PROVIDER_URL=%q\n' "$url" >"$url_tmp"
-        unset url
-        title="Stage нового Mihomo URL"
-        if capture "$MIHOMO_CONFIGURE" provider stage-url-file "$url_tmp"; then
-          rm -f "$url_tmp"
-          url_tmp=""
-          mihomo_candidate_menu
-        else
-          rm -f "$url_tmp"
-          url_tmp=""
-        fi
-        ;;
-      3)
-        title="Mihomo provider update — AUTO"
-        if capture "$MIHOMO_CONFIGURE" provider update auto; then
-          mihomo_candidate_menu
-        fi
-        ;;
-      4)
-        fetch_mode="$(dialog --backtitle "$BACKTITLE" --title "Bootstrap-канал" --item-help --menu \
-          "Выберите путь только для этой загрузки subscription." 20 100 6 \
-          direct "DIRECT" "Запрос выходит через обычный LAN/uplink Pi без SSTP и без другого VPN transport." \
-          mihomo "Mihomo" "HTTP-запрос идёт через локальный Mihomo proxy 127.0.0.1; используйте только если Mihomo healthy." \
-          awg "AmneziaWG" "Запрос принудительно идёт через awg0; используйте только если AWG healthy." \
-          0 "Назад" "Не выполнять обновление." 3>&1 1>&2 2>&3)" || continue
-        [[ "$fetch_mode" != 0 ]] || continue
-        title="Mihomo provider update — $fetch_mode"
-        if capture "$MIHOMO_CONFIGURE" provider update "$fetch_mode"; then
-          mihomo_candidate_menu
-        fi
-        ;;
-      5)
-        path="$(input "Mihomo provider" "Полный путь к локальному provider-файлу (Mihomo YAML / VLESS URI / Base64 VLESS):")" || continue
-        source_mode="$(mihomo_local_source_mode)" || continue
-        [[ "$source_mode" != 0 ]] || continue
-        title="Stage локального Mihomo provider"
-        if capture "$MIHOMO_CONFIGURE" provider stage-file "$path" "$source_mode"; then
-          mihomo_candidate_menu
-        fi
-        ;;
-      6) mihomo_node_menu ;;
-      7)
-        confirm "Transport → Mihomo" "Переключить datapath на Mihomo?\n\nСначала выполняются health/preflight. При ошибке останется текущий транспорт." || continue
+        confirm "Transport → Mihomo" "Переключить datapath на Mihomo?\n\nСначала выполняются health/preflight. При ошибке останется текущий transport." || continue
         run_interactive "Переключение на Mihomo" "$AWG_TRANSPORT" select mihomo
         ;;
-      8)
-        confirm "Transport → AmneziaWG" "Вернуть datapath на AmneziaWG?\n\nПереключение транзакционное." || continue
+      2)
+        if [[ "$current" == awg ]]; then
+          msg "Active transport" "AmneziaWG уже является активным transport."
+          continue
+        fi
+        confirm "Transport → AmneziaWG" "Переключить datapath на AmneziaWG?\n\nПереключение транзакционное." || continue
         run_interactive "Переключение на AmneziaWG" "$AWG_TRANSPORT" select awg
         ;;
-      9) mihomo_initial_setup_flow secondary ;;
-      10)
+      0) return 0 ;;
+    esac
+  done
+}
+
+mihomo_advanced_menu(){
+  local choice provider_format path
+  while true; do
+    choice="$(dialog --backtitle "$BACKTITLE" --title "Mihomo — Advanced / Recovery" --item-help --menu \
+      "Технические и recovery-функции. Для обычной эксплуатации используйте Subscription / Provider, Node и Node Failover." 24 112 8 \
+      1 "Обновить через выбранный канал" "Принудительно выбрать DIRECT / Mihomo / AWG для одной загрузки subscription без скрытого fallback." \
+      2 "Формат подписки" "Вручную зафиксировать AUTO / Mihomo YAML / VLESS URI / Base64 VLESS, если autodetect неоднозначен." \
+      3 "Staged provider / candidate" "Вернуться к уже подготовленному candidate, выбрать node/endpoint и commit." \
+      4 "Offline engine recovery (.gz)" "Установить локальный pinned Mihomo archive только после SHA256/version verification." \
+      0 "Назад" "Вернуться в Mihomo / Multi-Transport." 3>&1 1>&2 2>&3)" || return 0
+
+    case "$choice" in
+      1) mihomo_update_selected_channel ;;
+      2)
         provider_format="$(mihomo_provider_format_dialog)" || continue
         [[ "$provider_format" != 0 ]] || continue
         confirm "Формат subscription" "Загрузить текущий URL в формате '$provider_format' как staged candidate?\n\nLive provider не изменится до выбора candidate node и успешного health-check." || continue
@@ -913,18 +966,40 @@ mihomo_menu(){
           mihomo_candidate_menu
         fi
         ;;
-      11)
-        paste_mihomo_provider
-        ;;
-      12)
-        mihomo_candidate_menu
-        ;;
-      13)
+      3) mihomo_candidate_menu ;;
+      4)
         path="$(input "Mihomo engine recovery" "Полный путь к локальному pinned Mihomo .gz для текущей версии/архитектуры:")" || continue
         [[ -n "$path" ]] || continue
         run_interactive "Установка Mihomo engine из локального файла" "$MIHOMO_INSTALLER" --file "$path"
         ;;
-      14) mihomo_node_policy_menu ;;
+      0) return 0 ;;
+    esac
+  done
+}
+
+mihomo_menu(){
+  local choice
+  while true; do
+    choice="$(dialog --backtitle "$BACKTITLE" --title "Mihomo / Multi-Transport" --item-help --menu \
+      "Повседневные операции Mihomo. Subscription/provider и recovery разделены; добавление нового transport выполняется уровнем выше." 25 110 9 \
+      1 "Состояние Mihomo" "Runtime, provider cache, selected node, endpoint, service/health и последний bootstrap-канал без вывода секретов." \
+      2 "Subscription / Provider" "Заменить URL, обновить через AUTO или импортировать provider/subscription из файла либо текста." \
+      3 "Точка выхода / узел" "Посмотреть nodes текущего provider и транзакционно выбрать active Mihomo node." \
+      4 "Mihomo Node Failover" "MANUAL либо ordered FIXED exact-node chain. Только явно разрешённые nodes; no-wrap и без country inference." \
+      5 "Активный transport" "Ручное транзакционное переключение datapath между AWG и Mihomo; показывает текущий active transport." \
+      6 "Расширенные / Recovery" "Forced bootstrap channel, ручной формат subscription, staged candidate и offline engine recovery." \
+      0 "Назад" "Вернуться в меню VPN без изменений." 3>&1 1>&2 2>&3)" || return 0
+
+    case "$choice" in
+      1)
+        title="Mihomo status"
+        capture "$MIHOMO_CONFIGURE" status || true
+        ;;
+      2) mihomo_subscription_menu ;;
+      3) mihomo_node_menu ;;
+      4) mihomo_node_policy_menu ;;
+      5) mihomo_active_transport_menu ;;
+      6) mihomo_advanced_menu ;;
       0) return 0 ;;
     esac
   done
