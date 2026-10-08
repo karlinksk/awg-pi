@@ -78,6 +78,26 @@ for label in (
 assert "Весь маршрутизируемый трафик будет идти DIRECT" in menu
 assert "SSH и Transit backup" in menu
 
+# Main menu stays compact: OpenCCK administration is available from
+# VPN-сервисы / домены -> OpenCCK — расширенно, not duplicated at top level.
+main_start = menu.index('while true; do\n  refresh_backtitle', menu.index('system_menu(){'))
+main_block = menu[main_start:]
+assert '    5 "OpenCCK"' not in main_block
+assert '    5 "Клиенты"' in main_block
+assert '    6 "Диагностика"' in main_block
+assert '    7 "Обновления"' in main_block
+assert '    8 "Журналы"' in main_block
+assert '    9 "Системные функции"' in main_block
+assert '    10 "Выйти в обычный Shell"' in main_block
+assert '5) client_menu' in main_block
+assert '6) diagnostics_screen' in main_block
+assert '7) update_menu' in main_block
+assert '8) logs_screen' in main_block
+assert '9) system_menu' in main_block
+assert '10) clear; exit 10' in main_block
+assert 'OpenCCK — расширенно' in menu
+assert 'проверка/восстановление Mihomo engine' in main_block
+
 assert '--passwordbox "$prompt"' in menu
 assert '"$MIHOMO_CONFIGURE" provider stage-url-file "$url_tmp"' in menu
 assert '"$MIHOMO_CONFIGURE" provider stage-file "$path" "$source_mode"' in menu

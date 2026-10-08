@@ -1235,18 +1235,17 @@ while true; do
   choice="$(dialog --clear --backtitle "$BACKTITLE" --title "Главное меню — [$mode_badge]" --item-help --menu \
     "$summary
 
-Стрелки — выбор, Enter — открыть. Внизу показано пояснение выделенного пункта." 32 106 15 \
+Стрелки — выбор, Enter — открыть. Внизу показано пояснение выделенного пункта." 31 106 14 \
     1 "Состояние системы" "Сводка режима, health, сервисов, списков и безопасно отредактированного состояния AmneziaWG; ничего не меняет." \
     2 "VPN-маршрутизация" "Управление Selective/Transit, transport backends, AmneziaWG и Mihomo/recovery." \
-    3 "VPN-сервисы / домены" "Единый ввод Selective VPN-направлений: ручной домен или OpenCCK group/site без повторного ввода имени." \
+    3 "VPN-сервисы / домены" "Единая точка Selective VPN-направлений. OpenCCK полностью доступен здесь через пункт «OpenCCK — расширенно»." \
     4 "DIRECT-исключения" "Ручной список доменов, которые в Selective всегда должны идти напрямую, даже при пересечении с VPN-правилами." \
-    5 "OpenCCK" "Подключение и обслуживание внешних списков доменов/IP/CIDR для Selective-классификации." \
-    6 "Клиенты" "Allow-list устройств для Selective PBR. Пустой список означает всех клиентов, использующих Pi как gateway." \
-    7 "Диагностика" "Запускает расширенную проверку сети, active transport и fail-open/fail-closed логики; формирует локальный отчёт." \
-    8 "Обновления" "Проверка и установка стабильных обновлений AWG Pi Gateway и AmneziaWG core." \
-    9 "Журналы" "Показывает последние записи systemd для AWG, health monitor, dnsmasq, setup и OpenCCK updater." \
-    10 "Системные функции" "Reload, reboot/poweroff, перенастройка LAN/DNS и выбор Operating mode." \
-    11 "Выйти в обычный Shell" "Закрывает меню, но оставляет текущую SSH-сессию открытой в командной строке." \
+    5 "Клиенты" "Allow-list устройств для Selective PBR. Пустой список означает всех клиентов, использующих Pi как gateway." \
+    6 "Диагностика" "Запускает расширенную проверку сети, active transport и fail-open/fail-closed логики; формирует локальный отчёт." \
+    7 "Обновления" "Gateway, AmneziaWG core и проверка/восстановление Mihomo engine до pinned-версии текущего Gateway." \
+    8 "Журналы" "Показывает последние записи systemd для AWG, health monitor, dnsmasq, setup и OpenCCK updater." \
+    9 "Системные функции" "Reload, reboot/poweroff, перенастройка LAN/DNS, Operating mode, timezone и traffic." \
+    10 "Выйти в обычный Shell" "Закрывает меню, но оставляет текущую SSH-сессию открытой в командной строке." \
     0 "Завершить SSH-сессию" "Закрывает меню и завершает текущий сеанс в соответствии с оболочкой входа." 3>&1 1>&2 2>&3)" || exit 20
 
   case "$choice" in
@@ -1254,13 +1253,12 @@ while true; do
     2) vpn_menu ;;
     3) vpn_destination_menu ;;
     4) domain_menu direct "DIRECT-исключения" ;;
-    5) opencck_menu ;;
-    6) client_menu ;;
-    7) diagnostics_screen ;;
-    8) update_menu ;;
-    9) logs_screen ;;
-    10) system_menu ;;
-    11) clear; exit 10 ;;
+    5) client_menu ;;
+    6) diagnostics_screen ;;
+    7) update_menu ;;
+    8) logs_screen ;;
+    9) system_menu ;;
+    10) clear; exit 10 ;;
     0) clear; exit 20 ;;
   esac
 done
