@@ -157,7 +157,7 @@ grep -Fqx '0' "$TMP/run/failures"
 echo "=== exact-node recovery has priority over transport failover ==="
 run_policy mode fixed mihomo awg >/dev/null
 printf '%s\n' mihomo >"$TMP/transport"
-: >"$TMP/log"; : >"$TMP/node-policy.log"
+: >"$TMP/log"; sudo truncate -s 0 "$TMP/node-policy.log"
 printf '2\n' | sudo tee "$TMP/run/failures" >/dev/null
 out="$(MOCK_MIHOMO_HEALTH=down MOCK_AWG_HEALTH=up MOCK_NODE_POLICY_ENABLED=1 MOCK_NODE_FAILOVER_OK=1 run_monitor)"
 grep -Fqx 'MIHOMO_NODE_FAILOVER=Finland->Finland backup' <<<"$out"
@@ -169,7 +169,7 @@ grep -Fqx '0' "$TMP/run/failures"
 
 echo "=== transport fallback runs only after exact-node fallback fails ==="
 printf '%s\n' mihomo >"$TMP/transport"
-: >"$TMP/log"; : >"$TMP/node-policy.log"
+: >"$TMP/log"; sudo truncate -s 0 "$TMP/node-policy.log"
 printf '2\n' | sudo tee "$TMP/run/failures" >/dev/null
 out="$(MOCK_MIHOMO_HEALTH=down MOCK_AWG_HEALTH=up MOCK_NODE_POLICY_ENABLED=1 MOCK_NODE_FAILOVER_OK=0 run_monitor)"
 grep -Fqx 'FAILOVER=mihomo->awg' <<<"$out"
@@ -180,7 +180,7 @@ grep -Fqx awg "$TMP/transport"
 echo "=== transport MANUAL still permits separately explicit node failover ==="
 run_policy mode manual >/dev/null
 printf '%s\n' mihomo >"$TMP/transport"
-: >"$TMP/log"; : >"$TMP/node-policy.log"
+: >"$TMP/log"; sudo truncate -s 0 "$TMP/node-policy.log"
 printf '2\n' | sudo tee "$TMP/run/failures" >/dev/null
 out="$(MOCK_MIHOMO_HEALTH=down MOCK_NODE_POLICY_ENABLED=1 MOCK_NODE_FAILOVER_OK=1 run_monitor)"
 grep -Fqx 'MIHOMO_NODE_FAILOVER=Finland->Finland backup' <<<"$out"
