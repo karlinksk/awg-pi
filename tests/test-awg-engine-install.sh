@@ -46,6 +46,7 @@ MOCK
 cat >"$TMP/bin/make" <<'MOCK'
 #!/usr/bin/env bash
 printf 'make:%s\n' "$*" >>"${MOCK_LOG:?}"
+printf 'proxy:%s\n' "${HTTPS_PROXY:-none}" >>"${MOCK_LOG:?}"
 exit 0
 MOCK
 
@@ -89,13 +90,13 @@ while (($#)); do
 done
 printf 'mode=%s url=%s\n' "$mode" "$url" >>"$MOCK_FETCH_LOG"
 printf 'downloaded\n' >"$out"
-printf 'AWG_FETCH_PATH=direct\n'
+printf 'AWG_FETCH_PATH=%s\n' "${MOCK_FETCH_PATH:-direct}"
 MOCK
 
 chmod +x "$TMP/bin/"*
 
 run_engine(){
-  env     PATH="$TMP/bin:$PATH"     AWG_ENGINE_ARCH=arm64     AWG_FETCH_BIN="$TMP/bin/fetch"     AWG_ENV_FILE="$TMP/env"     AWG_SRC_ROOT="$TMP/src"     AWG_GO_ROOT="$TMP/go-parent/go"     AWG_GO_PROFILE="$TMP/etc/profile.d/go.sh"     SYSTEMCTL_BIN="$TMP/bin/systemctl"     MOCK_LOG="$TMP/log"     MOCK_FETCH_LOG="$TMP/fetch.log"     bash "$ROOT/src/awg-engine-install" "$@"
+  sudo env     PATH="$TMP/bin:$PATH"     AWG_ENGINE_ARCH=arm64     AWG_FETCH_BIN="$TMP/bin/fetch"     AWG_ENV_FILE="$TMP/env"     AWG_SRC_ROOT="$TMP/src"     AWG_GO_ROOT="$TMP/go-parent/go"     AWG_GO_PROFILE="$TMP/etc/profile.d/go.sh"     SYSTEMCTL_BIN="$TMP/bin/systemctl"     MOCK_LOG="$TMP/log"     MOCK_FETCH_LOG="$TMP/fetch.log"     MOCK_FETCH_PATH="${MOCK_FETCH_PATH:-}"     bash "$ROOT/src/awg-engine-install" "$@"
 }
 
 echo "=== offline pinned bundle ==="
@@ -120,6 +121,13 @@ grep -Fqx 'AWG_ENGINE_SOURCE=auto' <<<"$out"
 grep -Fq 'mode=auto url=https://go.dev/dl/go1.27.1.linux-arm64.tar.gz' "$TMP/fetch.log"
 grep -Fq 'amneziawg-go/archive/refs/tags/v3.1.20260828.tar.gz' "$TMP/fetch.log"
 grep -Fq 'amneziawg-tools/archive/refs/tags/v3.1.20260812.tar.gz' "$TMP/fetch.log"
+
+echo "=== Mihomo bootstrap path is inherited by Go module build ==="
+rm -rf "$TMP/src"; mkdir -p "$TMP/src"
+: >"$TMP/log"; : >"$TMP/fetch.log"
+out="$(MOCK_FETCH_PATH=mihomo run_engine --mode auto)"
+grep -Fqx 'AWG_ENGINE_FETCH_PATHS=mihomo mihomo mihomo' <<<"$out"
+grep -Fq 'proxy=http://127.0.0.1:7890' "$TMP/log"
 
 echo "=== offline bundle must contain all pinned archives ==="
 rm -f "$TMP/bundle/amneziawg-tools-v3.1.20260812.tar.gz"
