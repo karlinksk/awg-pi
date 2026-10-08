@@ -1,0 +1,191 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+[[ ${EUID:-$(id -u)} -eq 0 ]] || exec sudo "$0" "$@"
+
+MIHOMO_NODE_POLICY_MODE_FILE="${MIHOMO_NODE_POLICY_MODE_FILE:-/etc/awg-pbr/transports/mihomo/node-policy.mode}"
+MIHOMO_NODE_POLICY_ORDER_FILE="${MIHOMO_NODE_POLICY_ORDER_FILE:-/etc/awg-pbr/transports/mihomo/node-policy.nodes}"
+MIHOMO_NODE_NAME_FILE="${MIHOMO_NODE_NAME_FILE:-/etc/awg-pbr/transports/mihomo/node-name}"
+MIHOMO_CONFIGURE="${MIHOMO_CONFIGURE_BIN:-/usr/local/sbin/awg-mihomo-configure}"
+
+usage(){
+  cat <<'USAGE'
+Usage:
+  awg-mihomo-node-policy status
+  awg-mihomo-node-policy mode manual
+  awg-mihomo-node-policy mode fixed NODE [FALLBACK_NODE...]
+
+FIXED uses exact node names from the current live provider. The first name is
+the preferred/primary node; later names are explicitly allowed fallbacks.
+A healthy current allowed node is sticky. No automatic return for performance.
+
+This policy never infers country from a node name and never adds an unlisted
+node. Therefore a country change can happen automatically only if the user
+explicitly placed a node from another country in the fallback list.
+USAGE
+}
+
+mode_get(){
+  local mode
+  mode="$(cat "$MIHOMO_NODE_POLICY_MODE_FILE" 2>/dev/null || echo manual)"
+  case "$mode" in manual|fixed) printf '%s\n' "$mode" ;; *) return 1 ;; esac
+}
+
+atomic_mode(){
+  local value="$1" dir tmp
+  dir="$(dirname "$MIHOMO_NODE_POLICY_MODE_FILE")"
+  mkdir -p "$dir"; chmod 700 "$dir"
+  tmp="$(mktemp "$dir/.node-policy-mode.XXXXXX")"
+  printf '%s\n' "$value" >"$tmp"
+  chmod 600 "$tmp"
+  mv -f "$tmp" "$MIHOMO_NODE_POLICY_MODE_FILE"
+}
+
+atomic_order(){
+  local dir tmp node
+  dir="$(dirname "$MIHOMO_NODE_POLICY_ORDER_FILE")"
+  mkdir -p "$dir"; chmod 700 "$dir"
+  tmp="$(mktemp "$dir/.node-policy-nodes.XXXXXX")"
+  : >"$tmp"
+  for node in "$@"; do
+    printf '%s\n' "$node" >>"$tmp"
+  done
+  chmod 600 "$tmp"
+  mv -f "$tmp" "$MIHOMO_NODE_POLICY_ORDER_FILE"
+}
+
+validate_node_name(){
+  local node="$1"
+  [[ -n "$node" && "$node" != *$'\n'* && "$node" != *$'\r'* && "$node" != *$'\t'* ]]
+}
+
+validate_nodes(){
+  local node seen=$'\n'
+  (( $# > 0 )) || { echo "fixed mode requires at least one exact node name" >&2; return 2; }
+  for node in "$@"; do
+    validate_node_name "$node" || { echo "Invalid node name" >&2; return 2; }
+    [[ "$seen" != *$'\n'"$node"$'\n'* ]] || {
+      echo "Duplicate node in failover order: $node" >&2
+      return 2
+    }
+    "$MIHOMO_CONFIGURE" node prepare "$node" >/dev/null || {
+      echo "Node is not present/resolvable in the live provider: $node" >&2
+      return 2
+    }
+    seen+="$node"$'\n'
+  done
+}
+
+set_manual(){
+  atomic_mode manual
+  rm -f "$MIHOMO_NODE_POLICY_ORDER_FILE"
+  printf 'MIHOMO_NODE_POLICY=manual\n'
+}
+
+set_fixed(){
+  validate_nodes "$@" || return
+  atomic_order "$@"
+  atomic_mode fixed
+  printf 'MIHOMO_NODE_POLICY=fixed\n'
+  printf 'MIHOMO_NODE_ORDER='
+  local first=1 node
+  for node in "$@"; do
+    (( first == 1 )) || printf ' -> '
+    printf '%s' "$node"
+    first=0
+  done
+  printf '\n'
+}
+
+status(){
+  local mode current node n=0
+  mode="$(mode_get)" || {
+    echo "Invalid Mihomo node policy state" >&2
+    return 1
+  }
+  current="$(cat "$MIHOMO_NODE_NAME_FILE" 2>/dev/null || echo unknown)"
+  printf 'Mihomo node policy: %s\n' "$mode"
+  printf 'Current Mihomo node: %s\n' "$current"
+  if [[ "$mode" == fixed ]]; then
+    printf 'Allowed exact-node order:\n'
+    if [[ -r "$MIHOMO_NODE_POLICY_ORDER_FILE" ]]; then
+      while IFS= read -r node || [[ -n "$node" ]]; do
+        [[ -n "$node" ]] || continue
+        n=$((n+1))
+        printf '  %d. %s\n' "$n" "$node"
+      done <"$MIHOMO_NODE_POLICY_ORDER_FILE"
+    fi
+    (( n > 0 )) || printf '  (invalid/empty)\n'
+    printf 'Automatic trigger: repeated active-Mihomo health failure\n'
+  else
+    printf 'Automatic Mihomo node switching: disabled\n'
+  fi
+  printf 'Country inference: disabled\n'
+}
+
+is_fixed(){
+  [[ "$(mode_get 2>/dev/null || echo invalid)" == fixed ]] &&
+    [[ -s "$MIHOMO_NODE_POLICY_ORDER_FILE" ]]
+}
+
+failover(){
+  local current node found_current=0
+  is_fixed || return 1
+  current="$(cat "$MIHOMO_NODE_NAME_FILE" 2>/dev/null || true)"
+  [[ -n "$current" ]] || return 1
+
+  # Only act if the current node itself belongs to the explicitly allowed set.
+  while IFS= read -r node || [[ -n "$node" ]]; do
+    [[ -n "$node" ]] || continue
+    [[ "$node" == "$current" ]] && found_current=1
+  done <"$MIHOMO_NODE_POLICY_ORDER_FILE"
+  (( found_current == 1 )) || return 1
+
+  while IFS= read -r node || [[ -n "$node" ]]; do
+    [[ -n "$node" && "$node" != "$current" ]] || continue
+    if "$MIHOMO_CONFIGURE" node select-auto "$node" >/dev/null; then
+      printf 'MIHOMO_NODE_FAILOVER=%s->%s\n' "$current" "$node"
+      return 0
+    fi
+  done <"$MIHOMO_NODE_POLICY_ORDER_FILE"
+  return 1
+}
+
+case "${1:-status}" in
+  status)
+    [[ $# -eq 1 ]] || { usage >&2; exit 2; }
+    status
+    ;;
+  mode)
+    case "${2:-}" in
+      manual)
+        [[ $# -eq 2 ]] || { usage >&2; exit 2; }
+        set_manual
+        ;;
+      fixed)
+        [[ $# -ge 3 ]] || { usage >&2; exit 2; }
+        shift 2
+        set_fixed "$@"
+        ;;
+      *)
+        usage >&2
+        exit 2
+        ;;
+    esac
+    ;;
+  enabled)
+    [[ $# -eq 1 ]] || { usage >&2; exit 2; }
+    is_fixed
+    ;;
+  failover)
+    [[ $# -eq 1 ]] || { usage >&2; exit 2; }
+    failover
+    ;;
+  -h|--help|help)
+    usage
+    ;;
+  *)
+    usage >&2
+    exit 2
+    ;;
+esac
