@@ -296,7 +296,7 @@ sudo cmp -s "$tmp/candidate-provider.before" "$tmp/state/providers/candidate.yam
 echo "=== explicit provider update path reaches updater ==="
 : >"$tmp/update.log"
 run_cli provider update awg >/dev/null
-grep -Fqx "update --mode awg" "$tmp/update.log"
+grep -Fqx "update --stage-only --mode awg" "$tmp/update.log"
 
 echo "=== legacy local provider import stages instead of replacing live ==="
 : >"$tmp/update.log"
