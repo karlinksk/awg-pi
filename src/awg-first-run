@@ -6,6 +6,7 @@ set -Eeuo pipefail
 TTY="${AWG_FIRST_RUN_TTY:-/dev/tty}"
 AWG_ROUTE="${AWG_ROUTE_BIN:-/usr/local/sbin/awg-route}"
 AWG_TRANSPORT="${AWG_TRANSPORT_BIN:-/usr/local/sbin/awg-transport}"
+AWG_ENGINE_INSTALLER="${AWG_ENGINE_INSTALLER_BIN:-/usr/local/sbin/awg-engine-install}"
 MIHOMO_CONFIGURE="${MIHOMO_CONFIGURE_BIN:-/usr/local/sbin/awg-mihomo-configure}"
 MIHOMO_INSTALLER="${MIHOMO_INSTALLER_BIN:-/usr/local/sbin/awg-mihomo-install}"
 MIHOMO_ENV_FILE="${MIHOMO_ENV_FILE:-/etc/awg-pbr/transports/mihomo/provider.env}"
@@ -83,6 +84,50 @@ ensure_fresh_target(){
   }
 }
 
+ensure_awg_engine(){
+  local bundle="${AWG_FIRST_RUN_AWG_BUNDLE:-}"
+  if command -v awg >/dev/null 2>&1 &&
+     command -v awg-quick >/dev/null 2>&1 &&
+     command -v amneziawg-go >/dev/null 2>&1; then
+    return 0
+  fi
+
+  if [[ -n "$bundle" ]]; then
+    "$AWG_ENGINE_INSTALLER" --bundle "$bundle"
+    return
+  fi
+
+  if "$AWG_ENGINE_INSTALLER"; then
+    return 0
+  fi
+
+  ui_print "AWG/WG engine не удалось получить по сети."
+  ask "Путь к локальному AWG engine bundle (пусто = отменить)" ""
+  bundle="$REPLY"
+  [[ -n "$bundle" ]] || return 1
+  "$AWG_ENGINE_INSTALLER" --bundle "$bundle"
+}
+
+ensure_mihomo_engine(){
+  local archive="${AWG_FIRST_RUN_MIHOMO_ARCHIVE:-}"
+  [[ -x "$MIHOMO_BIN" ]] && return 0
+
+  if [[ -n "$archive" ]]; then
+    "$MIHOMO_INSTALLER" --file "$archive"
+    return
+  fi
+
+  if "$MIHOMO_INSTALLER"; then
+    return 0
+  fi
+
+  ui_print "Mihomo engine не удалось получить по сети."
+  ask "Путь к локальному pinned Mihomo .gz (пусто = отменить)" ""
+  archive="$REPLY"
+  [[ -n "$archive" ]] || return 1
+  "$MIHOMO_INSTALLER" --file "$archive"
+}
+
 activate_awg_file(){
   local file="$1"
   ensure_fresh_target
@@ -90,6 +135,7 @@ activate_awg_file(){
     echo "AWG/WireGuard profile is not a readable regular file: $file" >&2
     return 2
   }
+  ensure_awg_engine
   "$AWG_ROUTE" config check "$file"
   "$AWG_ROUTE" config replace "$file" --yes
   "$AWG_TRANSPORT" select awg
@@ -164,6 +210,7 @@ activate_mihomo_url(){
     printf 'MIHOMO_PROVIDER_FORMAT=%q\n' "$format"
   } >"$tmp"
   chmod 600 "$tmp"
+  ensure_mihomo_engine
   if "$MIHOMO_CONFIGURE" init "$tmp"; then
     rm -f "$tmp"
   else
@@ -183,7 +230,7 @@ activate_mihomo_file(){
   }
   case "$format" in auto|mihomo|vless|base64) ;; *) echo "Unsupported provider format: $format" >&2; return 2 ;; esac
 
-  [[ -x "$MIHOMO_BIN" ]] || "$MIHOMO_INSTALLER"
+  ensure_mihomo_engine
   prepare_local_mihomo_env "$format"
   "$MIHOMO_CONFIGURE" provider import "$file"
   choose_mihomo_node
