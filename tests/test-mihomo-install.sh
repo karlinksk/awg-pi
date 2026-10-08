@@ -93,6 +93,32 @@ grep -Fqx 'mode=direct' "$TMP/fetch.log"
 [[ ! -e "$TMP/target-fail" ]]
 grep -Fq 'Unable to download Mihomo binary through bootstrap manager' "$TMP/err"
 
+echo "=== verified local pinned asset installs without network ==="
+: >"$TMP/fetch.log"
+out="$(run_install "$TMP/target-local" --file "$TMP/mihomo.gz")"
+grep -Fqx 'MIHOMO_BINARY_FETCH_PATH=file' <<<"$out"
+[[ ! -s "$TMP/fetch.log" ]]
+"$TMP/target-local" -v | grep -Fqx 'Mihomo Meta v1.19.32'
+
+echo "=== corrupt local asset is rejected before install ==="
+cp "$TMP/mihomo.gz" "$TMP/corrupt.gz"
+printf 'x' >>"$TMP/corrupt.gz"
+if run_install "$TMP/target-corrupt" --file "$TMP/corrupt.gz" >"$TMP/out" 2>"$TMP/err"; then
+  echo 'FAIL: corrupt local Mihomo asset unexpectedly installed' >&2
+  exit 1
+fi
+[[ ! -e "$TMP/target-corrupt" ]]
+grep -Fq 'FAILED' "$TMP/err"
+
+echo "=== local symlink asset is rejected ==="
+ln -s "$TMP/mihomo.gz" "$TMP/mihomo-link.gz"
+if run_install "$TMP/target-link" --file "$TMP/mihomo-link.gz" >"$TMP/out" 2>"$TMP/err"; then
+  echo 'FAIL: symlinked local Mihomo asset unexpectedly installed' >&2
+  exit 1
+fi
+[[ ! -e "$TMP/target-link" ]]
+grep -Fq 'not a symlink' "$TMP/err"
+
 echo "=== legacy router mode maps to DIRECT ==="
 : >"$TMP/fetch.log"
 out="$(MOCK_FETCH_PATH=direct run_install "$TMP/target-legacy" --mode router)"
