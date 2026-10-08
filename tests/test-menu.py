@@ -231,6 +231,17 @@ assert 'Перезапустить awg0 и монитор состояния' no
 assert '7 "Политика выбора транспорта"' in vpn_block
 assert '8 "Политика выбора транспорта"' in vpn_block
 
+# Mode-change result dialogs refresh the header after the command, so the
+# backtitle cannot show the previous SELECTIVE/TRANSIT state.
+assert 'capture_mode_change(){' in menu
+assert 'capture_mode_change "$AWG_ROUTE" mode selective' in menu
+assert 'capture_mode_change "$AWG_ROUTE" mode transit' in menu
+mode_change_start = menu.index('capture_mode_change(){')
+mode_change_end = menu.index('localize_status_file(){', mode_change_start)
+mode_change_block = menu[mode_change_start:mode_change_end]
+assert 'refresh_backtitle' in mode_change_block
+assert 'dialog --backtitle "$BACKTITLE"' in mode_change_block
+
 # Mode indicators remain explicit technical IDs, but labels/help are Russian.
 for needle in (
     'BASE_BACKTITLE="AWG Pi Gateway v$VERSION"',

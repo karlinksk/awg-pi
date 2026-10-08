@@ -98,6 +98,17 @@ capture(){
   return "$rc"
 }
 
+capture_mode_change(){
+  local rc
+  set +e
+  "$@" >"$TMP" 2>&1
+  rc=$?
+  set -e
+  refresh_backtitle
+  dialog --backtitle "$BACKTITLE" --title "${title:-Режим работы}" --textbox "$TMP" 30 110
+  return "$rc"
+}
+
 
 localize_status_file(){
   sed -i \
@@ -1370,14 +1381,12 @@ operating_mode_menu(){
       1)
         confirm "Режим SELECTIVE" "Переключить Pi в режим SELECTIVE? Списки OpenCCK, VPN, DIRECT и клиентов снова станут активны." || continue
         title="Режим работы"
-        capture "$AWG_ROUTE" mode selective || true
-        refresh_backtitle
+        capture_mode_change "$AWG_ROUTE" mode selective || true
         ;;
       2)
         confirm "Режим TRANSIT" "Переключить Pi в режим TRANSIT?\n\nЕсли транспорт настроен, выполняются проверки состояния, DIRECT и маршрутизации. Если транспорт ещё не настроен, TRANSIT перейдёт в безопасный LOCKDOWN.\n\nMikroTik должен быть отдельно настроен на отправку выбранного трафика через Pi." || continue
         title="Режим работы"
-        capture "$AWG_ROUTE" mode transit || true
-        refresh_backtitle
+        capture_mode_change "$AWG_ROUTE" mode transit || true
         ;;
       0) return 0 ;;
     esac
