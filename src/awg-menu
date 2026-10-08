@@ -15,6 +15,7 @@ command -v dialog >/dev/null 2>&1 || { echo "Не найден dialog" >&2; exit
 AWG_ROUTE=/usr/local/sbin/awg-route
 AWG_TRANSPORT=/usr/local/sbin/awg-transport
 MIHOMO_CONFIGURE=/usr/local/sbin/awg-mihomo-configure
+MIHOMO_INSTALLER=/usr/local/sbin/awg-mihomo-install
 AWG_FIRST_RUN=/usr/local/sbin/awg-first-run
 AWG_UPDATE=/usr/local/sbin/awg-update
 VERSION="$(cat /etc/awg-pbr/version 2>/dev/null || echo unknown)"
@@ -521,6 +522,7 @@ mihomo_menu(){
       10 "Формат подписки" "AUTO по умолчанию; вручную можно зафиксировать Mihomo YAML, VLESS URI или Base64 VLESS. Изменение транзакционное." \
       11 "Вставить provider / subscription" "Вставка Mihomo YAML, VLESS URI(s) или Base64 из буфера. Сначала staged validation, затем выбор node и commit." \
       12 "Staged provider / candidate" "Открывает уже подготовленный candidate: выбрать node/endpoint и commit либо вернуться без изменения live." \
+      13 "Установить Mihomo engine из локального .gz" "Offline recovery: принимает только pinned asset текущей версии/архитектуры, проверяет SHA256 и версию перед установкой." \
       0 "Назад" "Возвращает в меню VPN без изменений." 3>&1 1>&2 2>&3)" || return 0
 
     case "$choice" in
@@ -635,6 +637,11 @@ mihomo_menu(){
         ;;
       12)
         mihomo_candidate_menu
+        ;;
+      13)
+        path="$(input "Mihomo engine recovery" "Полный путь к локальному pinned Mihomo .gz для текущей версии/архитектуры:")" || continue
+        [[ -n "$path" ]] || continue
+        run_interactive "Установка Mihomo engine из локального файла" "$MIHOMO_INSTALLER" --file "$path"
         ;;
       0) return 0 ;;
     esac
