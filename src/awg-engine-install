@@ -10,7 +10,9 @@ SRC_ROOT="${AWG_SRC_ROOT:-/opt/amneziawg-src}"
 GO_ROOT="${AWG_GO_ROOT:-/usr/local/go}"
 GO_PROFILE="${AWG_GO_PROFILE:-/etc/profile.d/go.sh}"
 SYSTEMCTL_BIN="${SYSTEMCTL_BIN:-systemctl}"
+MIHOMO_PROXY_URL="${MIHOMO_PROXY_URL:-http://127.0.0.1:7890}"
 LOCAL_BUNDLE=""
+FETCH_PATHS=""
 ENGINE_ARCH="${AWG_ENGINE_ARCH:-$(uname -m)}"
 
 GO_VERSION="1.27.1"
@@ -106,7 +108,18 @@ fetch_archive(){
       echo "Bootstrap fetch manager is unavailable: $AWG_FETCH_BIN" >&2
       return 2
     }
-    AWG_ENV_FILE="$AWG_ENV_FILE" "$AWG_FETCH_BIN"       --mode "$FETCH_MODE" --url "$url" --output "$dst" --       -4 --http1.1 -fsSL --retry 3 --retry-all-errors --retry-delay 1       --connect-timeout 10 --max-time 180 >/dev/null
+    fetch_output="$(
+      AWG_ENV_FILE="$AWG_ENV_FILE" MIHOMO_PROXY_URL="$MIHOMO_PROXY_URL" "$AWG_FETCH_BIN" \
+        --mode "$FETCH_MODE" --url "$url" --output "$dst" -- \
+        -4 --http1.1 -fsSL --retry 3 --retry-all-errors --retry-delay 1 \
+        --connect-timeout 10 --max-time 180
+    )"
+    fetch_path="$(awk -F= '$1=="AWG_FETCH_PATH"{print $2}' <<<"$fetch_output" | tail -n1)"
+    [[ "$fetch_path" =~ ^(direct|awg|mihomo)$ ]] || {
+      echo "Bootstrap manager returned an invalid AWG engine fetch path" >&2
+      return 1
+    }
+    FETCH_PATHS+=" $fetch_path"
   fi
   printf '%s  %s\n' "$sha" "$dst" | sha256sum -c -
 }
@@ -114,6 +127,15 @@ fetch_archive(){
 fetch_archive "$GO_ARCHIVE" "$GO_URL" "$GO_SHA256"
 fetch_archive "$AWG_GO_ARCHIVE" "$AWG_GO_URL" "$AWG_GO_SHA256"
 fetch_archive "$AWG_TOOLS_ARCHIVE" "$AWG_TOOLS_URL" "$AWG_TOOLS_SHA256"
+
+# amneziawg-go does not vendor its Go modules. If the archives had to use
+# Mihomo, keep module downloads on the same bootstrap path instead of leaking
+# back to DIRECT during the build.
+if [[ " $FETCH_PATHS " == *" mihomo "* ]]; then
+  export HTTPS_PROXY="$MIHOMO_PROXY_URL"
+  export HTTP_PROXY="$MIHOMO_PROXY_URL"
+  export NO_PROXY="127.0.0.1,localhost"
+fi
 
 if ! command -v go >/dev/null 2>&1 || [[ "$(go version 2>/dev/null || true)" != *"go${GO_VERSION} "* ]]; then
   [[ "$(basename "$GO_ROOT")" == go ]] || {
@@ -154,3 +176,6 @@ printf 'AWG_ENGINE=INSTALLED\n'
 printf 'AWG_GO_TAG=%s\n' "$AWG_GO_TAG"
 printf 'AWG_TOOLS_TAG=%s\n' "$AWG_TOOLS_TAG"
 printf 'AWG_ENGINE_SOURCE=%s\n' "$([[ -n "$LOCAL_BUNDLE" ]] && echo local-bundle || echo "$FETCH_MODE")"
+if [[ -n "$FETCH_PATHS" ]]; then
+  printf 'AWG_ENGINE_FETCH_PATHS=%s\n' "${FETCH_PATHS# }"
+fi
