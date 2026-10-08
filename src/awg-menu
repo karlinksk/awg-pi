@@ -85,7 +85,7 @@ input(){
 
 secret_input(){
   local title="$1" prompt="$2"
-  dialog --backtitle "$BACKTITLE" --title "$title" --passwordbox "$prompt" 11 90 3>&1 1>&2 2>&3
+  dialog --backtitle "$BACKTITLE" --title "$title" --insecure --passwordbox "$prompt" 11 90 3>&1 1>&2 2>&3
 }
 
 capture(){
@@ -944,7 +944,7 @@ secondary_transport_setup(){
 
 mihomo_replace_subscription(){
   local url url_tmp
-  url="$(secret_input "Подписка Mihomo" "Вставьте полный URL подписки.\n\nСсылка не будет показана в итоговом статусе.")" || return 0
+  url="$(secret_input "Подписка Mihomo" "Вставьте полный URL подписки.\n\nВведённые символы отображаются как *; сама ссылка не будет показана в итоговом статусе.")" || return 0
   [[ -n "$url" ]] || { msg "Mihomo" "Пустая ссылка не применена."; return 0; }
   if ! confirm "Подписка Mihomo" "Скачать и проверить профиль по новой ссылке через AUTO?\n\nПри ошибке текущая ссылка и кэш профиля останутся без изменений."; then
     unset url

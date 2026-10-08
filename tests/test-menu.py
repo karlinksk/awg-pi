@@ -174,6 +174,10 @@ assert 'Активный транспорт:' in menu
 assert 'URL подписки:' in menu
 assert '"$MIHOMO_INSTALLER" --file "$path"' in menu
 
+# Secret URL entry remains masked but gives visible feedback for typing/paste.
+assert '--insecure --passwordbox "$prompt"' in menu
+assert 'Введённые символы отображаются как *' in menu
+
 # Secret URL handling stays file-based.
 assert 'mktemp /run/awg-pbr/mihomo-url.XXXXXX' in menu
 assert 'chmod 600 "$url_tmp"' in menu
