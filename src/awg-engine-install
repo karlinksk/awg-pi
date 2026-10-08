@@ -11,6 +11,7 @@ GO_ROOT="${AWG_GO_ROOT:-/usr/local/go}"
 GO_PROFILE="${AWG_GO_PROFILE:-/etc/profile.d/go.sh}"
 SYSTEMCTL_BIN="${SYSTEMCTL_BIN:-systemctl}"
 LOCAL_BUNDLE=""
+ENGINE_ARCH="${AWG_ENGINE_ARCH:-$(uname -m)}"
 
 GO_VERSION="1.27.1"
 GO_ARCHIVE="go${GO_VERSION}.linux-arm64.tar.gz"
@@ -73,7 +74,7 @@ case "$FETCH_MODE" in
   *) echo "Unsupported fetch mode: $FETCH_MODE" >&2; exit 2 ;;
 esac
 
-case "$(uname -m)" in
+case "$ENGINE_ARCH" in
   aarch64|arm64) ;;
   *)
     echo "This pinned AWG engine bundle currently supports ARM64 only." >&2
