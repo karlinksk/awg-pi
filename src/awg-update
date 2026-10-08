@@ -61,7 +61,6 @@ backup_gateway(){
     etc/systemd/system/awg-mihomo.service \
     etc/systemd/system/awg-mihomo-update.service \
     etc/systemd/system/awg-mihomo-update.timer \
-    etc/systemd/system/awg-selection-monitor.service \
     var/lib/awg-pbr/mihomo \
     usr/local/lib/awg-pi \
     usr/local/bin/mihomo \
@@ -69,8 +68,6 @@ backup_gateway(){
     usr/local/sbin/awg-transport \
     usr/local/sbin/awg-fetch \
     usr/local/sbin/awg-first-run \
-    usr/local/sbin/awg-selection \
-    usr/local/sbin/awg-selection-monitor \
     usr/local/sbin/awg-menu \
     usr/local/sbin/awg-opencck-update \
     usr/local/sbin/awg-core-update \
@@ -112,8 +109,6 @@ restore_gateway(){
     /usr/local/sbin/awg-transport \
     /usr/local/sbin/awg-fetch \
     /usr/local/sbin/awg-first-run \
-    /usr/local/sbin/awg-selection \
-    /usr/local/sbin/awg-selection-monitor \
     /usr/local/sbin/awg-menu \
     /usr/local/sbin/awg-opencck-update \
     /usr/local/sbin/awg-core-update \
@@ -139,7 +134,6 @@ restore_gateway(){
     /etc/systemd/system/awg-mihomo.service \
     /etc/systemd/system/awg-mihomo-update.service \
     /etc/systemd/system/awg-mihomo-update.timer \
-    /etc/systemd/system/awg-selection-monitor.service \
     /etc/profile.d/awg-menu.sh
 
   tar -C / -xzf "$dir/gateway-state.tgz"
