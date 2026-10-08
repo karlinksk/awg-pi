@@ -88,7 +88,7 @@ MOCK
 cat >"$TMP/bin/mihomo-install" <<'MOCK'
 #!/usr/bin/env bash
 set -Eeuo pipefail
-printf 'mihomo-install\n' >>"${MOCK_LOG:?}"
+printf 'mihomo-install:%s\n' "$*" >>"${MOCK_LOG:?}"
 cat >"${MIHOMO_BIN:?}" <<'BIN'
 #!/usr/bin/env bash
 exit 0
@@ -138,7 +138,7 @@ rm -f "$TMP/bin/mihomo" "$TMP/etc/provider.env"
 printf 'vless://example\n' >"$TMP/provider.txt"
 out="$(run_first mihomo-file "$TMP/provider.txt" auto)"
 grep -Fqx 'FIRST_TRANSPORT=mihomo' <<<"$out"
-grep -Fqx 'mihomo-install' "$TMP/log"
+grep -Fqx 'mihomo-install:' "$TMP/log"
 grep -Fq "mihomo:provider stage-file $TMP/provider.txt local-only auto" "$TMP/log"
 grep -Fqx 'mihomo:provider candidate list' "$TMP/log"
 grep -Fqx 'mihomo:provider candidate prepare Finland' "$TMP/log"
@@ -151,6 +151,12 @@ if sudo grep -q '^MIHOMO_PROVIDER_URL=' "$TMP/etc/provider.env"; then
   echo 'FAIL: local-only provider unexpectedly gained a network URL' >&2
   exit 1
 fi
+
+echo "=== offline Mihomo engine helper passes pinned asset to installer ==="
+: >"$TMP/log"
+printf 'asset\n' >"$TMP/local-mihomo.gz"
+out="$(run_first mihomo-engine-file "$TMP/local-mihomo.gz")"
+grep -Fqx "mihomo-install:--file $TMP/local-mihomo.gz" "$TMP/log"
 
 echo "=== installer orders first transport before Operating Mode ==="
 first_line="$(grep -n -F '"$FIRST_RUN_CLI" wizard' "$ROOT/install.sh" | head -1 | cut -d: -f1)"
