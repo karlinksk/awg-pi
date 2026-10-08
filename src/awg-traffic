@@ -223,17 +223,17 @@ status(){
   m_total=$((m_awg+m_mihomo))
   case "${1:-full}" in
     compact)
-      printf 'Today: %s | Month: %s\n' "$(human_bytes "$d_total")" "$(human_bytes "$m_total")"
+      printf 'Сегодня: %s | Месяц: %s\n' "$(human_bytes "$d_total")" "$(human_bytes "$m_total")"
       ;;
     full)
-      printf 'Traffic scope: Pi transport interfaces only (%s + %s)\n' "$AWG_IF" "$MIHOMO_IF"
-      printf 'Today (%s): %s total\n' "${DAY_KEY:-unknown}" "$(human_bytes "$d_total")"
-      printf '  AWG:    RX %s  TX %s  Total %s\n' "$(human_bytes "$DAY_AWG_RX")" "$(human_bytes "$DAY_AWG_TX")" "$(human_bytes "$d_awg")"
-      printf '  Mihomo: RX %s  TX %s  Total %s\n' "$(human_bytes "$DAY_MIHOMO_RX")" "$(human_bytes "$DAY_MIHOMO_TX")" "$(human_bytes "$d_mihomo")"
-      printf 'Month (%s): %s total\n' "${MONTH_KEY:-unknown}" "$(human_bytes "$m_total")"
-      printf '  AWG:    RX %s  TX %s  Total %s\n' "$(human_bytes "$MONTH_AWG_RX")" "$(human_bytes "$MONTH_AWG_TX")" "$(human_bytes "$m_awg")"
-      printf '  Mihomo: RX %s  TX %s  Total %s\n' "$(human_bytes "$MONTH_MIHOMO_RX")" "$(human_bytes "$MONTH_MIHOMO_TX")" "$(human_bytes "$m_mihomo")"
-      printf 'Persistent checkpoint interval: %ss (runtime samples stay in RAM)\n' "$PERSIST_INTERVAL"
+      printf 'Учитывается только трафик транспортных интерфейсов Pi (%s + %s)\n' "$AWG_IF" "$MIHOMO_IF"
+      printf 'Сегодня (%s): всего %s\n' "${DAY_KEY:-неизвестно}" "$(human_bytes "$d_total")"
+      printf '  AWG:    приём %s  передача %s  всего %s\n' "$(human_bytes "$DAY_AWG_RX")" "$(human_bytes "$DAY_AWG_TX")" "$(human_bytes "$d_awg")"
+      printf '  Mihomo: приём %s  передача %s  всего %s\n' "$(human_bytes "$DAY_MIHOMO_RX")" "$(human_bytes "$DAY_MIHOMO_TX")" "$(human_bytes "$d_mihomo")"
+      printf 'Месяц (%s): всего %s\n' "${MONTH_KEY:-неизвестно}" "$(human_bytes "$m_total")"
+      printf '  AWG:    приём %s  передача %s  всего %s\n' "$(human_bytes "$MONTH_AWG_RX")" "$(human_bytes "$MONTH_AWG_TX")" "$(human_bytes "$m_awg")"
+      printf '  Mihomo: приём %s  передача %s  всего %s\n' "$(human_bytes "$MONTH_MIHOMO_RX")" "$(human_bytes "$MONTH_MIHOMO_TX")" "$(human_bytes "$m_mihomo")"
+      printf 'Интервал записи состояния на диск: %s с (промежуточные отсчёты хранятся в RAM)\n' "$PERSIST_INTERVAL"
       ;;
     *) flock -u 9; exec 9>&-; return 2 ;;
   esac

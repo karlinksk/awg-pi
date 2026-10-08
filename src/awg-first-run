@@ -66,7 +66,7 @@ paste_to_temp(){
   sed -i 's/\r$//' "$tmp"
   [[ -s "$tmp" ]] || {
     rm -f "$tmp"
-    echo "Pasted profile is empty" >&2
+    echo "Вставленный профиль пуст." >&2
     return 1
   }
   printf '%s\n' "$tmp"
@@ -80,7 +80,7 @@ ensure_fresh_target(){
   local state
   state="$(transport_state)"
   [[ "$state" == unconfigured ]] || {
-    echo "A transport is already selected: $state. Use the normal transport/configuration menus." >&2
+    echo "Транспорт уже выбран: $state. Используйте обычное меню настройки транспортов." >&2
     return 1
   }
 }
@@ -89,7 +89,7 @@ activate_awg_file(){
   local file="$1"
   ensure_fresh_target
   [[ -f "$file" && -r "$file" && ! -L "$file" ]] || {
-    echo "AWG/WireGuard profile is not a readable regular file: $file" >&2
+    echo "Файл профиля AWG/WireGuard не найден или недоступен для чтения: $file" >&2
     return 2
   }
   "$AWG_ROUTE" config check "$file"
@@ -112,29 +112,29 @@ configure_mihomo_node_chain(){
   local -a nodes=("$primary")
   [[ "${AWG_FIRST_RUN_INTERACTIVE:-0}" == 1 ]] || return 0
 
-  ask "Настроить резервную последовательность Mihomo nodes сейчас? (y/N)" "N"
+  ask "Настроить резервную цепочку узлов Mihomo сейчас? (y/N)" "N"
   answer="$REPLY"
   if [[ ! "$answer" =~ ^([Yy]|[Дд][Аа]?)$ ]]; then
     "$MIHOMO_NODE_POLICY" mode manual >/dev/null
-    ui_print "Mihomo node failover: MANUAL"
+    ui_print "Резервирование узлов Mihomo: MANUAL"
     return 0
   fi
 
   while true; do
     if ! listing="$("$MIHOMO_CONFIGURE" node list)"; then
       "$MIHOMO_NODE_POLICY" mode manual >/dev/null 2>&1 || true
-      ui_print "Список nodes сейчас недоступен; первый Mihomo transport сохранён, node policy = MANUAL."
+      ui_print "Список узлов сейчас недоступен; первый транспорт Mihomo сохранён, политика узлов = MANUAL."
       return 0
     fi
-    ui_print "$(printf '\n=== Live Mihomo nodes ===\n%s\n' "$listing")"
-    ask "Следующий fallback node (номер или ТОЧНОЕ имя; пусто = закончить)" ""
+    ui_print "$(printf '\n=== Доступные узлы Mihomo ===\n%s\n' "$listing")"
+    ask "Следующий резервный узел (номер или ТОЧНОЕ имя; пусто = закончить)" ""
     next="$REPLY"
     [[ -n "$next" ]] || break
     next="$(resolve_node_choice "$listing" "$next")"
 
     for existing in "${nodes[@]}"; do
       if [[ "$existing" == "$next" ]]; then
-        ui_print "Этот node уже есть в цепочке: $next"
+        ui_print "Этот узел уже есть в цепочке: $next"
         next=""
         break
       fi
@@ -142,7 +142,7 @@ configure_mihomo_node_chain(){
     [[ -n "$next" ]] || continue
 
     if ! "$MIHOMO_CONFIGURE" node prepare "$next" >/dev/null; then
-      ui_print "Node не найден/не готов: $next"
+      ui_print "Узел не найден или недоступен: $next"
       continue
     fi
     nodes+=("$next")
@@ -152,15 +152,15 @@ configure_mihomo_node_chain(){
 
   if (( ${#nodes[@]} < 2 )); then
     "$MIHOMO_NODE_POLICY" mode manual >/dev/null
-    ui_print "Fallback nodes не добавлены; Mihomo node failover остаётся MANUAL."
+    ui_print "Резервные узлы не добавлены; политика узлов Mihomo остаётся MANUAL."
     return 0
   fi
 
   chain="$(printf ' -> %s' "${nodes[@]}")"
-  ui_print "Итоговая exact-node chain: ${chain# -> }"
+  ui_print "Итоговая цепочка узлов: ${chain# -> }"
   if ! "$MIHOMO_NODE_POLICY" mode fixed "${nodes[@]}"; then
     "$MIHOMO_NODE_POLICY" mode manual >/dev/null 2>&1 || true
-    ui_print "Fallback chain не применена; первый Mihomo transport остаётся рабочим, node policy = MANUAL."
+    ui_print "Резервная цепочка не применена; первый транспорт Mihomo остаётся рабочим, политика узлов = MANUAL."
   fi
 }
 
@@ -177,15 +177,15 @@ choose_mihomo_node(){
       return 2
       ;;
   esac
-  ui_print "$(printf '\n=== Доступные Mihomo nodes ===\n%s\n' "$nodes")"
+  ui_print "$(printf '\n=== Доступные узлы Mihomo ===\n%s\n' "$nodes")"
   name="${AWG_FIRST_RUN_NODE:-}"
   if [[ -z "$name" ]]; then
-    ask "Введите номер или точное имя первого Mihomo node"
+    ask "Введите номер или точное имя первого узла Mihomo"
     name="$REPLY"
   fi
   name="$(resolve_node_choice "$nodes" "$name")"
   [[ -n "$name" ]] || {
-    echo "Node name is required" >&2
+    echo "Необходимо указать имя узла." >&2
     return 2
   }
 
@@ -197,11 +197,11 @@ choose_mihomo_node(){
   ui_print "$prepared"
   endpoint="${AWG_FIRST_RUN_ENDPOINT:-}"
   if [[ -z "$endpoint" ]]; then
-    ask "Введите один IPv4 из Resolved IPv4 endpoints"
+    ask "Введите один из показанных IPv4-адресов сервера"
     endpoint="$REPLY"
   fi
   [[ -n "$endpoint" ]] || {
-    echo "Endpoint IPv4 is required" >&2
+    echo "Необходимо указать IPv4-адрес сервера." >&2
     return 2
   }
 
@@ -225,8 +225,8 @@ ensure_mihomo_binary(){
   rc=$?
   (( interactive == 1 )) || return "$rc"
 
-  ui_print "AUTO-загрузка Mihomo не удалась. Можно указать локальный pinned .gz этой версии."
-  ask "Полный путь к локальному Mihomo .gz (пусто = отменить)" ""
+  ui_print "Автоматическая загрузка Mihomo не удалась. Можно указать локальный архив .gz поддерживаемой версии."
+  ask "Полный путь к локальному архиву Mihomo .gz (пусто = отменить)" ""
   path="$REPLY"
   [[ -n "$path" ]] || return "$rc"
   "$MIHOMO_INSTALLER" --file "$path"
@@ -236,10 +236,10 @@ activate_mihomo_url(){
   local url="$1" profile="${2:-standard}" format="${3:-auto}" tmp rc
   ensure_fresh_target
   ensure_mihomo_binary "${AWG_FIRST_RUN_INTERACTIVE:-0}"
-  case "$profile" in standard|remnawave) ;; *) echo "Unsupported provider profile: $profile" >&2; return 2 ;; esac
-  case "$format" in auto|mihomo|vless|base64) ;; *) echo "Unsupported provider format: $format" >&2; return 2 ;; esac
+  case "$profile" in standard|remnawave) ;; *) echo "Неподдерживаемый тип источника: $profile" >&2; return 2 ;; esac
+  case "$format" in auto|mihomo|vless|base64) ;; *) echo "Неподдерживаемый формат подписки: $format" >&2; return 2 ;; esac
   [[ "$url" =~ ^https?://[^[:space:]]+$ ]] || {
-    echo "Mihomo subscription URL must be http(s) without whitespace" >&2
+    echo "URL подписки Mihomo должен начинаться с http:// или https:// и не содержать пробелов." >&2
     return 2
   }
 
@@ -266,10 +266,10 @@ activate_mihomo_file(){
   local file="$1" format="${2:-auto}"
   ensure_fresh_target
   [[ -f "$file" && -r "$file" && ! -L "$file" ]] || {
-    echo "Mihomo provider is not a readable regular file: $file" >&2
+    echo "Файл профиля Mihomo не найден или недоступен для чтения: $file" >&2
     return 2
   }
-  case "$format" in auto|mihomo|vless|base64) ;; *) echo "Unsupported provider format: $format" >&2; return 2 ;; esac
+  case "$format" in auto|mihomo|vless|base64) ;; *) echo "Неподдерживаемый формат подписки: $format" >&2; return 2 ;; esac
 
   ensure_mihomo_binary "${AWG_FIRST_RUN_INTERACTIVE:-0}"
   "$MIHOMO_CONFIGURE" provider stage-file "$file" local-only "$format"
@@ -282,18 +282,18 @@ wizard(){
   ensure_fresh_target || return
   cat >"$TTY" <<'TEXT'
 
-=== Первичная настройка transport ===
+=== Первичная настройка транспорта ===
 Что у вас уже есть?
 
-1) AmneziaWG / WireGuard native .conf — файл
-2) AmneziaWG / WireGuard native .conf — вставить текст
-3) Mihomo / VLESS subscription URL
-4) Mihomo provider/subscription — локальный файл
-5) Mihomo provider/subscription — вставить текст
+1) AmneziaWG / WireGuard .conf — файл
+2) AmneziaWG / WireGuard .conf — вставить текст
+3) Mihomo / VLESS — URL подписки
+4) Mihomo — профиль/подписка из локального файла
+5) Mihomo — вставить профиль/подписку текстом
 6) Пока ничего не настраивать
 
-Transport не выбирается автоматически. После успешной настройки отдельно
-выбирается Operating Mode: Selective или Transit.
+Транспорт не выбирается автоматически. После успешной настройки отдельно
+выбирается режим работы: SELECTIVE или TRANSIT.
 TEXT
   ask "Выбор" "6"
   choice="$REPLY"
@@ -304,7 +304,7 @@ TEXT
       activate_awg_file "$REPLY"
       ;;
     2)
-      tmp="$(paste_to_temp 'Вставьте native AmneziaWG / WireGuard .conf')" || return
+      tmp="$(paste_to_temp 'Вставьте конфигурацию AmneziaWG / WireGuard .conf')" || return
       if activate_awg_file "$tmp"; then
         rm -f "$tmp"
       else
@@ -314,26 +314,26 @@ TEXT
       fi
       ;;
     3)
-      secret_ask "Вставьте полный subscription URL"
+      secret_ask "Вставьте полный URL подписки"
       url="$REPLY"
-      printf '%s\n' 'Provider mode: 1=standard/generic, 2=Remnawave-compatible' >"$TTY"
-      ask "Provider mode" "1"
+      printf '%s\n' 'Тип источника: 1=обычный/универсальный, 2=совместимый с Remnawave' >"$TTY"
+      ask "Тип источника" "1"
       case "$REPLY" in
         1) profile=standard ;;
         2) profile=remnawave ;;
-        *) echo "Invalid provider mode" >&2; return 2 ;;
+        *) echo "Некорректный тип источника." >&2; return 2 ;;
       esac
       format=auto
       activate_mihomo_url "$url" "$profile" "$format"
       unset url
       ;;
     4)
-      ask "Полный путь к Mihomo YAML / VLESS / Base64 subscription"
+      ask "Полный путь к файлу Mihomo YAML / VLESS / Base64"
       path="$REPLY"
       activate_mihomo_file "$path" auto
       ;;
     5)
-      tmp="$(paste_to_temp 'Вставьте Mihomo YAML, VLESS URI(s) или Base64 subscription')" || return
+      tmp="$(paste_to_temp 'Вставьте Mihomo YAML, VLESS URI или Base64-подписку')" || return
       if activate_mihomo_file "$tmp" auto; then
         rm -f "$tmp"
       else
@@ -346,7 +346,7 @@ TEXT
       printf 'FIRST_TRANSPORT=unconfigured\n'
       ;;
     *)
-      echo "Invalid first transport choice: $choice" >&2
+      echo "Некорректный выбор первого транспорта: $choice" >&2
       return 2
       ;;
   esac
