@@ -16,6 +16,9 @@ case "$*" in
   "node prepare 🇫🇮 Finland"|"node prepare DE (backup)+1"|"node prepare NL [test]*")
     printf 'Resolved IPv4 endpoints:\n  - 192.0.2.10\n'
     ;;
+  "node select-auto 🇫🇮 Finland")
+    printf '%s\n' '🇫🇮 Finland' >"${MOCK_NODE_NAME_FILE:?}"
+    ;;
   "node select-auto DE (backup)+1")
     [[ "${MOCK_DE_OK:-1}" == 1 ]] || exit 1
     printf '%s\n' 'DE (backup)+1' >"${MOCK_NODE_NAME_FILE:?}"
@@ -95,6 +98,26 @@ out="$(MOCK_DE_OK=0 MOCK_NL_OK=1 run_policy failover)"
 grep -Fqx 'MIHOMO_NODE_FAILOVER=🇫🇮 Finland->NL [test]*' <<<"$out"
 grep -Fqx 'node select-auto DE (backup)+1' "$TMP/log"
 grep -Fqx 'node select-auto NL [test]*' "$TMP/log"
+
+echo "=== failover chain never wraps back to an earlier node ==="
+printf '%s\n' 'DE (backup)+1' | sudo tee "$TMP/etc/node-name" >/dev/null
+: >"$TMP/log"
+out="$(run_policy failover)"
+grep -Fqx 'MIHOMO_NODE_FAILOVER=DE (backup)+1->NL [test]*' <<<"$out"
+grep -Fqx 'node select-auto NL [test]*' "$TMP/log"
+if grep -Fq 'node select-auto 🇫🇮 Finland' "$TMP/log"; then
+  echo 'FAIL: failover wrapped back to an earlier node' >&2
+  exit 1
+fi
+
+echo "=== last allowed node exhausts node failover ==="
+printf '%s\n' 'NL [test]*' | sudo tee "$TMP/etc/node-name" >/dev/null
+: >"$TMP/log"
+if run_policy failover >"$TMP/out" 2>"$TMP/err"; then
+  echo 'FAIL: last node unexpectedly produced another node failover' >&2
+  exit 1
+fi
+[[ ! -s "$TMP/log" ]]
 
 echo "=== current node outside policy disables node auto-failover ==="
 printf '%s\n' 'Unlisted current' | sudo tee "$TMP/etc/node-name" >/dev/null
