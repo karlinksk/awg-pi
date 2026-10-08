@@ -1075,11 +1075,12 @@ update_menu(){
   local choice
   while true; do
     choice="$(dialog --backtitle "$BACKTITLE" --title "Обновления" --item-help --menu \
-      "Обновления проверяются по стабильным версиям проекта." 21 100 8 \
-      1 "Показать версии" "Показывает установленную и доступную версию AWG Pi Gateway и наличие updater для AmneziaWG core." \
+      "Gateway/Core обновляются по стабильным версиям проекта. Mihomo engine — только до версии, pinned и проверенной текущим Gateway." 23 108 10 \
+      1 "Показать версии" "Показывает Gateway, AmneziaWG updater и installed/supported состояние Mihomo engine." \
       2 "Обновить AWG Pi Gateway" "Проверяет и устанавливает новый стабильный релиз gateway; меню после успешного обновления перезапускается." \
       3 "Обновить AmneziaWG core" "Проверяет и устанавливает поддерживаемую стабильную версию AmneziaWG tools/core." \
-      4 "Проверить/обновить всё" "Последовательно проверяет Gateway и AmneziaWG core и устанавливает доступные стабильные обновления." \
+      4 "Проверить / восстановить Mihomo engine" "No-op при совпадении installed=supported. При mismatch ставит только pinned SHA256-verified build; активный Mihomo сначала нужно вывести из datapath." \
+      5 "Проверить/обновить всё" "Последовательно проверяет Gateway, AmneziaWG core и соответствие Mihomo engine поддерживаемой pinned-версии." \
       0 "Назад" "Возвращает в главное меню без изменений." 3>&1 1>&2 2>&3)" || return 0
     case "$choice" in
       1)
@@ -1099,7 +1100,11 @@ update_menu(){
         run_interactive "AmneziaWG core update" "$AWG_UPDATE" --yes core
         ;;
       4)
-        confirm "Полное обновление" "Проверить обновления AWG Pi Gateway и AmneziaWG core?" || continue
+        confirm "Mihomo engine" "Проверить установленный Mihomo engine и при необходимости привести его к pinned-версии текущего Gateway?\n\nПроизвольный upstream latest не устанавливается." || continue
+        run_interactive "Mihomo engine" "$AWG_UPDATE" --yes mihomo
+        ;;
+      5)
+        confirm "Полное обновление" "Проверить AWG Pi Gateway, AmneziaWG core и поддерживаемую Mihomo engine version?" || continue
         run_interactive "Полное обновление" "$AWG_UPDATE" --yes all
         _old_menu_self="$0"
         unset AWG_MENU_REEXEC

@@ -19,6 +19,7 @@ RAW="https://raw.githubusercontent.com/$REPO"
 VERSION_FILE=/etc/awg-pbr/version
 BACKUP_ROOT=/var/backups/awg-gateway
 CORE_UPDATE=/usr/local/sbin/awg-core-update
+MIHOMO_INSTALLER=/usr/local/sbin/awg-mihomo-install
 ASSUME_YES=0
 
 confirm(){
@@ -238,6 +239,22 @@ gateway_update(){
     sort -nr | awk 'NR>5{sub(/^[^ ]+ /,""); print}' | xargs -r rm -rf
 }
 
+mihomo_status(){
+  if [[ -x "$MIHOMO_INSTALLER" ]]; then
+    "$MIHOMO_INSTALLER" status || true
+  else
+    echo "Mihomo engine updater: missing"
+  fi
+}
+
+mihomo_ensure(){
+  [[ -x "$MIHOMO_INSTALLER" ]] || {
+    echo "$MIHOMO_INSTALLER не найден" >&2
+    return 1
+  }
+  "$MIHOMO_INSTALLER" ensure
+}
+
 show_status(){
   local cur latest
   cur="$(current_version)"
@@ -248,6 +265,7 @@ show_status(){
   else
     echo "AmneziaWG core updater: missing"
   fi
+  mihomo_status
 }
 
 cmd="${1:-}"
@@ -265,28 +283,34 @@ case "$cmd" in
     (( ASSUME_YES == 1 )) && exec "$CORE_UPDATE" --yes
     exec "$CORE_UPDATE" "$@"
     ;;
+  mihomo)
+    mihomo_ensure
+    ;;
   all)
     gateway_update
     if [[ -x "$CORE_UPDATE" ]]; then
       (( ASSUME_YES == 1 )) && "$CORE_UPDATE" --yes || "$CORE_UPDATE"
     fi
+    mihomo_ensure
     ;;
   "")
     echo "1) AWG Pi Gateway"
     echo "2) AmneziaWG core"
-    echo "3) Всё"
-    echo "4) Только показать версии"
-    read -r -p "Выбор [4]: " choice </dev/tty
-    case "${choice:-4}" in
+    echo "3) Mihomo engine (supported pinned version)"
+    echo "4) Всё"
+    echo "5) Только показать версии"
+    read -r -p "Выбор [5]: " choice </dev/tty
+    case "${choice:-5}" in
       1) gateway_update ;;
       2) exec "$CORE_UPDATE" ;;
-      3) gateway_update; "$CORE_UPDATE" ;;
-      4) show_status ;;
+      3) mihomo_ensure ;;
+      4) gateway_update; "$CORE_UPDATE"; mihomo_ensure ;;
+      5) show_status ;;
       *) echo "Неверный выбор" >&2; exit 2 ;;
     esac
     ;;
   *)
-    echo "Использование: awg-update [--yes] {status|gateway|core|all}" >&2
+    echo "Использование: awg-update [--yes] {status|gateway|core|mihomo|all}" >&2
     exit 2
     ;;
 esac

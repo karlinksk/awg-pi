@@ -55,6 +55,16 @@ printf 'AWG_FETCH_PATH=%s\n' "$path"
 MOCK
 chmod +x "$TMP/bin/fetch"
 
+cat >"$TMP/bin/systemctl" <<'MOCK'
+#!/usr/bin/env bash
+if [[ "${1:-}" == is-active && "${2:-}" == --quiet && "${3:-}" == awg-mihomo.service ]]; then
+  [[ "${MOCK_MIHOMO_ACTIVE:-0}" == 1 ]] && exit 0
+  exit 3
+fi
+exit 0
+MOCK
+chmod +x "$TMP/bin/systemctl"
+
 run_install(){
   local target="$1"; shift
   sudo env \
@@ -66,8 +76,54 @@ run_install(){
     MOCK_FETCH_LOG="$TMP/fetch.log" \
     MOCK_FETCH_PATH="${MOCK_FETCH_PATH:-}" \
     MOCK_FETCH_FAIL="${MOCK_FETCH_FAIL:-0}" \
+    MOCK_MIHOMO_ACTIVE="${MOCK_MIHOMO_ACTIVE:-0}" \
+    SYSTEMCTL_BIN="$TMP/bin/systemctl" \
     bash "$ROOT/src/awg-mihomo-install" "$@"
 }
+
+echo "=== status reports missing and supported engine states ==="
+if run_install "$TMP/status-missing" status >"$TMP/out"; then
+  echo 'FAIL: missing engine status unexpectedly returned OK' >&2
+  exit 1
+fi
+grep -Fqx 'Mihomo engine: installed=missing supported=1.19.32 state=REPAIR_REQUIRED' "$TMP/out"
+cp "$TMP/mock-mihomo" "$TMP/status-ok"
+chmod +x "$TMP/status-ok"
+run_install "$TMP/status-ok" status | grep -Fqx 'Mihomo engine: installed=1.19.32 supported=1.19.32 state=OK'
+
+echo "=== ensure is a no-op when installed version matches ==="
+: >"$TMP/fetch.log"
+out="$(run_install "$TMP/status-ok" ensure)"
+grep -Fqx 'Mihomo engine: installed=1.19.32 supported=1.19.32 state=OK' <<<"$out"
+grep -Fqx 'Mihomo engine update is not required.' <<<"$out"
+[[ ! -s "$TMP/fetch.log" ]]
+
+echo "=== ensure repairs mismatch only while Mihomo is inactive ==="
+cat >"$TMP/mismatch" <<'MOCK'
+#!/usr/bin/env bash
+[[ "${1:-}" == -v ]] && { echo 'Mihomo Meta v0.0.1'; exit 0; }
+MOCK
+chmod +x "$TMP/mismatch"
+: >"$TMP/fetch.log"
+out="$(MOCK_FETCH_PATH=direct run_install "$TMP/mismatch" ensure)"
+grep -Fq 'state=REPAIR_REQUIRED' <<<"$out"
+grep -Fqx 'MIHOMO_BINARY_FETCH_PATH=direct' <<<"$out"
+"$TMP/mismatch" -v | grep -Fqx 'Mihomo Meta v1.19.32'
+
+echo "=== ensure refuses mismatched active Mihomo ==="
+cat >"$TMP/mismatch-active" <<'MOCK'
+#!/usr/bin/env bash
+[[ "${1:-}" == -v ]] && { echo 'Mihomo Meta v0.0.1'; exit 0; }
+MOCK
+chmod +x "$TMP/mismatch-active"
+: >"$TMP/fetch.log"
+if MOCK_MIHOMO_ACTIVE=1 run_install "$TMP/mismatch-active" ensure >"$TMP/out" 2>"$TMP/err"; then
+  echo 'FAIL: active mismatched Mihomo was replaced' >&2
+  exit 1
+fi
+grep -Fq 'repair refused while awg-mihomo.service is active' "$TMP/err"
+[[ ! -s "$TMP/fetch.log" ]]
+"$TMP/mismatch-active" -v | grep -Fqx 'Mihomo Meta v0.0.1'
 
 echo "=== installer AUTO delegates to shared manager ==="
 : >"$TMP/fetch.log"

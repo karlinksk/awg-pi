@@ -11,6 +11,7 @@ AWG_FETCH_BIN="${AWG_FETCH_BIN:-/usr/local/sbin/awg-fetch}"
 MIHOMO_INSTALL_FETCH_MODE="${MIHOMO_INSTALL_FETCH_MODE:-auto}"
 MIHOMO_INSTALL_ASSET_URL="${MIHOMO_INSTALL_ASSET_URL:-}"
 MIHOMO_INSTALL_ASSET_SHA256="${MIHOMO_INSTALL_ASSET_SHA256:-}"
+SYSTEMCTL_BIN="${SYSTEMCTL_BIN:-systemctl}"
 
 
 usage(){
@@ -18,14 +19,56 @@ usage(){
 Usage:
   awg-mihomo-install [--mode auto|direct|awg|mihomo]
   awg-mihomo-install --file PINNED_ASSET.gz
+  awg-mihomo-install status
+  awg-mihomo-install ensure [--mode auto|direct|awg|mihomo]
 
 AUTO delegates to the bootstrap manager: DIRECT first, then the selected
 healthy transport, then other healthy transports. Legacy "router" maps to DIRECT.
+
+status compares the installed binary with the version pinned by this Gateway
+release. ensure is a no-op when they already match; otherwise it installs only
+the pinned, SHA256-verified build. A mismatched active Mihomo service is not
+replaced in-place: switch transport first, then run ensure.
 
 --file is offline recovery. The local archive must match the pinned SHA256 and
 Mihomo version for this gateway release; arbitrary binaries are not accepted.
 USAGE
 }
+
+command_mode="install"
+if [[ "${1:-}" == status || "${1:-}" == ensure ]]; then
+  command_mode="$1"
+  shift
+fi
+
+installed_version(){
+  local line
+  [[ -x "$MIHOMO_TARGET" ]] || { printf '%s\n' missing; return 0; }
+  line="$("$MIHOMO_TARGET" -v 2>/dev/null | head -n1 || true)"
+  if [[ "$line" =~ Mihomo[[:space:]]+Meta[[:space:]]+v([0-9][^[:space:]]*) ]]; then
+    printf '%s\n' "${BASH_REMATCH[1]}"
+  else
+    printf '%s\n' unknown
+  fi
+}
+
+engine_status(){
+  local installed state
+  installed="$(installed_version)"
+  if [[ "$installed" == "$MIHOMO_VERSION" ]]; then
+    state=OK
+  else
+    state=REPAIR_REQUIRED
+  fi
+  printf 'Mihomo engine: installed=%s supported=%s state=%s\n' "$installed" "$MIHOMO_VERSION" "$state"
+  [[ "$state" == OK ]]
+}
+
+if [[ "$command_mode" == status ]]; then
+  (( $# == 0 )) || { usage >&2; exit 2; }
+  engine_status
+  exit $?
+fi
 
 local_archive=""
 while (( $# )); do
@@ -51,6 +94,17 @@ while (( $# )); do
       ;;
   esac
 done
+
+if [[ "$command_mode" == ensure ]]; then
+  if engine_status; then
+    echo "Mihomo engine update is not required."
+    exit 0
+  fi
+  if "$SYSTEMCTL_BIN" is-active --quiet awg-mihomo.service 2>/dev/null; then
+    echo "Mihomo engine repair refused while awg-mihomo.service is active. Switch active transport to AWG first." >&2
+    exit 1
+  fi
+fi
 
 [[ "$MIHOMO_INSTALL_FETCH_MODE" == router ]] && MIHOMO_INSTALL_FETCH_MODE=direct
 case "$MIHOMO_INSTALL_FETCH_MODE" in

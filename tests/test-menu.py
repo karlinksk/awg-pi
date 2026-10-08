@@ -18,6 +18,7 @@ required = [
     '"Редактировать FIXED chain"',
     '"Часовой пояс"',
     '"Статистика traffic"',
+    '"Проверить / восстановить Mihomo engine"',
     '"VPN-сервисы / домены"',
     '"Заменить ссылку подписки"',
     '"Обновить подписку — AUTO"',
@@ -133,6 +134,9 @@ assert 'Имя вводится один раз' in menu
 assert 'AWG_TRAFFIC=/usr/local/sbin/awg-traffic' in menu
 assert '"$AWG_TRAFFIC" status compact' in menu
 assert 'timedatectl set-timezone "$zone"' in menu
+assert '"$AWG_UPDATE" --yes mihomo' in menu
+assert 'Произвольный upstream latest не устанавливается.' in menu
+assert 'installed=supported' in menu
 assert 'cpu_temperature' in menu
 assert 'memory_summary' in menu
 assert 'system_uptime' in menu
