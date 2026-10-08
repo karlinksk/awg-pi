@@ -67,10 +67,10 @@ OUT
     chmod 600 "$MIHOMO_ENV_FILE"
     printf 'MIHOMO_HEALTH=healthy\n'
     ;;
-  "node list")
+  "node list"|"provider candidate list")
     printf 'Finland\tvless\t45.86.66.170:443\n'
     ;;
-  "node prepare Finland")
+  "node prepare Finland"|"provider candidate prepare Finland")
     cat <<'OUT'
 Node: Finland
 Type: vless
@@ -78,7 +78,7 @@ Resolved IPv4 endpoints:
   - 45.86.66.170
 OUT
     ;;
-  "node select Finland 45.86.66.170")
+  "node select Finland 45.86.66.170"|"provider candidate commit Finland 45.86.66.170")
     printf 'MIHOMO_HEALTH=healthy\n'
     ;;
   *) exit 2 ;;
@@ -126,8 +126,8 @@ printf '%s\n' unconfigured >"$TMP/transport"
 out="$(run_first mihomo-url 'https://subscription.example/token' standard auto)"
 grep -Fqx 'FIRST_TRANSPORT=mihomo' <<<"$out"
 grep -Eq '^mihomo:init ' "$TMP/log"
-grep -Fqx 'mihomo:node list' "$TMP/log"
-grep -Fqx 'mihomo:node select Finland 45.86.66.170' "$TMP/log"
+grep -Fqx 'mihomo:provider candidate list' "$TMP/log"
+grep -Fqx 'mihomo:provider candidate commit Finland 45.86.66.170' "$TMP/log"
 grep -Fqx 'transport-select:mihomo' "$TMP/log"
 grep -Fqx mihomo "$TMP/transport"
 
