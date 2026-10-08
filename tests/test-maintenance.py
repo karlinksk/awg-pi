@@ -92,6 +92,9 @@ class Maintenance(unittest.TestCase):
         p = patch.object(m, 'run', side_effect=self.mock_run)
         p.start()
         self.addCleanup(p.stop)
+        p = patch.object(m.shutil, 'which', return_value='/usr/bin/mock')
+        p.start()
+        self.addCleanup(p.stop)
         p = patch.object(m, 'preflight')
         self.preflight = p.start()
         self.addCleanup(p.stop)
@@ -114,6 +117,11 @@ class Maintenance(unittest.TestCase):
 
     def args(self, **kw):
         return argparse.Namespace(**dict(dict(yes=True, keep_clients=True, action='replace', file=str(self.new)), **kw))
+
+    def test_missing_awg_engine_bootstraps_on_demand(self):
+        with patch.object(m.shutil, 'which', return_value=None):
+            m.ensure_awg_engine()
+        self.assertIn((m.AWG_ENGINE_INSTALLER,), self.calls)
 
     def test_profile_sanitization(self):
         clean, endpoint = m.profile(PROFILE)
