@@ -26,12 +26,14 @@ BASE_BACKTITLE="AWG Pi Gateway v$VERSION"
 BACKTITLE="$BASE_BACKTITLE"
 TMP="$(mktemp)"
 PASTE_TMP=""
+PASTE_OUT=""
 SELF_TMP=""
 if [[ "${AWG_MENU_REEXEC:-0}" == 1 && "$0" == /tmp/awg-menu.* ]]; then
   SELF_TMP="$0"
 fi
 cleanup(){
   [[ -z "$PASTE_TMP" ]] || rm -f "$PASTE_TMP" 2>/dev/null || true
+  [[ -z "$PASTE_OUT" ]] || rm -f "$PASTE_OUT" 2>/dev/null || true
   rm -f "$TMP" 2>/dev/null || true
   [[ -z "$SELF_TMP" ]] || rm -f "$SELF_TMP" 2>/dev/null || true
 }
@@ -503,19 +505,23 @@ paste_awg_config(){
   local rc
   install -d -m 700 /run/awg-pbr
   PASTE_TMP="$(mktemp /run/awg-pbr/config-paste.XXXXXX.conf)"
-  chmod 600 "$PASTE_TMP"
+  PASTE_OUT="$(mktemp /run/awg-pbr/config-paste-result.XXXXXX.conf)"
+  chmod 600 "$PASTE_TMP" "$PASTE_OUT"
 
   set +e
-  dialog --backtitle "$BACKTITLE" --title "Вставить конфигурацию AmneziaWG" \
+  dialog --stdout --backtitle "$BACKTITLE" --title "Вставить конфигурацию AmneziaWG" \
     --ok-label "Проверить" --cancel-label "Отмена" \
-    --editbox "$PASTE_TMP" 30 110
+    --editbox "$PASTE_TMP" 30 110 >"$PASTE_OUT"
   rc=$?
   set -e
   if (( rc != 0 )); then
-    rm -f "$PASTE_TMP"
+    rm -f "$PASTE_TMP" "$PASTE_OUT"
     PASTE_TMP=""
+    PASTE_OUT=""
     return 0
   fi
+  mv -f "$PASTE_OUT" "$PASTE_TMP"
+  PASTE_OUT=""
 
   # Text copied from Windows terminals/clipboard may contain CRLF.
   sed -i 's/\r$//' "$PASTE_TMP"
@@ -696,17 +702,20 @@ paste_mihomo_provider(){
   local rc source_mode
   install -d -m 700 /run/awg-pbr
   PASTE_TMP="$(mktemp /run/awg-pbr/mihomo-paste.XXXXXX)"
-  chmod 600 "$PASTE_TMP"
+  PASTE_OUT="$(mktemp /run/awg-pbr/mihomo-paste-result.XXXXXX)"
+  chmod 600 "$PASTE_TMP" "$PASTE_OUT"
 
   set +e
-  dialog --backtitle "$BACKTITLE" --title "Вставить профиль / подписку Mihomo" \
+  dialog --stdout --backtitle "$BACKTITLE" --title "Вставить профиль / подписку Mihomo" \
     --ok-label "Проверить" --cancel-label "Отмена" \
-    --editbox "$PASTE_TMP" 30 110
+    --editbox "$PASTE_TMP" 30 110 >"$PASTE_OUT"
   rc=$?
   set -e
   if (( rc != 0 )); then
-    rm -f "$PASTE_TMP"; PASTE_TMP=""; return 0
+    rm -f "$PASTE_TMP" "$PASTE_OUT"; PASTE_TMP=""; PASTE_OUT=""; return 0
   fi
+  mv -f "$PASTE_OUT" "$PASTE_TMP"
+  PASTE_OUT=""
 
   sed -i 's/\r$//' "$PASTE_TMP"
   if ! grep -q '[^[:space:]]' "$PASTE_TMP"; then

@@ -49,7 +49,17 @@ check_pos = menu.index('config check "$PASTE_TMP"')
 replace_pos = menu.index('config replace "$PASTE_TMP" --yes')
 assert check_pos < replace_pos
 assert 'PASTE_TMP=""' in menu
+assert 'PASTE_OUT=""' in menu
 assert 'trap cleanup EXIT' in menu
+
+# dialog --editbox returns edited text on its output stream; it does not modify
+# the input file. Both paste flows must capture that output into a root-only
+# temporary file before validating/using it.
+assert menu.count('dialog --stdout --backtitle "$BACKTITLE"') >= 2
+assert menu.count('>"$PASTE_OUT"') == 2
+assert menu.count('mv -f "$PASTE_OUT" "$PASTE_TMP"') == 2
+assert 'config-paste-result.XXXXXX.conf' in menu
+assert 'mihomo-paste-result.XXXXXX' in menu
 
 # Every dialog menu has item help.
 assert menu.count("--menu") == menu.count("--item-help --menu")
