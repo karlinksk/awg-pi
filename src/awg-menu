@@ -455,13 +455,24 @@ awg_config_menu(){
   done
 }
 
+resolve_tsv_node_choice(){
+  local listing="$1" choice="$2" resolved
+  resolved=""
+  if [[ "$choice" =~ ^[0-9]+$ ]]; then
+    resolved="$(awk -F '\t' -v pick="$choice" '$1 == pick {print $2; exit}' <<<"$listing")"
+  fi
+  printf '%s\n' "${resolved:-$choice}"
+}
+
 mihomo_node_menu(){
-  local node_name endpoint info_tmp current rc
+  local node_name endpoint info_tmp current rc listing
 
   title="Доступные Mihomo nodes"
   capture "$MIHOMO_CONFIGURE" node list || return 0
+  listing="$("$MIHOMO_CONFIGURE" node list 2>/dev/null)" || return 0
 
-  node_name="$(input "Точка выхода Mihomo" "Введите ТОЧНОЕ имя узла из списка выше:")" || return 0
+  node_name="$(input "Точка выхода Mihomo" "Введите номер или ТОЧНОЕ имя узла из списка выше:")" || return 0
+  node_name="$(resolve_tsv_node_choice "$listing" "$node_name")"
   [[ -n "$node_name" ]] || { msg "Mihomo" "Имя узла не задано."; return 0; }
 
   info_tmp="$(mktemp)"
@@ -501,14 +512,16 @@ mihomo_node_menu(){
 }
 
 mihomo_candidate_menu(){
-  local node_name endpoint info_tmp current rc
+  local node_name endpoint info_tmp current rc listing
 
   title="Staged Mihomo provider"
   if ! capture "$MIHOMO_CONFIGURE" provider candidate list; then
     return 0
   fi
+  listing="$("$MIHOMO_CONFIGURE" provider candidate list 2>/dev/null)" || return 0
 
-  node_name="$(input "Candidate node" "Введите ТОЧНОЕ имя узла из staged provider:")" || return 0
+  node_name="$(input "Candidate node" "Введите номер или ТОЧНОЕ имя узла из staged provider:")" || return 0
+  node_name="$(resolve_tsv_node_choice "$listing" "$node_name")"
   [[ -n "$node_name" ]] || { msg "Mihomo" "Имя candidate node не задано."; return 0; }
 
   info_tmp="$(mktemp)"
@@ -599,7 +612,7 @@ mihomo_provider_format_dialog(){
 }
 
 mihomo_node_chain_editor(){
-  local choice node idx chain current order_file
+  local choice node idx chain current order_file listing
   local -a nodes=()
   order_file=/etc/awg-pbr/transports/mihomo/node-policy.nodes
 
@@ -631,7 +644,9 @@ mihomo_node_chain_editor(){
       1)
         title="Доступные Mihomo nodes"
         capture "$MIHOMO_CONFIGURE" node list || true
-        node="$(input "Добавить node" "Введите ТОЧНОЕ имя live-node:")" || continue
+        listing="$("$MIHOMO_CONFIGURE" node list 2>/dev/null)" || continue
+        node="$(input "Добавить node" "Введите номер или ТОЧНОЕ имя live-node:")" || continue
+        node="$(resolve_tsv_node_choice "$listing" "$node")"
         [[ -n "$node" ]] || continue
         if printf '%s\n' "${nodes[@]}" | grep -Fxq -- "$node"; then
           msg "Mihomo Node Failover" "Этот node уже есть в цепочке."

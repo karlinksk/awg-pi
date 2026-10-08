@@ -171,7 +171,10 @@ grep -Fq '4) Mihomo provider/subscription — локальный файл' "$ROO
 grep -Fq '5) Mihomo provider/subscription — вставить текст' "$ROOT/src/awg-first-run"
 grep -Fq '6) Пока ничего не настраивать' "$ROOT/src/awg-first-run"
 grep -Fq 'Настроить резервную последовательность Mihomo nodes сейчас?' "$ROOT/src/awg-first-run"
-grep -Fq 'Следующий fallback node (ТОЧНОЕ имя; пусто = закончить)' "$ROOT/src/awg-first-run"
+grep -Fq 'Следующий fallback node (номер или ТОЧНОЕ имя; пусто = закончить)' "$ROOT/src/awg-first-run"
+grep -Fq 'Введите номер или точное имя первого Mihomo node' "$ROOT/src/awg-first-run"
+grep -Fq 'resolve_node_choice' "$ROOT/src/awg-first-run"
+grep -Fq 'первый Mihomo transport остаётся рабочим, node policy = MANUAL' "$ROOT/src/awg-first-run"
 grep -Fq '"$MIHOMO_NODE_POLICY" mode fixed "${nodes[@]}"' "$ROOT/src/awg-first-run"
 grep -Fq 'Итоговая exact-node chain' "$ROOT/src/awg-first-run"
 

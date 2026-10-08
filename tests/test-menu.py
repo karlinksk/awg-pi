@@ -109,6 +109,9 @@ assert 'MIHOMO_NODE_POLICY=/usr/local/sbin/awg-mihomo-node-policy' in menu
 assert '"$MIHOMO_NODE_POLICY" mode manual' in menu
 assert '"$MIHOMO_NODE_POLICY" mode fixed "${nodes[@]}"' in menu
 assert 'Failover идёт только слева направо' in menu
+assert 'resolve_tsv_node_choice' in menu
+assert 'Введите номер или ТОЧНОЕ имя узла из списка выше:' in menu
+assert 'Введите номер или ТОЧНОЕ имя live-node:' in menu
 assert '"$AWG_ROUTE" source add opencck "$target" --type domains --kind "$method"' in menu
 assert 'Имя вводится один раз' in menu
 assert 'AWG_TRAFFIC=/usr/local/sbin/awg-traffic' in menu

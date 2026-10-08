@@ -98,8 +98,17 @@ activate_awg_file(){
   printf 'FIRST_TRANSPORT=awg\n'
 }
 
+resolve_node_choice(){
+  local listing="$1" choice="$2" resolved
+  resolved=""
+  if [[ "$choice" =~ ^[0-9]+$ ]]; then
+    resolved="$(awk -F '\t' -v pick="$choice" '$1 == pick {print $2; exit}' <<<"$listing")"
+  fi
+  printf '%s\n' "${resolved:-$choice}"
+}
+
 configure_mihomo_node_chain(){
-  local primary="$1" answer next chain node existing
+  local primary="$1" answer next chain node existing listing
   local -a nodes=("$primary")
   [[ "${AWG_FIRST_RUN_INTERACTIVE:-0}" == 1 ]] || return 0
 
@@ -112,10 +121,16 @@ configure_mihomo_node_chain(){
   fi
 
   while true; do
-    ui_print "$(printf '\n=== Live Mihomo nodes ===\n%s\n' "$("$MIHOMO_CONFIGURE" node list)")"
-    ask "Следующий fallback node (ТОЧНОЕ имя; пусто = закончить)" ""
+    if ! listing="$("$MIHOMO_CONFIGURE" node list)"; then
+      "$MIHOMO_NODE_POLICY" mode manual >/dev/null 2>&1 || true
+      ui_print "Список nodes сейчас недоступен; первый Mihomo transport сохранён, node policy = MANUAL."
+      return 0
+    fi
+    ui_print "$(printf '\n=== Live Mihomo nodes ===\n%s\n' "$listing")"
+    ask "Следующий fallback node (номер или ТОЧНОЕ имя; пусто = закончить)" ""
     next="$REPLY"
     [[ -n "$next" ]] || break
+    next="$(resolve_node_choice "$listing" "$next")"
 
     for existing in "${nodes[@]}"; do
       if [[ "$existing" == "$next" ]]; then
@@ -143,7 +158,10 @@ configure_mihomo_node_chain(){
 
   chain="$(printf ' -> %s' "${nodes[@]}")"
   ui_print "Итоговая exact-node chain: ${chain# -> }"
-  "$MIHOMO_NODE_POLICY" mode fixed "${nodes[@]}"
+  if ! "$MIHOMO_NODE_POLICY" mode fixed "${nodes[@]}"; then
+    "$MIHOMO_NODE_POLICY" mode manual >/dev/null 2>&1 || true
+    ui_print "Fallback chain не применена; первый Mihomo transport остаётся рабочим, node policy = MANUAL."
+  fi
 }
 
 choose_mihomo_node(){
@@ -162,9 +180,10 @@ choose_mihomo_node(){
   ui_print "$(printf '\n=== Доступные Mihomo nodes ===\n%s\n' "$nodes")"
   name="${AWG_FIRST_RUN_NODE:-}"
   if [[ -z "$name" ]]; then
-    ask "Введите точное имя первого Mihomo node"
+    ask "Введите номер или точное имя первого Mihomo node"
     name="$REPLY"
   fi
+  name="$(resolve_node_choice "$nodes" "$name")"
   [[ -n "$name" ]] || {
     echo "Node name is required" >&2
     return 2
