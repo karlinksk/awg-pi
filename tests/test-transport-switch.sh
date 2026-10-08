@@ -9,6 +9,7 @@ printf '%s\n' awg >"$tmp/transport"
 printf '%s\n' transit >"$tmp/mode"
 printf '%s\n' '45.86.66.170' >"$tmp/expected-egress"
 : >"$tmp/preflight.log"
+: >"$tmp/awg.active"
 
 cat >"$tmp/env" <<'EOF'
 VPN_IF=awg0
@@ -26,6 +27,7 @@ MOCK
 cat >"$tmp/bin/awg" <<'MOCK'
 #!/usr/bin/env bash
 [[ "$*" == "show awg0 latest-handshakes" ]] || exit 1
+[[ -e "${MOCK_AWG_ACTIVE_FILE:?}" ]] || exit 1
 echo 'peer 1000'
 MOCK
 
@@ -68,7 +70,10 @@ case "$*" in
   "stop awg-mihomo.service")
     rm -f "${MOCK_MIHOMO_ACTIVE_FILE:?}"
     ;;
-  "start awg-quick@awg0.service"|"stop awg-pbr-health.service"|"restart awg-pbr-health.service")
+  "start awg-quick@awg0.service")
+    : >"${MOCK_AWG_ACTIVE_FILE:?}"
+    ;;
+  "enable awg-quick@awg0.service"|"enable awg-mihomo.service"|"stop awg-pbr-health.service"|"restart awg-pbr-health.service")
     exit 0
     ;;
   *)
@@ -114,6 +119,7 @@ run_select(){
     AWG_LOCK_FILE="$tmp/maintenance.lock" \
     MOCK_SYSTEMCTL_LOG="$tmp/systemctl.log" MOCK_ROUTE_LOG="$tmp/route.log" \
     MOCK_MIHOMO_ACTIVE_FILE="$tmp/mihomo.active" \
+    MOCK_AWG_ACTIVE_FILE="$tmp/awg.active" \
     MOCK_MIHOMO_HEALTH="${MOCK_MIHOMO_HEALTH:-up}" \
     MOCK_PREFLIGHT_LOG="$tmp/preflight.log" \
     MOCK_PREFLIGHT_FAIL="${MOCK_PREFLIGHT_FAIL:-0}" \
@@ -128,6 +134,7 @@ out="$(run_select mihomo)"
 grep -Fqx mihomo "$tmp/preflight.log"
 sudo grep -Fqx mihomo "$tmp/transport"
 grep -Fqx 'start awg-mihomo.service' "$tmp/systemctl.log"
+grep -Fqx 'enable awg-mihomo.service' "$tmp/systemctl.log"
 grep -Fqx reload "$tmp/route.log"
 grep -Fqx 'Transport ID: mihomo' <<<"$out"
 [[ "$(sudo stat -c '%a' "$tmp/transport")" == 600 ]]
@@ -138,9 +145,24 @@ out="$(run_select awg)"
 grep -Fqx awg "$tmp/preflight.log"
 sudo grep -Fqx awg "$tmp/transport"
 grep -Fqx 'start awg-quick@awg0.service' "$tmp/systemctl.log"
+grep -Fqx 'enable awg-quick@awg0.service' "$tmp/systemctl.log"
 grep -Fqx 'stop awg-mihomo.service' "$tmp/systemctl.log"
 grep -Fqx reload "$tmp/route.log"
 grep -Fqx 'Transport ID: awg' <<<"$out"
+
+echo "=== selected AWG self-heals after reboot and enables backend ==="
+: >"$tmp/systemctl.log"; : >"$tmp/route.log"; : >"$tmp/preflight.log"
+printf '%s\n' awg | sudo tee "$tmp/transport" >/dev/null
+sudo chmod 600 "$tmp/transport"
+rm -f "$tmp/awg.active"
+out="$(run_select awg)"
+grep -Fqx 'start awg-quick@awg0.service' "$tmp/systemctl.log"
+grep -Fqx 'enable awg-quick@awg0.service' "$tmp/systemctl.log"
+grep -Fqx awg "$tmp/preflight.log"
+grep -Fqx reload "$tmp/route.log"
+grep -Fqx 'Transport ID: awg' <<<"$out"
+grep -Fq 'Transport recovered and enabled for boot: AmneziaWG' <<<"$out"
+[[ -e "$tmp/awg.active" ]]
 
 echo "=== unhealthy Mihomo leaves state unchanged ==="
 : >"$tmp/systemctl.log"; : >"$tmp/route.log"; rm -f "$tmp/mihomo.active"
