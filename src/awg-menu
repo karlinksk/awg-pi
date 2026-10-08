@@ -434,14 +434,20 @@ paste_awg_config(){
 }
 
 awg_config_menu(){
-  local choice path
+  local choice path previous rollback_state
   while true; do
+    previous="/etc/amnezia/amneziawg/${VPN_IF:-awg0}.conf.previous"
+    if [[ -s "$previous" ]]; then
+      rollback_state="доступен"
+    else
+      rollback_state="нет предыдущего профиля"
+    fi
     choice="$(dialog --backtitle "$BACKTITLE" --title "Конфигурация AmneziaWG" --item-help --menu \
       "Выберите способ установки native .conf. Перед заменой профиль проходит безопасную проверку." \
-      21 100 8 \
+      21 110 8 \
       1 "Вставить конфигурацию текстом" "Открывает защищённое многострочное поле: вставьте native AmneziaWG .conf из буфера обмена. Сначала выполняется check." \
       2 "Загрузить конфигурацию из файла" "Использует уже существующий native .conf на Raspberry Pi и запускает транзакционную замену с rollback." \
-      3 "Откатить предыдущую конфигурацию" "Меняет текущий и предыдущий профили местами и проверяет handshake/transport; используется для быстрого возврата." \
+      3 "Откатить предыдущую конфигурацию [$rollback_state]" "Доступен после первой успешной замены профиля через v1.3; меняет current/previous местами и проверяет handshake/transport." \
       0 "Назад" "Возвращает в меню VPN без изменений." 3>&1 1>&2 2>&3)" || return 0
     case "$choice" in
       1) paste_awg_config ;;
@@ -449,7 +455,13 @@ awg_config_menu(){
         path="$(input "AmneziaWG" "Полный путь к native .conf:")" || continue
         run_interactive "Замена профиля" "$AWG_ROUTE" config replace "$path"
         ;;
-      3) run_interactive "Откат профиля" "$AWG_ROUTE" config rollback ;;
+      3)
+        if [[ ! -s "$previous" ]]; then
+          msg "Откат профиля" "Предыдущий AWG-профиль для быстрого rollback отсутствует.\n\nОн появится автоматически после первой успешной замены профиля через этот v1.3 мастер.\n\nАрхивные upgrade/install backups не используются как automatic rollback, чтобы случайно не активировать устаревшую конфигурацию."
+          continue
+        fi
+        run_interactive "Откат профиля" "$AWG_ROUTE" config rollback
+        ;;
       0) return 0 ;;
     esac
   done

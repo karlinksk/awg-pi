@@ -479,6 +479,11 @@ def replace_config(args, env):
         raise ValueError('Некорректный VPN_IF')
     active = Path(CONF_DIR) / (vpn + '.conf')
     previous = active.with_suffix('.conf.previous')
+    if args.action == 'rollback' and not previous.is_file():
+        raise ValueError(
+            'Откат недоступен: предыдущий AWG-профиль отсутствует. '
+            'Он появится после первой успешной замены профиля через v1.3.'
+        )
     source = previous if args.action == 'rollback' else Path(args.file)
     clean, endpoint = profile(source.read_text())
     had_active = active.exists()

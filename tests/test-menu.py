@@ -12,7 +12,7 @@ required = [
     'config replace "$PASTE_TMP" --yes',
     '"Вставить конфигурацию текстом"',
     '"Загрузить конфигурацию из файла"',
-    '"Откатить предыдущую конфигурацию"',
+    '"Откатить предыдущую конфигурацию [$rollback_state]"',
     '"Mihomo / Multi-Transport"',
     '"Mihomo Node Failover"',
     '"Редактировать FIXED chain"',
@@ -98,6 +98,11 @@ assert 'Отдельное MikroTik правило для этого IP боль
 assert 'gateway-wide DIRECT bypass' in menu
 assert '"$AWG_FIRST_RUN" wizard' in menu
 assert 'secondary_transport_setup' in menu
+assert 'rollback_state="доступен"' in menu
+assert 'rollback_state="нет предыдущего профиля"' in menu
+assert 'Предыдущий AWG-профиль для быстрого rollback отсутствует.' in menu
+assert 'Архивные upgrade/install backups не используются как automatic rollback' in menu
+assert 'if [[ ! -s "$previous" ]]' in menu
 assert '5) secondary_transport_setup' in menu
 assert '6) secondary_transport_setup' in menu
 assert 'mihomo_initial_setup_flow secondary' in menu

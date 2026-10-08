@@ -286,6 +286,17 @@ class Maintenance(unittest.TestCase):
             1,
         )
 
+    def test_rollback_without_previous_profile_is_explicit_and_safe(self):
+        self.previous.unlink(missing_ok=True)
+        with self.assertRaisesRegex(
+                ValueError,
+                'Откат недоступен: предыдущий AWG-профиль отсутствует'):
+            m.replace_config(self.args(action='rollback', file=None), self.env)
+        self.assertEqual(self.calls, [])
+        self.preflight.assert_not_called()
+        self.assertEqual(self.active.read_text(), PROFILE)
+        self.assertFalse(Path(m.BACKUPS).exists())
+
     def test_config_success_and_manual_rollback(self):
         before = {f: Path(f).read_bytes() for f in [m.ENV, m.DNS, m.NFT, m.CLIENTS, m.DOMAINS]}
         m.replace_config(self.args(), self.env)
