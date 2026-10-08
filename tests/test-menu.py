@@ -20,6 +20,7 @@ required = [
     '"Импортировать локальный профиль"',
     '"Вставить provider / subscription"',
     '"Staged provider / candidate"',
+    '"Mihomo engine / recovery"',
     '"Переключить транспорт на Mihomo"',
     '"Переключить транспорт на AmneziaWG"',
     '"Точка выхода / узел"',
@@ -101,6 +102,8 @@ assert 'MIHOMO_PROVIDER_PROFILE=%q' in menu
 assert 'MIHOMO_PROVIDER_FORMAT=%q' in menu
 assert '"$MIHOMO_CONFIGURE" provider format set "$provider_format"' in menu
 assert 'mihomo_provider_format_dialog' in menu
+assert '"$MIHOMO_INSTALL" --file "$path"' in menu
+assert 'pinned SHA256' in menu
 
 
 for needle in (
