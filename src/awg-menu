@@ -17,6 +17,7 @@ AWG_TRANSPORT=/usr/local/sbin/awg-transport
 MIHOMO_CONFIGURE=/usr/local/sbin/awg-mihomo-configure
 MIHOMO_INSTALLER=/usr/local/sbin/awg-mihomo-install
 AWG_FIRST_RUN=/usr/local/sbin/awg-first-run
+AWG_SELECTION=/usr/local/sbin/awg-selection
 AWG_UPDATE=/usr/local/sbin/awg-update
 VERSION="$(cat /etc/awg-pbr/version 2>/dev/null || echo unknown)"
 BASE_BACKTITLE="AWG Pi Gateway v$VERSION"
@@ -648,6 +649,54 @@ mihomo_menu(){
   done
 }
 
+selection_policy_menu(){
+  local choice
+  while true; do
+    choice="$(dialog --backtitle "$BACKTITLE" --title "Transport Selection Policy" --item-help --menu \
+      "MANUAL — безопасный default. FIXED+FAILOVER и AUTO переключают transport только после повторных health failures. Здоровый канал ради скорости не меняется; Mihomo node/страна автоматически не меняются." \
+      24 110 9 \
+      1 "Показать policy" "Показывает режим, active transport, primary/fallback/allowed order и ограничения AUTO." \
+      2 "MANUAL" "Полностью запрещает автоматическое переключение transport. Ручной выбор всегда имеет приоритет." \
+      3 "FIXED: AWG → Mihomo" "AWG primary; после нескольких подряд failures разрешён failover только на Mihomo." \
+      4 "FIXED: Mihomo → AWG" "Mihomo primary; после нескольких подряд failures разрешён failover только на AWG." \
+      5 "AUTO: AWG → Mihomo" "Разрешены AWG и Mihomo в этом порядке. Переключение только при повторном отказе текущего; без performance switching." \
+      6 "AUTO: Mihomo → AWG" "Разрешены Mihomo и AWG в этом порядке. Переключение только при повторном отказе текущего; без performance switching." \
+      0 "Назад" "Не менять selection policy." 3>&1 1>&2 2>&3)" || return 0
+    case "$choice" in
+      1)
+        title="Transport Selection Policy"
+        capture "$AWG_SELECTION" status || true
+        ;;
+      2)
+        confirm "Selection Policy" "Перейти в MANUAL? Автоматический failover transport будет отключён." || continue
+        title="Selection → MANUAL"
+        capture "$AWG_SELECTION" mode manual || true
+        ;;
+      3)
+        confirm "FIXED+FAILOVER" "Primary=AWG, fallback=Mihomo. Автоматический переход разрешён только после повторных health failures. Применить?" || continue
+        title="Selection → FIXED AWG→Mihomo"
+        capture "$AWG_SELECTION" mode fixed awg mihomo || true
+        ;;
+      4)
+        confirm "FIXED+FAILOVER" "Primary=Mihomo, fallback=AWG. Автоматический переход разрешён только после повторных health failures. Применить?" || continue
+        title="Selection → FIXED Mihomo→AWG"
+        capture "$AWG_SELECTION" mode fixed mihomo awg || true
+        ;;
+      5)
+        confirm "AUTO" "Разрешить availability-only AUTO в порядке AWG→Mihomo? Здоровый transport не меняется ради производительности; Mihomo node/страна не меняются." || continue
+        title="Selection → AUTO AWG→Mihomo"
+        capture "$AWG_SELECTION" mode auto awg mihomo || true
+        ;;
+      6)
+        confirm "AUTO" "Разрешить availability-only AUTO в порядке Mihomo→AWG? Здоровый transport не меняется ради производительности; Mihomo node/страна не меняются." || continue
+        title="Selection → AUTO Mihomo→AWG"
+        capture "$AWG_SELECTION" mode auto mihomo awg || true
+        ;;
+      0) return 0 ;;
+    esac
+  done
+}
+
 vpn_menu(){
   local choice mode
   while true; do
@@ -655,12 +704,13 @@ vpn_menu(){
     if [[ "$mode" == transit ]]; then
       choice="$(dialog --backtitle "$BACKTITLE" --title "AWG / Transit [TRANSIT]" --item-help --menu \
         "Transit: MikroTik выбирает трафик. Health monitor автоматически управляет AWG и применяет FAIL-CLOSED при отказе." \
-        21 100 7 \
+        23 104 8 \
         1 "Показать состояние режима" "Показывает текущий Operating mode, Transit guard, policy rule и готовность VPN table." \
         2 "Перезапустить awg0 и health monitor" "Перезапускает сам туннель AmneziaWG и его контроль здоровья. Возможен краткий обрыв backup VPN-трафика." \
         3 "Конфигурация AmneziaWG" "Установка нового native .conf текстом/из файла или rollback предыдущего профиля." \
         4 "Mihomo / Multi-Transport" "Subscription, bootstrap, выбор точки выхода и транзакционное переключение AWG ↔ Mihomo." \
         5 "Первичная настройка transport" "Используется в состоянии unconfigured/recovery: выбрать первый backend из имеющегося AWG профиля или Mihomo subscription/profile." \
+        6 "Transport Selection Policy" "MANUAL / FIXED+FAILOVER / conservative AUTO. Не меняет Mihomo node/страну автоматически." \
         0 "Назад" "Возвращает в главное меню без изменений." 3>&1 1>&2 2>&3)" || return 0
       case "$choice" in
         1)
@@ -675,19 +725,21 @@ vpn_menu(){
         3) awg_config_menu ;;
         4) mihomo_menu ;;
         5) run_interactive "Первичная настройка transport" "$AWG_FIRST_RUN" wizard ;;
+        6) selection_policy_menu ;;
         0) return 0 ;;
       esac
       continue
     fi
 
     choice="$(dialog --backtitle "$BACKTITLE" --title "VPN policy [SELECTIVE]" --item-help --menu \
-      "Управление Selective Gateway. Подсказка для выделенного пункта показана внизу." 21 100 7 \
+      "Управление Selective Gateway. Подсказка для выделенного пункта показана внизу." 23 104 8 \
       1 "Включить VPN policy" "Разрешает выборочную VPN-маршрутизацию. Policy станет ACTIVE только после успешного health-check AWG." \
       2 "Выключить VPN policy (всё DIRECT)" "Отключает Selective policy: весь маршрутизируемый трафик идёт DIRECT. Сам awg0 не удаляется." \
       3 "Перезапустить awg0 и health monitor" "Перезапускает туннель AmneziaWG и проверку здоровья; VPN-трафик может кратковременно перейти в FAIL-OPEN/DIRECT." \
       4 "Конфигурация AmneziaWG" "Установка нового native .conf текстом/из файла или rollback предыдущего профиля." \
       5 "Mihomo / Multi-Transport" "Subscription, bootstrap-каналы, локальный импорт и транзакционное переключение AWG ↔ Mihomo." \
       6 "Первичная настройка transport" "Используется в состоянии unconfigured/recovery: выбрать первый backend из имеющегося AWG профиля или Mihomo subscription/profile." \
+      7 "Transport Selection Policy" "MANUAL / FIXED+FAILOVER / conservative AUTO. Не меняет Mihomo node/страну автоматически." \
       0 "Назад" "Возвращает в главное меню без изменений." 3>&1 1>&2 2>&3)" || return 0
     case "$choice" in
       1)
@@ -707,6 +759,7 @@ vpn_menu(){
       4) awg_config_menu ;;
       5) mihomo_menu ;;
       6) run_interactive "Первичная настройка transport" "$AWG_FIRST_RUN" wizard ;;
+      7) selection_policy_menu ;;
       0) return 0 ;;
     esac
   done

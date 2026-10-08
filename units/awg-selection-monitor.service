@@ -1,0 +1,13 @@
+[Unit]
+Description=AWG Pi Gateway transport selection monitor
+After=network-online.target awg-pbr-setup.service awg-pbr-health.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/sbin/awg-selection-monitor
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

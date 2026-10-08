@@ -1,0 +1,172 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+[[ ${EUID:-$(id -u)} -eq 0 ]] || exec sudo "$0" "$@"
+
+AWG_COMMON_FILE="${AWG_COMMON_FILE:-/usr/local/lib/awg-pi/common.sh}"
+AWG_SELECTION_FILE="${AWG_SELECTION_FILE:-/etc/awg-pbr/selection.env}"
+AWG_TRANSPORT_CLI="${AWG_TRANSPORT_CLI:-/usr/local/sbin/awg-transport}"
+
+# shellcheck disable=SC1090
+source "$AWG_COMMON_FILE"
+
+usage(){
+  cat <<'USAGE'
+Usage:
+  awg-selection status
+  awg-selection mode manual
+  awg-selection mode fixed PRIMARY [FALLBACK...]
+  awg-selection mode auto ALLOWED...
+
+Modes:
+  manual  Never switch transport automatically.
+  fixed   Keep PRIMARY while healthy; after repeated failures use the first
+          explicitly listed healthy fallback. Never switches back merely for
+          performance.
+  auto    Conservative availability-only AUTO. Keep the current allowed healthy
+          transport. If it repeatedly fails, use the first other healthy transport
+          from the explicit allowed order. No latency/performance optimization.
+
+This policy controls transport selection only. Mihomo node/country/protocol
+selection remains manual until a separate node policy explicitly permits it.
+USAGE
+}
+
+valid_transport(){
+  awg_transport_backend_valid "${1:-}"
+}
+
+atomic_write(){
+  local mode="$1" primary="$2" order="$3" dir tmp
+  dir="$(dirname "$AWG_SELECTION_FILE")"
+  mkdir -p "$dir"
+  chmod 700 "$dir"
+  tmp="$(mktemp "$dir/.selection.XXXXXX")"
+  {
+    printf 'SELECTION_MODE=%q\n' "$mode"
+    printf 'SELECTION_PRIMARY=%q\n' "$primary"
+    printf 'SELECTION_ORDER=%q\n' "$order"
+  } >"$tmp"
+  chmod 600 "$tmp"
+  mv -f "$tmp" "$AWG_SELECTION_FILE"
+}
+
+load_policy(){
+  SELECTION_MODE=manual
+  SELECTION_PRIMARY=""
+  SELECTION_ORDER=""
+  if [[ -r "$AWG_SELECTION_FILE" ]]; then
+    # shellcheck disable=SC1090
+    source "$AWG_SELECTION_FILE"
+  fi
+  case "${SELECTION_MODE:-}" in manual|fixed|auto) ;; *) return 1 ;; esac
+}
+
+validate_unique(){
+  local seen="," item
+  for item in "$@"; do
+    valid_transport "$item" || {
+      echo "Unsupported transport in selection policy: $item" >&2
+      return 2
+    }
+    [[ "$seen" != *",$item,"* ]] || {
+      echo "Duplicate transport in selection policy: $item" >&2
+      return 2
+    }
+    seen+="$item,"
+  done
+}
+
+set_manual(){
+  atomic_write manual "" ""
+  printf 'SELECTION_MODE=manual\n'
+}
+
+set_fixed(){
+  local primary="${1:-}" order item joined=""
+  shift || true
+  [[ -n "$primary" ]] || { echo "fixed mode requires PRIMARY" >&2; return 2; }
+  validate_unique "$primary" "$@" || return
+  for item in "$@"; do
+    joined="${joined:+$joined,}$item"
+  done
+  atomic_write fixed "$primary" "$joined"
+  printf 'SELECTION_MODE=fixed\n'
+  printf 'SELECTION_PRIMARY=%s\n' "$primary"
+  printf 'SELECTION_FALLBACKS=%s\n' "${joined:-none}"
+}
+
+set_auto(){
+  local item joined=""
+  (( $# > 0 )) || { echo "auto mode requires at least one allowed transport" >&2; return 2; }
+  validate_unique "$@" || return
+  for item in "$@"; do
+    joined="${joined:+$joined,}$item"
+  done
+  atomic_write auto "" "$joined"
+  printf 'SELECTION_MODE=auto\n'
+  printf 'SELECTION_ALLOWED=%s\n' "$joined"
+}
+
+status(){
+  local current
+  load_policy || {
+    echo "Invalid selection policy file: $AWG_SELECTION_FILE" >&2
+    return 1
+  }
+  current="$(awg_transport_get 2>/dev/null || echo unconfigured)"
+  printf 'Selection mode: %s\n' "$SELECTION_MODE"
+  printf 'Current transport: %s\n' "$current"
+  case "$SELECTION_MODE" in
+    manual)
+      printf 'Automatic transport switching: disabled\n'
+      ;;
+    fixed)
+      printf 'Primary transport: %s\n' "${SELECTION_PRIMARY:-none}"
+      printf 'Fallback transports: %s\n' "${SELECTION_ORDER:-none}"
+      printf 'Automatic trigger: repeated health failure only\n'
+      ;;
+    auto)
+      printf 'Allowed transport order: %s\n' "${SELECTION_ORDER:-none}"
+      printf 'Automatic trigger: repeated health failure only\n'
+      printf 'Performance optimization: disabled (conservative AUTO)\n'
+      ;;
+  esac
+  printf 'Mihomo node auto-selection: disabled\n'
+}
+
+case "${1:-status}" in
+  status)
+    [[ $# -le 1 ]] || { usage >&2; exit 2; }
+    status
+    ;;
+  mode)
+    case "${2:-}" in
+      manual)
+        [[ $# -eq 2 ]] || { usage >&2; exit 2; }
+        set_manual
+        ;;
+      fixed)
+        [[ $# -ge 3 ]] || { usage >&2; exit 2; }
+        shift 2
+        set_fixed "$@"
+        ;;
+      auto)
+        [[ $# -ge 3 ]] || { usage >&2; exit 2; }
+        shift 2
+        set_auto "$@"
+        ;;
+      *)
+        usage >&2
+        exit 2
+        ;;
+    esac
+    ;;
+  -h|--help|help)
+    usage
+    ;;
+  *)
+    usage >&2
+    exit 2
+    ;;
+esac

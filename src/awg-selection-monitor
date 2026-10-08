@@ -1,0 +1,161 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+AWG_COMMON_FILE="${AWG_COMMON_FILE:-/usr/local/lib/awg-pi/common.sh}"
+AWG_SELECTION_FILE="${AWG_SELECTION_FILE:-/etc/awg-pbr/selection.env}"
+AWG_TRANSPORT_CLI="${AWG_TRANSPORT_CLI:-/usr/local/sbin/awg-transport}"
+AWG_SELECTION_STATE_DIR="${AWG_SELECTION_STATE_DIR:-/run/awg-pbr}"
+AWG_SELECTION_FAILURES="${AWG_SELECTION_FAILURES:-$AWG_SELECTION_STATE_DIR/selection.failures}"
+AWG_SELECTION_INTERVAL="${AWG_SELECTION_INTERVAL:-10}"
+AWG_SELECTION_FAILURE_THRESHOLD="${AWG_SELECTION_FAILURE_THRESHOLD:-3}"
+LOGGER_BIN="${LOGGER_BIN:-logger}"
+SLEEP_BIN="${SLEEP_BIN:-sleep}"
+
+# shellcheck disable=SC1090
+source "$AWG_COMMON_FILE"
+
+mkdir -p "$AWG_SELECTION_STATE_DIR"
+
+log_event(){
+  "$LOGGER_BIN" -t awg-selection "$*" 2>/dev/null || true
+}
+
+load_policy(){
+  SELECTION_MODE=manual
+  SELECTION_PRIMARY=""
+  SELECTION_ORDER=""
+  if [[ -r "$AWG_SELECTION_FILE" ]]; then
+    # shellcheck disable=SC1090
+    source "$AWG_SELECTION_FILE"
+  fi
+  case "${SELECTION_MODE:-}" in manual|fixed|auto) return 0 ;; *) return 1 ;; esac
+}
+
+read_failures(){
+  local n
+  n="$(cat "$AWG_SELECTION_FAILURES" 2>/dev/null || echo 0)"
+  [[ "$n" =~ ^[0-9]+$ ]] || n=0
+  printf '%s\n' "$n"
+}
+
+write_failures(){
+  printf '%s\n' "$1" >"$AWG_SELECTION_FAILURES"
+}
+
+reset_failures(){
+  write_failures 0
+}
+
+transport_healthy(){
+  local t="$1"
+  awg_transport_backend_valid "$t" || return 1
+  "$AWG_TRANSPORT_CLI" check "$t" >/dev/null 2>&1
+}
+
+policy_csv(){
+  case "$SELECTION_MODE" in
+    fixed)
+      if [[ -n "$SELECTION_PRIMARY" && -n "$SELECTION_ORDER" ]]; then
+        printf '%s,%s\n' "$SELECTION_PRIMARY" "$SELECTION_ORDER"
+      else
+        printf '%s\n' "${SELECTION_PRIMARY:-$SELECTION_ORDER}"
+      fi
+      ;;
+    auto)
+      printf '%s\n' "${SELECTION_ORDER:-}"
+      ;;
+    *)
+      printf '\n'
+      ;;
+  esac
+}
+
+current_is_allowed(){
+  local current="$1" csv item
+  csv="$(policy_csv)"
+  IFS=',' read -ra _items <<<"$csv"
+  for item in "${_items[@]}"; do
+    [[ -n "$item" && "$item" == "$current" ]] && return 0
+  done
+  return 1
+}
+
+try_failover(){
+  local current="$1" csv candidate
+  csv="$(policy_csv)"
+  IFS=',' read -ra _items <<<"$csv"
+  for candidate in "${_items[@]}"; do
+    [[ -n "$candidate" && "$candidate" != "$current" ]] || continue
+    if transport_healthy "$candidate"; then
+      if "$AWG_TRANSPORT_CLI" select "$candidate" >/dev/null; then
+        log_event "Automatic failover: $current -> $candidate (mode=$SELECTION_MODE)"
+        reset_failures
+        printf 'FAILOVER=%s->%s\n' "$current" "$candidate"
+        return 0
+      fi
+    fi
+  done
+  return 1
+}
+
+selection_cycle(){
+  local current failures
+
+  if ! load_policy; then
+    log_event "Invalid selection policy; automatic switching disabled"
+    reset_failures
+    return 0
+  fi
+
+  if [[ "$SELECTION_MODE" == manual ]]; then
+    reset_failures
+    return 0
+  fi
+
+  current="$(awg_transport_get 2>/dev/null || echo unconfigured)"
+
+  if [[ "$current" == unconfigured ]]; then
+    # A configured policy is explicit permission to pick from its listed
+    # transports. There is no active datapath to preserve in this state.
+    if try_failover unconfigured; then
+      return 0
+    fi
+    reset_failures
+    return 0
+  fi
+
+  if ! current_is_allowed "$current"; then
+    # Never switch a healthy/manual transport merely because policy metadata
+    # changed. The user must explicitly select an allowed transport once.
+    reset_failures
+    return 0
+  fi
+
+  if transport_healthy "$current"; then
+    reset_failures
+    return 0
+  fi
+
+  failures="$(read_failures)"
+  failures=$((failures + 1))
+  write_failures "$failures"
+
+  if (( failures < AWG_SELECTION_FAILURE_THRESHOLD )); then
+    return 0
+  fi
+
+  if try_failover "$current"; then
+    return 0
+  fi
+
+  # Keep the saturated counter so the next cycle can immediately reconsider a
+  # recovered allowed fallback without generating extra persistent writes.
+  write_failures "$AWG_SELECTION_FAILURE_THRESHOLD"
+  return 0
+}
+
+while true; do
+  selection_cycle
+  [[ "${AWG_SELECTION_ONCE:-0}" == 1 ]] && break
+  "$SLEEP_BIN" "$AWG_SELECTION_INTERVAL"
+done
