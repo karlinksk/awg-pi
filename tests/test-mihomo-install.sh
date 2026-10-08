@@ -93,6 +93,21 @@ grep -Fqx 'mode=direct' "$TMP/fetch.log"
 [[ ! -e "$TMP/target-fail" ]]
 grep -Fq 'Unable to download Mihomo binary through bootstrap manager' "$TMP/err"
 
+echo "=== offline pinned archive bypasses bootstrap manager ==="
+: >"$TMP/fetch.log"
+out="$(run_install "$TMP/target-local" --file "$TMP/mihomo.gz")"
+grep -Fqx 'MIHOMO_BINARY_FETCH_PATH=file' <<<"$out"
+[[ ! -s "$TMP/fetch.log" ]]
+"$TMP/target-local" -v | grep -Fqx 'Mihomo Meta v1.19.32'
+
+echo "=== bad offline archive is rejected before install ==="
+printf 'corrupt\n' >"$TMP/bad.gz"
+if run_install "$TMP/target-bad" --file "$TMP/bad.gz" >"$TMP/out" 2>"$TMP/err"; then
+  echo 'FAIL: corrupt offline Mihomo archive unexpectedly succeeded' >&2
+  exit 1
+fi
+[[ ! -e "$TMP/target-bad" ]]
+
 echo "=== legacy router mode maps to DIRECT ==="
 : >"$TMP/fetch.log"
 out="$(MOCK_FETCH_PATH=direct run_install "$TMP/target-legacy" --mode router)"
