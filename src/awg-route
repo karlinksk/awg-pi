@@ -29,6 +29,9 @@ HEALTH_SERVICE="${AWG_HEALTH_SERVICE:-awg-pbr-health.service}"
 MODE_SWITCH="${AWG_MODE_SWITCH:-/usr/local/sbin/awg-mode-switch}"
 TRANSIT_ROUTING="${AWG_TRANSIT_ROUTING:-/usr/local/sbin/awg-transit-routing}"
 TRANSPORT_CLI="${AWG_TRANSPORT_CLI:-/usr/local/sbin/awg-transport}"
+SELECTION_CLI="${AWG_SELECTION_CLI:-/usr/local/sbin/awg-selection}"
+MIHOMO_CONFIGURE="${MIHOMO_CONFIGURE_BIN:-/usr/local/sbin/awg-mihomo-configure}"
+MIHOMO_ENDPOINT_IP_FILE="${MIHOMO_ENDPOINT_IP_FILE:-/etc/awg-pbr/transports/mihomo/endpoint-ip}"
 OPENCCK_UPDATE="${AWG_OPENCCK_UPDATE:-/usr/local/sbin/awg-opencck-update}"
 SOURCE_ROOT="${SOURCE_ROOT:-/etc/awg-pbr/sources}"
 OPENCCK_DIR="$SOURCE_ROOT/opencck"
@@ -503,12 +506,27 @@ show_status(){
     printf 'VPN policy requested: %s\n' "$([[ "$enabled" == 1 ]] && echo ON || echo OFF)"
     printf 'Policy rule: %s\n' "$(policy_present && echo ACTIVE || echo FAIL-OPEN/DIRECT)"
   fi
-  if [[ "$transport_id" == awg ]]; then
-    if (( age >= 0 )); then printf 'Latest AWG handshake age: %ss\n' "$age"; else echo 'Latest AWG handshake: отсутствует'; fi
+  case "$transport_id" in
+    awg)
+      if (( age >= 0 )); then printf 'Latest AWG handshake age: %ss\n' "$age"; else echo 'Latest AWG handshake: отсутствует'; fi
+      ;;
+    mihomo)
+      echo
+      echo "=== Active Mihomo details ==="
+      [[ -x "$MIHOMO_CONFIGURE" ]] && "$MIHOMO_CONFIGURE" status 2>/dev/null || echo "Mihomo status unavailable"
+      ;;
+    unconfigured)
+      printf 'Transport readiness: not-ready\n'
+      ;;
+  esac
+  if [[ -x "$SELECTION_CLI" ]]; then
+    echo
+    echo "=== Selection Policy ==="
+    "$SELECTION_CLI" status 2>/dev/null || true
   fi
   echo
   echo "=== Services ==="
-  for s in awg-pbr-setup.service dnsmasq.service "awg-quick@$VPN_IF.service" awg-mihomo.service awg-pbr-health.service awg-opencck-update.timer awg-mihomo-update.timer; do
+  for s in awg-pbr-setup.service dnsmasq.service "awg-quick@$VPN_IF.service" awg-mihomo.service awg-pbr-health.service awg-selection-monitor.service awg-opencck-update.timer awg-mihomo-update.timer; do
     printf '%-30s %s\n' "$s" "$(systemctl is-active "$s" 2>/dev/null || true)"
   done
   echo
@@ -518,8 +536,20 @@ show_status(){
   printf 'Client allow-list: %s\n' "$(grep -Evc '^\s*(#|$)' "$CF" 2>/dev/null || true)"
   printf 'OpenCCK sources: %s total / %s enabled / %s cached entries\n' "$sc_total" "$sc_enabled" "$sc_entries"
   echo
-  echo "=== AmneziaWG backend ==="
-  awg_safe_show "$VPN_IF" || echo "awg0 недоступен"
+  echo "=== Backend details ==="
+  case "$transport_id" in
+    awg)
+      echo "AmneziaWG / WireGuard backend [ACTIVE]"
+      awg_safe_show "$VPN_IF" || echo "$VPN_IF недоступен"
+      ;;
+    mihomo)
+      echo "Mihomo backend [ACTIVE]"
+      [[ -x "$MIHOMO_CONFIGURE" ]] && "$MIHOMO_CONFIGURE" status 2>/dev/null || echo "Mihomo status unavailable"
+      ;;
+    unconfigured)
+      echo "No active backend configured"
+      ;;
+  esac
 }
 
 domain_source(){
@@ -626,13 +656,33 @@ run_diagnostics(){
     dig +time=3 +tries=1 +short A example.com @"$PI_IP" | grep -qE '^[0-9]+\.' && echo "dnsmasq query: OK" || echo "dnsmasq query: FAIL"
     echo
     echo "--- Services ---"
-    for s in awg-pbr-setup.service dnsmasq.service "awg-quick@$VPN_IF.service" awg-pbr-health.service awg-opencck-update.timer; do
+    for s in awg-pbr-setup.service dnsmasq.service "awg-quick@$VPN_IF.service" awg-mihomo.service awg-pbr-health.service awg-selection-monitor.service awg-opencck-update.timer awg-mihomo-update.timer; do
       echo "$s: $(systemctl is-active "$s" 2>/dev/null || true) / enabled=$(systemctl is-enabled "$s" 2>/dev/null || true)"
     done
     echo
-    echo "--- AWG ---"; awg_safe_show "$VPN_IF" || true
-    age="$(handshake_age)"; echo "Handshake age: $age"; echo "Health state: $(health_state)"
+    echo "--- Active backend ---"
+    case "$transport_id" in
+      awg)
+        echo "Backend: AmneziaWG / WireGuard"
+        awg_safe_show "$VPN_IF" || true
+        age="$(handshake_age)"
+        echo "AWG handshake age: $age"
+        ;;
+      mihomo)
+        echo "Backend: Mihomo"
+        [[ -x "$MIHOMO_CONFIGURE" ]] && "$MIHOMO_CONFIGURE" status 2>&1 || true
+        ;;
+      unconfigured)
+        echo "Backend: not-ready"
+        ;;
+    esac
+    echo "Health state: $(health_state)"
     echo "Policy present: $(policy_present && echo yes || echo no)"
+    if [[ -x "$SELECTION_CLI" ]]; then
+      echo
+      echo "--- Selection Policy ---"
+      "$SELECTION_CLI" status 2>&1 || true
+    fi
     echo
     if [[ "$diag_mode" == transit ]]; then
       echo "--- Transit safety ---"
@@ -641,16 +691,28 @@ run_diagnostics(){
         awk '{for(i=1;i<=NF;i++) if($i=="lladdr"){print $(i+1); exit}}')"
       echo "Router MAC: ${router_mac:-unresolved}"
       echo "Selective classification: INACTIVE (state preserved)"
-      while IFS= read -r endpoint; do
-        [[ -n "$endpoint" && "$endpoint" != "(none)" ]] || continue
-        if [[ "$endpoint" == \[* ]]; then
-          echo "AWG endpoint: $endpoint (IPv6 is not supported by the current IPv4 Transit datapath)"
-          continue
-        fi
-        endpoint_host="${endpoint%:*}"
-        echo "AWG endpoint: $endpoint"
-        echo "Endpoint route: $(ip -4 route get "$endpoint_host" 2>&1 | head -1 || true)"
-      done < <(awg show "$VPN_IF" endpoints 2>/dev/null | awk 'NF>=2{print $2}')
+      case "$transport_id" in
+        awg)
+          while IFS= read -r endpoint; do
+            [[ -n "$endpoint" && "$endpoint" != "(none)" ]] || continue
+            if [[ "$endpoint" == \[* ]]; then
+              echo "AWG endpoint: $endpoint (IPv6 is not supported by the current IPv4 Transit datapath)"
+              continue
+            fi
+            endpoint_host="${endpoint%:*}"
+            echo "AWG endpoint: $endpoint"
+            echo "Endpoint route: $(ip -4 route get "$endpoint_host" 2>&1 | head -1 || true)"
+          done < <(awg show "$VPN_IF" endpoints 2>/dev/null | awk 'NF>=2{print $2}')
+          ;;
+        mihomo)
+          endpoint_host="$(tr -d '\r\n[:space:]' <"$MIHOMO_ENDPOINT_IP_FILE" 2>/dev/null || true)"
+          echo "Mihomo endpoint IPv4: ${endpoint_host:-unavailable}"
+          [[ -z "$endpoint_host" ]] || echo "Endpoint route: $(ip -4 route get "$endpoint_host" 2>&1 | head -1 || true)"
+          ;;
+        unconfigured)
+          echo "Transport endpoint: not-ready"
+          ;;
+      esac
       echo
     fi
     echo "--- Policy routing ---"; ip -4 rule show; ip -4 route show table "$VPN_TABLE" 2>/dev/null || true
