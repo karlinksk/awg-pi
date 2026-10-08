@@ -43,14 +43,35 @@ cat >"$TMP/bin/logger" <<'MOCK'
 #!/usr/bin/env bash
 exit 0
 MOCK
+cat >"$TMP/bin/node-policy" <<'MOCK'
+#!/usr/bin/env bash
+set -Eeuo pipefail
+printf '%s\n' "$*" >>"${MOCK_NODE_POLICY_LOG:?}"
+case "${1:-}" in
+  enabled)
+    [[ "${MOCK_NODE_POLICY_ENABLED:-0}" == 1 ]]
+    ;;
+  failover)
+    if [[ "${MOCK_NODE_FAILOVER_OK:-0}" == 1 ]]; then
+      printf 'MIHOMO_NODE_FAILOVER=Finland->Finland backup\n'
+      exit 0
+    fi
+    exit 1
+    ;;
+  *)
+    exit 2
+    ;;
+esac
+MOCK
+
 chmod +x "$TMP/bin/"*
 
 run_policy(){
-  sudo env     AWG_COMMON_FILE="$ROOT/src/awg-common"     AWG_TRANSPORT_FILE="$TMP/transport"     AWG_SELECTION_FILE="$TMP/selection.env"     AWG_TRANSPORT_CLI="$TMP/bin/transport"     MOCK_TRANSPORT_STATE="$TMP/transport"     MOCK_TRANSPORT_LOG="$TMP/log"     MOCK_AWG_HEALTH="${MOCK_AWG_HEALTH:-up}"     MOCK_MIHOMO_HEALTH="${MOCK_MIHOMO_HEALTH:-up}"     bash "$ROOT/src/awg-selection" "$@"
+  sudo env     AWG_COMMON_FILE="$ROOT/src/awg-common"     AWG_TRANSPORT_FILE="$TMP/transport"     AWG_SELECTION_FILE="$TMP/selection.env"     AWG_TRANSPORT_CLI="$TMP/bin/transport"     MOCK_TRANSPORT_STATE="$TMP/transport"     MOCK_TRANSPORT_LOG="$TMP/log"     MOCK_NODE_POLICY_LOG="$TMP/node-policy.log"     MOCK_NODE_POLICY_ENABLED="${MOCK_NODE_POLICY_ENABLED:-0}"     MOCK_NODE_FAILOVER_OK="${MOCK_NODE_FAILOVER_OK:-0}"     MOCK_AWG_HEALTH="${MOCK_AWG_HEALTH:-up}"     MOCK_MIHOMO_HEALTH="${MOCK_MIHOMO_HEALTH:-up}"     bash "$ROOT/src/awg-selection" "$@"
 }
 
 run_monitor(){
-  sudo env     AWG_COMMON_FILE="$ROOT/src/awg-common"     AWG_TRANSPORT_FILE="$TMP/transport"     AWG_SELECTION_FILE="$TMP/selection.env"     AWG_TRANSPORT_CLI="$TMP/bin/transport"     AWG_SELECTION_STATE_DIR="$TMP/run"     AWG_SELECTION_FAILURES="$TMP/run/failures"     AWG_SELECTION_FAILURE_THRESHOLD=3     AWG_SELECTION_ONCE=1     LOGGER_BIN="$TMP/bin/logger"     MOCK_TRANSPORT_STATE="$TMP/transport"     MOCK_TRANSPORT_LOG="$TMP/log"     MOCK_AWG_HEALTH="${MOCK_AWG_HEALTH:-up}"     MOCK_MIHOMO_HEALTH="${MOCK_MIHOMO_HEALTH:-up}"     bash "$ROOT/src/awg-selection-monitor"
+  sudo env     AWG_COMMON_FILE="$ROOT/src/awg-common"     AWG_TRANSPORT_FILE="$TMP/transport"     AWG_SELECTION_FILE="$TMP/selection.env"     AWG_TRANSPORT_CLI="$TMP/bin/transport"     MIHOMO_NODE_POLICY_CLI="$TMP/bin/node-policy"     AWG_SELECTION_STATE_DIR="$TMP/run"     AWG_SELECTION_FAILURES="$TMP/run/failures"     AWG_SELECTION_FAILURE_THRESHOLD=3     AWG_SELECTION_ONCE=1     LOGGER_BIN="$TMP/bin/logger"     MOCK_TRANSPORT_STATE="$TMP/transport"     MOCK_TRANSPORT_LOG="$TMP/log"     MOCK_AWG_HEALTH="${MOCK_AWG_HEALTH:-up}"     MOCK_MIHOMO_HEALTH="${MOCK_MIHOMO_HEALTH:-up}"     bash "$ROOT/src/awg-selection-monitor"
 }
 
 echo "=== manual is the safe default ==="
@@ -132,5 +153,38 @@ MOCK_AWG_HEALTH=down MOCK_MIHOMO_HEALTH=up run_monitor
 [[ ! -s "$TMP/log" ]]
 grep -Fqx awg "$TMP/transport"
 grep -Fqx '0' "$TMP/run/failures"
+
+echo "=== exact-node recovery has priority over transport failover ==="
+run_policy mode fixed mihomo awg >/dev/null
+printf '%s\n' mihomo >"$TMP/transport"
+: >"$TMP/log"; : >"$TMP/node-policy.log"
+printf '2\n' | sudo tee "$TMP/run/failures" >/dev/null
+out="$(MOCK_MIHOMO_HEALTH=down MOCK_AWG_HEALTH=up MOCK_NODE_POLICY_ENABLED=1 MOCK_NODE_FAILOVER_OK=1 run_monitor)"
+grep -Fqx 'MIHOMO_NODE_FAILOVER=Finland->Finland backup' <<<"$out"
+grep -Fqx 'enabled' "$TMP/node-policy.log"
+grep -Fqx 'failover' "$TMP/node-policy.log"
+[[ ! -s "$TMP/log" ]]
+grep -Fqx mihomo "$TMP/transport"
+grep -Fqx '0' "$TMP/run/failures"
+
+echo "=== transport fallback runs only after exact-node fallback fails ==="
+printf '%s\n' mihomo >"$TMP/transport"
+: >"$TMP/log"; : >"$TMP/node-policy.log"
+printf '2\n' | sudo tee "$TMP/run/failures" >/dev/null
+out="$(MOCK_MIHOMO_HEALTH=down MOCK_AWG_HEALTH=up MOCK_NODE_POLICY_ENABLED=1 MOCK_NODE_FAILOVER_OK=0 run_monitor)"
+grep -Fqx 'FAILOVER=mihomo->awg' <<<"$out"
+grep -Fqx 'failover' "$TMP/node-policy.log"
+grep -Fqx 'select:awg' "$TMP/log"
+grep -Fqx awg "$TMP/transport"
+
+echo "=== transport MANUAL still permits separately explicit node failover ==="
+run_policy mode manual >/dev/null
+printf '%s\n' mihomo >"$TMP/transport"
+: >"$TMP/log"; : >"$TMP/node-policy.log"
+printf '2\n' | sudo tee "$TMP/run/failures" >/dev/null
+out="$(MOCK_MIHOMO_HEALTH=down MOCK_NODE_POLICY_ENABLED=1 MOCK_NODE_FAILOVER_OK=1 run_monitor)"
+grep -Fqx 'MIHOMO_NODE_FAILOVER=Finland->Finland backup' <<<"$out"
+[[ ! -s "$TMP/log" ]]
+grep -Fqx mihomo "$TMP/transport"
 
 echo "transport selection policy: OK"
