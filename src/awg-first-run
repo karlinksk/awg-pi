@@ -25,7 +25,6 @@ Usage:
   awg-first-run awg-file FILE
   awg-first-run mihomo-url URL [standard|remnawave] [auto|mihomo|vless|base64]
   awg-first-run mihomo-file FILE [auto|mihomo|vless|base64]
-  awg-first-run mihomo-engine-file PINNED_ASSET.gz
   awg-first-run status
 
 The wizard configures the first transport backend only. Operating Mode
@@ -97,19 +96,27 @@ activate_awg_file(){
   printf 'FIRST_TRANSPORT=awg\n'
 }
 
+prepare_local_mihomo_env(){
+  local format="$1" dir tmp
+  case "$format" in auto|mihomo|vless|base64) ;; *) return 2 ;; esac
+  dir="$(dirname "$MIHOMO_ENV_FILE")"
+  mkdir -p "$dir"
+  chmod 700 "$dir"
+  if [[ ! -e "$MIHOMO_ENV_FILE" ]]; then
+    tmp="$(mktemp "$dir/.first-run-provider.XXXXXX")"
+    {
+      printf 'MIHOMO_PROVIDER_PROFILE=%q\n' standard
+      printf 'MIHOMO_PROVIDER_FORMAT=%q\n' "$format"
+      printf 'MIHOMO_FETCH_MODE=%q\n' auto
+    } >"$tmp"
+    chmod 600 "$tmp"
+    mv -f "$tmp" "$MIHOMO_ENV_FILE"
+  fi
+}
+
 choose_mihomo_node(){
-  local source="${1:-live}" nodes name prepared endpoint
-  case "$source" in
-    live)
-      nodes="$("$MIHOMO_CONFIGURE" node list)" || return
-      ;;
-    candidate)
-      nodes="$("$MIHOMO_CONFIGURE" provider candidate list)" || return
-      ;;
-    *)
-      return 2
-      ;;
-  esac
+  local nodes name prepared endpoint
+  nodes="$("$MIHOMO_CONFIGURE" node list)" || return
   ui_print "$(printf '\n=== Доступные Mihomo nodes ===\n%s\n' "$nodes")"
   name="${AWG_FIRST_RUN_NODE:-}"
   if [[ -z "$name" ]]; then
@@ -121,11 +128,7 @@ choose_mihomo_node(){
     return 2
   }
 
-  if [[ "$source" == candidate ]]; then
-    prepared="$("$MIHOMO_CONFIGURE" provider candidate prepare "$name")" || return
-  else
-    prepared="$("$MIHOMO_CONFIGURE" node prepare "$name")" || return
-  fi
+  prepared="$("$MIHOMO_CONFIGURE" node prepare "$name")" || return
   ui_print "$prepared"
   endpoint="${AWG_FIRST_RUN_ENDPOINT:-}"
   if [[ -z "$endpoint" ]]; then
@@ -137,36 +140,14 @@ choose_mihomo_node(){
     return 2
   }
 
-  if [[ "$source" == candidate ]]; then
-    "$MIHOMO_CONFIGURE" provider candidate commit "$name" "$endpoint"
-  else
-    "$MIHOMO_CONFIGURE" node select "$name" "$endpoint"
-  fi
+  "$MIHOMO_CONFIGURE" node select "$name" "$endpoint"
   "$AWG_TRANSPORT" select mihomo
   printf 'FIRST_TRANSPORT=mihomo\n'
-}
-
-ensure_mihomo_binary(){
-  local interactive="${1:-0}" path rc
-  [[ -x "$MIHOMO_BIN" ]] && return 0
-
-  if "$MIHOMO_INSTALLER"; then
-    return 0
-  fi
-  rc=$?
-  (( interactive == 1 )) || return "$rc"
-
-  ui_print "AUTO-загрузка Mihomo не удалась. Можно указать локальный pinned .gz этой версии."
-  ask "Полный путь к локальному Mihomo .gz (пусто = отменить)" ""
-  path="$REPLY"
-  [[ -n "$path" ]] || return "$rc"
-  "$MIHOMO_INSTALLER" --file "$path"
 }
 
 activate_mihomo_url(){
   local url="$1" profile="${2:-standard}" format="${3:-auto}" tmp rc
   ensure_fresh_target
-  ensure_mihomo_binary "${AWG_FIRST_RUN_INTERACTIVE:-0}"
   case "$profile" in standard|remnawave) ;; *) echo "Unsupported provider profile: $profile" >&2; return 2 ;; esac
   case "$format" in auto|mihomo|vless|base64) ;; *) echo "Unsupported provider format: $format" >&2; return 2 ;; esac
   [[ "$url" =~ ^https?://[^[:space:]]+$ ]] || {
@@ -190,7 +171,7 @@ activate_mihomo_url(){
     rm -f "$tmp"
     return "$rc"
   fi
-  choose_mihomo_node candidate
+  choose_mihomo_node
 }
 
 activate_mihomo_file(){
@@ -202,14 +183,14 @@ activate_mihomo_file(){
   }
   case "$format" in auto|mihomo|vless|base64) ;; *) echo "Unsupported provider format: $format" >&2; return 2 ;; esac
 
-  ensure_mihomo_binary "${AWG_FIRST_RUN_INTERACTIVE:-0}"
-  "$MIHOMO_CONFIGURE" provider stage-file "$file" local-only "$format"
-  choose_mihomo_node candidate
+  [[ -x "$MIHOMO_BIN" ]] || "$MIHOMO_INSTALLER"
+  prepare_local_mihomo_env "$format"
+  "$MIHOMO_CONFIGURE" provider import "$file"
+  choose_mihomo_node
 }
 
 wizard(){
   local choice path tmp profile format url rc
-  export AWG_FIRST_RUN_INTERACTIVE=1
   ensure_fresh_target || return
   cat >"$TTY" <<'TEXT'
 
@@ -299,10 +280,6 @@ case "${1:-wizard}" in
   mihomo-file)
     [[ $# -ge 2 && $# -le 3 ]] || { usage >&2; exit 2; }
     activate_mihomo_file "$2" "${3:-auto}"
-    ;;
-  mihomo-engine-file)
-    [[ $# -eq 2 ]] || { usage >&2; exit 2; }
-    "$MIHOMO_INSTALLER" --file "$2"
     ;;
   status)
     [[ $# -eq 1 ]] || { usage >&2; exit 2; }
