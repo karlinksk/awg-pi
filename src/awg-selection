@@ -132,7 +132,7 @@ status(){
       printf 'Performance optimization: disabled (conservative AUTO)\n'
       ;;
   esac
-  printf 'Mihomo node auto-selection: disabled\n'
+  printf 'Mihomo node failover: separate explicit policy (no country inference)\n'
 }
 
 case "${1:-status}" in
