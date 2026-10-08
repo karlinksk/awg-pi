@@ -18,15 +18,11 @@ required = [
     '"Обновить подписку — AUTO"',
     '"Обновить через выбранный канал"',
     '"Импортировать локальный профиль"',
-    '"Вставить provider / subscription"',
-    '"Staged provider / candidate"',
-    '"Установить Mihomo engine из локального .gz"',
     '"Переключить транспорт на Mihomo"',
     '"Переключить транспорт на AmneziaWG"',
     '"Точка выхода / узел"',
     '"Первичная настройка Mihomo"',
     '"Первичная настройка transport"',
-    '"Transport Selection Policy"',
     '"Citadel / Remnawave"',
     '"Формат подписки"',
     '"Mihomo / Clash YAML"',
@@ -73,17 +69,12 @@ assert "Весь маршрутизируемый трафик будет идт
 assert "SSH и Transit backup" in menu
 
 assert '--passwordbox "$prompt"' in menu
-assert '"$MIHOMO_CONFIGURE" provider stage-url-file "$url_tmp"' in menu
-assert '"$MIHOMO_CONFIGURE" provider stage-file "$path" "$source_mode"' in menu
-assert '"$MIHOMO_CONFIGURE" provider candidate commit "$node_name" "$endpoint"' in menu
-assert 'provider-url set-file "$url_tmp"' not in menu
+assert '"$MIHOMO_CONFIGURE" provider-url set-file "$url_tmp"' in menu
 assert '"$MIHOMO_CONFIGURE" provider update auto' in menu
 assert 'direct "DIRECT"' in menu
 assert 'router "Router/default"' not in menu
 assert "DIRECT → текущий healthy transport → остальные healthy transports" in menu
-assert "Live не меняется до выбора node и commit" in menu
-assert 'mktemp /run/awg-pbr/mihomo-paste.XXXXXX' in menu
-assert '"$MIHOMO_CONFIGURE" provider stage-file "$PASTE_TMP" "$source_mode"' in menu
+assert '"$MIHOMO_CONFIGURE" provider import "$path"' in menu
 assert '"$AWG_TRANSPORT" select mihomo' in menu
 assert '"$AWG_TRANSPORT" select awg' in menu
 assert '"$MIHOMO_CONFIGURE" node select "$node_name" "$endpoint"' in menu
@@ -92,15 +83,6 @@ assert '"$MIHOMO_CONFIGURE" node prepare "$node_name"' in menu
 assert 'Отдельное MikroTik правило для этого IP больше НЕ требуется' in menu
 assert 'gateway-wide DIRECT bypass' in menu
 assert '"$AWG_FIRST_RUN" wizard' in menu
-assert 'AWG_SELECTION=/usr/local/sbin/awg-selection' in menu
-assert '"$AWG_SELECTION" mode manual' in menu
-assert '"$AWG_SELECTION" mode fixed awg mihomo' in menu
-assert '"$AWG_SELECTION" mode fixed mihomo awg' in menu
-assert '"$AWG_SELECTION" mode auto awg mihomo' in menu
-assert '"$AWG_SELECTION" mode auto mihomo awg' in menu
-assert 'Mihomo node/страна не меняются' in menu
-assert 'MIHOMO_INSTALLER=/usr/local/sbin/awg-mihomo-install' in menu
-assert '"$MIHOMO_INSTALLER" --file "$path"' in menu
 assert 'mktemp /run/awg-pbr/mihomo-url.XXXXXX' in menu
 assert 'chmod 600 "$url_tmp"' in menu
 assert 'printf \'MIHOMO_PROVIDER_URL=%q\\n\' "$url" >"$url_tmp"' in menu
