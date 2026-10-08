@@ -4,6 +4,7 @@ set -Eeuo pipefail
 AWG_COMMON_FILE="${AWG_COMMON_FILE:-/usr/local/lib/awg-pi/common.sh}"
 AWG_SELECTION_FILE="${AWG_SELECTION_FILE:-/etc/awg-pbr/selection.env}"
 AWG_TRANSPORT_CLI="${AWG_TRANSPORT_CLI:-/usr/local/sbin/awg-transport}"
+MIHOMO_NODE_POLICY_CLI="${MIHOMO_NODE_POLICY_CLI:-/usr/local/sbin/awg-mihomo-node-policy}"
 AWG_SELECTION_STATE_DIR="${AWG_SELECTION_STATE_DIR:-/run/awg-pbr}"
 AWG_SELECTION_FAILURES="${AWG_SELECTION_FAILURES:-$AWG_SELECTION_STATE_DIR/selection.failures}"
 AWG_SELECTION_INTERVAL="${AWG_SELECTION_INTERVAL:-10}"
@@ -99,34 +100,37 @@ try_failover(){
 }
 
 selection_cycle(){
-  local current failures
+  local current failures node_policy_enabled=0 transport_policy_enabled=0
 
   if ! load_policy; then
-    log_event "Invalid selection policy; automatic switching disabled"
-    reset_failures
-    return 0
-  fi
-
-  if [[ "$SELECTION_MODE" == manual ]]; then
-    reset_failures
-    return 0
+    log_event "Invalid transport selection policy; transport auto-switching disabled"
+    SELECTION_MODE=manual
+    SELECTION_PRIMARY=""
+    SELECTION_ORDER=""
   fi
 
   current="$(awg_transport_get 2>/dev/null || echo unconfigured)"
 
   if [[ "$current" == unconfigured ]]; then
-    # A configured policy is explicit permission to pick from its listed
-    # transports. There is no active datapath to preserve in this state.
-    if try_failover unconfigured; then
+    if [[ "$SELECTION_MODE" != manual ]] && try_failover unconfigured; then
       return 0
     fi
     reset_failures
     return 0
   fi
 
-  if ! current_is_allowed "$current"; then
-    # Never switch a healthy/manual transport merely because policy metadata
-    # changed. The user must explicitly select an allowed transport once.
+  if [[ "$current" == mihomo && -x "$MIHOMO_NODE_POLICY_CLI" ]] &&
+     "$MIHOMO_NODE_POLICY_CLI" enabled >/dev/null 2>&1; then
+    node_policy_enabled=1
+  fi
+
+  if [[ "$SELECTION_MODE" != manual ]] && current_is_allowed "$current"; then
+    transport_policy_enabled=1
+  fi
+
+  # MANUAL transport policy does not disable a separately and explicitly
+  # configured Mihomo exact-node failover policy.
+  if (( node_policy_enabled == 0 && transport_policy_enabled == 0 )); then
     reset_failures
     return 0
   fi
@@ -144,12 +148,24 @@ selection_cycle(){
     return 0
   fi
 
-  if try_failover "$current"; then
+  # Exact-node recovery has priority over changing the transport. The node
+  # policy can only choose names the user explicitly placed in its allow-list.
+  if (( node_policy_enabled == 1 )); then
+    node_out="$("$MIHOMO_NODE_POLICY_CLI" failover 2>/dev/null || true)"
+    if [[ "$node_out" == MIHOMO_NODE_FAILOVER=* ]]; then
+      log_event "Automatic Mihomo node failover: ${node_out#MIHOMO_NODE_FAILOVER=}"
+      reset_failures
+      printf '%s\n' "$node_out"
+      return 0
+    fi
+  fi
+
+  if (( transport_policy_enabled == 1 )) && try_failover "$current"; then
     return 0
   fi
 
-  # Keep the saturated counter so the next cycle can immediately reconsider a
-  # recovered allowed fallback without generating extra persistent writes.
+  # Keep the counter saturated so a recovered explicitly allowed node/transport
+  # can be retried on the next cycle without extra persistent state.
   write_failures "$AWG_SELECTION_FAILURE_THRESHOLD"
   return 0
 }
