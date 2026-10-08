@@ -551,11 +551,22 @@ dnsmasq --test || die "dnsmasq не принимает подготовленн�
 # health, TUI and source-management behavior can be audited independently.
 STAGE="установка компонентов v$AWG_PI_VERSION"
 log "[8b/12] CLI v$AWG_PI_VERSION + Multi-Transport + OpenCCK + SSH TUI"
+stage_project_file(){
+  local remote="$1" tmp="$2" local_path=""
+  if [[ -n "$PROJECT_DIR" ]]; then
+    local_path="$PROJECT_DIR/$remote"
+  fi
+  if [[ -n "$local_path" && -f "$local_path" && -r "$local_path" && ! -L "$local_path" ]]; then
+    cp -- "$local_path" "$tmp"
+    return 0
+  fi
+  curl -4fLsS --retry 3 --connect-timeout 8 --max-time 45 "$PROJECT_RAW_BASE/$remote" -o "$tmp" \
+    || die "Не удалось получить $remote: локальный repo bundle отсутствует, remote source ($PROJECT_REF) недоступен"
+}
 install_project_helper(){
   local remote="$1" target="$2" tmp
   tmp="$(mktemp)"
-  curl -4fLsS --retry 3 --connect-timeout 8 --max-time 45 "$PROJECT_RAW_BASE/$remote" -o "$tmp" \
-    || die "Не удалось загрузить $remote из проекта ($PROJECT_REF)"
+  stage_project_file "$remote" "$tmp"
   bash -n "$tmp" || die "Синтаксическая проверка $remote не пройдена"
   install -m 755 "$tmp" "$target"
   rm -f "$tmp"
@@ -563,8 +574,7 @@ install_project_helper(){
 install_project_unit(){
   local remote="$1" target="$2" tmp
   tmp="$(mktemp)"
-  curl -4fLsS --retry 3 --connect-timeout 8 --max-time 45 "$PROJECT_RAW_BASE/$remote" -o "$tmp" \
-    || die "Не удалось загрузить $remote из проекта ($PROJECT_REF)"
+  stage_project_file "$remote" "$tmp"
   install -m 644 "$tmp" "$target"
   rm -f "$tmp"
 }
@@ -572,14 +582,13 @@ mkdir -p /usr/local/lib/awg-pi
 install_project_helper src/awg-common /usr/local/lib/awg-pi/common.sh
 chmod 644 /usr/local/lib/awg-pi/common.sh
 _manage_tmp="$(mktemp)"
-curl -4fLsS --retry 3 --connect-timeout 8 --max-time 45 "$PROJECT_RAW_BASE/src/awg-manage.py" -o "$_manage_tmp" || die "Не удалось загрузить awg-manage.py"
+stage_project_file src/awg-manage.py "$_manage_tmp"
 python3 -c 'import ast,sys; ast.parse(open(sys.argv[1]).read())' "$_manage_tmp" || die "Ошибка синтаксиса awg-manage.py"
 install -m 755 "$_manage_tmp" /usr/local/lib/awg-pi/manage.py
 rm -f "$_manage_tmp"
 
 _mihomo_provider_tmp="$(mktemp)"
-curl -4fLsS --retry 3 --connect-timeout 8 --max-time 45 "$PROJECT_RAW_BASE/src/awg-mihomo-provider.py" -o "$_mihomo_provider_tmp" \
-  || die "Не удалось загрузить awg-mihomo-provider.py"
+stage_project_file src/awg-mihomo-provider.py "$_mihomo_provider_tmp"
 python3 -m py_compile "$_mihomo_provider_tmp" || die "Ошибка синтаксиса awg-mihomo-provider.py"
 install -m 755 "$_mihomo_provider_tmp" /usr/local/lib/awg-pi/mihomo-provider.py
 rm -f "$_mihomo_provider_tmp"
@@ -591,6 +600,7 @@ install_project_helper src/awg-mihomo-update "$MIHOMO_UPDATE_SCRIPT"
 install_project_helper src/awg-mihomo-install "$MIHOMO_INSTALL_SCRIPT"
 install_project_helper src/awg-mihomo-prepare "$MIHOMO_PREPARE_SCRIPT"
 install_project_helper src/awg-mihomo-configure "$MIHOMO_CONFIGURE_SCRIPT"
+install_project_helper src/awg-engine-install "$AWG_ENGINE_INSTALL_SCRIPT"
 install_project_helper src/awg-first-run "$FIRST_RUN_CLI"
 install_project_helper src/awg-pbr-setup "$SETUP_SCRIPT"
 install_project_helper src/awg-transit-nft /usr/local/sbin/awg-transit-nft
@@ -680,7 +690,7 @@ EOF
 # -----------------------------------------------------------------------------
 STAGE="проверка компонентов управления"
 log "[10/12] Проверка awg-route / awg-menu / awg-update"
-for f in "$ROUTE_CLI" "$TRANSPORT_CLI" "$FETCH_CLI" "$MIHOMO_CONFIG_SCRIPT" "$MIHOMO_UPDATE_SCRIPT" "$MIHOMO_INSTALL_SCRIPT" "$MIHOMO_PREPARE_SCRIPT" "$MIHOMO_CONFIGURE_SCRIPT" "$FIRST_RUN_CLI" "$SETUP_SCRIPT" /usr/local/sbin/awg-menu /usr/local/sbin/awg-transit-nft /usr/local/sbin/awg-transit-preflight /usr/local/sbin/awg-transit-apply /usr/local/sbin/awg-transit-routing /usr/local/sbin/awg-mode-switch "$HEALTH_SCRIPT" /usr/local/sbin/awg-opencck-update /usr/local/sbin/awg-core-update "$UPDATE_SCRIPT"; do
+for f in "$ROUTE_CLI" "$TRANSPORT_CLI" "$FETCH_CLI" "$MIHOMO_CONFIG_SCRIPT" "$MIHOMO_UPDATE_SCRIPT" "$MIHOMO_INSTALL_SCRIPT" "$MIHOMO_PREPARE_SCRIPT" "$MIHOMO_CONFIGURE_SCRIPT" "$AWG_ENGINE_INSTALL_SCRIPT" "$FIRST_RUN_CLI" "$SETUP_SCRIPT" /usr/local/sbin/awg-menu /usr/local/sbin/awg-transit-nft /usr/local/sbin/awg-transit-preflight /usr/local/sbin/awg-transit-apply /usr/local/sbin/awg-transit-routing /usr/local/sbin/awg-mode-switch "$HEALTH_SCRIPT" /usr/local/sbin/awg-opencck-update /usr/local/sbin/awg-core-update "$UPDATE_SCRIPT"; do
   [[ -x "$f" ]] || die "Не установлен исполняемый компонент: $f"
   bash -n "$f" || die "Синтаксическая проверка компонента не пройдена: $f"
 done
