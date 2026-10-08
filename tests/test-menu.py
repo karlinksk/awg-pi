@@ -79,6 +79,7 @@ assert '"$MIHOMO_CONFIGURE" provider update auto' in menu
 assert 'direct "DIRECT"' in menu
 assert 'router "Router/default"' not in menu
 assert "DIRECT → текущий healthy transport → остальные healthy transports" in menu
+assert "Live не меняется до выбора node и commit" in menu
 assert 'mktemp /run/awg-pbr/mihomo-paste.XXXXXX' in menu
 assert '"$MIHOMO_CONFIGURE" provider stage-file "$PASTE_TMP" "$source_mode"' in menu
 assert '"$AWG_TRANSPORT" select mihomo' in menu
