@@ -7,6 +7,9 @@ AWG_FETCH_BIN="${AWG_FETCH_BIN:-/usr/local/sbin/awg-fetch}"
 AWG_ENV_FILE="${AWG_ENV_FILE:-/etc/awg-pbr/env}"
 FETCH_MODE="${AWG_ENGINE_FETCH_MODE:-auto}"
 SRC_ROOT="${AWG_SRC_ROOT:-/opt/amneziawg-src}"
+GO_ROOT="${AWG_GO_ROOT:-/usr/local/go}"
+GO_PROFILE="${AWG_GO_PROFILE:-/etc/profile.d/go.sh}"
+SYSTEMCTL_BIN="${SYSTEMCTL_BIN:-systemctl}"
 LOCAL_BUNDLE=""
 
 GO_VERSION="1.27.1"
@@ -112,11 +115,17 @@ fetch_archive "$AWG_GO_ARCHIVE" "$AWG_GO_URL" "$AWG_GO_SHA256"
 fetch_archive "$AWG_TOOLS_ARCHIVE" "$AWG_TOOLS_URL" "$AWG_TOOLS_SHA256"
 
 if ! command -v go >/dev/null 2>&1 || [[ "$(go version 2>/dev/null || true)" != *"go${GO_VERSION} "* ]]; then
-  rm -rf /usr/local/go
-  tar -C /usr/local -xzf "$tmpdir/$GO_ARCHIVE"
+  [[ "$(basename "$GO_ROOT")" == go ]] || {
+    echo "AWG_GO_ROOT basename must be 'go'" >&2
+    exit 2
+  }
+  mkdir -p "$(dirname "$GO_ROOT")"
+  rm -rf "$GO_ROOT"
+  tar -C "$(dirname "$GO_ROOT")" -xzf "$tmpdir/$GO_ARCHIVE"
 fi
-export PATH=/usr/local/go/bin:$PATH
-printf 'export PATH=/usr/local/go/bin:$PATH\n' >/etc/profile.d/go.sh
+export PATH="$GO_ROOT/bin:$PATH"
+mkdir -p "$(dirname "$GO_PROFILE")"
+printf 'export PATH=%s/bin:$PATH\n' "$GO_ROOT" >"$GO_PROFILE"
 go version | grep -Fq "go${GO_VERSION}"
 
 mkdir -p "$SRC_ROOT"
@@ -132,7 +141,7 @@ make -C "$SRC_ROOT/amneziawg-go" PREFIX=/usr install
 make -C "$SRC_ROOT/amneziawg-tools/src" clean >/dev/null 2>&1 || true
 make -C "$SRC_ROOT/amneziawg-tools/src"
 make -C "$SRC_ROOT/amneziawg-tools/src" install PREFIX=/usr WITH_WGQUICK=yes WITH_SYSTEMDUNITS=yes
-systemctl daemon-reload
+"$SYSTEMCTL_BIN" daemon-reload
 
 command -v awg >/dev/null
 command -v awg-quick >/dev/null
