@@ -11,11 +11,14 @@ INTERVAL="${AWG_TRAFFIC_INTERVAL:-60}"
 PERSIST_INTERVAL="${AWG_TRAFFIC_PERSIST_INTERVAL:-21600}"
 AWG_IF="${AWG_TRAFFIC_AWG_IF:-awg0}"
 MIHOMO_IF="${AWG_TRAFFIC_MIHOMO_IF:-mihomo0}"
+BOOT_ID_FILE="${AWG_TRAFFIC_BOOT_ID_FILE:-/proc/sys/kernel/random/boot_id}"
 
 mkdir -p "$RUNTIME_DIR" "$PERSIST_DIR"
 chmod 700 "$RUNTIME_DIR" "$PERSIST_DIR"
 
 zero_state(){
+  INITIALIZED=0
+  LAST_BOOT_ID=""
   DAY_KEY=""
   MONTH_KEY=""
   DAY_AWG_RX=0 DAY_AWG_TX=0 DAY_MIHOMO_RX=0 DAY_MIHOMO_TX=0
@@ -36,7 +39,9 @@ load_state(){
   if [[ -n "$source" ]]; then
     # shellcheck disable=SC1090
     . "$source"
+    : "${INITIALIZED:=1}"
   fi
+  : "${INITIALIZED:=0}" "${LAST_BOOT_ID:=}"
   : "${DAY_AWG_RX:=0}" "${DAY_AWG_TX:=0}" "${DAY_MIHOMO_RX:=0}" "${DAY_MIHOMO_TX:=0}"
   : "${MONTH_AWG_RX:=0}" "${MONTH_AWG_TX:=0}" "${MONTH_MIHOMO_RX:=0}" "${MONTH_MIHOMO_TX:=0}"
   : "${LAST_AWG_RX:=0}" "${LAST_AWG_TX:=0}" "${LAST_MIHOMO_RX:=0}" "${LAST_MIHOMO_TX:=0}"
@@ -50,6 +55,8 @@ state_write(){
   mkdir -p "$dir"
   tmp="$(mktemp "$dir/.traffic-state.XXXXXX")"
   cat >"$tmp" <<EOF
+INITIALIZED=1
+LAST_BOOT_ID=$(printf %q "$LAST_BOOT_ID")
 DAY_KEY=$(printf %q "$DAY_KEY")
 MONTH_KEY=$(printf %q "$MONTH_KEY")
 DAY_AWG_RX=$DAY_AWG_RX
@@ -92,9 +99,19 @@ ifindex(){
   fi
 }
 
+boot_id(){
+  if [[ -r "$BOOT_ID_FILE" ]]; then
+    cat "$BOOT_ID_FILE" 2>/dev/null || printf 'unknown\n'
+  else
+    printf 'unknown\n'
+  fi
+}
+
 delta(){
-  local current="$1" previous="$2" current_ifindex="$3" previous_ifindex="$4"
-  if [[ "$current_ifindex" != "$previous_ifindex" ]]; then
+  local current="$1" previous="$2" current_ifindex="$3" previous_ifindex="$4" current_boot="$5" previous_boot="$6"
+  if [[ -n "$previous_boot" && "$current_boot" != "$previous_boot" ]]; then
+    printf '%s\n' "$current"
+  elif [[ "$current_ifindex" != "$previous_ifindex" ]]; then
     # Interface instance changed (restart/recreate). The whole new counter belongs
     # to the current accounting period, regardless of whether it is numerically
     # above or below the previous instance's last value.
@@ -112,11 +129,29 @@ day_key(){ date -d "@$(now_epoch)" +%F; }
 month_key(){ date -d "@$(now_epoch)" +%Y-%m; }
 
 sample_locked(){
-  local now day month awg_rx awg_tx mihomo_rx mihomo_tx awg_ifindex mihomo_ifindex d period_changed=0
+  local now day month awg_rx awg_tx mihomo_rx mihomo_tx awg_ifindex mihomo_ifindex current_boot d period_changed=0
   now="$(now_epoch)"
   day="$(day_key)"
   month="$(month_key)"
   load_state
+
+  current_boot="$(boot_id)"
+  awg_ifindex="$(ifindex "$AWG_IF")"
+  mihomo_ifindex="$(ifindex "$MIHOMO_IF")"
+  awg_rx="$(counter "$AWG_IF" rx)"; awg_tx="$(counter "$AWG_IF" tx)"
+  mihomo_rx="$(counter "$MIHOMO_IF" rx)"; mihomo_tx="$(counter "$MIHOMO_IF" tx)"
+
+  if (( INITIALIZED != 1 )); then
+    DAY_KEY="$day"
+    MONTH_KEY="$month"
+    LAST_BOOT_ID="$current_boot"
+    LAST_AWG_RX="$awg_rx"; LAST_AWG_TX="$awg_tx"; LAST_AWG_IFINDEX="$awg_ifindex"
+    LAST_MIHOMO_RX="$mihomo_rx"; LAST_MIHOMO_TX="$mihomo_tx"; LAST_MIHOMO_IFINDEX="$mihomo_ifindex"
+    LAST_PERSIST_EPOCH="$now"
+    state_write "$RUNTIME_STATE"
+    state_write "$PERSIST_STATE"
+    return 0
+  fi
 
   if [[ -n "$MONTH_KEY" && "$MONTH_KEY" != "$month" ]]; then period_changed=1; fi
   if [[ -n "$DAY_KEY" && "$DAY_KEY" != "$day" ]]; then period_changed=1; fi
@@ -130,16 +165,12 @@ sample_locked(){
     DAY_AWG_RX=0 DAY_AWG_TX=0 DAY_MIHOMO_RX=0 DAY_MIHOMO_TX=0
   fi
 
-  awg_ifindex="$(ifindex "$AWG_IF")"
-  mihomo_ifindex="$(ifindex "$MIHOMO_IF")"
-  awg_rx="$(counter "$AWG_IF" rx)"; awg_tx="$(counter "$AWG_IF" tx)"
-  mihomo_rx="$(counter "$MIHOMO_IF" rx)"; mihomo_tx="$(counter "$MIHOMO_IF" tx)"
+  d="$(delta "$awg_rx" "$LAST_AWG_RX" "$awg_ifindex" "$LAST_AWG_IFINDEX" "$current_boot" "$LAST_BOOT_ID")"; DAY_AWG_RX=$((DAY_AWG_RX+d)); MONTH_AWG_RX=$((MONTH_AWG_RX+d))
+  d="$(delta "$awg_tx" "$LAST_AWG_TX" "$awg_ifindex" "$LAST_AWG_IFINDEX" "$current_boot" "$LAST_BOOT_ID")"; DAY_AWG_TX=$((DAY_AWG_TX+d)); MONTH_AWG_TX=$((MONTH_AWG_TX+d))
+  d="$(delta "$mihomo_rx" "$LAST_MIHOMO_RX" "$mihomo_ifindex" "$LAST_MIHOMO_IFINDEX" "$current_boot" "$LAST_BOOT_ID")"; DAY_MIHOMO_RX=$((DAY_MIHOMO_RX+d)); MONTH_MIHOMO_RX=$((MONTH_MIHOMO_RX+d))
+  d="$(delta "$mihomo_tx" "$LAST_MIHOMO_TX" "$mihomo_ifindex" "$LAST_MIHOMO_IFINDEX" "$current_boot" "$LAST_BOOT_ID")"; DAY_MIHOMO_TX=$((DAY_MIHOMO_TX+d)); MONTH_MIHOMO_TX=$((MONTH_MIHOMO_TX+d))
 
-  d="$(delta "$awg_rx" "$LAST_AWG_RX" "$awg_ifindex" "$LAST_AWG_IFINDEX")"; DAY_AWG_RX=$((DAY_AWG_RX+d)); MONTH_AWG_RX=$((MONTH_AWG_RX+d))
-  d="$(delta "$awg_tx" "$LAST_AWG_TX" "$awg_ifindex" "$LAST_AWG_IFINDEX")"; DAY_AWG_TX=$((DAY_AWG_TX+d)); MONTH_AWG_TX=$((MONTH_AWG_TX+d))
-  d="$(delta "$mihomo_rx" "$LAST_MIHOMO_RX" "$mihomo_ifindex" "$LAST_MIHOMO_IFINDEX")"; DAY_MIHOMO_RX=$((DAY_MIHOMO_RX+d)); MONTH_MIHOMO_RX=$((MONTH_MIHOMO_RX+d))
-  d="$(delta "$mihomo_tx" "$LAST_MIHOMO_TX" "$mihomo_ifindex" "$LAST_MIHOMO_IFINDEX")"; DAY_MIHOMO_TX=$((DAY_MIHOMO_TX+d)); MONTH_MIHOMO_TX=$((MONTH_MIHOMO_TX+d))
-
+  LAST_BOOT_ID="$current_boot"
   LAST_AWG_RX="$awg_rx"; LAST_AWG_TX="$awg_tx"; LAST_AWG_IFINDEX="$awg_ifindex"
   LAST_MIHOMO_RX="$mihomo_rx"; LAST_MIHOMO_TX="$mihomo_tx"; LAST_MIHOMO_IFINDEX="$mihomo_ifindex"
 

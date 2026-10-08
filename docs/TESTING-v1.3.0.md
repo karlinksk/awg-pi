@@ -319,11 +319,14 @@ Verify that:
 - provider updates are periodic and atomic rather than continuously rewriting
   cache files;
 - transport traffic is sampled into /run (RAM);
+- the first sample establishes a baseline and does not claim interface bytes
+  accumulated before accounting was enabled;
 - persistent traffic state is checkpointed no more often than the configured
-  low-write interval (default 21600 seconds / 6 hours), plus clean shutdown and
-  period rollover;
-- awg0/mihomo0 recreation is detected by interface identity so counter resets do
-  not corrupt today/month totals.
+  low-write interval (default 21600 seconds / 6 hours), plus initial baseline,
+  clean shutdown and period rollover;
+- awg0/mihomo0 recreation is detected by interface identity;
+- reboot is detected by boot identity even if Linux reuses the same interface
+  index, so counter resets do not silently corrupt today/month totals.
 
 ## 12. Release acceptance
 

@@ -37,7 +37,10 @@ The SSH TUI also includes a system dashboard (clock/timezone, uptime, CPU
 temperature/load, RAM and disk), timezone management, unified VPN
 destination/OpenCCK entry, and low-write today/month transport traffic
 accounting for awg0 + mihomo0. Traffic samples stay in RAM and persistent state
-is checkpointed only periodically.
+is checkpointed only periodically. On first activation the counter establishes
+a baseline instead of attributing pre-existing interface bytes to the current
+day; boot identity and interface identity are tracked so restarts/recreates do
+not silently corrupt the deltas.
 
 The v1.2.0 stable tag remains the updater target until the v1.3 hardware gate is
 complete. Do not treat develop/v1.3.0 as a stable installation source without an

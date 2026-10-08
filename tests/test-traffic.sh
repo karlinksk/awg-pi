@@ -4,6 +4,7 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 mkdir -p "$TMP/sys/awg0/statistics" "$TMP/sys/mihomo0/statistics" "$TMP/run" "$TMP/persist"
+printf 'boot-A\n' >"$TMP/boot-id"
 
 setc(){
   printf '%s\n' "$2" >"$TMP/sys/$1/statistics/rx_bytes"
@@ -14,10 +15,10 @@ setidx(){
 }
 
 run_traffic(){
-  env     AWG_TRAFFIC_RUNTIME_DIR="$TMP/run"     AWG_TRAFFIC_PERSIST_DIR="$TMP/persist"     AWG_TRAFFIC_SYSFS_ROOT="$TMP/sys"     AWG_TRAFFIC_NOW_EPOCH="$NOW"     AWG_TRAFFIC_PERSIST_INTERVAL=21600     bash "$ROOT/src/awg-traffic" "$@"
+  env     AWG_TRAFFIC_RUNTIME_DIR="$TMP/run"     AWG_TRAFFIC_PERSIST_DIR="$TMP/persist"     AWG_TRAFFIC_SYSFS_ROOT="$TMP/sys"     AWG_TRAFFIC_BOOT_ID_FILE="$TMP/boot-id"     AWG_TRAFFIC_NOW_EPOCH="$NOW"     AWG_TRAFFIC_PERSIST_INTERVAL=21600     bash "$ROOT/src/awg-traffic" "$@"
 }
 
-echo "=== first sample counts existing interface bytes ==="
+echo "=== first sample establishes baseline without inventing historical traffic ==="
 NOW="$(date -d '2026-10-08 10:00:00 UTC' +%s)"
 setidx awg0 10
 setidx mihomo0 20
@@ -26,9 +27,15 @@ setc mihomo0 300 700
 run_traffic sample
 # shellcheck disable=SC1090
 . "$TMP/run/state.env"
-[[ "$DAY_AWG_RX" == 1000 && "$DAY_AWG_TX" == 2000 ]]
-[[ "$DAY_MIHOMO_RX" == 300 && "$DAY_MIHOMO_TX" == 700 ]]
-[[ "$MONTH_AWG_RX" == 1000 && "$MONTH_MIHOMO_TX" == 700 ]]
+[[ "$INITIALIZED" == 1 ]]
+[[ "$LAST_BOOT_ID" == boot-A ]]
+[[ "$DAY_AWG_RX" == 0 && "$DAY_AWG_TX" == 0 ]]
+[[ "$DAY_MIHOMO_RX" == 0 && "$DAY_MIHOMO_TX" == 0 ]]
+[[ "$MONTH_AWG_RX" == 0 && "$MONTH_MIHOMO_TX" == 0 ]]
+[[ "$LAST_AWG_RX" == 1000 && "$LAST_AWG_TX" == 2000 ]]
+[[ "$LAST_MIHOMO_RX" == 300 && "$LAST_MIHOMO_TX" == 700 ]]
+grep -Fq 'INITIALIZED=1' "$TMP/persist/state.env"
+grep -Fq 'LAST_BOOT_ID=boot-A' "$TMP/persist/state.env"
 
 echo "=== second sample adds deltas only ==="
 NOW=$((NOW+60))
@@ -36,8 +43,8 @@ setc awg0 1600 2600
 setc mihomo0 500 900
 run_traffic sample
 . "$TMP/run/state.env"
-[[ "$DAY_AWG_RX" == 1600 && "$DAY_AWG_TX" == 2600 ]]
-[[ "$DAY_MIHOMO_RX" == 500 && "$DAY_MIHOMO_TX" == 900 ]]
+[[ "$DAY_AWG_RX" == 600 && "$DAY_AWG_TX" == 600 ]]
+[[ "$DAY_MIHOMO_RX" == 200 && "$DAY_MIHOMO_TX" == 200 ]]
 
 echo "=== interface recreation is detected by ifindex even with larger counters ==="
 NOW=$((NOW+60))
@@ -47,8 +54,8 @@ setc awg0 5000 6000
 setc mihomo0 1000 1200
 run_traffic sample
 . "$TMP/run/state.env"
-[[ "$DAY_AWG_RX" == 6600 && "$DAY_AWG_TX" == 8600 ]]
-[[ "$DAY_MIHOMO_RX" == 1500 && "$DAY_MIHOMO_TX" == 2100 ]]
+[[ "$DAY_AWG_RX" == 5600 && "$DAY_AWG_TX" == 6600 ]]
+[[ "$DAY_MIHOMO_RX" == 1200 && "$DAY_MIHOMO_TX" == 1400 ]]
 
 echo "=== day rollover resets day but preserves month ==="
 NOW="$(date -d '2026-10-09 00:01:00 UTC' +%s)"
@@ -59,8 +66,8 @@ run_traffic sample
 [[ "$DAY_KEY" == 2026-10-09 ]]
 [[ "$DAY_AWG_RX" == 50 && "$DAY_AWG_TX" == 50 ]]
 [[ "$DAY_MIHOMO_RX" == 20 && "$DAY_MIHOMO_TX" == 30 ]]
-[[ "$MONTH_AWG_RX" == 6650 && "$MONTH_AWG_TX" == 8650 ]]
-[[ "$MONTH_MIHOMO_RX" == 1520 && "$MONTH_MIHOMO_TX" == 2130 ]]
+[[ "$MONTH_AWG_RX" == 5650 && "$MONTH_AWG_TX" == 6650 ]]
+[[ "$MONTH_MIHOMO_RX" == 1220 && "$MONTH_MIHOMO_TX" == 1430 ]]
 # Rollover forces a persistent checkpoint even before the normal 6h interval.
 grep -Fq 'DAY_KEY=2026-10-09' "$TMP/persist/state.env"
 
@@ -74,6 +81,17 @@ run_traffic sample
 [[ "$MONTH_AWG_RX" == 50 && "$MONTH_AWG_TX" == 50 ]]
 [[ "$MONTH_MIHOMO_RX" == 20 && "$MONTH_MIHOMO_TX" == 20 ]]
 grep -Fq 'MONTH_KEY=2026-11' "$TMP/persist/state.env"
+
+echo "=== reboot is detected even when ifindex is reused ==="
+printf 'boot-B\n' >"$TMP/boot-id"
+NOW=$((NOW+60))
+setc awg0 9000 9100
+setc mihomo0 3000 3100
+run_traffic sample
+. "$TMP/run/state.env"
+[[ "$LAST_BOOT_ID" == boot-B ]]
+[[ "$MONTH_AWG_RX" == 9050 && "$MONTH_AWG_TX" == 9150 ]]
+[[ "$MONTH_MIHOMO_RX" == 3020 && "$MONTH_MIHOMO_TX" == 3120 ]]
 
 echo "=== compact/full status are readable ==="
 compact="$(run_traffic status compact)"
@@ -91,6 +109,7 @@ env \
   AWG_TRAFFIC_RUNTIME_DIR="$TMP/run" \
   AWG_TRAFFIC_PERSIST_DIR="$TMP/persist" \
   AWG_TRAFFIC_SYSFS_ROOT="$TMP/sys" \
+  AWG_TRAFFIC_BOOT_ID_FILE="$TMP/boot-id" \
   AWG_TRAFFIC_NOW_EPOCH="$NOW" \
   AWG_TRAFFIC_INTERVAL=30 \
   AWG_TRAFFIC_PERSIST_INTERVAL=21600 \
@@ -101,6 +120,7 @@ timeout 2 env \
   AWG_TRAFFIC_RUNTIME_DIR="$TMP/run" \
   AWG_TRAFFIC_PERSIST_DIR="$TMP/persist" \
   AWG_TRAFFIC_SYSFS_ROOT="$TMP/sys" \
+  AWG_TRAFFIC_BOOT_ID_FILE="$TMP/boot-id" \
   AWG_TRAFFIC_NOW_EPOCH="$NOW" \
   bash "$ROOT/src/awg-traffic" status compact >/dev/null
 kill -TERM "$daemon_pid"
