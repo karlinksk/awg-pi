@@ -21,6 +21,132 @@ grep -Fq 'FIRST_RUN_CLI="/usr/local/sbin/awg-first-run"' install.sh
 grep -Fq '"$FIRST_RUN_CLI" wizard' install.sh
 grep -Fq 'Active transport не настроен. Это допустимое recovery-состояние' install.sh
 
+# Interactive confirmations must tolerate CR/whitespace from SSH terminals and
+# accept common English/Russian affirmative forms.
+confirm_parser="$(awk '/^confirm_yes\(\)\{/{capture=1} capture{print} capture && /^}$/{exit}' install.sh)"
+eval "$confirm_parser"
+for answer in y Y yes Yes YES д Д да Да ДА 
+# Fresh installs stage in Selective + unconfigured, configure/recover the
+# first transport, then choose Operating Mode explicitly.
+grep -Fq "printf '%s\\n' selective >\"\$MODE_FILE\"" install.sh
+grep -Fq 'log "[11a/12] First transport wizard"' install.sh
+grep -Fq 'log "[11b/12] Operating Mode selection"' install.sh
+grep -Fq '2) MikroTik Transit / Backup VPN — transport DOWN/not-ready => FAIL-CLOSED/LOCKDOWN' install.sh
+grep -Fq 'elif (( ACTIVATE_TRANSIT_AFTER_INSTALL == 1 )); then' install.sh
+
+# Existing v1.2+ mode and v1.3 transport state are preserved during upgrade.
+grep -Fq '[[ -f "$MODE_FILE" ]] || printf' install.sh
+grep -Fq 'if [[ ! -f "$TRANSPORT_FILE" ]]; then' install.sh
+grep -Fq 'Миграция legacy state: существующий AWG backend принят как active transport.' install.sh
+
+# The updater must support direct legacy v1.1 -> newer releases, while
+# preserving existing v1.2+ mode state through the installer.
+grep -Fq '[[ "$cur" == 1.1.0 ]] && version_gt "$latest" "1.1.0"' src/awg-update
+grep -Fq 'v1.1.0 -> $latest: --yes подтверждает post-upgrade Transit preflight/switch.' src/awg-update
+
+# v1.3 rollback must include the complete Mihomo transport state, not only the
+# v1.2 AWG files.
+for needle in \
+  'var/lib/awg-pbr/mihomo' \
+  'usr/local/bin/mihomo' \
+  'usr/local/sbin/awg-transport' \
+  'usr/local/sbin/awg-first-run' \
+  'usr/local/sbin/awg-selection' \
+  'usr/local/sbin/awg-selection-monitor' \
+  'usr/local/sbin/awg-mihomo-node-policy' \
+  'usr/local/sbin/awg-traffic' \
+  'usr/local/sbin/awg-mihomo-config' \
+  'usr/local/sbin/awg-mihomo-update' \
+  'usr/local/sbin/awg-mihomo-install' \
+  'usr/local/sbin/awg-mihomo-prepare' \
+  'usr/local/sbin/awg-mihomo-configure' \
+  'etc/systemd/system/awg-mihomo.service' \
+  'etc/systemd/system/awg-mihomo-update.service' \
+  'etc/systemd/system/awg-mihomo-update.timer' \
+  'etc/systemd/system/awg-selection-monitor.service' \
+  'etc/systemd/system/awg-traffic.service' \
+  'var/lib/awg-pbr/traffic'
+do
+  grep -Fq "$needle" src/awg-update
+done
+
+grep -Fq 'rm -rf /etc/awg-pbr /var/lib/awg-pbr/mihomo /var/lib/awg-pbr/traffic /usr/local/lib/awg-pi' src/awg-update
+grep -Fq 'systemctl stop \' src/awg-update
+grep -Fq 'awg-mihomo-update.timer \' src/awg-update
+grep -Fq 'awg-mihomo.service \' src/awg-update
+
+echo "v1.3 upgrade/rollback policy: OK"
+
+grep -Fq 'install_project_helper src/awg-mihomo-node-policy "$MIHOMO_NODE_POLICY_CLI"' install.sh
+grep -Fq 'install_project_helper src/awg-traffic "$TRAFFIC_CLI"' install.sh
+grep -Fq 'install_project_unit units/awg-traffic.service /etc/systemd/system/awg-traffic.service' install.sh
+grep -Fq 'systemctl restart awg-traffic.service' install.sh
+y\r' ' y ' 
+# Fresh installs stage in Selective + unconfigured, configure/recover the
+# first transport, then choose Operating Mode explicitly.
+grep -Fq "printf '%s\\n' selective >\"\$MODE_FILE\"" install.sh
+grep -Fq 'log "[11a/12] First transport wizard"' install.sh
+grep -Fq 'log "[11b/12] Operating Mode selection"' install.sh
+grep -Fq '2) MikroTik Transit / Backup VPN — transport DOWN/not-ready => FAIL-CLOSED/LOCKDOWN' install.sh
+grep -Fq 'elif (( ACTIVATE_TRANSIT_AFTER_INSTALL == 1 )); then' install.sh
+
+# Existing v1.2+ mode and v1.3 transport state are preserved during upgrade.
+grep -Fq '[[ -f "$MODE_FILE" ]] || printf' install.sh
+grep -Fq 'if [[ ! -f "$TRANSPORT_FILE" ]]; then' install.sh
+grep -Fq 'Миграция legacy state: существующий AWG backend принят как active transport.' install.sh
+
+# The updater must support direct legacy v1.1 -> newer releases, while
+# preserving existing v1.2+ mode state through the installer.
+grep -Fq '[[ "$cur" == 1.1.0 ]] && version_gt "$latest" "1.1.0"' src/awg-update
+grep -Fq 'v1.1.0 -> $latest: --yes подтверждает post-upgrade Transit preflight/switch.' src/awg-update
+
+# v1.3 rollback must include the complete Mihomo transport state, not only the
+# v1.2 AWG files.
+for needle in \
+  'var/lib/awg-pbr/mihomo' \
+  'usr/local/bin/mihomo' \
+  'usr/local/sbin/awg-transport' \
+  'usr/local/sbin/awg-first-run' \
+  'usr/local/sbin/awg-selection' \
+  'usr/local/sbin/awg-selection-monitor' \
+  'usr/local/sbin/awg-mihomo-node-policy' \
+  'usr/local/sbin/awg-traffic' \
+  'usr/local/sbin/awg-mihomo-config' \
+  'usr/local/sbin/awg-mihomo-update' \
+  'usr/local/sbin/awg-mihomo-install' \
+  'usr/local/sbin/awg-mihomo-prepare' \
+  'usr/local/sbin/awg-mihomo-configure' \
+  'etc/systemd/system/awg-mihomo.service' \
+  'etc/systemd/system/awg-mihomo-update.service' \
+  'etc/systemd/system/awg-mihomo-update.timer' \
+  'etc/systemd/system/awg-selection-monitor.service' \
+  'etc/systemd/system/awg-traffic.service' \
+  'var/lib/awg-pbr/traffic'
+do
+  grep -Fq "$needle" src/awg-update
+done
+
+grep -Fq 'rm -rf /etc/awg-pbr /var/lib/awg-pbr/mihomo /var/lib/awg-pbr/traffic /usr/local/lib/awg-pi' src/awg-update
+grep -Fq 'systemctl stop \' src/awg-update
+grep -Fq 'awg-mihomo-update.timer \' src/awg-update
+grep -Fq 'awg-mihomo.service \' src/awg-update
+
+echo "v1.3 upgrade/rollback policy: OK"
+
+grep -Fq 'install_project_helper src/awg-mihomo-node-policy "$MIHOMO_NODE_POLICY_CLI"' install.sh
+grep -Fq 'install_project_helper src/awg-traffic "$TRAFFIC_CLI"' install.sh
+grep -Fq 'install_project_unit units/awg-traffic.service /etc/systemd/system/awg-traffic.service' install.sh
+grep -Fq 'systemctl restart awg-traffic.service' install.sh
+да\r'; do
+  confirm_yes "$answer" || { echo "FAIL: affirmative confirmation rejected: [$answer]" >&2; exit 1; }
+done
+for answer in n N no No NO нет Нет '' '   '; do
+  if confirm_yes "$answer"; then
+    echo "FAIL: negative/empty confirmation accepted: [$answer]" >&2
+    exit 1
+  fi
+done
+
 # Fresh installs stage in Selective + unconfigured, configure/recover the
 # first transport, then choose Operating Mode explicitly.
 grep -Fq "printf '%s\\n' selective >\"\$MODE_FILE\"" install.sh
