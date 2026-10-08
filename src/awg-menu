@@ -511,8 +511,8 @@ mihomo_menu(){
       31 110 14 \
       1 "Состояние Mihomo" "Показывает runtime, provider cache, последний успешный bootstrap-канал и health без вывода секретов." \
       2 "Заменить ссылку подписки" "Новый URL сначала загружается в staged candidate. Live provider/URL меняются только после выбора candidate node и успешного health-check." \
-      3 "Обновить подписку — AUTO" "Сначала DIRECT, затем текущий healthy transport и другие healthy transports. Неудача не удаляет рабочий cache." \
-      4 "Обновить через выбранный канал" "Позволяет вручную выбрать DIRECT, Mihomo или AmneziaWG только для одной загрузки; скрытого fallback нет." \
+      3 "Обновить подписку — AUTO" "Скачивает и проверяет новый provider как candidate: DIRECT → healthy transports. Live не меняется до выбора node и commit." \
+      4 "Обновить через выбранный канал" "Ставит candidate через выбранный DIRECT/Mihomo/AWG без скрытого fallback. Live не меняется до commit." \
       5 "Импортировать локальный профиль" "Файл проходит adapter + mihomo -t и попадает в staged candidate. Live не меняется до commit выбранного node." \
       6 "Точка выхода / узел" "Показывает узлы subscription и безопасно меняет node без зависимости от AWG и без per-IP MikroTik правил." \
       7 "Переключить транспорт на Mihomo" "Транзакционно проверяет Mihomo и только затем переводит datapath с AWG на mihomo0; при ошибке выполняется rollback." \
