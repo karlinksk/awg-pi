@@ -29,6 +29,7 @@ BACKUPS = '/var/backups/awg-gateway'
 FAILOPEN = '/usr/local/sbin/awg-pbr-failopen'
 SETUP = '/usr/local/sbin/awg-pbr-setup'
 ROUTE = '/usr/local/sbin/awg-route'
+AWG_ENGINE_INSTALLER = '/usr/local/sbin/awg-engine-install'
 CONF_DIR = '/etc/amnezia/amneziawg'
 CANCEL_EXIT = 20
 
@@ -426,6 +427,14 @@ def profile(text):
     return clean, peer['Endpoint']
 
 
+def ensure_awg_engine():
+    """Install the shared AWG/WG engine only when profile validation needs it."""
+    required = ('awg', 'awg-quick', 'amneziawg-go')
+    if all(shutil.which(name) for name in required):
+        return
+    run(AWG_ENGINE_INSTALLER)
+
+
 def preflight(path, env):
     # strip validates awg-quick parsing without executing the profile. Core
     # parsing is checked on a disposable interface in a private network namespace.
@@ -481,6 +490,7 @@ def replace_config(args, env):
     previous = active.with_suffix('.conf.previous')
     source = previous if args.action == 'rollback' else Path(args.file)
     clean, endpoint = profile(source.read_text())
+    ensure_awg_engine()
     had_active = active.exists()
     old_endpoint = None
     if had_active:
