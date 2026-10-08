@@ -52,32 +52,39 @@ transport_healthy(){
   "$AWG_TRANSPORT_CLI" check "$t" >/dev/null 2>&1
 }
 
-policy_order(){
-  local item
+policy_csv(){
   case "$SELECTION_MODE" in
     fixed)
-      [[ -n "$SELECTION_PRIMARY" ]] && printf '%s\n' "$SELECTION_PRIMARY"
-      IFS=',' read -ra _items <<<"${SELECTION_ORDER:-}"
-      for item in "${_items[@]}"; do [[ -n "$item" ]] && printf '%s\n' "$item"; done
+      if [[ -n "$SELECTION_PRIMARY" && -n "$SELECTION_ORDER" ]]; then
+        printf '%s,%s\n' "$SELECTION_PRIMARY" "$SELECTION_ORDER"
+      else
+        printf '%s\n' "${SELECTION_PRIMARY:-$SELECTION_ORDER}"
+      fi
       ;;
     auto)
-      IFS=',' read -ra _items <<<"${SELECTION_ORDER:-}"
-      for item in "${_items[@]}"; do [[ -n "$item" ]] && printf '%s\n' "$item"; done
+      printf '%s\n' "${SELECTION_ORDER:-}"
+      ;;
+    *)
+      printf '\n'
       ;;
   esac
 }
 
 current_is_allowed(){
-  local current="$1" candidate
-  while IFS= read -r candidate; do
-    [[ "$candidate" == "$current" ]] && return 0
-  done < <(policy_order)
+  local current="$1" csv item
+  csv="$(policy_csv)"
+  IFS=',' read -ra _items <<<"$csv"
+  for item in "${_items[@]}"; do
+    [[ -n "$item" && "$item" == "$current" ]] && return 0
+  done
   return 1
 }
 
 try_failover(){
-  local current="$1" candidate
-  while IFS= read -r candidate; do
+  local current="$1" csv candidate
+  csv="$(policy_csv)"
+  IFS=',' read -ra _items <<<"$csv"
+  for candidate in "${_items[@]}"; do
     [[ -n "$candidate" && "$candidate" != "$current" ]] || continue
     if transport_healthy "$candidate"; then
       if "$AWG_TRANSPORT_CLI" select "$candidate" >/dev/null; then
@@ -87,7 +94,7 @@ try_failover(){
         return 0
       fi
     fi
-  done < <(policy_order)
+  done
   return 1
 }
 
