@@ -20,11 +20,24 @@ Current stable release: **v1.2.0**
 ## v1.3.0 development track
 
 v1.3.0 is the current multi-transport development line. It keeps the v1.2
-Selective/Transit semantics and adds a transport abstraction with an optional
-Mihomo backend, transactional AWG <-> Mihomo switching, provider-cache
-bootstrap/rollback, secure first-run onboarding, guarded manual exit-node
-selection, and a provider adapter layer for native Mihomo/Clash YAML, plain
-VLESS URI subscriptions and Base64 VLESS subscriptions.
+Selective/Transit semantics and adds a transport abstraction with AmneziaWG and
+Mihomo backends, transactional AWG <-> Mihomo switching, provider-cache
+bootstrap/rollback, secure first-run onboarding, ordered exact-node failover,
+conservative availability-only transport AUTO, and a provider adapter layer for
+native Mihomo/Clash YAML, plain VLESS URI subscriptions and Base64 VLESS
+subscriptions.
+
+The fresh-install wizard can choose AWG or Mihomo as the first transport. When
+Mihomo is chosen it interactively selects the first live node and may configure
+an explicit one-way fallback chain (for example Finland -> Estonia -> Latvia ->
+Sweden). Node failover never infers countries or wraps back to an earlier node.
+Transport FIXED/AUTO policy is independent from the Mihomo node policy.
+
+The SSH TUI also includes a system dashboard (clock/timezone, uptime, CPU
+temperature/load, RAM and disk), timezone management, unified VPN
+destination/OpenCCK entry, and low-write today/month transport traffic
+accounting for awg0 + mihomo0. Traffic samples stay in RAM and persistent state
+is checkpointed only periodically.
 
 The v1.2.0 stable tag remains the updater target until the v1.3 hardware gate is
 complete. Do not treat develop/v1.3.0 as a stable installation source without an

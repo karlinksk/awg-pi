@@ -39,6 +39,7 @@ SELECTION_CLI="/usr/local/sbin/awg-selection"
 SELECTION_MONITOR="/usr/local/sbin/awg-selection-monitor"
 MIHOMO_NODE_POLICY_CLI="/usr/local/sbin/awg-mihomo-node-policy"
 UPDATE_SCRIPT="/usr/local/sbin/awg-update"
+TRAFFIC_CLI="/usr/local/sbin/awg-traffic"
 SETUP_SERVICE="/etc/systemd/system/awg-pbr-setup.service"
 HEALTH_SERVICE="/etc/systemd/system/awg-pbr-health.service"
 SYSCTL_FILE="/etc/sysctl.d/99-awg-pbr.conf"
@@ -668,16 +669,18 @@ install_project_helper src/awg-pbr-health "$HEALTH_SCRIPT"
 install_project_helper src/awg-opencck-update /usr/local/sbin/awg-opencck-update
 install_project_helper src/awg-core-update /usr/local/sbin/awg-core-update
 install_project_helper src/awg-update "$UPDATE_SCRIPT"
+install_project_helper src/awg-traffic "$TRAFFIC_CLI"
 install_project_helper src/awg-menu /usr/local/sbin/awg-menu
 
 mkdir -p /etc/awg-pbr/sources/opencck/metadata
-mkdir -p /etc/awg-pbr/transports/mihomo /var/lib/awg-pbr/mihomo/providers
+mkdir -p /etc/awg-pbr/transports/mihomo /var/lib/awg-pbr/mihomo/providers /var/lib/awg-pbr/traffic
 chmod 700 /etc/awg-pbr/sources /etc/awg-pbr/sources/opencck /etc/awg-pbr/sources/opencck/metadata
-chmod 700 /etc/awg-pbr/transports /etc/awg-pbr/transports/mihomo /var/lib/awg-pbr/mihomo /var/lib/awg-pbr/mihomo/providers
+chmod 700 /etc/awg-pbr/transports /etc/awg-pbr/transports/mihomo /var/lib/awg-pbr/mihomo /var/lib/awg-pbr/mihomo/providers /var/lib/awg-pbr/traffic
 install_project_unit units/awg-mihomo.service /etc/systemd/system/awg-mihomo.service
 install_project_unit units/awg-mihomo-update.service /etc/systemd/system/awg-mihomo-update.service
 install_project_unit units/awg-mihomo-update.timer /etc/systemd/system/awg-mihomo-update.timer
 install_project_unit units/awg-selection-monitor.service /etc/systemd/system/awg-selection-monitor.service
+install_project_unit units/awg-traffic.service /etc/systemd/system/awg-traffic.service
 cat >/etc/systemd/system/awg-opencck-update.service <<'EOF'
 [Unit]
 Description=AWG Pi Gateway OpenCCK source updater
@@ -747,7 +750,7 @@ EOF
 # -----------------------------------------------------------------------------
 STAGE="проверка компонентов управления"
 log "[10/12] Проверка awg-route / awg-menu / awg-update"
-for f in "$ROUTE_CLI" "$TRANSPORT_CLI" "$FETCH_CLI" "$MIHOMO_CONFIG_SCRIPT" "$MIHOMO_UPDATE_SCRIPT" "$MIHOMO_INSTALL_SCRIPT" "$MIHOMO_PREPARE_SCRIPT" "$MIHOMO_CONFIGURE_SCRIPT" "$FIRST_RUN_CLI" "$SELECTION_CLI" "$SELECTION_MONITOR" "$MIHOMO_NODE_POLICY_CLI" "$SETUP_SCRIPT" /usr/local/sbin/awg-menu /usr/local/sbin/awg-transit-nft /usr/local/sbin/awg-transit-preflight /usr/local/sbin/awg-transit-apply /usr/local/sbin/awg-transit-routing /usr/local/sbin/awg-mode-switch "$HEALTH_SCRIPT" /usr/local/sbin/awg-opencck-update /usr/local/sbin/awg-core-update "$UPDATE_SCRIPT"; do
+for f in "$ROUTE_CLI" "$TRANSPORT_CLI" "$FETCH_CLI" "$MIHOMO_CONFIG_SCRIPT" "$MIHOMO_UPDATE_SCRIPT" "$MIHOMO_INSTALL_SCRIPT" "$MIHOMO_PREPARE_SCRIPT" "$MIHOMO_CONFIGURE_SCRIPT" "$FIRST_RUN_CLI" "$SELECTION_CLI" "$SELECTION_MONITOR" "$MIHOMO_NODE_POLICY_CLI" "$SETUP_SCRIPT" /usr/local/sbin/awg-menu /usr/local/sbin/awg-transit-nft /usr/local/sbin/awg-transit-preflight /usr/local/sbin/awg-transit-apply /usr/local/sbin/awg-transit-routing /usr/local/sbin/awg-mode-switch "$HEALTH_SCRIPT" /usr/local/sbin/awg-opencck-update /usr/local/sbin/awg-core-update "$UPDATE_SCRIPT" "$TRAFFIC_CLI"; do
   [[ -x "$f" ]] || die "Не установлен исполняемый компонент: $f"
   bash -n "$f" || die "Синтаксическая проверка компонента не пройдена: $f"
 done
@@ -759,7 +762,7 @@ ok "Компоненты управления v$AWG_PI_VERSION установл�
 STAGE="первый запуск и критические проверки"
 log "[11/12] Первый запуск"
 systemctl daemon-reload
-systemctl enable awg-pbr-setup.service dnsmasq.service awg-pbr-health.service awg-selection-monitor.service awg-opencck-update.timer >/dev/null
+systemctl enable awg-pbr-setup.service dnsmasq.service awg-pbr-health.service awg-selection-monitor.service awg-traffic.service awg-opencck-update.timer >/dev/null
 
 # Base control plane comes up before any VPN backend. This is what keeps SSH,
 # TUI, DNS and recovery available even with zero working transports.
@@ -825,6 +828,8 @@ systemctl restart awg-pbr-health.service
 systemctl is-active --quiet awg-pbr-health.service || die "health monitor не запустился"
 systemctl restart awg-selection-monitor.service
 systemctl is-active --quiet awg-selection-monitor.service || die "selection monitor не запустился"
+systemctl restart awg-traffic.service
+systemctl is-active --quiet awg-traffic.service || warn "traffic accounting не запустился; маршрутизация продолжит работу"
 systemctl start awg-opencck-update.timer
 systemctl is-active --quiet awg-opencck-update.timer || warn "OpenCCK timer не активен; ручное обновление останется доступно"
 

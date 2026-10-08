@@ -73,39 +73,54 @@ awg-update backup/restore must include the complete v1.3 state:
 
 - /etc/awg-pbr
 - /var/lib/awg-pbr/mihomo
+- /var/lib/awg-pbr/traffic
 - /usr/local/bin/mihomo when present
 - /usr/local/lib/awg-pi
-- awg-transport
+- awg-transport and awg-traffic
 - all awg-mihomo-* helpers
 - Mihomo systemd service/update units
+- selection-monitor and traffic-accounting units
 
 A failed gateway update must restore the previous version and leave the gateway
 usable on the previous transport.
 
 ## 4. Mihomo first-run onboarding
 
-The active datapath must remain on AWG during initial Mihomo setup.
+On a fresh install the first transport is chosen before Operating Mode. The
+wizard must support either AWG or Mihomo as the first backend without assuming
+that the other one already exists.
 
-For a provider that is not reachable DIRECT (the observed Citadel case), AUTO
-bootstrap must be able to obtain the provider using an available transport.
+For Mihomo first-run the interactive flow must support:
 
-AUTO bootstrap order:
+1. subscription URL or local/pasted provider input;
+2. provider profile/format validation;
+3. safe live-node listing;
+4. exact selection of the first node and one resolved IPv4 endpoint;
+5. optional ordered exact-node fallback chain (2+ explicit nodes);
+6. activation of Mihomo as the first transport;
+7. Operating Mode selection only afterward.
 
-1. current healthy Mihomo proxy (when available)
-2. AmneziaWG
-3. router/default path
+For a provider that is not reachable DIRECT, AUTO bootstrap must be able to use
+an already healthy transport. AUTO bootstrap order is:
 
-The router/default path means Pi -> MikroTik. MikroTik may then keep the request
-DIRECT or policy-route it through SSTP/another router-side VPN.
+1. DIRECT through the normal Pi LAN/uplink;
+2. the currently selected healthy transport, if one exists;
+3. other configured healthy transports explicitly supported by the bootstrap manager.
+
+Router-side SSTP/VPN is not a required bootstrap dependency. Pi-originated
+transport/control traffic must retain the gateway-wide DIRECT invariant so that
+a new transport is not accidentally configured through itself.
 
 Required checks:
 
-- subscription URL can be entered through the protected menu flow.
-- full URL/token is not echoed in status.
-- local provider-file import works without network.
-- invalid/empty provider never replaces the working cache.
-- failed refresh leaves the last valid provider cache intact.
-- Last fetch path reflects the successful bootstrap path.
+- subscription URL can be entered through the protected menu flow;
+- full URL/token is not echoed in status;
+- local provider-file import works without network;
+- invalid/empty provider never replaces the working cache;
+- failed refresh leaves the last valid provider cache intact;
+- Last fetch path reflects the successful bootstrap path;
+- declining node failover leaves Mihomo node policy MANUAL;
+- accepting it saves only the exact ordered node names entered by the user.
 
 ### Provider adapter independence gate
 
@@ -164,37 +179,50 @@ the expected public egress IP.
 
 ## 6. MikroTik DIRECT protection
 
-Before selecting a Mihomo node, its transport endpoint must bypass SSTP/VPN
-policy on MikroTik.
+All Pi-originated transport/control traffic must bypass router-side SSTP/VPN
+policy. This gateway-wide invariant replaces per-endpoint MikroTik rules for
+normal node changes.
 
-The release test should use a narrowly scoped early mangle accept rule for:
+For every selected Mihomo node, verify that its resolved endpoint uses the
+normal main route through the home router/LAN and never recursively traverses
+the Pi transport, SSTP, or another VPN path. The same invariant applies to AWG
+transport endpoints and bootstrap/control downloads.
 
-- source: Pi LAN IPv4
-- destination: selected transport endpoint IPv4
-- protocol/port where known
-
-Apply router changes in RouterOS Safe Mode and verify that the endpoint uses the
-normal WAN/main route rather than r_to_vpn.
-
-Do not disable SSTP as part of this test.
+Do not disable SSTP as part of this test. SSTP remains the priority management
+link and should not be disturbed by transport validation.
 
 ## 7. Manual/Fixed node selection
 
-v1.3.0 ships with Manual/Fixed as the baseline node-selection mode.
+v1.3.0 ships with MANUAL and FIXED exact-node policy.
+
+FIXED is an explicit one-way ordered chain. Only nodes after the current exact
+node may be tried automatically; the chain never wraps back to an earlier node.
+Country inference is disabled. A healthy current node is sticky and there is no
+performance-based return to a previous node.
+
+Example release chain:
+
+~~~text
+Finland -> Estonia -> Latvia -> Sweden
+~~~
+
+If the last allowed node fails, exact-node recovery is exhausted and transport
+selection gets the next chance (for example Mihomo -> AWG).
 
 The selected node must be applied transactionally:
 
-1. provider cache already valid
-2. candidate node found
-3. endpoint resolved
-4. MikroTik DIRECT protection confirmed
-5. runtime config rendered
-6. mihomo -t succeeds
-7. Mihomo service becomes healthy
-8. only then may the user select the Mihomo transport
+1. provider cache already valid;
+2. candidate node found;
+3. endpoint resolved;
+4. gateway-wide DIRECT protection confirmed;
+5. runtime config rendered;
+6. mihomo -t succeeds;
+7. Mihomo service becomes healthy;
+8. dataplane/health monitoring is restored.
 
 If node reconfiguration fails, the previous working node/config/cache must stay
-usable.
+usable. The TUI and fresh-install wizard must both support configuring the full
+ordered chain, not only one primary/fallback pair.
 
 ## 8. AWG -> Mihomo hardware switch
 
@@ -247,6 +275,26 @@ Expected:
 
 This switch is required before the release candidate is accepted.
 
+## 9a. Transport selection policy gate
+
+Transport selection is independent from Mihomo node selection.
+
+Required modes:
+
+- MANUAL: no automatic transport switching.
+- FIXED: explicit primary plus fallback order, triggered only by repeated health
+  failure. A healthy fallback is sticky; there is no automatic failback.
+- AUTO: explicit allowed transport order, availability-only. It must never
+  switch a healthy current transport for latency, throughput, preference or
+  performance reasons.
+
+Hardware evidence must cover both AWG -> Mihomo and Mihomo -> AWG failover with
+a stopped standby backend, plus conservative AUTO stickiness after the alternate
+backend recovers.
+
+Exact-node recovery has priority while active transport is Mihomo. Only after
+the ordered node-chain is exhausted may transport-level failover run.
+
 ## 10. Provider outage/cache test
 
 With a valid cache already present, make the provider URL temporarily
@@ -260,15 +308,22 @@ Expected:
 
 ## 11. microSD/write sanity
 
-Mihomo runtime logs must not introduce persistent high-volume writes.
+Mihomo runtime logs and traffic accounting must not introduce persistent
+high-volume writes.
 
 Verify that:
 
-- runtime logging is warning-level or lower-volume.
-- temporary/test logs use tmpfs where practical.
-- no high-frequency updater timer was introduced.
+- runtime logging is warning-level or lower-volume;
+- temporary/test logs use tmpfs where practical;
+- no high-frequency provider updater timer was introduced;
 - provider updates are periodic and atomic rather than continuously rewriting
-  cache files.
+  cache files;
+- transport traffic is sampled into /run (RAM);
+- persistent traffic state is checkpointed no more often than the configured
+  low-write interval (default 21600 seconds / 6 hours), plus clean shutdown and
+  period rollover;
+- awg0/mihomo0 recreation is detected by interface identity so counter resets do
+  not corrupt today/month totals.
 
 ## 12. Release acceptance
 
@@ -277,12 +332,27 @@ A v1.3.0 RC is acceptable only after all of the following are true:
 - CI is green.
 - existing v1.2.0 upgrade on the real Pi passes.
 - AWG remains unchanged immediately after upgrade.
-- first-run Mihomo onboarding succeeds.
-- blocked provider download succeeds through AUTO bootstrap.
-- provider adapters pass native Mihomo YAML plus at least one non-Citadel VLESS/base64 format.
-- manual node selection succeeds with MikroTik DIRECT protection.
-- AWG -> Mihomo switch succeeds.
-- Mihomo -> AWG switch succeeds.
+- fresh first-run can choose either AWG or Mihomo before Operating Mode.
+- first-run Mihomo onboarding selects the initial exact node and can save a
+  multi-node ordered fallback chain interactively.
+- blocked provider download succeeds through DIRECT-first AUTO bootstrap with
+  healthy Pi-transport fallback when DIRECT is unavailable.
+- provider adapters pass native Mihomo YAML plus at least one non-Citadel
+  VLESS/base64 format.
+- manual node selection succeeds with gateway-wide Pi transport/control DIRECT
+  protection.
+- the ordered exact-node chain advances only forward and exhausts into
+  transport-level fallback.
+- FIXED AWG -> Mihomo and Mihomo -> AWG failover both succeed from realistic
+  standby states.
+- conservative AUTO switches only on repeated health failure and retains a
+  healthy current transport after the alternate backend recovers.
+- Selective remains FAIL-OPEN and Transit remains FAIL-CLOSED throughout all
+  transport/node transitions.
+- the TUI exposes the system dashboard, timezone control, unified VPN/OpenCCK
+  destination entry, full ordered node-chain editor and traffic statistics.
+- today/month transport traffic accounting survives interface recreation,
+  samples in RAM and uses low-frequency persistent checkpoints.
 - failure/rollback scenarios preserve connectivity and cached state.
 - no secrets appear in status/menu/test evidence.
 - no unexpected microSD write regression is observed.

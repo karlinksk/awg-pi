@@ -44,6 +44,7 @@ for needle in \
   'usr/local/sbin/awg-selection' \
   'usr/local/sbin/awg-selection-monitor' \
   'usr/local/sbin/awg-mihomo-node-policy' \
+  'usr/local/sbin/awg-traffic' \
   'usr/local/sbin/awg-mihomo-config' \
   'usr/local/sbin/awg-mihomo-update' \
   'usr/local/sbin/awg-mihomo-install' \
@@ -52,12 +53,14 @@ for needle in \
   'etc/systemd/system/awg-mihomo.service' \
   'etc/systemd/system/awg-mihomo-update.service' \
   'etc/systemd/system/awg-mihomo-update.timer' \
-  'etc/systemd/system/awg-selection-monitor.service'
+  'etc/systemd/system/awg-selection-monitor.service' \
+  'etc/systemd/system/awg-traffic.service' \
+  'var/lib/awg-pbr/traffic'
 do
   grep -Fq "$needle" src/awg-update
 done
 
-grep -Fq 'rm -rf /etc/awg-pbr /var/lib/awg-pbr/mihomo /usr/local/lib/awg-pi' src/awg-update
+grep -Fq 'rm -rf /etc/awg-pbr /var/lib/awg-pbr/mihomo /var/lib/awg-pbr/traffic /usr/local/lib/awg-pi' src/awg-update
 grep -Fq 'systemctl stop \' src/awg-update
 grep -Fq 'awg-mihomo-update.timer \' src/awg-update
 grep -Fq 'awg-mihomo.service \' src/awg-update
@@ -65,3 +68,6 @@ grep -Fq 'awg-mihomo.service \' src/awg-update
 echo "v1.3 upgrade/rollback policy: OK"
 
 grep -Fq 'install_project_helper src/awg-mihomo-node-policy "$MIHOMO_NODE_POLICY_CLI"' install.sh
+grep -Fq 'install_project_helper src/awg-traffic "$TRAFFIC_CLI"' install.sh
+grep -Fq 'install_project_unit units/awg-traffic.service /etc/systemd/system/awg-traffic.service' install.sh
+grep -Fq 'systemctl restart awg-traffic.service' install.sh

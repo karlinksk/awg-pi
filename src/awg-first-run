@@ -8,6 +8,7 @@ AWG_ROUTE="${AWG_ROUTE_BIN:-/usr/local/sbin/awg-route}"
 AWG_TRANSPORT="${AWG_TRANSPORT_BIN:-/usr/local/sbin/awg-transport}"
 MIHOMO_CONFIGURE="${MIHOMO_CONFIGURE_BIN:-/usr/local/sbin/awg-mihomo-configure}"
 MIHOMO_INSTALLER="${MIHOMO_INSTALLER_BIN:-/usr/local/sbin/awg-mihomo-install}"
+MIHOMO_NODE_POLICY="${MIHOMO_NODE_POLICY_BIN:-/usr/local/sbin/awg-mihomo-node-policy}"
 MIHOMO_ENV_FILE="${MIHOMO_ENV_FILE:-/etc/awg-pbr/transports/mihomo/provider.env}"
 MIHOMO_BIN="${MIHOMO_BIN:-/usr/local/bin/mihomo}"
 export MIHOMO_ENV_FILE MIHOMO_BIN
@@ -97,6 +98,54 @@ activate_awg_file(){
   printf 'FIRST_TRANSPORT=awg\n'
 }
 
+configure_mihomo_node_chain(){
+  local primary="$1" answer next chain node existing
+  local -a nodes=("$primary")
+  [[ "${AWG_FIRST_RUN_INTERACTIVE:-0}" == 1 ]] || return 0
+
+  ask "Настроить резервную последовательность Mihomo nodes сейчас? (y/N)" "N"
+  answer="$REPLY"
+  if [[ ! "$answer" =~ ^([Yy]|[Дд][Аа]?)$ ]]; then
+    "$MIHOMO_NODE_POLICY" mode manual >/dev/null
+    ui_print "Mihomo node failover: MANUAL"
+    return 0
+  fi
+
+  while true; do
+    ui_print "$(printf '\n=== Live Mihomo nodes ===\n%s\n' "$("$MIHOMO_CONFIGURE" node list)")"
+    ask "Следующий fallback node (ТОЧНОЕ имя; пусто = закончить)" ""
+    next="$REPLY"
+    [[ -n "$next" ]] || break
+
+    for existing in "${nodes[@]}"; do
+      if [[ "$existing" == "$next" ]]; then
+        ui_print "Этот node уже есть в цепочке: $next"
+        next=""
+        break
+      fi
+    done
+    [[ -n "$next" ]] || continue
+
+    if ! "$MIHOMO_CONFIGURE" node prepare "$next" >/dev/null; then
+      ui_print "Node не найден/не готов: $next"
+      continue
+    fi
+    nodes+=("$next")
+    chain="$(printf ' -> %s' "${nodes[@]}")"
+    ui_print "Текущая цепочка: ${chain# -> }"
+  done
+
+  if (( ${#nodes[@]} < 2 )); then
+    "$MIHOMO_NODE_POLICY" mode manual >/dev/null
+    ui_print "Fallback nodes не добавлены; Mihomo node failover остаётся MANUAL."
+    return 0
+  fi
+
+  chain="$(printf ' -> %s' "${nodes[@]}")"
+  ui_print "Итоговая exact-node chain: ${chain# -> }"
+  "$MIHOMO_NODE_POLICY" mode fixed "${nodes[@]}"
+}
+
 choose_mihomo_node(){
   local source="${1:-live}" nodes name prepared endpoint
   case "$source" in
@@ -143,6 +192,7 @@ choose_mihomo_node(){
     "$MIHOMO_CONFIGURE" node select "$name" "$endpoint"
   fi
   "$AWG_TRANSPORT" select mihomo
+  configure_mihomo_node_chain "$name"
   printf 'FIRST_TRANSPORT=mihomo\n'
 }
 

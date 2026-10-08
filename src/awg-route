@@ -32,6 +32,7 @@ TRANSPORT_CLI="${AWG_TRANSPORT_CLI:-/usr/local/sbin/awg-transport}"
 SELECTION_CLI="${AWG_SELECTION_CLI:-/usr/local/sbin/awg-selection}"
 MIHOMO_CONFIGURE="${MIHOMO_CONFIGURE_BIN:-/usr/local/sbin/awg-mihomo-configure}"
 MIHOMO_NODE_POLICY="${MIHOMO_NODE_POLICY_BIN:-/usr/local/sbin/awg-mihomo-node-policy}"
+TRAFFIC_CLI="${AWG_TRAFFIC_BIN:-/usr/local/sbin/awg-traffic}"
 MIHOMO_ENDPOINT_IP_FILE="${MIHOMO_ENDPOINT_IP_FILE:-/etc/awg-pbr/transports/mihomo/endpoint-ip}"
 OPENCCK_UPDATE="${AWG_OPENCCK_UPDATE:-/usr/local/sbin/awg-opencck-update}"
 SOURCE_ROOT="${SOURCE_ROOT:-/etc/awg-pbr/sources}"
@@ -532,7 +533,7 @@ show_status(){
   fi
   echo
   echo "=== Services ==="
-  for s in awg-pbr-setup.service dnsmasq.service "awg-quick@$VPN_IF.service" awg-mihomo.service awg-pbr-health.service awg-selection-monitor.service awg-opencck-update.timer awg-mihomo-update.timer; do
+  for s in awg-pbr-setup.service dnsmasq.service "awg-quick@$VPN_IF.service" awg-mihomo.service awg-pbr-health.service awg-selection-monitor.service awg-traffic.service awg-opencck-update.timer awg-mihomo-update.timer; do
     printf '%-30s %s\n' "$s" "$(systemctl is-active "$s" 2>/dev/null || true)"
   done
   echo
@@ -541,6 +542,11 @@ show_status(){
   printf 'DIRECT exceptions: %s\n' "$(grep -Evc '^\s*(#|$)' "$DD" 2>/dev/null || true)"
   printf 'Client allow-list: %s\n' "$(grep -Evc '^\s*(#|$)' "$CF" 2>/dev/null || true)"
   printf 'OpenCCK sources: %s total / %s enabled / %s cached entries\n' "$sc_total" "$sc_enabled" "$sc_entries"
+  if [[ -x "$TRAFFIC_CLI" ]]; then
+    echo
+    echo "=== Traffic ==="
+    "$TRAFFIC_CLI" status full 2>/dev/null || echo "Traffic statistics: unavailable"
+  fi
   echo
   echo "=== Backend details ==="
   case "$transport_id" in
@@ -662,7 +668,7 @@ run_diagnostics(){
     dig +time=3 +tries=1 +short A example.com @"$PI_IP" | grep -qE '^[0-9]+\.' && echo "dnsmasq query: OK" || echo "dnsmasq query: FAIL"
     echo
     echo "--- Services ---"
-    for s in awg-pbr-setup.service dnsmasq.service "awg-quick@$VPN_IF.service" awg-mihomo.service awg-pbr-health.service awg-selection-monitor.service awg-opencck-update.timer awg-mihomo-update.timer; do
+    for s in awg-pbr-setup.service dnsmasq.service "awg-quick@$VPN_IF.service" awg-mihomo.service awg-pbr-health.service awg-selection-monitor.service awg-traffic.service awg-opencck-update.timer awg-mihomo-update.timer; do
       echo "$s: $(systemctl is-active "$s" 2>/dev/null || true) / enabled=$(systemctl is-enabled "$s" 2>/dev/null || true)"
     done
     echo
@@ -848,7 +854,7 @@ case "$cmd" in
   diagnostics) run_diagnostics ;;
   logs)
     n="${action:-150}"; [[ "$n" =~ ^[0-9]+$ ]] || n=150
-    journalctl --no-pager -n "$n" -u "awg-quick@$VPN_IF.service" -u awg-pbr-health.service -u dnsmasq.service -u awg-pbr-setup.service -u awg-opencck-update.service
+    journalctl --no-pager -n "$n" -u "awg-quick@$VPN_IF.service" -u awg-pbr-health.service -u awg-traffic.service -u dnsmasq.service -u awg-pbr-setup.service -u awg-opencck-update.service
     ;;
   *) usage; exit 2 ;;
 esac

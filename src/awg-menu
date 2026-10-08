@@ -20,6 +20,7 @@ MIHOMO_NODE_POLICY=/usr/local/sbin/awg-mihomo-node-policy
 AWG_FIRST_RUN=/usr/local/sbin/awg-first-run
 AWG_SELECTION=/usr/local/sbin/awg-selection
 AWG_UPDATE=/usr/local/sbin/awg-update
+AWG_TRAFFIC=/usr/local/sbin/awg-traffic
 VERSION="$(cat /etc/awg-pbr/version 2>/dev/null || echo unknown)"
 BASE_BACKTITLE="AWG Pi Gateway v$VERSION"
 BACKTITLE="$BASE_BACKTITLE"
@@ -114,8 +115,40 @@ run_interactive(){
   return 0
 }
 
+current_timezone(){
+  timedatectl show -p Timezone --value 2>/dev/null || cat /etc/timezone 2>/dev/null || echo unknown
+}
+
+system_uptime(){
+  awk '{s=int($1); d=int(s/86400); h=int((s%86400)/3600); m=int((s%3600)/60);
+        if (d>0) printf "%dd %02dh %02dm",d,h,m; else printf "%02dh %02dm",h,m}' /proc/uptime 2>/dev/null || echo n/a
+}
+
+cpu_temperature(){
+  local path value
+  for path in /sys/class/thermal/thermal_zone*/temp; do
+    [[ -r "$path" ]] || continue
+    value="$(cat "$path" 2>/dev/null || true)"
+    [[ "$value" =~ ^[0-9]+$ ]] || continue
+    awk -v t="$value" 'BEGIN{printf "%.1f°C",t/1000}'
+    return 0
+  done
+  printf '%s' 'n/a'
+}
+
+memory_summary(){
+  awk '/^MemTotal:/{t=$2}/^MemAvailable:/{a=$2}END{
+    if(t>0){u=t-a; printf "%.0f/%.0f MiB (%.0f%%)",u/1024,t/1024,(u*100)/t}else printf "n/a"
+  }' /proc/meminfo 2>/dev/null
+}
+
+disk_summary(){
+  df -hP / 2>/dev/null | awk 'NR==2{printf "%s/%s (%s)",$3,$2,$5}'
+}
+
 quick_summary(){
   local health policy dns awg_state hs oc pi router mode mode_label mode_badge transport
+  local now tz temp uptime load mem disk traffic
   health="$(cat /run/awg-pbr/health.state 2>/dev/null || echo unknown)"
   mode="$(operating_mode_id)"
   mode_label="$(operating_mode_label "$mode")"
@@ -139,8 +172,17 @@ quick_summary(){
   systemctl is-active --quiet awg-opencck-update.timer && oc=OK || oc=OFF
   pi="${PI_IP:-?}"
   router="${ROUTER_IP:-?}"
-  printf 'РЕЖИМ РАБОТЫ: [%s] %s | Transport: %s\nVPN health: %-7s Policy: %-7s DNS: %-4s\nawg0: %-9s Handshake: %-8s OpenCCK: %s\nPi: %-15s Router: %s' \
-    "$mode_badge" "$mode_label" "$transport" "$health" "$policy" "$dns" "$awg_state" "$hs" "$oc" "$pi" "$router"
+  now="$(date '+%Y-%m-%d %H:%M:%S')"
+  tz="$(current_timezone)"
+  temp="$(cpu_temperature)"
+  uptime="$(system_uptime)"
+  load="$(awk '{print $1" "$2" "$3}' /proc/loadavg 2>/dev/null || echo n/a)"
+  mem="$(memory_summary)"
+  disk="$(disk_summary)"
+  traffic="$("$AWG_TRAFFIC" status compact 2>/dev/null || echo 'Today: n/a | Month: n/a')"
+  printf 'ВРЕМЯ: %s | TZ: %s\nСИСТЕМА: Uptime %s | CPU %s | Load %s\nПАМЯТЬ: %s | Disk /: %s\nРЕЖИМ: [%s] %s | Transport: %s\nVPN health: %-7s Policy: %-7s DNS: %-4s | awg0: %-4s HS: %-8s OpenCCK: %s\nTRAFFIC: %s\nPi: %-15s Router: %s' \
+    "$now" "$tz" "$uptime" "$temp" "$load" "$mem" "$disk" \
+    "$mode_badge" "$mode_label" "$transport" "$health" "$policy" "$dns" "$awg_state" "$hs" "$oc" "$traffic" "$pi" "$router"
 }
 
 status_screen(){
@@ -201,6 +243,56 @@ domain_menu(){
         title="Экспорт"
         capture "$AWG_ROUTE" "$kind" export "$path" || true
         ;;
+      0) return 0 ;;
+    esac
+  done
+}
+
+vpn_destination_menu(){
+  local choice target method
+  while true; do
+    choice="$(dialog --backtitle "$BACKTITLE" --title "VPN-сервисы / домены" --item-help --menu \
+      "Единая точка добавления Selective VPN-направлений: ручной домен или OpenCCK source. Имя вводится один раз." 23 104 9 \
+      1 "Показать всё" "Показывает ручные VPN/DIRECT домены, OpenCCK sources и client allow-list." \
+      2 "Добавить VPN-направление" "Введите имя один раз, затем выберите: ручной домен, OpenCCK group или OpenCCK site." \
+      3 "Удалить ручной VPN-домен" "Удаляет только запись из ручного VPN domain list." \
+      4 "Ручные VPN-домены — расширенно" "Импорт/экспорт/replace и другие операции с ручным domain list." \
+      5 "OpenCCK — расширенно" "Полное управление OpenCCK sources, cache, enable/disable/update." \
+      0 "Назад" "Возвращает в главное меню." 3>&1 1>&2 2>&3)" || return 0
+    case "$choice" in
+      1)
+        title="VPN назначения"
+        capture "$AWG_ROUTE" list || true
+        ;;
+      2)
+        target="$(input "VPN-направление" "Введите домен, имя OpenCCK group или site ОДИН раз:")" || continue
+        [[ -n "$target" ]] || continue
+        method="$(dialog --backtitle "$BACKTITLE" --title "Источник VPN-направления" --item-help --menu \
+          "Значение: $target" 18 100 5 \
+          manual "Ручной VPN-домен" "Добавляет domain в локальный VPN list; подходит для точного домена и его поддоменов." \
+          group "OpenCCK group" "Добавляет OpenCCK group с type=domains и сразу загружает cache." \
+          site "OpenCCK site" "Добавляет OpenCCK site с type=domains и сразу загружает cache." \
+          0 "Назад" "Ничего не добавлять." 3>&1 1>&2 2>&3)" || continue
+        case "$method" in
+          manual)
+            title="Добавление VPN-домена"
+            capture "$AWG_ROUTE" vpn add "$target" || true
+            ;;
+          group|site)
+            title="Добавление OpenCCK → VPN"
+            capture "$AWG_ROUTE" source add opencck "$target" --type domains --kind "$method" || true
+            ;;
+          0) ;;
+        esac
+        ;;
+      3)
+        target="$(input "VPN-домен" "Введите домен для удаления из ручного списка:")" || continue
+        [[ -n "$target" ]] || continue
+        title="Удаление VPN-домена"
+        capture "$AWG_ROUTE" vpn del "$target" || true
+        ;;
+      4) domain_menu vpn "Домены VPN" ;;
+      5) opencck_menu ;;
       0) return 0 ;;
     esac
   done
@@ -506,15 +598,100 @@ mihomo_provider_format_dialog(){
     0 "Назад" "Не менять формат." 3>&1 1>&2 2>&3
 }
 
+mihomo_node_chain_editor(){
+  local choice node idx chain current order_file
+  local -a nodes=()
+  order_file=/etc/awg-pbr/transports/mihomo/node-policy.nodes
+
+  if [[ -r "$order_file" ]] && "$MIHOMO_NODE_POLICY" status 2>/dev/null | grep -q '^Mihomo node policy: fixed$'; then
+    mapfile -t nodes <"$order_file"
+  fi
+  if (( ${#nodes[@]} == 0 )); then
+    current="$(cat /etc/awg-pbr/transports/mihomo/node-name 2>/dev/null || true)"
+    [[ -z "$current" ]] || nodes=("$current")
+  fi
+
+  while true; do
+    chain="(пусто)"
+    if (( ${#nodes[@]} > 0 )); then
+      chain="$(printf ' -> %s' "${nodes[@]}")"
+      chain="${chain# -> }"
+    fi
+    choice="$(dialog --backtitle "$BACKTITLE" --title "Ordered Mihomo node-chain" --item-help --menu \
+      "Текущая цепочка:\n$chain\n\nFailover идёт только слева направо; назад не возвращается." 26 110 10 \
+      1 "Добавить node" "Добавляет точное имя live-node в конец цепочки." \
+      2 "Удалить node" "Удаляет элемент по его номеру в цепочке." \
+      3 "Переместить выше" "Меняет выбранный node местами с предыдущим." \
+      4 "Переместить ниже" "Меняет выбранный node местами со следующим." \
+      5 "Применить FIXED chain" "Проверяет все exact names и сохраняет ordered one-way failover chain." \
+      6 "Начать с текущего node" "Сбрасывает редактор к текущей выбранной Mihomo ноде." \
+      7 "Показать доступные nodes" "Показывает безопасный live-список name/type/server:port." \
+      0 "Отмена" "Выход без изменения сохранённой policy." 3>&1 1>&2 2>&3)" || return 0
+    case "$choice" in
+      1)
+        title="Доступные Mihomo nodes"
+        capture "$MIHOMO_CONFIGURE" node list || true
+        node="$(input "Добавить node" "Введите ТОЧНОЕ имя live-node:")" || continue
+        [[ -n "$node" ]] || continue
+        if printf '%s\n' "${nodes[@]}" | grep -Fxq -- "$node"; then
+          msg "Mihomo Node Failover" "Этот node уже есть в цепочке."
+          continue
+        fi
+        if ! "$MIHOMO_CONFIGURE" node prepare "$node" >/dev/null 2>&1; then
+          msg "Mihomo Node Failover" "Node не найден или не резолвится в текущем live provider."
+          continue
+        fi
+        nodes+=("$node")
+        ;;
+      2)
+        (( ${#nodes[@]} > 0 )) || { msg "Mihomo Node Failover" "Цепочка пуста."; continue; }
+        idx="$(input "Удалить node" "Номер элемента 1..${#nodes[@]}:")" || continue
+        [[ "$idx" =~ ^[0-9]+$ ]] && (( idx>=1 && idx<=${#nodes[@]} )) || { msg "Mihomo Node Failover" "Некорректный номер."; continue; }
+        unset 'nodes[idx-1]'
+        nodes=("${nodes[@]}")
+        ;;
+      3)
+        (( ${#nodes[@]} > 1 )) || continue
+        idx="$(input "Переместить выше" "Номер элемента 2..${#nodes[@]}:")" || continue
+        [[ "$idx" =~ ^[0-9]+$ ]] && (( idx>=2 && idx<=${#nodes[@]} )) || { msg "Mihomo Node Failover" "Некорректный номер."; continue; }
+        node="${nodes[idx-1]}"; nodes[idx-1]="${nodes[idx-2]}"; nodes[idx-2]="$node"
+        ;;
+      4)
+        (( ${#nodes[@]} > 1 )) || continue
+        idx="$(input "Переместить ниже" "Номер элемента 1..$((${#nodes[@]}-1)):")" || continue
+        [[ "$idx" =~ ^[0-9]+$ ]] && (( idx>=1 && idx<${#nodes[@]} )) || { msg "Mihomo Node Failover" "Некорректный номер."; continue; }
+        node="${nodes[idx-1]}"; nodes[idx-1]="${nodes[idx]}"; nodes[idx]="$node"
+        ;;
+      5)
+        (( ${#nodes[@]} >= 2 )) || { msg "Mihomo Node Failover" "Для automatic failover нужно минимум 2 node."; continue; }
+        chain="$(printf ' -> %s' "${nodes[@]}")"; chain="${chain# -> }"
+        confirm "Применить FIXED chain" "Сохранить exact-node chain:\n\n$chain\n\nАвтоматический переход разрешён только слева направо; страна не выводится автоматически." || continue
+        title="Mihomo node policy → FIXED"
+        capture "$MIHOMO_NODE_POLICY" mode fixed "${nodes[@]}" || true
+        return 0
+        ;;
+      6)
+        current="$(cat /etc/awg-pbr/transports/mihomo/node-name 2>/dev/null || true)"
+        [[ -n "$current" ]] && nodes=("$current") || nodes=()
+        ;;
+      7)
+        title="Доступные Mihomo nodes"
+        capture "$MIHOMO_CONFIGURE" node list || true
+        ;;
+      0) return 0 ;;
+    esac
+  done
+}
+
 mihomo_node_policy_menu(){
-  local choice primary fallback
+  local choice
   while true; do
     choice="$(dialog --backtitle "$BACKTITLE" --title "Mihomo Node Failover" --item-help --menu \
-      "MANUAL по умолчанию. FIXED переключает только между точными именами узлов, которые вы явно разрешили. Страна из имени НЕ определяется и скрыто не меняется." \
+      "MANUAL по умолчанию. FIXED использует ordered exact-node chain из 2+ явно разрешённых узлов. Failover идёт только вперёд; страна автоматически не определяется." \
       22 110 7 \
-      1 "Показать policy" "Показывает текущий node, режим и точный allow-list fallback-узлов." \
-      2 "MANUAL" "Отключает автоматическую смену Mihomo node." \
-      3 "FIXED: primary → fallback" "Задаёт точные имена primary и одного fallback из текущего live provider. Другие nodes никогда не выбираются автоматически." \
+      1 "Показать policy" "Показывает текущий node, режим и полный ordered exact-node allow-list." \
+      2 "MANUAL" "Отключает автоматическую смену Mihomo node и удаляет сохранённую chain." \
+      3 "Редактировать FIXED chain" "Добавление/удаление/перестановка exact nodes в однонаправленной failover-цепочке." \
       4 "Показать доступные nodes" "Безопасно показывает name/type/server:port без UUID/ключей." \
       0 "Назад" "Не менять node policy." 3>&1 1>&2 2>&3)" || return 0
     case "$choice" in
@@ -523,21 +700,11 @@ mihomo_node_policy_menu(){
         capture "$MIHOMO_NODE_POLICY" status || true
         ;;
       2)
-        confirm "Mihomo Node Failover" "Перейти в MANUAL и удалить automatic node fallback allow-list?" || continue
+        confirm "Mihomo Node Failover" "Перейти в MANUAL и удалить automatic node-chain?" || continue
         title="Mihomo node policy → MANUAL"
         capture "$MIHOMO_NODE_POLICY" mode manual || true
         ;;
-      3)
-        title="Доступные Mihomo nodes"
-        capture "$MIHOMO_CONFIGURE" node list || true
-        primary="$(input "Mihomo primary node" "Введите ТОЧНОЕ имя primary node из списка:")" || continue
-        [[ -n "$primary" ]] || continue
-        fallback="$(input "Mihomo fallback node" "Введите ТОЧНОЕ имя fallback node из списка:")" || continue
-        [[ -n "$fallback" ]] || continue
-        confirm "FIXED node failover" "Разрешить automatic node failover только: '$primary' → '$fallback'?\n\nСтрана автоматически не определяется: если nodes из разных стран, это ваше явное разрешение на такую смену." || continue
-        title="Mihomo node policy → FIXED"
-        capture "$MIHOMO_NODE_POLICY" mode fixed "$primary" "$fallback" || true
-        ;;
+      3) mihomo_node_chain_editor ;;
       4)
         title="Доступные Mihomo nodes"
         capture "$MIHOMO_CONFIGURE" node list || true
@@ -831,148 +998,3 @@ dns_menu(){
         ;;
       0) return 0 ;;
     esac
-  done
-}
-
-update_menu(){
-  local choice
-  while true; do
-    choice="$(dialog --backtitle "$BACKTITLE" --title "Обновления" --item-help --menu \
-      "Обновления проверяются по стабильным версиям проекта." 21 100 8 \
-      1 "Показать версии" "Показывает установленную и доступную версию AWG Pi Gateway и наличие updater для AmneziaWG core." \
-      2 "Обновить AWG Pi Gateway" "Проверяет и устанавливает новый стабильный релиз gateway; меню после успешного обновления перезапускается." \
-      3 "Обновить AmneziaWG core" "Проверяет и устанавливает поддерживаемую стабильную версию AmneziaWG tools/core." \
-      4 "Проверить/обновить всё" "Последовательно проверяет Gateway и AmneziaWG core и устанавливает доступные стабильные обновления." \
-      0 "Назад" "Возвращает в главное меню без изменений." 3>&1 1>&2 2>&3)" || return 0
-    case "$choice" in
-      1)
-        title="Версии"
-        capture "$AWG_UPDATE" status || true
-        ;;
-      2)
-        confirm "Gateway update" "Проверить новый релиз AWG Pi Gateway и установить его при наличии?" || continue
-        run_interactive "AWG Pi Gateway update" "$AWG_UPDATE" --yes gateway
-        _old_menu_self="$0"
-        unset AWG_MENU_REEXEC
-        rm -f "$_old_menu_self" 2>/dev/null || true
-        exec /usr/local/sbin/awg-menu
-        ;;
-      3)
-        confirm "Core update" "Проверить и обновить AmneziaWG core при наличии новой стабильной версии?" || continue
-        run_interactive "AmneziaWG core update" "$AWG_UPDATE" --yes core
-        ;;
-      4)
-        confirm "Полное обновление" "Проверить обновления AWG Pi Gateway и AmneziaWG core?" || continue
-        run_interactive "Полное обновление" "$AWG_UPDATE" --yes all
-        _old_menu_self="$0"
-        unset AWG_MENU_REEXEC
-        rm -f "$_old_menu_self" 2>/dev/null || true
-        exec /usr/local/sbin/awg-menu
-        ;;
-      0) return 0 ;;
-    esac
-  done
-}
-
-operating_mode_menu(){
-  local choice current current_id selective_label transit_label
-  while true; do
-    current_id="$(operating_mode_id)"
-    current="$(operating_mode_label "$current_id")"
-    selective_label="Selective Gateway"
-    transit_label="MikroTik Transit / Backup VPN"
-    [[ "$current_id" == selective ]] && selective_label="$selective_label [ТЕКУЩИЙ]"
-    [[ "$current_id" == transit ]] && transit_label="$transit_label [ТЕКУЩИЙ]"
-    refresh_backtitle
-    choice="$(dialog --backtitle "$BACKTITLE" --title "Operating mode [$(operating_mode_badge "$current_id")]" --item-help --menu \
-      "Текущий режим: $current\n\nВыберите архитектуру маршрутизации. Сохранённые Selective-списки не удаляются при Transit." \
-      21 100 6 \
-      1 "$selective_label" "Raspberry Pi сама классифицирует VPN/DIRECT/OpenCCK/client трафик и применяет FAIL-OPEN при отказе active transport." \
-      2 "$transit_label" "MikroTik выбирает трафик; Pi принимает его только от доверенного роутера и отправляет через active transport с FAIL-CLOSED/LOCKDOWN." \
-      0 "Назад" "Возвращает в системное меню без изменения режима." 3>&1 1>&2 2>&3)" || return 0
-    case "$choice" in
-      1)
-        confirm "Selective Gateway" "Переключить Pi в Selective Gateway? Списки OpenCCK/VPN/DIRECT и clients будут снова активны." || continue
-        title="Operating mode"
-        capture "$AWG_ROUTE" mode selective || true
-        refresh_backtitle
-        ;;
-      2)
-        confirm "MikroTik Transit" "Переключить Pi в Transit?\n\nПри готовом transport выполняются health/DIRECT/preflight. Если transport ещё не настроен, Transit войдёт в безопасный LOCKDOWN.\n\nMikroTik должен быть настроен отдельно как источник backup-трафика." || continue
-        title="Operating mode"
-        capture "$AWG_ROUTE" mode transit || true
-        refresh_backtitle
-        ;;
-      0) return 0 ;;
-    esac
-  done
-}
-
-system_menu(){
-  local choice mode_badge
-  while true; do
-    mode_badge="$(operating_mode_badge)"
-    choice="$(dialog --backtitle "$BACKTITLE" --title "Система [$mode_badge]" --item-help --menu \
-      "Системные функции AWG Pi Gateway. Опасные действия требуют отдельного подтверждения." 24 100 10 \
-      1 "Перезагрузить конфигурацию AWG Gateway" "Повторно применяет текущие правила nftables/DNS/маршрутизации и перезапускает health monitor без reboot Pi." \
-      2 "Перезагрузить Raspberry Pi" "Полностью перезагружает ОС Raspberry Pi. SSH и backup VPN будут временно недоступны." \
-      3 "Выключить Raspberry Pi" "Корректно завершает работу ОС и выключает Pi. Для включения потребуется подача/перезапуск питания." \
-      4 "Перенастроить LAN gateway" "Повторно определяет LAN interface, адрес Pi, подсеть и основной роутер; операция транзакционная и может повлиять на SSH." \
-      5 "DNS upstream" "Просмотр и изменение DNS-серверов, которыми пользуется локальный dnsmasq Pi." \
-      6 "Operating mode [$mode_badge]" "Переключение между Selective Gateway и MikroTik Transit / Backup VPN с безопасными проверками. Метка показывает текущий режим." \
-      0 "Назад" "Возвращает в главное меню без изменений." 3>&1 1>&2 2>&3)" || return 0
-    case "$choice" in
-      1)
-        title="Reload"
-        capture "$AWG_ROUTE" reload || true
-        ;;
-      2)
-        confirm "Reboot" "Перезагрузить Raspberry Pi?\n\nSSH и Transit backup через эту Pi будут временно недоступны до завершения загрузки." && systemctl reboot
-        ;;
-      3)
-        confirm "Poweroff" "Выключить Raspberry Pi?\n\nSSH и Transit backup перестанут работать. Для последующего запуска потребуется питание/перезапуск питания." && systemctl poweroff
-        ;;
-      4) run_interactive "Перенастройка сети" "$AWG_ROUTE" network reconfigure ;;
-      5) dns_menu ;;
-      6) operating_mode_menu ;;
-      0) return 0 ;;
-    esac
-  done
-}
-
-while true; do
-  refresh_backtitle
-  mode_badge="$(operating_mode_badge)"
-  summary="$(quick_summary)"
-  choice="$(dialog --clear --backtitle "$BACKTITLE" --title "Главное меню — [$mode_badge]" --item-help --menu \
-    "$summary
-
-Стрелки — выбор, Enter — открыть. Внизу показано пояснение выделенного пункта." 32 106 15 \
-    1 "Состояние системы" "Сводка режима, health, сервисов, списков и безопасно отредактированного состояния AmneziaWG; ничего не меняет." \
-    2 "VPN-маршрутизация" "Управление Selective/Transit, transport backends, AmneziaWG и Mihomo/recovery." \
-    3 "Домены VPN" "Ручной список доменов, которые в Selective должны направляться через AmneziaWG." \
-    4 "DIRECT-исключения" "Ручной список доменов, которые в Selective всегда должны идти напрямую, даже при пересечении с VPN-правилами." \
-    5 "OpenCCK" "Подключение и обслуживание внешних списков доменов/IP/CIDR для Selective-классификации." \
-    6 "Клиенты" "Allow-list устройств для Selective PBR. Пустой список означает всех клиентов, использующих Pi как gateway." \
-    7 "Диагностика" "Запускает расширенную проверку сети, active transport и fail-open/fail-closed логики; формирует локальный отчёт." \
-    8 "Обновления" "Проверка и установка стабильных обновлений AWG Pi Gateway и AmneziaWG core." \
-    9 "Журналы" "Показывает последние записи systemd для AWG, health monitor, dnsmasq, setup и OpenCCK updater." \
-    10 "Системные функции" "Reload, reboot/poweroff, перенастройка LAN/DNS и выбор Operating mode." \
-    11 "Выйти в обычный Shell" "Закрывает меню, но оставляет текущую SSH-сессию открытой в командной строке." \
-    0 "Завершить SSH-сессию" "Закрывает меню и завершает текущий сеанс в соответствии с оболочкой входа." 3>&1 1>&2 2>&3)" || exit 20
-
-  case "$choice" in
-    1) status_screen ;;
-    2) vpn_menu ;;
-    3) domain_menu vpn "Домены VPN" ;;
-    4) domain_menu direct "DIRECT-исключения" ;;
-    5) opencck_menu ;;
-    6) client_menu ;;
-    7) diagnostics_screen ;;
-    8) update_menu ;;
-    9) logs_screen ;;
-    10) system_menu ;;
-    11) clear; exit 10 ;;
-    0) clear; exit 20 ;;
-  esac
-done

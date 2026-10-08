@@ -62,7 +62,9 @@ backup_gateway(){
     etc/systemd/system/awg-mihomo-update.service \
     etc/systemd/system/awg-mihomo-update.timer \
     etc/systemd/system/awg-selection-monitor.service \
+    etc/systemd/system/awg-traffic.service \
     var/lib/awg-pbr/mihomo \
+    var/lib/awg-pbr/traffic \
     usr/local/lib/awg-pi \
     usr/local/bin/mihomo \
     usr/local/sbin/awg-route \
@@ -76,6 +78,7 @@ backup_gateway(){
     usr/local/sbin/awg-opencck-update \
     usr/local/sbin/awg-core-update \
     usr/local/sbin/awg-update \
+    usr/local/sbin/awg-traffic \
     usr/local/sbin/awg-pbr-setup \
     usr/local/sbin/awg-pbr-health \
     usr/local/sbin/awg-pbr-failopen \
@@ -102,11 +105,13 @@ restore_gateway(){
   systemctl stop \
     awg-mihomo-update.timer \
     awg-mihomo.service \
+    awg-selection-monitor.service \
+    awg-traffic.service \
     awg-opencck-update.timer \
     awg-pbr-health.service \
     2>/dev/null || true
 
-  rm -rf /etc/awg-pbr /var/lib/awg-pbr/mihomo /usr/local/lib/awg-pi
+  rm -rf /etc/awg-pbr /var/lib/awg-pbr/mihomo /var/lib/awg-pbr/traffic /usr/local/lib/awg-pi
   rm -f \
     /usr/local/bin/mihomo \
     /usr/local/sbin/awg-route \
@@ -120,6 +125,7 @@ restore_gateway(){
     /usr/local/sbin/awg-opencck-update \
     /usr/local/sbin/awg-core-update \
     /usr/local/sbin/awg-update \
+    /usr/local/sbin/awg-traffic \
     /usr/local/sbin/awg-pbr-setup \
     /usr/local/sbin/awg-pbr-health \
     /usr/local/sbin/awg-pbr-failopen \
@@ -142,6 +148,7 @@ restore_gateway(){
     /etc/systemd/system/awg-mihomo-update.service \
     /etc/systemd/system/awg-mihomo-update.timer \
     /etc/systemd/system/awg-selection-monitor.service \
+    /etc/systemd/system/awg-traffic.service \
     /etc/profile.d/awg-menu.sh
 
   tar -C / -xzf "$dir/gateway-state.tgz"
@@ -151,6 +158,10 @@ restore_gateway(){
   systemctl restart dnsmasq.service 2>/dev/null || true
   systemctl restart awg-quick@awg0.service 2>/dev/null || true
   systemctl restart awg-pbr-health.service 2>/dev/null || true
+  [[ -f /etc/systemd/system/awg-selection-monitor.service ]] &&
+    systemctl restart awg-selection-monitor.service 2>/dev/null || true
+  [[ -f /etc/systemd/system/awg-traffic.service ]] &&
+    systemctl restart awg-traffic.service 2>/dev/null || true
   systemctl start awg-opencck-update.timer 2>/dev/null || true
   [[ -f /etc/systemd/system/awg-mihomo.service ]] &&
     systemctl start awg-mihomo.service 2>/dev/null || true
