@@ -26,6 +26,7 @@ required = [
     '"Точка выхода / узел"',
     '"Первичная настройка Mihomo"',
     '"Первичная настройка transport"',
+    '"Transport Selection Policy"',
     '"Citadel / Remnawave"',
     '"Формат подписки"',
     '"Mihomo / Clash YAML"',
@@ -91,6 +92,13 @@ assert '"$MIHOMO_CONFIGURE" node prepare "$node_name"' in menu
 assert 'Отдельное MikroTik правило для этого IP больше НЕ требуется' in menu
 assert 'gateway-wide DIRECT bypass' in menu
 assert '"$AWG_FIRST_RUN" wizard' in menu
+assert 'AWG_SELECTION=/usr/local/sbin/awg-selection' in menu
+assert '"$AWG_SELECTION" mode manual' in menu
+assert '"$AWG_SELECTION" mode fixed awg mihomo' in menu
+assert '"$AWG_SELECTION" mode fixed mihomo awg' in menu
+assert '"$AWG_SELECTION" mode auto awg mihomo' in menu
+assert '"$AWG_SELECTION" mode auto mihomo awg' in menu
+assert 'Mihomo node/страна не меняются' in menu
 assert 'MIHOMO_INSTALLER=/usr/local/sbin/awg-mihomo-install' in menu
 assert '"$MIHOMO_INSTALLER" --file "$path"' in menu
 assert 'mktemp /run/awg-pbr/mihomo-url.XXXXXX' in menu
