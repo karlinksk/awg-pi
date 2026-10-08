@@ -734,8 +734,8 @@ init_cmd(){
     return 1
   }
 
-  if [[ -r "$MIHOMO_ENV_FILE" || -r "$MIHOMO_PROVIDER_FILE" ]]; then
-    echo "Mihomo provider is already initialized; use provider-url/provider update instead." >&2
+  if [[ -r "$MIHOMO_ENV_FILE" || -r "$MIHOMO_PROVIDER_FILE" || -r "$MIHOMO_CANDIDATE_FILE" || -r "$MIHOMO_CANDIDATE_ENV_FILE" ]]; then
+    echo "Mihomo provider initialization already exists (live or staged); commit/clear the candidate or use provider update." >&2
     return 1
   fi
 
