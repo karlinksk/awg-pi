@@ -169,4 +169,47 @@ grep -Fqx down "$tmp/state/health.state"
 
 echo awg >"$tmp/transport"
 
+echo "=== SIGTERM exits the long-running health loop ==="
+term_state="$tmp/term-state"
+term_rule="$tmp/term-rule"
+term_transit_log="$tmp/term-transit.log"
+term_ip_log="$tmp/term-ip.log"
+mkdir -p "$term_state"
+: >"$term_transit_log"
+: >"$term_ip_log"
+echo selective >"$tmp/mode"
+env \
+  AWG_ENV_FILE="$tmp/env" \
+  AWG_COMMON_FILE="$repo_root/src/awg-common" \
+  AWG_MODE_FILE="$tmp/mode" \
+  AWG_TRANSPORT_FILE="$tmp/transport" \
+  AWG_VPN_ENABLED_FILE="$tmp/vpn-enabled" \
+  AWG_STATE_DIR="$term_state" \
+  AWG_TRANSIT_ROUTING="$tmp/transit-routing" \
+  AWG_TRANSPORT_CLI="$tmp/transport-cli" \
+  MIHOMO_TUN_IF=mihomo0 \
+  IP_BIN="$tmp/bin/ip" AWG_BIN="$tmp/bin/awg" PING_BIN="$tmp/bin/ping" LOGGER_BIN="$tmp/bin/logger" \
+  MOCK_RULE_FILE="$term_rule" MOCK_TRANSIT_LOG="$term_transit_log" MOCK_IP_LOG="$term_ip_log" \
+  MOCK_HEALTH=up MOCK_MIHOMO_HEALTH=up \
+  AWG_HEALTH_ONCE=0 \
+  bash "$repo_root/src/awg-pbr-health" &
+term_pid=$!
+sleep 0.2
+kill -TERM "$term_pid"
+exited=0
+for _ in $(seq 1 20); do
+  if ! kill -0 "$term_pid" 2>/dev/null; then
+    exited=1
+    break
+  fi
+  sleep 0.1
+done
+if (( exited == 0 )); then
+  kill -KILL "$term_pid" 2>/dev/null || true
+  wait "$term_pid" 2>/dev/null || true
+  echo "FAIL: awg-pbr-health ignored SIGTERM" >&2
+  exit 1
+fi
+wait "$term_pid" 2>/dev/null || true
+
 echo "mode-aware health monitor: OK"
