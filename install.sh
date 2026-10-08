@@ -5,6 +5,7 @@ IFS=$'\n\t'
 AWG_PI_VERSION="1.3.0"
 PROJECT_REF="${AWG_PI_REF:-v${AWG_PI_VERSION}}"
 PROJECT_RAW_BASE="https://raw.githubusercontent.com/karlinksk/awg-pi/${PROJECT_REF}"
+PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd || true)"
 TTY=/dev/tty
 STAGE="preflight"
 
@@ -34,6 +35,7 @@ MIHOMO_UPDATE_SCRIPT="/usr/local/sbin/awg-mihomo-update"
 MIHOMO_INSTALL_SCRIPT="/usr/local/sbin/awg-mihomo-install"
 MIHOMO_PREPARE_SCRIPT="/usr/local/sbin/awg-mihomo-prepare"
 MIHOMO_CONFIGURE_SCRIPT="/usr/local/sbin/awg-mihomo-configure"
+AWG_ENGINE_INSTALL_SCRIPT="/usr/local/sbin/awg-engine-install"
 FIRST_RUN_CLI="/usr/local/sbin/awg-first-run"
 UPDATE_SCRIPT="/usr/local/sbin/awg-update"
 SETUP_SERVICE="/etc/systemd/system/awg-pbr-setup.service"
@@ -207,10 +209,11 @@ else
   ok "IPv6 default route отсутствует"
 fi
 
-if ! first_working_url https://github.com https://go.dev; then
-  die "Нет доступа к GitHub/go.dev. Без него установка AmneziaWG невозможна"
+if first_working_url https://github.com https://go.dev; then
+  ok "DIRECT-доступ к внешним engine sources сейчас есть"
+else
+  warn "GitHub/go.dev по DIRECT сейчас недоступны. Fresh install продолжится: первый transport можно поднять через локальный engine bundle/archive."
 fi
-ok "Интернет до источников установки доступен"
 
 if command -v timedatectl >/dev/null; then
   NTP_SYNC="$(timedatectl show -p NTPSynchronized --value 2>/dev/null || true)"
@@ -236,7 +239,7 @@ dnsmasq --version | grep -qi nftset || die "Установленный dnsmasq �
 ok "dnsmasq поддерживает nftset"
 
 # -----------------------------------------------------------------------------
-# 3. Go
+# 3-4. Preserve existing AWG engine on upgrade; fresh install defers engine
 # -----------------------------------------------------------------------------
 if (( UPGRADE_EXISTING == 1 )); then
   STAGE="проверка существующего AmneziaWG"
@@ -248,73 +251,10 @@ if (( UPGRADE_EXISTING == 1 )); then
   TOOLS_TAG="$(git -C "$SRC_ROOT/amneziawg-tools" describe --tags --exact-match 2>/dev/null || echo installed)"
   ok "AmneziaWG core не изменяется при обновлении Gateway (go=$GO_TAG tools=$TOOLS_TAG)"
 else
-STAGE="установка Go"
-log "[3/12] Go"
-install_go(){
-  local j f s t
-  j="$(curl -fsSL --max-time 30 https://go.dev/dl/?mode=json)"
-  f="$(jq -r --arg a "$GO_ARCH" '.[0].files[]|select(.os=="linux" and .arch==$a and .kind=="archive")|.filename' <<<"$j" | head -1)"
-  s="$(jq -r --arg a "$GO_ARCH" '.[0].files[]|select(.os=="linux" and .arch==$a and .kind=="archive")|.sha256' <<<"$j" | head -1)"
-  [[ -n "$f" && "$f" != null && -n "$s" && "$s" != null ]] || die "Не удалось определить актуальную стабильную версию Go"
-  t="/tmp/$f"
-  curl -fL --retry 3 "https://go.dev/dl/$f" -o "$t"
-  echo "$s  $t" | sha256sum -c -
-  rm -rf /usr/local/go
-  tar -C /usr/local -xzf "$t"
-  rm -f "$t"
-  export PATH=/usr/local/go/bin:$PATH
-  printf 'export PATH=/usr/local/go/bin:$PATH\n' >/etc/profile.d/go.sh
-}
-install_go
-ok "$(go version)"
-
-# -----------------------------------------------------------------------------
-# 4. Build/install AmneziaWG stable tags
-# -----------------------------------------------------------------------------
-STAGE="установка AmneziaWG"
-log "[4/12] AmneziaWG"
-GO_REPO="https://github.com/amnezia-vpn/amneziawg-go.git"
-TOOLS_REPO="https://github.com/amnezia-vpn/amneziawg-tools.git"
-latest_tag(){
-  git ls-remote --tags --refs "$1" 'refs/tags/v*' | awk -F/ '{print $3}' | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -1
-}
-sync_repo(){
-  local repo="$1" dir="$2" tag="$3"
-  mkdir -p "$SRC_ROOT"
-  if [[ -d "$dir/.git" ]]; then
-    git -C "$dir" fetch --tags --prune origin
-    git -C "$dir" checkout -f "$tag"
-    git -C "$dir" reset --hard "$tag"
-  else
-    rm -rf "$dir"
-    git clone --depth 1 --branch "$tag" "$repo" "$dir"
-  fi
-}
-
-GO_TAG="$(latest_tag "$GO_REPO")"
-TOOLS_TAG="$(latest_tag "$TOOLS_REPO")"
-[[ -n "$GO_TAG" && -n "$TOOLS_TAG" ]] || die "Не удалось получить стабильные теги AmneziaWG"
-printf "Найдены стабильные теги: amneziawg-go=%s, tools=%s\n" "$GO_TAG" "$TOOLS_TAG"
-if [[ "$AUTO_UPGRADE" != 1 ]]; then
-  confirm "Установить эти стабильные версии?" "Y" || die "Установка отменена пользователем"
-fi
-
-sync_repo "$GO_REPO" "$SRC_ROOT/amneziawg-go" "$GO_TAG"
-make -C "$SRC_ROOT/amneziawg-go" clean >/dev/null 2>&1 || true
-make -C "$SRC_ROOT/amneziawg-go"
-make -C "$SRC_ROOT/amneziawg-go" PREFIX=/usr install
-
-sync_repo "$TOOLS_REPO" "$SRC_ROOT/amneziawg-tools" "$TOOLS_TAG"
-make -C "$SRC_ROOT/amneziawg-tools/src" clean >/dev/null 2>&1 || true
-make -C "$SRC_ROOT/amneziawg-tools/src"
-make -C "$SRC_ROOT/amneziawg-tools/src" install PREFIX=/usr WITH_WGQUICK=yes WITH_SYSTEMDUNITS=yes
-systemctl daemon-reload
-
-command -v awg >/dev/null || die "awg не установлен"
-command -v awg-quick >/dev/null || die "awg-quick не установлен"
-command -v amneziawg-go >/dev/null || die "amneziawg-go не установлен"
-ok "$(awg --version 2>/dev/null || echo 'awg установлен')"
-ok "$(amneziawg-go --version 2>/dev/null || echo 'amneziawg-go установлен')"
+  GO_TAG="on-demand"
+  TOOLS_TAG="on-demand"
+  log "[3-4/12] AWG/WG engine отложен до выбора первого transport"
+  ok "Fresh install не требует AWG/WG engine до first-run wizard"
 fi
 
 # -----------------------------------------------------------------------------
