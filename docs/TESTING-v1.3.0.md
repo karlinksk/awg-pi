@@ -361,3 +361,111 @@ A v1.3.0 RC is acceptable only after all of the following are true:
 - no unexpected microSD write regression is observed.
 
 Only then should the v1.3.0 tag/release become the stable updater target.
+
+
+## 13. Raspberry Pi live evidence — 2026-10-08
+
+Hardware/live validation on Raspberry Pi 4, Debian 13 ARM64, LAN
+`192.168.112.0/24`, Pi `192.168.112.34`, MikroTik `192.168.112.1`.
+Validated code head: `bceb06847f9ec273399bf97c1cf48882d431d591`.
+
+### CI and local regression
+
+GitHub Actions run `37734894001` passed both jobs:
+
+- `shell`: Bash syntax, ShellCheck and all unit/regression tests;
+- `awg-v31`: pinned AWG v3.1 build and real isolated profile preflight.
+
+The same Pi also passed the targeted local regression gate:
+
+- first-transport wizard (AWG and Mihomo onboarding);
+- existing transport is never silently replaced;
+- FIXED/AUTO transport-selection policy;
+- exact-node FIXED validation, no wrap-back and exhaustion behavior;
+- low-write traffic baseline, deltas, interface recreation, rollover and reboot
+  identity handling;
+- TUI/menu regression.
+
+### Live UX/traffic deployment
+
+The v1.3 UX completion was deployed transactionally with backup
+`/root/awg-v13-ux-pre-20261008-125710`.
+
+Post-deploy invariants:
+
+- Operating Mode: Transit;
+- active transport: AWG, healthy;
+- Transit guard: SAFE;
+- transport selection: MANUAL;
+- Mihomo node policy: MANUAL;
+- Mihomo standby: inactive;
+- `awg-traffic.service`: enabled and active;
+- no failed systemd units.
+
+Installed `awg-first-run`, `awg-menu`, `awg-route`, `awg-update`,
+`awg-traffic` and `awg-traffic.service` matched the repository blobs.
+
+Traffic accounting started from a zero baseline instead of claiming historical
+`awg0` bytes. A controlled AWG health probe produced a 1.48 KiB delta. The
+runtime state in `/run` changed while the persistent state mtime stayed
+unchanged, confirming that normal samples are RAM-only and do not write the
+microSD before the low-write checkpoint.
+
+### Live transport failover
+
+FIXED `AWG -> Mihomo` passed with Mihomo initially stopped:
+
+- automatic switch occurred after repeated health failure;
+- `table 100` moved to `mihomo0`;
+- Mihomo endpoint `45.86.66.170` stayed DIRECT through the LAN router;
+- observed Mihomo proxy egress was `45.86.66.170`;
+- Transit guard remained SAFE;
+- simulated Transit FAIL-CLOSED and restore both passed;
+- final baseline returned to AWG / MANUAL with Mihomo inactive.
+
+Reverse FIXED `Mihomo -> AWG` also passed:
+
+- AWG remained a healthy standby;
+- automatic switch occurred after repeated Mihomo health failure;
+- fallback AWG stayed sticky and did not automatically return to Mihomo;
+- FAIL-CLOSED and restore both passed.
+
+Conservative AUTO passed in both directions:
+
+- AWG failure switched to Mihomo only after repeated health failure;
+- recovering AWG did not move a healthy current Mihomo;
+- Mihomo failure switched to AWG only after repeated health failure;
+- recovering Mihomo did not move a healthy current AWG;
+- performance optimization remained disabled;
+- FAIL-CLOSED and restore passed;
+- final baseline returned to AWG / MANUAL / Mihomo inactive.
+
+### Exact-node chain evidence
+
+The live selection-monitor journal records the explicit one-way chain:
+
+~~~text
+🇫🇮 Finland -> 🇪🇪 Estonia
+🇪🇪 Estonia -> 🇱🇻 Latvia
+🇱🇻 Latvia -> 🇸🇪 Sweden
+~~~
+
+After the last exact node was exhausted, transport fallback `mihomo -> awg`
+occurred. This provides live evidence for ordered exact-node recovery before
+transport-level fallback and no country inference. The working baseline was
+subsequently restored to Mihomo node policy MANUAL with Finland selected.
+
+### Still required before stable v1.3.0
+
+These live results do not replace the remaining release gates that require a
+separate environment or external input:
+
+1. one destructive clean install from a fresh Debian image using the current
+   v1.3 head (the first-run logic is regression-tested, but the working Pi was
+   not wiped for this test);
+2. one live non-Citadel provider using plain VLESS URI or Base64 VLESS, to
+   complement the already-tested native Mihomo/Citadel provider path;
+3. a deliberate post-v1.3 reboot/persistence hardware check after scheduling an
+   acceptable gateway interruption.
+
+Stable tagging must wait for those gates.
