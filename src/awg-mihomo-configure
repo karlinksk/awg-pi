@@ -57,6 +57,7 @@ Usage:
   awg-mihomo-configure node list
   awg-mihomo-configure node prepare NAME
   awg-mihomo-configure node select NAME ENDPOINT_IP
+  awg-mihomo-configure node select-auto NAME
 
 For init FILE is a root-trusted environment file. Required:
   MIHOMO_PROVIDER_URL
@@ -720,6 +721,17 @@ node_select(){
   fi
 }
 
+node_select_auto(){
+  local name="$1" info endpoint
+  info="$(node_info_json "$name")" || return
+  endpoint="$(jq -r '.endpoint_ips[0] // empty' <<<"$info")"
+  valid_ipv4 "$endpoint" || {
+    echo "Node has no valid IPv4 endpoint: $name" >&2
+    return 1
+  }
+  node_select "$name" "$endpoint"
+}
+
 init_cmd(){
   local source_file="$1" tmp_input tmp_env snapshot rc profile provider_format url hwid="" suffix=""
   local hwid_generated=0 node_count=0
@@ -1058,6 +1070,10 @@ case "${1:-}" in
       select)
         [[ $# -eq 4 ]] || { usage >&2; exit 2; }
         node_select "$3" "$4"
+        ;;
+      select-auto)
+        [[ $# -eq 3 ]] || { usage >&2; exit 2; }
+        node_select_auto "$3"
         ;;
       *)
         usage >&2
