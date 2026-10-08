@@ -176,7 +176,7 @@ assert '"$MIHOMO_CONFIGURE" provider format set "$provider_format"' in menu
 assert 'mihomo_provider_format_dialog' in menu
 assert 'mihomo_subscription_menu' in menu
 assert 'mihomo_import_menu' in menu
-assert 'mihomo_active_transport_menu' in menu
+assert 'active_transport_menu' in menu
 assert 'mihomo_advanced_menu' in menu
 
 # The top-level Mihomo menu is intentionally compact. Technical/recovery
@@ -189,8 +189,7 @@ for label in (
     '2 "Subscription / Provider"',
     '3 "Точка выхода / узел"',
     '4 "Mihomo Node Failover"',
-    '5 "Активный transport"',
-    '6 "Расширенные / Recovery"',
+    '5 "Расширенные / Recovery"',
 ):
     assert label in mihomo_block, f"missing compact Mihomo item: {label}"
 
@@ -210,7 +209,7 @@ for old_top_level in (
     )
 
 subscription_start = menu.index('mihomo_subscription_menu(){')
-subscription_end = menu.index('mihomo_active_transport_menu(){', subscription_start)
+subscription_end = menu.index('active_transport_menu(){', subscription_start)
 subscription_block = menu[subscription_start:subscription_end]
 assert '"Заменить URL subscription"' in subscription_block
 assert '"Обновить subscription — AUTO"' in subscription_block
@@ -226,6 +225,20 @@ assert '"Offline engine recovery (.gz)"' in advanced_block
 
 assert 'mihomo_initial_setup_flow secondary' in menu
 assert '"Добавить / первично настроить Mihomo"' not in mihomo_block
+assert '"Активный transport"' not in mihomo_block
+assert 'mihomo_active_transport_menu' not in menu
+
+vpn_start = menu.index('vpn_menu(){')
+vpn_end = menu.index('dns_menu(){', vpn_start)
+vpn_block = menu[vpn_start:vpn_end]
+assert vpn_block.count('"Активный transport"') == 2
+assert '6 "Активный transport"' in vpn_block
+assert '7 "Активный transport"' in vpn_block
+assert '6) active_transport_menu' in vpn_block
+assert '7) active_transport_menu' in vpn_block
+assert '7 "Transport Selection Policy"' in vpn_block
+assert '8 "Transport Selection Policy"' in vpn_block
+assert 'active transport меняется отдельным пунктом ниже' in vpn_block
 
 
 for needle in (

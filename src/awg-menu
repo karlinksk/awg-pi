@@ -907,7 +907,7 @@ mihomo_subscription_menu(){
   done
 }
 
-mihomo_active_transport_menu(){
+active_transport_menu(){
   local choice current mihomo_label awg_label
   while true; do
     current="$("$AWG_TRANSPORT" get 2>/dev/null || echo unconfigured)"
@@ -981,13 +981,12 @@ mihomo_menu(){
   local choice
   while true; do
     choice="$(dialog --backtitle "$BACKTITLE" --title "Mihomo / Multi-Transport" --item-help --menu \
-      "Повседневные операции Mihomo. Subscription/provider и recovery разделены; добавление нового transport выполняется уровнем выше." 25 110 9 \
+      "Повседневные операции Mihomo: provider, nodes, node failover и recovery. Управление active transport выполняется уровнем выше." 24 110 8 \
       1 "Состояние Mihomo" "Runtime, provider cache, selected node, endpoint, service/health и последний bootstrap-канал без вывода секретов." \
       2 "Subscription / Provider" "Заменить URL, обновить через AUTO или импортировать provider/subscription из файла либо текста." \
       3 "Точка выхода / узел" "Посмотреть nodes текущего provider и транзакционно выбрать active Mihomo node." \
       4 "Mihomo Node Failover" "MANUAL либо ordered FIXED exact-node chain. Только явно разрешённые nodes; no-wrap и без country inference." \
-      5 "Активный transport" "Ручное транзакционное переключение datapath между AWG и Mihomo; показывает текущий active transport." \
-      6 "Расширенные / Recovery" "Forced bootstrap channel, ручной формат subscription, staged candidate и offline engine recovery." \
+      5 "Расширенные / Recovery" "Forced bootstrap channel, ручной формат subscription, staged candidate и offline engine recovery." \
       0 "Назад" "Вернуться в меню VPN без изменений." 3>&1 1>&2 2>&3)" || return 0
 
     case "$choice" in
@@ -998,8 +997,7 @@ mihomo_menu(){
       2) mihomo_subscription_menu ;;
       3) mihomo_node_menu ;;
       4) mihomo_node_policy_menu ;;
-      5) mihomo_active_transport_menu ;;
-      6) mihomo_advanced_menu ;;
+      5) mihomo_advanced_menu ;;
       0) return 0 ;;
     esac
   done
@@ -1064,9 +1062,10 @@ vpn_menu(){
         1 "Показать состояние режима" "Показывает текущий Operating mode, Transit guard, policy rule и готовность VPN table." \
         2 "Перезапустить awg0 и health monitor" "Перезапускает сам туннель AmneziaWG и его контроль здоровья. Возможен краткий обрыв backup VPN-трафика." \
         3 "Конфигурация AmneziaWG" "Установка нового native .conf текстом/из файла или rollback предыдущего профиля." \
-        4 "Mihomo / Multi-Transport" "Subscription, bootstrap, выбор точки выхода и транзакционное переключение AWG ↔ Mihomo." \
+        4 "Mihomo / Multi-Transport" "Управление Mihomo provider, nodes, node failover и recovery; active transport меняется отдельным пунктом ниже." \
         5 "Добавить / настроить transport" "Runtime-aware мастер: unconfigured → первый transport; AWG active → добавить/управлять Mihomo; Mihomo active → добавить/управлять AmneziaWG." \
-        6 "Transport Selection Policy" "MANUAL / FIXED+FAILOVER / conservative AUTO. Не меняет Mihomo node/страну автоматически." \
+        6 "Активный transport" "Ручное транзакционное переключение datapath между AWG и Mihomo; показывает текущий active transport." \
+        7 "Transport Selection Policy" "MANUAL / FIXED+FAILOVER / conservative AUTO. Не меняет Mihomo node/страну автоматически." \
         0 "Назад" "Возвращает в главное меню без изменений." 3>&1 1>&2 2>&3)" || return 0
       case "$choice" in
         1)
@@ -1081,7 +1080,8 @@ vpn_menu(){
         3) awg_config_menu ;;
         4) mihomo_menu ;;
         5) secondary_transport_setup ;;
-        6) selection_policy_menu ;;
+        6) active_transport_menu ;;
+        7) selection_policy_menu ;;
         0) return 0 ;;
       esac
       continue
@@ -1093,9 +1093,10 @@ vpn_menu(){
       2 "Выключить VPN policy (всё DIRECT)" "Отключает Selective policy: весь маршрутизируемый трафик идёт DIRECT. Сам awg0 не удаляется." \
       3 "Перезапустить awg0 и health monitor" "Перезапускает туннель AmneziaWG и проверку здоровья; VPN-трафик может кратковременно перейти в FAIL-OPEN/DIRECT." \
       4 "Конфигурация AmneziaWG" "Установка нового native .conf текстом/из файла или rollback предыдущего профиля." \
-      5 "Mihomo / Multi-Transport" "Subscription, bootstrap-каналы, локальный импорт и транзакционное переключение AWG ↔ Mihomo." \
+      5 "Mihomo / Multi-Transport" "Управление Mihomo provider, nodes, node failover и recovery; active transport меняется отдельным пунктом ниже." \
       6 "Добавить / настроить transport" "Runtime-aware мастер: unconfigured → первый transport; AWG active → добавить/управлять Mihomo; Mihomo active → добавить/управлять AmneziaWG." \
-      7 "Transport Selection Policy" "MANUAL / FIXED+FAILOVER / conservative AUTO. Не меняет Mihomo node/страну автоматически." \
+      7 "Активный transport" "Ручное транзакционное переключение datapath между AWG и Mihomo; показывает текущий active transport." \
+      8 "Transport Selection Policy" "MANUAL / FIXED+FAILOVER / conservative AUTO. Не меняет Mihomo node/страну автоматически." \
       0 "Назад" "Возвращает в главное меню без изменений." 3>&1 1>&2 2>&3)" || return 0
     case "$choice" in
       1)
@@ -1115,7 +1116,8 @@ vpn_menu(){
       4) awg_config_menu ;;
       5) mihomo_menu ;;
       6) secondary_transport_setup ;;
-      7) selection_policy_menu ;;
+      7) active_transport_menu ;;
+      8) selection_policy_menu ;;
       0) return 0 ;;
     esac
   done
