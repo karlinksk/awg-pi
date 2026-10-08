@@ -108,7 +108,7 @@ if run_install "$TMP/target-corrupt" --file "$TMP/corrupt.gz" >"$TMP/out" 2>"$TM
   exit 1
 fi
 [[ ! -e "$TMP/target-corrupt" ]]
-grep -Fq 'FAILED' "$TMP/err"
+grep -Fq 'Mihomo asset SHA256 mismatch; refusing installation' "$TMP/err"
 
 echo "=== local symlink asset is rejected ==="
 ln -s "$TMP/mihomo.gz" "$TMP/mihomo-link.gz"
