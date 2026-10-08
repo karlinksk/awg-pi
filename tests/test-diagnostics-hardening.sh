@@ -21,6 +21,15 @@ grep -Fq 'return "$diag_rc"' "$ROUTE"
 echo "=== diagnostics is transport-aware ==="
 grep -Fq 'Active transport: $transport_id' "$ROUTE"
 grep -Fq '"$TRANSPORT_CLI" status 2>&1 || true' "$ROUTE"
+grep -Fq -- '--- Active backend ---' "$ROUTE"
+grep -Fq 'Backend: Mihomo' "$ROUTE"
+grep -Fq 'Mihomo endpoint IPv4:' "$ROUTE"
+grep -Fq -- '--- Selection Policy ---' "$ROUTE"
+grep -Fq 'awg-selection-monitor.service' "$ROUTE"
+if grep -Fq 'echo "--- AWG ---"' "$ROUTE"; then
+  echo 'FAIL: diagnostics still emits an unconditional AWG backend block' >&2
+  exit 1
+fi
 
 echo "=== installer publishes version before diagnostics ==="
 version_line="$(grep -n -F "printf '%s\\n' \"\$AWG_PI_VERSION\" >/etc/awg-pbr/version" "$INSTALL" | head -1 | cut -d: -f1)"
