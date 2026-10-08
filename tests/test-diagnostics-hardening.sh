@@ -25,6 +25,8 @@ grep -Fq -- '--- Active backend ---' "$ROUTE"
 grep -Fq 'Backend: Mihomo' "$ROUTE"
 grep -Fq 'Mihomo endpoint IPv4:' "$ROUTE"
 grep -Fq -- '--- Selection Policy ---' "$ROUTE"
+grep -Fq -- '--- Mihomo Node Policy ---' "$ROUTE"
+grep -Fq 'MIHOMO_NODE_POLICY' "$ROUTE"
 grep -Fq 'awg-selection-monitor.service' "$ROUTE"
 if grep -Fq 'echo "--- AWG ---"' "$ROUTE"; then
   echo 'FAIL: diagnostics still emits an unconditional AWG backend block' >&2
