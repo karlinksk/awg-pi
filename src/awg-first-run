@@ -83,6 +83,32 @@ ensure_fresh_target(){
   }
 }
 
+ensure_mihomo_engine_interactive(){
+  local choice path
+  [[ -x "$MIHOMO_BIN" ]] && return 0
+
+  ui_print "Mihomo engine не установлен."
+  ui_print "1) Установить через AUTO bootstrap (DIRECT → healthy transports)"
+  ui_print "2) Установить из локального официального release .gz"
+  ask "Источник Mihomo engine" "1"
+  choice="$REPLY"
+  case "$choice" in
+    1)
+      "$MIHOMO_INSTALLER"
+      ;;
+    2)
+      ask "Полный путь к официальному Mihomo release .gz"
+      path="$REPLY"
+      [[ -n "$path" ]] || { echo "Mihomo archive path is required" >&2; return 2; }
+      "$MIHOMO_INSTALLER" --file "$path"
+      ;;
+    *)
+      echo "Invalid Mihomo engine source: $choice" >&2
+      return 2
+      ;;
+  esac
+}
+
 activate_awg_file(){
   local file="$1"
   ensure_fresh_target
@@ -225,6 +251,7 @@ TEXT
       fi
       ;;
     3)
+      ensure_mihomo_engine_interactive || return
       secret_ask "Вставьте полный subscription URL"
       url="$REPLY"
       printf '%s\n' 'Provider mode: 1=standard/generic, 2=Remnawave-compatible' >"$TTY"
@@ -239,11 +266,13 @@ TEXT
       unset url
       ;;
     4)
+      ensure_mihomo_engine_interactive || return
       ask "Полный путь к Mihomo YAML / VLESS / Base64 subscription"
       path="$REPLY"
       activate_mihomo_file "$path" auto
       ;;
     5)
+      ensure_mihomo_engine_interactive || return
       tmp="$(paste_to_temp 'Вставьте Mihomo YAML, VLESS URI(s) или Base64 subscription')" || return
       if activate_mihomo_file "$tmp" auto; then
         rm -f "$tmp"
