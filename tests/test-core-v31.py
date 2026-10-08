@@ -14,7 +14,7 @@ public = subprocess.run(['awg', 'pubkey'], input=peer_private, text=True,
 
 with tempfile.TemporaryDirectory() as temp:
     candidate = Path(temp) / 'awgcheck.conf'
-    for name in ('PROFILE', 'V3_PROFILE'):
+    for name in ('WG_PROFILE', 'PROFILE', 'V3_PROFILE'):
         text = ns[name].replace('PrivateKey = ' + ns['KEY'], 'PrivateKey = ' + private)
         text = text.replace('PublicKey = ' + ns['KEY'], 'PublicKey = ' + public)
         text = text.replace('HeaderProtectionKey = ' + ns['KEY'],
