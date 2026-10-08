@@ -11,6 +11,10 @@ MIHOMO_EXPECTED_EGRESS_IP_FILE="${MIHOMO_EXPECTED_EGRESS_IP_FILE:-/etc/awg-pbr/t
 MIHOMO_LAST_FETCH_FILE="${MIHOMO_LAST_FETCH_FILE:-/var/lib/awg-pbr/mihomo/last-fetch-path}"
 MIHOMO_LAST_FORMAT_FILE="${MIHOMO_LAST_FORMAT_FILE:-/var/lib/awg-pbr/mihomo/last-provider-format}"
 MIHOMO_PROVIDER_FILE="${MIHOMO_PROVIDER_FILE:-/var/lib/awg-pbr/mihomo/providers/subscription.yaml}"
+MIHOMO_CANDIDATE_FILE="${MIHOMO_CANDIDATE_FILE:-/var/lib/awg-pbr/mihomo/providers/candidate.yaml}"
+MIHOMO_CANDIDATE_ENV_FILE="${MIHOMO_CANDIDATE_ENV_FILE:-/var/lib/awg-pbr/mihomo/providers/candidate.env}"
+MIHOMO_CANDIDATE_FETCH_FILE="${MIHOMO_CANDIDATE_FETCH_FILE:-/var/lib/awg-pbr/mihomo/candidate-fetch-path}"
+MIHOMO_CANDIDATE_FORMAT_FILE="${MIHOMO_CANDIDATE_FORMAT_FILE:-/var/lib/awg-pbr/mihomo/candidate-provider-format}"
 MIHOMO_CONFIG_FILE="${MIHOMO_CONFIG_FILE:-/etc/awg-pbr/transports/mihomo/config.yaml}"
 MIHOMO_INSTALLER="${MIHOMO_INSTALLER:-/usr/local/sbin/awg-mihomo-install}"
 MIHOMO_UPDATER="${MIHOMO_UPDATER:-/usr/local/sbin/awg-mihomo-update}"
@@ -43,6 +47,12 @@ Usage:
   awg-mihomo-configure provider-url set-file FILE
   awg-mihomo-configure provider update [auto|mihomo|awg|router]
   awg-mihomo-configure provider import FILE
+  awg-mihomo-configure provider stage-url-file FILE [auto|mihomo|vless|base64]
+  awg-mihomo-configure provider stage-file FILE [keep-source|local-only] [auto|mihomo|vless|base64]
+  awg-mihomo-configure provider candidate list
+  awg-mihomo-configure provider candidate prepare NAME
+  awg-mihomo-configure provider candidate commit NAME ENDPOINT_IP
+  awg-mihomo-configure provider candidate clear
   awg-mihomo-configure provider format set auto|mihomo|vless|base64
   awg-mihomo-configure node list
   awg-mihomo-configure node prepare NAME
@@ -163,6 +173,7 @@ status_cmd(){
   printf 'Provider format requested: %s\n' "$(provider_format_requested)"
   printf 'Provider format detected: %s\n' "$([[ -r "$MIHOMO_LAST_FORMAT_FILE" ]] && cat "$MIHOMO_LAST_FORMAT_FILE" || echo none)"
   printf 'Provider cache: %s\n' "$([[ -r "$MIHOMO_PROVIDER_FILE" ]] && echo ready || echo missing)"
+  printf 'Provider candidate: %s\n' "$([[ -r "$MIHOMO_CANDIDATE_FILE" ]] && echo staged || echo none)"
   printf 'Selected node: %s\n' "$([[ -r "$MIHOMO_NODE_NAME_FILE" ]] && cat "$MIHOMO_NODE_NAME_FILE" || echo unknown)"
   printf 'Endpoint: %s\n' "$([[ -r "$MIHOMO_ENDPOINT_IP_FILE" ]] && cat "$MIHOMO_ENDPOINT_IP_FILE" || echo none)"
   printf 'Last fetch path: %s\n' "$([[ -r "$MIHOMO_LAST_FETCH_FILE" ]] && cat "$MIHOMO_LAST_FETCH_FILE" || echo none)"
@@ -190,58 +201,29 @@ write_env_key(){
 }
 
 provider_url_set(){
-  local url="$1" snapshot
+  local url="$1" tmp rc
   [[ "$url" =~ ^https?://[^[:space:]]+$ ]] || {
     echo "Provider URL must be an http(s) URL without whitespace" >&2
     return 2
   }
-
-  snapshot="$(mktemp)"
-  if [[ -r "$MIHOMO_ENV_FILE" ]]; then
-    cp -a "$MIHOMO_ENV_FILE" "$snapshot"
+  tmp="$(mktemp)"
+  chmod 600 "$tmp"
+  printf 'MIHOMO_PROVIDER_URL=%q\n' "$url" >"$tmp"
+  if provider_stage_url_file "$tmp"; then
+    rc=0
   else
-    : >"$snapshot"
+    rc=$?
   fi
-
-  write_env_key "$MIHOMO_ENV_FILE" MIHOMO_PROVIDER_URL "$url"
-
-  if ! MIHOMO_ENV_FILE="$MIHOMO_ENV_FILE" \
-       MIHOMO_PROVIDER_FILE="$MIHOMO_PROVIDER_FILE" \
-       MIHOMO_BIN="$MIHOMO_BIN" \
-       MIHOMO_LAST_FETCH_FILE="$MIHOMO_LAST_FETCH_FILE" \
-       MIHOMO_LAST_FORMAT_FILE="$MIHOMO_LAST_FORMAT_FILE" \
-       MIHOMO_PROVIDER_HELPER="$MIHOMO_PROVIDER_HELPER" \
-       "$MIHOMO_UPDATER" --mode auto; then
-    if [[ -s "$snapshot" ]]; then
-      install -m 600 "$snapshot" "$MIHOMO_ENV_FILE"
-    else
-      rm -f "$MIHOMO_ENV_FILE"
-    fi
-    rm -f "$snapshot"
-    echo "Provider URL update failed; previous URL restored." >&2
-    return 1
-  fi
-
-  rm -f "$snapshot"
-  printf 'MIHOMO_PROVIDER_URL=UPDATED\n'
+  rm -f "$tmp"
+  (( rc == 0 )) || return "$rc"
+  printf 'MIHOMO_PROVIDER_URL=STAGED\n'
+  printf 'NEXT=awg-mihomo-configure provider candidate list\n'
 }
 
 provider_url_set_file(){
-  local source_file="$1"
-  local MIHOMO_PROVIDER_URL=""
-
-  trusted_config_file "$source_file" || {
-    echo "Provider URL file must be root-owned mode 0600: $source_file" >&2
-    return 2
-  }
-
-  # shellcheck disable=SC1090
-  source "$source_file"
-  [[ -n "$MIHOMO_PROVIDER_URL" ]] || {
-    echo "Provider URL file does not define MIHOMO_PROVIDER_URL" >&2
-    return 2
-  }
-  provider_url_set "$MIHOMO_PROVIDER_URL"
+  provider_stage_url_file "$1"
+  printf 'MIHOMO_PROVIDER_URL=STAGED\n'
+  printf 'NEXT=awg-mihomo-configure provider candidate list\n'
 }
 
 provider_update(){
@@ -258,18 +240,273 @@ provider_update(){
 }
 
 provider_import(){
-  local file="$1"
-  MIHOMO_ENV_FILE="$MIHOMO_ENV_FILE" \
-  MIHOMO_PROVIDER_FILE="$MIHOMO_PROVIDER_FILE" \
-  MIHOMO_BIN="$MIHOMO_BIN" \
-  MIHOMO_LAST_FETCH_FILE="$MIHOMO_LAST_FETCH_FILE" \
-  MIHOMO_LAST_FORMAT_FILE="$MIHOMO_LAST_FORMAT_FILE" \
-  MIHOMO_PROVIDER_HELPER="$MIHOMO_PROVIDER_HELPER" \
-    "$MIHOMO_UPDATER" --file "$file"
+  provider_stage_file "$1" keep-source auto
+  printf 'MIHOMO_PROVIDER_IMPORT=STAGED\n'
+  printf 'NEXT=awg-mihomo-configure provider candidate list\n'
+}
+
+prepare_candidate_env(){
+  local dir
+  dir="$(dirname "$MIHOMO_CANDIDATE_ENV_FILE")"
+  mkdir -p "$dir"
+  chmod 700 "$dir"
+  if [[ -r "$MIHOMO_ENV_FILE" ]]; then
+    install -m 600 "$MIHOMO_ENV_FILE" "$MIHOMO_CANDIDATE_ENV_FILE"
+  else
+    {
+      printf 'MIHOMO_PROVIDER_PROFILE=%q\n' standard
+      printf 'MIHOMO_PROVIDER_FORMAT=%q\n' auto
+      printf 'MIHOMO_FETCH_MODE=%q\n' auto
+    } >"$MIHOMO_CANDIDATE_ENV_FILE"
+    chmod 600 "$MIHOMO_CANDIDATE_ENV_FILE"
+  fi
+}
+
+candidate_clear(){
+  rm -f "$MIHOMO_CANDIDATE_FILE" "$MIHOMO_CANDIDATE_ENV_FILE" \
+    "$MIHOMO_CANDIDATE_FETCH_FILE" "$MIHOMO_CANDIDATE_FORMAT_FILE"
+  printf 'MIHOMO_PROVIDER_CANDIDATE=CLEARED\n'
+}
+
+snapshot_candidate_state(){
+  local snapshot="$1"
+  snapshot_path "$MIHOMO_CANDIDATE_FILE" provider "$snapshot"
+  snapshot_path "$MIHOMO_CANDIDATE_ENV_FILE" env "$snapshot"
+  snapshot_path "$MIHOMO_CANDIDATE_FETCH_FILE" fetch "$snapshot"
+  snapshot_path "$MIHOMO_CANDIDATE_FORMAT_FILE" format "$snapshot"
+}
+
+restore_candidate_state(){
+  local snapshot="$1"
+  restore_path "$MIHOMO_CANDIDATE_FILE" provider "$snapshot"
+  restore_path "$MIHOMO_CANDIDATE_ENV_FILE" env "$snapshot"
+  restore_path "$MIHOMO_CANDIDATE_FETCH_FILE" fetch "$snapshot"
+  restore_path "$MIHOMO_CANDIDATE_FORMAT_FILE" format "$snapshot"
+}
+
+provider_stage_url_file(){
+  local source_file="$1" format_override="${2:-}" MIHOMO_PROVIDER_URL="" snapshot rc
+  trusted_config_file "$source_file" || {
+    echo "Provider URL file must be root-owned mode 0600: $source_file" >&2
+    return 2
+  }
+  # shellcheck disable=SC1090
+  source "$source_file"
+  [[ "$MIHOMO_PROVIDER_URL" =~ ^https?://[^[:space:]]+$ ]] || {
+    echo "Provider URL file does not contain a valid MIHOMO_PROVIDER_URL" >&2
+    return 2
+  }
+  if [[ -n "$format_override" ]]; then
+    case "$format_override" in auto|mihomo|vless|base64) ;; *) return 2 ;; esac
+  fi
+
+  snapshot="$(mktemp -d)"
+  chmod 700 "$snapshot"
+  snapshot_candidate_state "$snapshot"
+  prepare_candidate_env
+  write_env_key "$MIHOMO_CANDIDATE_ENV_FILE" MIHOMO_PROVIDER_URL "$MIHOMO_PROVIDER_URL"
+  if [[ -n "$format_override" ]]; then
+    write_env_key "$MIHOMO_CANDIDATE_ENV_FILE" MIHOMO_PROVIDER_FORMAT "$format_override"
+  fi
+  if MIHOMO_ENV_FILE="$MIHOMO_CANDIDATE_ENV_FILE" \
+       MIHOMO_PROVIDER_FILE="$MIHOMO_PROVIDER_FILE" \
+       MIHOMO_CANDIDATE_FILE="$MIHOMO_CANDIDATE_FILE" \
+       MIHOMO_CANDIDATE_ENV_FILE="$MIHOMO_CANDIDATE_ENV_FILE" \
+       MIHOMO_CANDIDATE_FETCH_FILE="$MIHOMO_CANDIDATE_FETCH_FILE" \
+       MIHOMO_CANDIDATE_FORMAT_FILE="$MIHOMO_CANDIDATE_FORMAT_FILE" \
+       MIHOMO_BIN="$MIHOMO_BIN" MIHOMO_PROVIDER_HELPER="$MIHOMO_PROVIDER_HELPER" \
+       "$MIHOMO_UPDATER" --stage-only --mode auto; then
+    rc=0
+  else
+    rc=$?
+    restore_candidate_state "$snapshot"
+  fi
+  rm -rf "$snapshot"
+  (( rc == 0 )) || return "$rc"
+  printf 'MIHOMO_PROVIDER_SOURCE=URL_STAGED\n'
+}
+
+provider_stage_file(){
+  local file="$1" source_mode="${2:-keep-source}" format="${3:-auto}" snapshot rc
+  [[ -f "$file" && -r "$file" && ! -L "$file" ]] || {
+    echo "Provider input is not a readable regular file: $file" >&2
+    return 2
+  }
+  case "$source_mode" in keep-source|local-only) ;; *) return 2 ;; esac
+  case "$format" in auto|mihomo|vless|base64) ;; *) return 2 ;; esac
+
+  snapshot="$(mktemp -d)"
+  chmod 700 "$snapshot"
+  snapshot_candidate_state "$snapshot"
+  prepare_candidate_env
+  write_env_key "$MIHOMO_CANDIDATE_ENV_FILE" MIHOMO_PROVIDER_FORMAT "$format"
+  if [[ "$source_mode" == local-only ]]; then
+    remove_env_key "$MIHOMO_CANDIDATE_ENV_FILE" MIHOMO_PROVIDER_URL
+    remove_env_key "$MIHOMO_CANDIDATE_ENV_FILE" MIHOMO_UPDATE_SUFFIX
+  fi
+  if MIHOMO_ENV_FILE="$MIHOMO_CANDIDATE_ENV_FILE" \
+       MIHOMO_PROVIDER_FILE="$MIHOMO_PROVIDER_FILE" \
+       MIHOMO_CANDIDATE_FILE="$MIHOMO_CANDIDATE_FILE" \
+       MIHOMO_CANDIDATE_ENV_FILE="$MIHOMO_CANDIDATE_ENV_FILE" \
+       MIHOMO_CANDIDATE_FETCH_FILE="$MIHOMO_CANDIDATE_FETCH_FILE" \
+       MIHOMO_CANDIDATE_FORMAT_FILE="$MIHOMO_CANDIDATE_FORMAT_FILE" \
+       MIHOMO_BIN="$MIHOMO_BIN" MIHOMO_PROVIDER_HELPER="$MIHOMO_PROVIDER_HELPER" \
+       "$MIHOMO_UPDATER" --stage-only --file "$file" --format "$format"; then
+    rc=0
+  else
+    rc=$?
+    restore_candidate_state "$snapshot"
+  fi
+  rm -rf "$snapshot"
+  (( rc == 0 )) || return "$rc"
+  printf 'MIHOMO_PROVIDER_SOURCE=%s\n' "$source_mode"
+}
+
+candidate_info_json(){
+  local name="$1"
+  [[ -r "$MIHOMO_CANDIDATE_FILE" ]] || {
+    echo "No staged Mihomo provider candidate" >&2
+    return 1
+  }
+  "$PYTHON_BIN" "$MIHOMO_PROVIDER_HELPER" info "$MIHOMO_CANDIDATE_FILE" "$name"
+}
+
+candidate_list(){
+  [[ -r "$MIHOMO_CANDIDATE_FILE" ]] || {
+    echo "No staged Mihomo provider candidate" >&2
+    return 1
+  }
+  "$PYTHON_BIN" "$MIHOMO_PROVIDER_HELPER" list "$MIHOMO_CANDIDATE_FILE" --format tsv
+}
+
+candidate_prepare(){
+  local name="$1" info
+  info="$(candidate_info_json "$name")" || return
+  printf 'Candidate node: %s\n' "$(jq -r '.name' <<<"$info")"
+  printf 'Type: %s\n' "$(jq -r '.type' <<<"$info")"
+  printf 'Provider server: %s:%s\n' "$(jq -r '.server' <<<"$info")" "$(jq -r '.port' <<<"$info")"
+  printf 'Resolved IPv4 endpoints:\n'
+  jq -r '.endpoint_ips[] | "  - " + .' <<<"$info"
+}
+
+candidate_commit(){
+  local name="$1" endpoint="$2" current mode info filter snapshot rc healthy=0 provider_has_url=0
+  local service_enabled=0 service_active=0 timer_enabled=0 timer_active=0 health_was_active=0
+
+  valid_ipv4 "$endpoint" || { echo "Selected endpoint must be valid IPv4" >&2; return 2; }
+  info="$(candidate_info_json "$name")" || return
+  jq -e --arg ip "$endpoint" '.endpoint_ips | index($ip) != null' <<<"$info" >/dev/null || {
+    echo "Selected endpoint is not one of the candidate node IPv4 addresses" >&2
+    return 2
+  }
+  filter="$(jq -r '.filter_regex' <<<"$info")"
+  current="$(awg_transport_get)"
+  mode="$(awg_mode_get)"
+
+  exec 9>"$AWG_LOCK_FILE"
+  flock -x 9
+  [[ "$(awg_transport_get)" == "$current" ]] || { echo "Transport changed; retry candidate commit." >&2; return 1; }
+
+  snapshot="$(mktemp -d)"
+  chmod 700 "$snapshot"
+  snapshot_path "$MIHOMO_ENV_FILE" env "$snapshot"
+  snapshot_path "$MIHOMO_PROVIDER_FILE" provider "$snapshot"
+  snapshot_path "$MIHOMO_ENDPOINT_IP_FILE" endpoint "$snapshot"
+  snapshot_path "$MIHOMO_EXPECTED_EGRESS_IP_FILE" egress "$snapshot"
+  snapshot_path "$MIHOMO_NODE_NAME_FILE" node "$snapshot"
+  snapshot_path "$MIHOMO_CONFIG_FILE" config "$snapshot"
+  snapshot_path "$MIHOMO_LAST_FETCH_FILE" fetch "$snapshot"
+  snapshot_path "$MIHOMO_LAST_FORMAT_FILE" format "$snapshot"
+
+  unit_enabled "$MIHOMO_SERVICE" && service_enabled=1 || true
+  unit_active "$MIHOMO_SERVICE" && service_active=1 || true
+  unit_enabled "$MIHOMO_UPDATE_TIMER" && timer_enabled=1 || true
+  unit_active "$MIHOMO_UPDATE_TIMER" && timer_active=1 || true
+  unit_active "$HEALTH_SERVICE" && health_was_active=1 || true
+
+  rollback_candidate(){
+    rc=$?
+    trap - ERR
+    "$SYSTEMCTL_BIN" stop "$MIHOMO_UPDATE_TIMER" "$MIHOMO_UPDATE_SERVICE" "$MIHOMO_SERVICE" >/dev/null 2>&1 || true
+    restore_path "$MIHOMO_ENV_FILE" env "$snapshot"
+    restore_path "$MIHOMO_PROVIDER_FILE" provider "$snapshot"
+    restore_path "$MIHOMO_ENDPOINT_IP_FILE" endpoint "$snapshot"
+    restore_path "$MIHOMO_EXPECTED_EGRESS_IP_FILE" egress "$snapshot"
+    restore_path "$MIHOMO_NODE_NAME_FILE" node "$snapshot"
+    restore_path "$MIHOMO_CONFIG_FILE" config "$snapshot"
+    restore_path "$MIHOMO_LAST_FETCH_FILE" fetch "$snapshot"
+    restore_path "$MIHOMO_LAST_FORMAT_FILE" format "$snapshot"
+    "$SYSTEMCTL_BIN" daemon-reload >/dev/null 2>&1 || true
+    restore_unit_state "$MIHOMO_SERVICE" "$service_enabled" "$service_active"
+    restore_unit_state "$MIHOMO_UPDATE_TIMER" "$timer_enabled" "$timer_active"
+    if [[ "$current" == mihomo && "$health_was_active" == 1 ]]; then
+      "$SYSTEMCTL_BIN" restart "$HEALTH_SERVICE" >/dev/null 2>&1 || true
+    fi
+    rm -rf "$snapshot"
+    echo "Candidate commit failed; previous live provider/node restored and candidate preserved." >&2
+    exit "$rc"
+  }
+  trap rollback_candidate ERR
+
+  if [[ "$current" == mihomo ]]; then
+    "$SYSTEMCTL_BIN" stop "$HEALTH_SERVICE" >/dev/null 2>&1 || true
+    case "$mode" in
+      selective) "$AWG_FAILOPEN" >/dev/null 2>&1 || true ;;
+      transit) "$TRANSIT_ROUTING" disable >/dev/null ;;
+      *) return 1 ;;
+    esac
+  fi
+
+  "$SYSTEMCTL_BIN" stop "$MIHOMO_UPDATE_TIMER" "$MIHOMO_UPDATE_SERVICE" "$MIHOMO_SERVICE" >/dev/null 2>&1 || true
+  mkdir -p "$(dirname "$MIHOMO_PROVIDER_FILE")" "$(dirname "$MIHOMO_ENV_FILE")" \
+    "$(dirname "$MIHOMO_ENDPOINT_IP_FILE")" "$(dirname "$MIHOMO_NODE_NAME_FILE")"
+  chmod 700 "$(dirname "$MIHOMO_PROVIDER_FILE")" "$(dirname "$MIHOMO_ENV_FILE")"
+  install -m 600 "$MIHOMO_CANDIDATE_FILE" "$MIHOMO_PROVIDER_FILE"
+  [[ ! -r "$MIHOMO_CANDIDATE_ENV_FILE" ]] || install -m 600 "$MIHOMO_CANDIDATE_ENV_FILE" "$MIHOMO_ENV_FILE"
+  write_env_key "$MIHOMO_ENV_FILE" MIHOMO_NODE_FILTER "$filter"
+  write_env_key "$MIHOMO_ENV_FILE" MIHOMO_ENDPOINT_IP "$endpoint"
+  remove_env_key "$MIHOMO_ENV_FILE" MIHOMO_EXPECTED_EGRESS_IP
+  printf '%s\n' "$endpoint" >"$MIHOMO_ENDPOINT_IP_FILE"; chmod 600 "$MIHOMO_ENDPOINT_IP_FILE"
+  printf '%s\n' "$name" >"$MIHOMO_NODE_NAME_FILE"; chmod 600 "$MIHOMO_NODE_NAME_FILE"
+  rm -f "$MIHOMO_EXPECTED_EGRESS_IP_FILE"
+  [[ ! -r "$MIHOMO_CANDIDATE_FETCH_FILE" ]] || install -m 600 "$MIHOMO_CANDIDATE_FETCH_FILE" "$MIHOMO_LAST_FETCH_FILE"
+  [[ ! -r "$MIHOMO_CANDIDATE_FORMAT_FILE" ]] || install -m 600 "$MIHOMO_CANDIDATE_FORMAT_FILE" "$MIHOMO_LAST_FORMAT_FILE"
+
+  MIHOMO_ENV_FILE="$MIHOMO_ENV_FILE" MIHOMO_PROVIDER_FILE="$MIHOMO_PROVIDER_FILE" \
+    MIHOMO_CONFIG_FILE="$MIHOMO_CONFIG_FILE" MIHOMO_BIN="$MIHOMO_BIN" "$MIHOMO_PREPARE"
+  "$SYSTEMCTL_BIN" daemon-reload
+  "$SYSTEMCTL_BIN" enable --now "$MIHOMO_SERVICE"
+
+  for _ in $(seq 1 30); do
+    if "$TRANSPORT_CLI" check mihomo >/dev/null 2>&1; then healthy=1; break; fi
+    "$SLEEP_BIN" 0.2
+  done
+  (( healthy == 1 ))
+
+  # shellcheck disable=SC1090
+  source "$MIHOMO_ENV_FILE"
+  [[ -n "${MIHOMO_PROVIDER_URL:-}" ]] && provider_has_url=1 || true
+  if (( provider_has_url == 1 )); then
+    "$SYSTEMCTL_BIN" enable --now "$MIHOMO_UPDATE_TIMER" >/dev/null 2>&1 || true
+  else
+    "$SYSTEMCTL_BIN" disable "$MIHOMO_UPDATE_TIMER" >/dev/null 2>&1 || true
+  fi
+  if [[ "$current" == mihomo && "$health_was_active" == 1 ]]; then
+    "$SYSTEMCTL_BIN" restart "$HEALTH_SERVICE"
+  fi
+
+  trap - ERR
+  rm -rf "$snapshot"
+  candidate_clear >/dev/null
+  printf 'MIHOMO_PROVIDER=COMMITTED\n'
+  printf 'MIHOMO_NODE=%s\n' "$name"
+  printf 'MIHOMO_ENDPOINT_IP=%s\n' "$endpoint"
+  printf 'MIHOMO_HEALTH=healthy\n'
+  printf 'ACTIVE_TRANSPORT=%s\n' "$(awg_transport_get)"
 }
 
 provider_format_set(){
-  local format="$1" snapshot
+  local format="$1" MIHOMO_PROVIDER_URL="" tmp rc
   case "$format" in
     auto|mihomo|vless|base64) ;;
     *)
@@ -283,25 +520,26 @@ provider_format_set(){
     return 1
   }
 
-  snapshot="$(mktemp)"
-  cp -a "$MIHOMO_ENV_FILE" "$snapshot"
-  write_env_key "$MIHOMO_ENV_FILE" MIHOMO_PROVIDER_FORMAT "$format"
-
-  if ! MIHOMO_ENV_FILE="$MIHOMO_ENV_FILE" \
-       MIHOMO_PROVIDER_FILE="$MIHOMO_PROVIDER_FILE" \
-       MIHOMO_BIN="$MIHOMO_BIN" \
-       MIHOMO_LAST_FETCH_FILE="$MIHOMO_LAST_FETCH_FILE" \
-       MIHOMO_LAST_FORMAT_FILE="$MIHOMO_LAST_FORMAT_FILE" \
-       MIHOMO_PROVIDER_HELPER="$MIHOMO_PROVIDER_HELPER" \
-       "$MIHOMO_UPDATER" --mode auto --format "$format"; then
-    install -m 600 "$snapshot" "$MIHOMO_ENV_FILE"
-    rm -f "$snapshot"
-    echo "Provider format change failed; previous format restored." >&2
+  # shellcheck disable=SC1090
+  source "$MIHOMO_ENV_FILE"
+  [[ "$MIHOMO_PROVIDER_URL" =~ ^https?://[^[:space:]]+$ ]] || {
+    echo "Current provider has no network URL; choose the format when staging the next local file/paste." >&2
     return 1
-  fi
+  }
 
-  rm -f "$snapshot"
-  printf 'MIHOMO_PROVIDER_FORMAT=%s\n' "$format"
+  tmp="$(mktemp)"
+  chmod 600 "$tmp"
+  printf 'MIHOMO_PROVIDER_URL=%q\n' "$MIHOMO_PROVIDER_URL" >"$tmp"
+  if provider_stage_url_file "$tmp" "$format"; then
+    rc=0
+  else
+    rc=$?
+  fi
+  rm -f "$tmp"
+  (( rc == 0 )) || return "$rc"
+
+  printf 'MIHOMO_PROVIDER_FORMAT=%s-STAGED\n' "$format"
+  printf 'NEXT=awg-mihomo-configure provider candidate list\n'
 }
 
 remove_env_key(){
@@ -450,10 +688,8 @@ node_select(){
   done
   (( healthy == 1 ))
 
-  if [[ -r "$MIHOMO_ENV_FILE" ]]; then
-    # shellcheck disable=SC1090
-    source "$MIHOMO_ENV_FILE"
-    [[ -n "${MIHOMO_PROVIDER_URL:-}" ]] && provider_has_url=1 || true
+  if grep -q '^MIHOMO_PROVIDER_URL=' "$MIHOMO_ENV_FILE" 2>/dev/null; then
+    provider_has_url=1
   fi
   if (( provider_has_url == 1 )); then
     "$SYSTEMCTL_BIN" enable --now "$MIHOMO_UPDATE_TIMER" >/dev/null 2>&1 || true
@@ -838,6 +1074,38 @@ case "${1:-}" in
       import)
         [[ $# -eq 3 ]] || { usage >&2; exit 2; }
         provider_import "$3"
+        ;;
+      stage-url-file)
+        [[ $# -ge 3 && $# -le 4 ]] || { usage >&2; exit 2; }
+        provider_stage_url_file "$3" "${4:-}"
+        ;;
+      stage-file)
+        [[ $# -ge 3 && $# -le 5 ]] || { usage >&2; exit 2; }
+        provider_stage_file "$3" "${4:-keep-source}" "${5:-auto}"
+        ;;
+      candidate)
+        case "${3:-}" in
+          list)
+            [[ $# -eq 3 ]] || { usage >&2; exit 2; }
+            candidate_list
+            ;;
+          prepare)
+            [[ $# -eq 4 ]] || { usage >&2; exit 2; }
+            candidate_prepare "$4"
+            ;;
+          commit)
+            [[ $# -eq 5 ]] || { usage >&2; exit 2; }
+            candidate_commit "$4" "$5"
+            ;;
+          clear)
+            [[ $# -eq 3 ]] || { usage >&2; exit 2; }
+            candidate_clear
+            ;;
+          *)
+            usage >&2
+            exit 2
+            ;;
+        esac
         ;;
       format)
         [[ $# -eq 4 && "${3:-}" == set ]] || { usage >&2; exit 2; }
