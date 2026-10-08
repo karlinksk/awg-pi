@@ -41,6 +41,8 @@ for needle in \
   'usr/local/bin/mihomo' \
   'usr/local/sbin/awg-transport' \
   'usr/local/sbin/awg-first-run' \
+  'usr/local/sbin/awg-selection' \
+  'usr/local/sbin/awg-selection-monitor' \
   'usr/local/sbin/awg-mihomo-config' \
   'usr/local/sbin/awg-mihomo-update' \
   'usr/local/sbin/awg-mihomo-install' \
@@ -48,7 +50,8 @@ for needle in \
   'usr/local/sbin/awg-mihomo-configure' \
   'etc/systemd/system/awg-mihomo.service' \
   'etc/systemd/system/awg-mihomo-update.service' \
-  'etc/systemd/system/awg-mihomo-update.timer'
+  'etc/systemd/system/awg-mihomo-update.timer' \
+  'etc/systemd/system/awg-selection-monitor.service'
 do
   grep -Fq "$needle" src/awg-update
 done
