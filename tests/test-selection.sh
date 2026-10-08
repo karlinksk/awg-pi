@@ -126,7 +126,7 @@ grep -Fqx mihomo "$TMP/transport"
 status="$(run_policy status)"
 grep -Fqx 'Selection mode: auto' <<<"$status"
 grep -Fqx 'Performance optimization: disabled (conservative AUTO)' <<<"$status"
-grep -Fqx 'Mihomo node auto-selection: disabled' <<<"$status"
+grep -Fqx 'Mihomo node failover: separate explicit policy (no country inference)' <<<"$status"
 
 echo "=== policy never silently moves a healthy transport not in allowed set ==="
 run_policy mode auto awg >/dev/null
