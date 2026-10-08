@@ -71,6 +71,7 @@ backup_gateway(){
     usr/local/sbin/awg-first-run \
     usr/local/sbin/awg-selection \
     usr/local/sbin/awg-selection-monitor \
+    usr/local/sbin/awg-mihomo-node-policy \
     usr/local/sbin/awg-menu \
     usr/local/sbin/awg-opencck-update \
     usr/local/sbin/awg-core-update \
@@ -114,6 +115,7 @@ restore_gateway(){
     /usr/local/sbin/awg-first-run \
     /usr/local/sbin/awg-selection \
     /usr/local/sbin/awg-selection-monitor \
+    /usr/local/sbin/awg-mihomo-node-policy \
     /usr/local/sbin/awg-menu \
     /usr/local/sbin/awg-opencck-update \
     /usr/local/sbin/awg-core-update \
