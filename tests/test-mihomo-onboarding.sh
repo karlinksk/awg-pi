@@ -29,8 +29,9 @@ source "${MIHOMO_ENV_FILE:?}"
   printf 'suffix=%s\n' "${MIHOMO_UPDATE_SUFFIX:-}"
   printf 'has_hwid=%s\n' "$([[ -n "${MIHOMO_PROVIDER_HWID:-}" ]] && echo yes || echo no)"
 } >>"${MOCK_UPDATE_LOG:?}"
-mkdir -p "$(dirname "${MIHOMO_PROVIDER_FILE:?}")"
-cat >"$MIHOMO_PROVIDER_FILE" <<'YAML'
+target_provider="${MIHOMO_CANDIDATE_FILE:-${MIHOMO_PROVIDER_FILE:?}}"
+mkdir -p "$(dirname "$target_provider")"
+cat >"$target_provider" <<'YAML'
 proxies:
   - name: Finland
     type: vless
@@ -41,8 +42,8 @@ proxies:
     server: 203.0.113.7
     port: 443
 YAML
-printf 'awg\n' >"${MIHOMO_LAST_FETCH_FILE:?}"
-printf 'mihomo\n' >"${MIHOMO_LAST_FORMAT_FILE:?}"
+printf 'awg\n' >"${MIHOMO_CANDIDATE_FETCH_FILE:-${MIHOMO_LAST_FETCH_FILE:?}}"
+printf 'mihomo\n' >"${MIHOMO_CANDIDATE_FORMAT_FILE:-${MIHOMO_LAST_FORMAT_FILE:?}}"
 MOCK
 
 cat >"$tmp/bin/openssl" <<'MOCK'
@@ -80,6 +81,10 @@ run_init(){
     AWG_LOCK_FILE="$CASE/lock" \
     MIHOMO_ENV_FILE="$CASE/etc/provider.env" \
     MIHOMO_PROVIDER_FILE="$CASE/state/providers/subscription.yaml" \
+    MIHOMO_CANDIDATE_FILE="$CASE/state/providers/candidate.yaml" \
+    MIHOMO_CANDIDATE_ENV_FILE="$CASE/state/providers/candidate.env" \
+    MIHOMO_CANDIDATE_FETCH_FILE="$CASE/state/candidate-fetch-path" \
+    MIHOMO_CANDIDATE_FORMAT_FILE="$CASE/state/candidate-provider-format" \
     MIHOMO_LAST_FETCH_FILE="$CASE/state/last-fetch-path" \
     MIHOMO_LAST_FORMAT_FILE="$CASE/state/last-provider-format" \
     MIHOMO_PROVIDER_HELPER="$repo_root/src/awg-mihomo-provider.py" \
@@ -98,16 +103,16 @@ echo "=== standard provider init ==="
 prepare_case standard
 write_init standard 'https://subscription.example/profile.yaml'
 out="$(run_init)"
-grep -Fqx 'MIHOMO_INITIALIZED=1' <<<"$out"
+grep -Fqx 'MIHOMO_INITIALIZED=STAGED' <<<"$out"
 grep -Fqx 'MIHOMO_PROVIDER_PROFILE=standard' <<<"$out"
 grep -Fqx 'MIHOMO_PROVIDER_FORMAT=auto' <<<"$out"
 grep -Fqx 'MIHOMO_PROVIDER_FORMAT_DETECTED=mihomo' <<<"$out"
 grep -Fqx 'MIHOMO_HWID_GENERATED=0' <<<"$out"
 grep -Fqx 'MIHOMO_NODE_COUNT=2' <<<"$out"
-grep -Fqx 'args=--cache-only --mode auto --format auto' "$CASE/update.log"
+grep -Fqx 'args=--stage-only --mode auto --format auto' "$CASE/update.log"
 grep -Fqx 'profile=standard' "$CASE/update.log"
-sudo grep -Fqx 'MIHOMO_PROVIDER_FORMAT=auto' "$CASE/etc/provider.env"
-grep -Fqx mihomo "$CASE/state/last-provider-format"
+sudo grep -Fqx 'MIHOMO_PROVIDER_FORMAT=auto' "$CASE/state/providers/candidate.env"
+grep -Fqx mihomo "$CASE/state/candidate-provider-format"
 grep -Fqx 'suffix=' "$CASE/update.log"
 grep -Fqx 'has_hwid=no' "$CASE/update.log"
 if grep -Fq '0123456789abcdef' <<<"$out"; then
@@ -120,7 +125,7 @@ if run_init >"$CASE/out" 2>"$CASE/err"; then
   echo 'FAIL: second init unexpectedly succeeded' >&2
   exit 1
 fi
-grep -Fq 'already initialized' "$CASE/err"
+grep -Fq 'initialization already exists' "$CASE/err"
 
 echo "=== Remnawave/Citadel generates one stable HWID ==="
 prepare_case remnawave
@@ -131,7 +136,7 @@ grep -Fqx 'MIHOMO_HWID_GENERATED=1' <<<"$out"
 grep -Fqx 'profile=remnawave' "$CASE/update.log"
 grep -Fqx 'suffix=mihomo' "$CASE/update.log"
 grep -Fqx 'has_hwid=yes' "$CASE/update.log"
-sudo grep -Fqx 'MIHOMO_PROVIDER_HWID=0123456789abcdef0123456789abcdef' "$CASE/etc/provider.env"
+sudo grep -Fqx 'MIHOMO_PROVIDER_HWID=0123456789abcdef0123456789abcdef' "$CASE/state/providers/candidate.env"
 if grep -Fq '0123456789abcdef' <<<"$out"; then
   echo 'FAIL: generated HWID leaked in init output' >&2
   exit 1
@@ -142,7 +147,7 @@ prepare_case existing-hwid
 write_init remnawave 'https://subscription.example/token' 'existing-hwid-12345678'
 out="$(run_init)"
 grep -Fqx 'MIHOMO_HWID_GENERATED=0' <<<"$out"
-sudo grep -Fqx 'MIHOMO_PROVIDER_HWID=existing-hwid-12345678' "$CASE/etc/provider.env"
+sudo grep -Fqx 'MIHOMO_PROVIDER_HWID=existing-hwid-12345678' "$CASE/state/providers/candidate.env"
 
 echo "=== URL already ending in /mihomo is not doubled ==="
 prepare_case suffix
@@ -159,7 +164,9 @@ if MOCK_UPDATE_FAIL=1 run_init >"$CASE/out" 2>"$CASE/err"; then
 fi
 sudo test ! -e "$CASE/etc/provider.env"
 sudo test ! -e "$CASE/state/providers/subscription.yaml"
-grep -Fq 'previous provider state restored' "$CASE/err"
+sudo test ! -e "$CASE/state/providers/candidate.env"
+sudo test ! -e "$CASE/state/providers/candidate.yaml"
+grep -Fq 'previous candidate state restored' "$CASE/err"
 
 echo "=== init refuses active Mihomo datapath ==="
 prepare_case active

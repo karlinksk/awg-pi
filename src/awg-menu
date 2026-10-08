@@ -405,6 +405,93 @@ mihomo_node_menu(){
   fi
 }
 
+mihomo_candidate_menu(){
+  local node_name endpoint info_tmp current rc
+
+  title="Staged Mihomo provider"
+  if ! capture "$MIHOMO_CONFIGURE" provider candidate list; then
+    return 0
+  fi
+
+  node_name="$(input "Candidate node" "Введите ТОЧНОЕ имя узла из staged provider:")" || return 0
+  [[ -n "$node_name" ]] || { msg "Mihomo" "Имя candidate node не задано."; return 0; }
+
+  info_tmp="$(mktemp)"
+  if ! "$MIHOMO_CONFIGURE" provider candidate prepare "$node_name" >"$info_tmp" 2>&1; then
+    dialog --backtitle "$BACKTITLE" --title "Candidate node" --textbox "$info_tmp" 24 108
+    rm -f "$info_tmp"
+    return 0
+  fi
+  dialog --backtitle "$BACKTITLE" --title "Candidate node" --textbox "$info_tmp" 24 108
+  endpoint="$(input "Candidate endpoint" "Введите один IPv4 из Resolved IPv4 endpoints:")" || {
+    rm -f "$info_tmp"
+    return 0
+  }
+  rm -f "$info_tmp"
+  [[ -n "$endpoint" ]] || return 0
+
+  confirm "Commit staged provider?" "Live provider и текущий node будут заменены только после успешного запуска и health-check candidate. При ошибке live автоматически восстановится, а candidate останется для повторной попытки." || return 0
+
+  current="$("$AWG_TRANSPORT" get 2>/dev/null || echo unconfigured)"
+  title="Commit staged Mihomo provider"
+  if capture "$MIHOMO_CONFIGURE" provider candidate commit "$node_name" "$endpoint"; then
+    rc=0
+  else
+    rc=$?
+  fi
+
+  if (( rc == 0 )) && [[ "$current" != mihomo ]]; then
+    if confirm "Активировать Mihomo?" "Новый provider/node healthy. Сделать Mihomo активным transport сейчас?"; then
+      title="Transport → Mihomo"
+      capture "$AWG_TRANSPORT" select mihomo || true
+    fi
+  elif (( rc != 0 )); then
+    msg "Mihomo candidate" "Commit не выполнен. Предыдущий live provider сохранён/восстановлен; staged candidate оставлен."
+  fi
+}
+
+mihomo_local_source_mode(){
+  dialog --backtitle "$BACKTITLE" --title "Источник обновлений" --item-help --menu \
+    "Что делать с URL источника после commit локального/pasted provider?" 18 102 4 \
+    keep-source "Сохранить текущий URL" "Подходит для offline recovery: профиль импортируется локально, а будущие обновления снова используют текущий URL." \
+    local-only "Только локальный provider" "После commit сетевой URL для этого provider не используется; update timer будет отключён." \
+    0 "Назад" "Отменить staging." 3>&1 1>&2 2>&3
+}
+
+paste_mihomo_provider(){
+  local rc source_mode
+  install -d -m 700 /run/awg-pbr
+  PASTE_TMP="$(mktemp /run/awg-pbr/mihomo-paste.XXXXXX)"
+  chmod 600 "$PASTE_TMP"
+
+  set +e
+  dialog --backtitle "$BACKTITLE" --title "Вставить Mihomo provider/subscription" \
+    --ok-label "Проверить" --cancel-label "Отмена" \
+    --editbox "$PASTE_TMP" 30 110
+  rc=$?
+  set -e
+  if (( rc != 0 )); then
+    rm -f "$PASTE_TMP"; PASTE_TMP=""; return 0
+  fi
+
+  sed -i 's/\r$//' "$PASTE_TMP"
+  if ! grep -q '[^[:space:]]' "$PASTE_TMP"; then
+    msg "Mihomo" "Вставленный provider пуст. Live state не изменён."
+    rm -f "$PASTE_TMP"; PASTE_TMP=""; return 0
+  fi
+
+  source_mode="$(mihomo_local_source_mode)" || { rm -f "$PASTE_TMP"; PASTE_TMP=""; return 0; }
+  [[ "$source_mode" != 0 ]] || { rm -f "$PASTE_TMP"; PASTE_TMP=""; return 0; }
+
+  title="Stage Mihomo provider"
+  if capture "$MIHOMO_CONFIGURE" provider stage-file "$PASTE_TMP" "$source_mode"; then
+    rm -f "$PASTE_TMP"; PASTE_TMP=""
+    mihomo_candidate_menu
+  else
+    rm -f "$PASTE_TMP"; PASTE_TMP=""
+  fi
+}
+
 mihomo_provider_format_dialog(){
   dialog --backtitle "$BACKTITLE" --title "Формат subscription" --item-help --menu \
     "AUTO рекомендуется по умолчанию. Ручной формат нужен, если autodetect неоднозначен или оператор использует известную обёртку." \
@@ -417,21 +504,23 @@ mihomo_provider_format_dialog(){
 }
 
 mihomo_menu(){
-  local choice url path fetch_mode init_tmp url_tmp profile provider_format
+  local choice url path fetch_mode init_tmp url_tmp profile provider_format source_mode
   while true; do
     choice="$(dialog --backtitle "$BACKTITLE" --title "Mihomo / Multi-Transport" --item-help --menu \
       "Управление Mihomo и subscription. AUTO: DIRECT → текущий healthy transport → остальные healthy transports. SSTP/router-side VPN не является зависимостью." \
-      28 108 12 \
+      31 110 14 \
       1 "Состояние Mihomo" "Показывает runtime, provider cache, последний успешный bootstrap-канал и health без вывода секретов." \
-      2 "Заменить ссылку подписки" "Вставляет новый URL в скрытом поле. Новый профиль проверяется транзакционно; при ошибке старая ссылка и cache остаются." \
-      3 "Обновить подписку — AUTO" "Сначала DIRECT, затем текущий healthy transport и другие healthy transports. Неудача не удаляет рабочий cache." \
-      4 "Обновить через выбранный канал" "Позволяет вручную выбрать DIRECT, Mihomo или AmneziaWG только для одной загрузки; скрытого fallback нет." \
-      5 "Импортировать локальный профиль" "Импортирует с Pi native Mihomo YAML, plain VLESS URI или Base64 VLESS без обращения к сети; формат определяется адаптером." \
+      2 "Заменить ссылку подписки" "Новый URL сначала загружается в staged candidate. Live provider/URL меняются только после выбора candidate node и успешного health-check." \
+      3 "Обновить подписку — AUTO" "Скачивает и проверяет новый provider как candidate: DIRECT → healthy transports. Live не меняется до выбора node и commit." \
+      4 "Обновить через выбранный канал" "Ставит candidate через выбранный DIRECT/Mihomo/AWG без скрытого fallback. Live не меняется до commit." \
+      5 "Импортировать локальный профиль" "Файл проходит adapter + mihomo -t и попадает в staged candidate. Live не меняется до commit выбранного node." \
       6 "Точка выхода / узел" "Показывает узлы subscription и безопасно меняет node без зависимости от AWG и без per-IP MikroTik правил." \
       7 "Переключить транспорт на Mihomo" "Транзакционно проверяет Mihomo и только затем переводит datapath с AWG на mihomo0; при ошибке выполняется rollback." \
       8 "Переключить транспорт на AmneziaWG" "Возвращает datapath на awg0 с health-check и rollback при ошибке." \
       9 "Первичная настройка Mihomo" "Для чистой установки: ставит Mihomo, создаёт provider state, нормализует subscription и затем предлагает выбрать узел." \
       10 "Формат подписки" "AUTO по умолчанию; вручную можно зафиксировать Mihomo YAML, VLESS URI или Base64 VLESS. Изменение транзакционное." \
+      11 "Вставить provider / subscription" "Вставка Mihomo YAML, VLESS URI(s) или Base64 из буфера. Сначала staged validation, затем выбор node и commit." \
+      12 "Staged provider / candidate" "Открывает уже подготовленный candidate: выбрать node/endpoint и commit либо вернуться без изменения live." \
       0 "Назад" "Возвращает в меню VPN без изменений." 3>&1 1>&2 2>&3)" || return 0
 
     case "$choice" in
@@ -451,12 +540,21 @@ mihomo_menu(){
         chmod 600 "$url_tmp"
         printf 'MIHOMO_PROVIDER_URL=%q\n' "$url" >"$url_tmp"
         unset url
-        run_interactive "Обновление ссылки Mihomo" "$MIHOMO_CONFIGURE" provider-url set-file "$url_tmp"
-        rm -f "$url_tmp"
-        url_tmp=""
+        title="Stage нового Mihomo URL"
+        if capture "$MIHOMO_CONFIGURE" provider stage-url-file "$url_tmp"; then
+          rm -f "$url_tmp"
+          url_tmp=""
+          mihomo_candidate_menu
+        else
+          rm -f "$url_tmp"
+          url_tmp=""
+        fi
         ;;
       3)
-        run_interactive "Mihomo provider update — AUTO" "$MIHOMO_CONFIGURE" provider update auto
+        title="Mihomo provider update — AUTO"
+        if capture "$MIHOMO_CONFIGURE" provider update auto; then
+          mihomo_candidate_menu
+        fi
         ;;
       4)
         fetch_mode="$(dialog --backtitle "$BACKTITLE" --title "Bootstrap-канал" --item-help --menu \
@@ -466,12 +564,19 @@ mihomo_menu(){
           awg "AmneziaWG" "Запрос принудительно идёт через awg0; используйте только если AWG healthy." \
           0 "Назад" "Не выполнять обновление." 3>&1 1>&2 2>&3)" || continue
         [[ "$fetch_mode" != 0 ]] || continue
-        run_interactive "Mihomo provider update — $fetch_mode" "$MIHOMO_CONFIGURE" provider update "$fetch_mode"
+        title="Mihomo provider update — $fetch_mode"
+        if capture "$MIHOMO_CONFIGURE" provider update "$fetch_mode"; then
+          mihomo_candidate_menu
+        fi
         ;;
       5)
         path="$(input "Mihomo provider" "Полный путь к локальному provider-файлу (Mihomo YAML / VLESS URI / Base64 VLESS):")" || continue
-        confirm "Импорт профиля" "Проверить и импортировать локальный профиль?\n\nРабочий cache будет заменён только после успешной проверки." || continue
-        run_interactive "Импорт Mihomo provider" "$MIHOMO_CONFIGURE" provider import "$path"
+        source_mode="$(mihomo_local_source_mode)" || continue
+        [[ "$source_mode" != 0 ]] || continue
+        title="Stage локального Mihomo provider"
+        if capture "$MIHOMO_CONFIGURE" provider stage-file "$path" "$source_mode"; then
+          mihomo_candidate_menu
+        fi
         ;;
       6) mihomo_node_menu ;;
       7)
@@ -508,8 +613,8 @@ mihomo_menu(){
         if capture "$MIHOMO_CONFIGURE" init "$init_tmp"; then
           rm -f "$init_tmp"
           init_tmp=""
-          if confirm "Mihomo provider готов" "Provider cache успешно загружен и проверен. Перейти к выбору точки выхода?"; then
-            mihomo_node_menu
+          if confirm "Mihomo candidate готов" "Provider candidate успешно загружен и проверен. Перейти к выбору точки выхода и commit?"; then
+            mihomo_candidate_menu
           fi
         else
           rm -f "$init_tmp"
@@ -519,8 +624,17 @@ mihomo_menu(){
       10)
         provider_format="$(mihomo_provider_format_dialog)" || continue
         [[ "$provider_format" != 0 ]] || continue
-        confirm "Формат subscription" "Проверить текущую subscription в формате '$provider_format' и применить его только при успешной нормализации?" || continue
-        run_interactive "Формат Mihomo provider" "$MIHOMO_CONFIGURE" provider format set "$provider_format"
+        confirm "Формат subscription" "Загрузить текущий URL в формате '$provider_format' как staged candidate?\n\nLive provider не изменится до выбора candidate node и успешного health-check." || continue
+        title="Stage формата Mihomo provider"
+        if capture "$MIHOMO_CONFIGURE" provider format set "$provider_format"; then
+          mihomo_candidate_menu
+        fi
+        ;;
+      11)
+        paste_mihomo_provider
+        ;;
+      12)
+        mihomo_candidate_menu
         ;;
       0) return 0 ;;
     esac
