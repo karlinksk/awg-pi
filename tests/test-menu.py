@@ -29,8 +29,8 @@ required = [
     '"Переключить транспорт на Mihomo"',
     '"Переключить транспорт на AmneziaWG"',
     '"Точка выхода / узел"',
-    '"Первичная настройка Mihomo"',
-    '"Первичная настройка transport"',
+    '"Добавить / первично настроить Mihomo"',
+    '"Добавить / настроить transport"',
     '"Transport Selection Policy"',
     '"Citadel / Remnawave"',
     '"Формат подписки"',
@@ -70,7 +70,7 @@ for label in (
     '"Завершить SSH-сессию"',
     '"Selective Gateway"',
     '"MikroTik Transit / Backup VPN"',
-    '"Первичная настройка transport"',
+    '"Добавить / настроить transport"',
 ):
     assert label in menu, f"missing documented menu item: {label}"
 
@@ -97,6 +97,17 @@ assert '"$MIHOMO_CONFIGURE" node prepare "$node_name"' in menu
 assert 'Отдельное MikroTik правило для этого IP больше НЕ требуется' in menu
 assert 'gateway-wide DIRECT bypass' in menu
 assert '"$AWG_FIRST_RUN" wizard' in menu
+assert 'secondary_transport_setup' in menu
+assert '5) secondary_transport_setup' in menu
+assert '6) secondary_transport_setup' in menu
+assert 'mihomo_initial_setup_flow secondary' in menu
+assert 'Mihomo уже настроен как дополнительный backend' in menu
+assert 'Текущий active transport' in menu
+assert 'НЕ изменён' in menu
+assert 'optional ordered fallback-chain' in menu
+# The normal VPN menus must not invoke first-run directly when a transport exists.
+transit_block = menu[menu.index('vpn_menu(){'):menu.index('dns_menu(){')]
+assert 'run_interactive "Первичная настройка transport" "$AWG_FIRST_RUN" wizard' not in transit_block
 assert 'AWG_SELECTION=/usr/local/sbin/awg-selection' in menu
 assert '"$AWG_SELECTION" mode manual' in menu
 assert '"$AWG_SELECTION" mode fixed awg mihomo' in menu

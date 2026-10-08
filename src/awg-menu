@@ -512,7 +512,7 @@ mihomo_node_menu(){
 }
 
 mihomo_candidate_menu(){
-  local node_name endpoint info_tmp current rc listing
+  local behavior="${1:-normal}" node_name endpoint info_tmp current rc listing
 
   title="Staged Mihomo provider"
   if ! capture "$MIHOMO_CONFIGURE" provider candidate list; then
@@ -548,12 +548,21 @@ mihomo_candidate_menu(){
     rc=$?
   fi
 
-  if (( rc == 0 )) && [[ "$current" != mihomo ]]; then
-    if confirm "Активировать Mihomo?" "Новый provider/node healthy. Сделать Mihomo активным transport сейчас?"; then
-      title="Transport → Mihomo"
-      capture "$AWG_TRANSPORT" select mihomo || true
+  if (( rc == 0 )); then
+    if [[ "$behavior" == secondary ]]; then
+      msg "Mihomo добавлен" "Provider и primary node успешно настроены. Текущий active transport '$current' НЕ изменён."
+      if confirm "Mihomo Node Failover" "Настроить ordered fallback-chain для Mihomo сейчас?\n\nPrimary уже выбран: $node_name\nFailover будет идти только слева направо по явно добавленным nodes."; then
+        mihomo_node_chain_editor
+      else
+        "$MIHOMO_NODE_POLICY" mode manual >/dev/null 2>&1 || true
+      fi
+    elif [[ "$current" != mihomo ]]; then
+      if confirm "Активировать Mihomo?" "Новый provider/node healthy. Сделать Mihomo активным transport сейчас?"; then
+        title="Transport → Mihomo"
+        capture "$AWG_TRANSPORT" select mihomo || true
+      fi
     fi
-  elif (( rc != 0 )); then
+  else
     msg "Mihomo candidate" "Commit не выполнен. Предыдущий live provider сохранён/восстановлен; staged candidate оставлен."
   fi
 }
@@ -729,8 +738,75 @@ mihomo_node_policy_menu(){
   done
 }
 
+mihomo_initial_setup_flow(){
+  local behavior="${1:-secondary}" profile provider_format url init_tmp
+
+  profile="$(dialog --backtitle "$BACKTITLE" --title "Тип subscription" --item-help --menu \
+    "Выберите профиль первичной настройки Mihomo." 19 104 5 \
+    standard "Обычная Mihomo/Clash subscription" "URL используется как есть; HWID не добавляется." \
+    remnawave "Citadel / Remnawave" "Создаётся один стабильный HWID и используется /mihomo profile. HWID сохраняется и не показывается." \
+    0 "Назад" "Не выполнять настройку." 3>&1 1>&2 2>&3)" || return 0
+  [[ "$profile" != 0 ]] || return 0
+
+  provider_format="$(mihomo_provider_format_dialog)" || return 0
+  [[ "$provider_format" != 0 ]] || return 0
+
+  url="$(secret_input "Настройка Mihomo" "Вставьте полный URL subscription.\n\nДля Citadel/Remnawave можно вставить базовую ссылку: /mihomo будет добавлен автоматически.")" || return 0
+  [[ -n "$url" ]] || { msg "Mihomo" "Пустая ссылка не применена."; return 0; }
+
+  install -d -m 700 /run/awg-pbr
+  init_tmp="$(mktemp /run/awg-pbr/mihomo-init.XXXXXX)"
+  chmod 600 "$init_tmp"
+  {
+    printf 'MIHOMO_PROVIDER_URL=%q\n' "$url"
+    printf 'MIHOMO_PROVIDER_PROFILE=%q\n' "$profile"
+    printf 'MIHOMO_PROVIDER_FORMAT=%q\n' "$provider_format"
+  } >"$init_tmp"
+  unset url
+
+  title="Настройка Mihomo"
+  if capture "$MIHOMO_CONFIGURE" init "$init_tmp"; then
+    rm -f "$init_tmp"
+    init_tmp=""
+    if confirm "Mihomo candidate готов" "Provider candidate успешно загружен и проверен. Перейти к выбору primary node и commit?"; then
+      mihomo_candidate_menu "$behavior"
+    fi
+  else
+    rm -f "$init_tmp"
+    init_tmp=""
+  fi
+}
+
+secondary_transport_setup(){
+  local current mihomo_status
+
+  current="$("$AWG_TRANSPORT" get 2>/dev/null || echo unconfigured)"
+  case "$current" in
+    unconfigured)
+      run_interactive "Первичная настройка transport" "$AWG_FIRST_RUN" wizard
+      ;;
+    awg)
+      mihomo_status="$("$MIHOMO_CONFIGURE" status 2>/dev/null || true)"
+      if grep -Fqx 'Configured: yes' <<<"$mihomo_status"; then
+        msg "Второй transport" "Mihomo уже настроен как дополнительный backend.\n\nActive transport: AWG.\nMihomo не переинициализируется. Открываю обычное меню управления Mihomo."
+        mihomo_menu
+      else
+        confirm "Добавить Mihomo" "AWG уже работает и останется active transport.\n\nНастроить Mihomo как второй backend: subscription → primary node → optional ordered fallback-chain?" || return 0
+        mihomo_initial_setup_flow secondary
+      fi
+      ;;
+    mihomo)
+      msg "Второй transport" "Mihomo уже активен. Для добавления/обновления AmneziaWG используйте конфигурацию AWG. Переключение transport отдельно и автоматически не выполняется."
+      awg_config_menu
+      ;;
+    *)
+      msg "Transport" "Неизвестное состояние active transport: $current"
+      ;;
+  esac
+}
+
 mihomo_menu(){
-  local choice url path fetch_mode init_tmp url_tmp profile provider_format source_mode
+  local choice url path fetch_mode url_tmp provider_format source_mode
   while true; do
     choice="$(dialog --backtitle "$BACKTITLE" --title "Mihomo / Multi-Transport" --item-help --menu \
       "Управление Mihomo и subscription. AUTO: DIRECT → текущий healthy transport → остальные healthy transports. SSTP/router-side VPN не является зависимостью." \
@@ -743,7 +819,7 @@ mihomo_menu(){
       6 "Точка выхода / узел" "Показывает узлы subscription и безопасно меняет node без зависимости от AWG и без per-IP MikroTik правил." \
       7 "Переключить транспорт на Mihomo" "Транзакционно проверяет Mihomo и только затем переводит datapath с AWG на mihomo0; при ошибке выполняется rollback." \
       8 "Переключить транспорт на AmneziaWG" "Возвращает datapath на awg0 с health-check и rollback при ошибке." \
-      9 "Первичная настройка Mihomo" "Для чистой установки: ставит Mihomo, создаёт provider state, нормализует subscription и затем предлагает выбрать узел." \
+      9 "Добавить / первично настроить Mihomo" "Настраивает subscription → primary node → optional ordered fallback-chain. Active transport сам не меняет." \
       10 "Формат подписки" "AUTO по умолчанию; вручную можно зафиксировать Mihomo YAML, VLESS URI или Base64 VLESS. Изменение транзакционное." \
       11 "Вставить provider / subscription" "Вставка Mihomo YAML, VLESS URI(s) или Base64 из буфера. Сначала staged validation, затем выбор node и commit." \
       12 "Staged provider / candidate" "Открывает уже подготовленный candidate: выбрать node/endpoint и commit либо вернуться без изменения live." \
@@ -815,40 +891,7 @@ mihomo_menu(){
         confirm "Transport → AmneziaWG" "Вернуть datapath на AmneziaWG?\n\nПереключение транзакционное." || continue
         run_interactive "Переключение на AmneziaWG" "$AWG_TRANSPORT" select awg
         ;;
-      9)
-        profile="$(dialog --backtitle "$BACKTITLE" --title "Тип subscription" --item-help --menu \
-          "Выберите профиль первичной настройки." 19 104 5 \
-          standard "Обычная Mihomo/Clash subscription" "URL используется как есть; HWID не добавляется." \
-          remnawave "Citadel / Remnawave" "Создаётся один стабильный HWID и используется /mihomo profile. HWID сохраняется и не показывается." \
-          0 "Назад" "Не выполнять первичную настройку." 3>&1 1>&2 2>&3)" || continue
-        [[ "$profile" != 0 ]] || continue
-        provider_format="$(mihomo_provider_format_dialog)" || continue
-        [[ "$provider_format" != 0 ]] || continue
-        url="$(secret_input "Первичная настройка Mihomo" "Вставьте полный URL subscription.\n\nДля Citadel/Remnawave можно вставить базовую ссылку: /mihomo будет добавлен автоматически.")" || continue
-        [[ -n "$url" ]] || { msg "Mihomo" "Пустая ссылка не применена."; continue; }
-
-        install -d -m 700 /run/awg-pbr
-        init_tmp="$(mktemp /run/awg-pbr/mihomo-init.XXXXXX)"
-        chmod 600 "$init_tmp"
-        {
-          printf 'MIHOMO_PROVIDER_URL=%q\n' "$url"
-          printf 'MIHOMO_PROVIDER_PROFILE=%q\n' "$profile"
-          printf 'MIHOMO_PROVIDER_FORMAT=%q\n' "$provider_format"
-        } >"$init_tmp"
-        unset url
-
-        title="Первичная настройка Mihomo"
-        if capture "$MIHOMO_CONFIGURE" init "$init_tmp"; then
-          rm -f "$init_tmp"
-          init_tmp=""
-          if confirm "Mihomo candidate готов" "Provider candidate успешно загружен и проверен. Перейти к выбору точки выхода и commit?"; then
-            mihomo_candidate_menu
-          fi
-        else
-          rm -f "$init_tmp"
-          init_tmp=""
-        fi
-        ;;
+      9) mihomo_initial_setup_flow secondary ;;
       10)
         provider_format="$(mihomo_provider_format_dialog)" || continue
         [[ "$provider_format" != 0 ]] || continue
@@ -935,7 +978,7 @@ vpn_menu(){
         2 "Перезапустить awg0 и health monitor" "Перезапускает сам туннель AmneziaWG и его контроль здоровья. Возможен краткий обрыв backup VPN-трафика." \
         3 "Конфигурация AmneziaWG" "Установка нового native .conf текстом/из файла или rollback предыдущего профиля." \
         4 "Mihomo / Multi-Transport" "Subscription, bootstrap, выбор точки выхода и транзакционное переключение AWG ↔ Mihomo." \
-        5 "Первичная настройка transport" "Используется в состоянии unconfigured/recovery: выбрать первый backend из имеющегося AWG профиля или Mihomo subscription/profile." \
+        5 "Добавить / настроить transport" "Runtime-aware мастер: unconfigured → первый transport; AWG active → добавить/управлять Mihomo; Mihomo active → добавить/управлять AmneziaWG." \
         6 "Transport Selection Policy" "MANUAL / FIXED+FAILOVER / conservative AUTO. Не меняет Mihomo node/страну автоматически." \
         0 "Назад" "Возвращает в главное меню без изменений." 3>&1 1>&2 2>&3)" || return 0
       case "$choice" in
@@ -950,7 +993,7 @@ vpn_menu(){
           ;;
         3) awg_config_menu ;;
         4) mihomo_menu ;;
-        5) run_interactive "Первичная настройка transport" "$AWG_FIRST_RUN" wizard ;;
+        5) secondary_transport_setup ;;
         6) selection_policy_menu ;;
         0) return 0 ;;
       esac
@@ -964,7 +1007,7 @@ vpn_menu(){
       3 "Перезапустить awg0 и health monitor" "Перезапускает туннель AmneziaWG и проверку здоровья; VPN-трафик может кратковременно перейти в FAIL-OPEN/DIRECT." \
       4 "Конфигурация AmneziaWG" "Установка нового native .conf текстом/из файла или rollback предыдущего профиля." \
       5 "Mihomo / Multi-Transport" "Subscription, bootstrap-каналы, локальный импорт и транзакционное переключение AWG ↔ Mihomo." \
-      6 "Первичная настройка transport" "Используется в состоянии unconfigured/recovery: выбрать первый backend из имеющегося AWG профиля или Mihomo subscription/profile." \
+      6 "Добавить / настроить transport" "Runtime-aware мастер: unconfigured → первый transport; AWG active → добавить/управлять Mihomo; Mihomo active → добавить/управлять AmneziaWG." \
       7 "Transport Selection Policy" "MANUAL / FIXED+FAILOVER / conservative AUTO. Не меняет Mihomo node/страну автоматически." \
       0 "Назад" "Возвращает в главное меню без изменений." 3>&1 1>&2 2>&3)" || return 0
     case "$choice" in
@@ -984,7 +1027,7 @@ vpn_menu(){
         ;;
       4) awg_config_menu ;;
       5) mihomo_menu ;;
-      6) run_interactive "Первичная настройка transport" "$AWG_FIRST_RUN" wizard ;;
+      6) secondary_transport_setup ;;
       7) selection_policy_menu ;;
       0) return 0 ;;
     esac
