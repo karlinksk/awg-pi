@@ -1,0 +1,146 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+[[ ${EUID:-$(id -u)} -eq 0 ]] || exec sudo "$0" "$@"
+
+AWG_FETCH_BIN="${AWG_FETCH_BIN:-/usr/local/sbin/awg-fetch}"
+AWG_ENV_FILE="${AWG_ENV_FILE:-/etc/awg-pbr/env}"
+FETCH_MODE="${AWG_ENGINE_FETCH_MODE:-auto}"
+SRC_ROOT="${AWG_SRC_ROOT:-/opt/amneziawg-src}"
+LOCAL_BUNDLE=""
+
+GO_VERSION="1.27.1"
+GO_ARCHIVE="go${GO_VERSION}.linux-arm64.tar.gz"
+GO_URL="https://go.dev/dl/${GO_ARCHIVE}"
+GO_SHA256="3450b45a3f9ee8568792736a5c5e70a1f2e9b36c35a8f74958c03e51d7d92bec"
+
+AWG_GO_TAG="v3.1.20260828"
+AWG_GO_ARCHIVE="amneziawg-go-${AWG_GO_TAG}.tar.gz"
+AWG_GO_URL="https://github.com/amnezia-vpn/amneziawg-go/archive/refs/tags/${AWG_GO_TAG}.tar.gz"
+AWG_GO_SHA256="24c656cfb80ff6855702710eaf2e3729fa710bf6bfdbbbdfba01984ccd17de95"
+
+AWG_TOOLS_TAG="v3.1.20260812"
+AWG_TOOLS_ARCHIVE="amneziawg-tools-${AWG_TOOLS_TAG}.tar.gz"
+AWG_TOOLS_URL="https://github.com/amnezia-vpn/amneziawg-tools/archive/refs/tags/${AWG_TOOLS_TAG}.tar.gz"
+AWG_TOOLS_SHA256="dbd8ce0748d835d18f30bb76720246b7bfc80bd09cd17c379b1c59f683a18493"
+
+usage(){
+  cat <<'USAGE'
+Usage:
+  awg-engine-install [--mode auto|direct|awg|mihomo]
+  awg-engine-install --bundle DIR [--mode auto|direct|awg|mihomo]
+
+Network mode downloads pinned, SHA256-verified source/toolchain archives through
+awg-fetch. --bundle is offline recovery and must contain these exact files:
+  go1.27.1.linux-arm64.tar.gz
+  amneziawg-go-v3.1.20260828.tar.gz
+  amneziawg-tools-v3.1.20260812.tar.gz
+
+The engine is installed but no tunnel/service is started automatically.
+USAGE
+}
+
+while (( $# )); do
+  case "$1" in
+    --mode)
+      [[ $# -ge 2 ]] || { usage >&2; exit 2; }
+      FETCH_MODE="$2"
+      shift 2
+      ;;
+    --bundle)
+      [[ $# -ge 2 ]] || { usage >&2; exit 2; }
+      LOCAL_BUNDLE="$2"
+      shift 2
+      ;;
+    -h|--help|help)
+      usage
+      exit 0
+      ;;
+    *)
+      echo "Unknown argument: $1" >&2
+      usage >&2
+      exit 2
+      ;;
+  esac
+done
+
+[[ "$FETCH_MODE" == router ]] && FETCH_MODE=direct
+case "$FETCH_MODE" in
+  auto|direct|awg|mihomo) ;;
+  *) echo "Unsupported fetch mode: $FETCH_MODE" >&2; exit 2 ;;
+esac
+
+case "$(uname -m)" in
+  aarch64|arm64) ;;
+  *)
+    echo "This pinned AWG engine bundle currently supports ARM64 only." >&2
+    exit 2
+    ;;
+esac
+
+for tool in tar gzip sha256sum make gcc; do
+  command -v "$tool" >/dev/null 2>&1 || {
+    echo "Missing build dependency: $tool" >&2
+    exit 2
+  }
+done
+
+tmpdir="$(mktemp -d)"
+trap 'rm -rf "$tmpdir"' EXIT
+
+fetch_archive(){
+  local name="$1" url="$2" sha="$3" dst="$tmpdir/$1" source
+  if [[ -n "$LOCAL_BUNDLE" ]]; then
+    source="$LOCAL_BUNDLE/$name"
+    [[ -f "$source" && -r "$source" && ! -L "$source" ]] || {
+      echo "Offline AWG bundle is missing: $name" >&2
+      return 1
+    }
+    cp -- "$source" "$dst"
+  else
+    [[ -x "$AWG_FETCH_BIN" ]] || {
+      echo "Bootstrap fetch manager is unavailable: $AWG_FETCH_BIN" >&2
+      return 2
+    }
+    AWG_ENV_FILE="$AWG_ENV_FILE" "$AWG_FETCH_BIN"       --mode "$FETCH_MODE" --url "$url" --output "$dst" --       -4 --http1.1 -fsSL --retry 3 --retry-all-errors --retry-delay 1       --connect-timeout 10 --max-time 180 >/dev/null
+  fi
+  printf '%s  %s\n' "$sha" "$dst" | sha256sum -c -
+}
+
+fetch_archive "$GO_ARCHIVE" "$GO_URL" "$GO_SHA256"
+fetch_archive "$AWG_GO_ARCHIVE" "$AWG_GO_URL" "$AWG_GO_SHA256"
+fetch_archive "$AWG_TOOLS_ARCHIVE" "$AWG_TOOLS_URL" "$AWG_TOOLS_SHA256"
+
+if ! command -v go >/dev/null 2>&1 || [[ "$(go version 2>/dev/null || true)" != *"go${GO_VERSION} "* ]]; then
+  rm -rf /usr/local/go
+  tar -C /usr/local -xzf "$tmpdir/$GO_ARCHIVE"
+fi
+export PATH=/usr/local/go/bin:$PATH
+printf 'export PATH=/usr/local/go/bin:$PATH\n' >/etc/profile.d/go.sh
+go version | grep -Fq "go${GO_VERSION}"
+
+mkdir -p "$SRC_ROOT"
+rm -rf "$SRC_ROOT/amneziawg-go" "$SRC_ROOT/amneziawg-tools"
+mkdir -p "$SRC_ROOT/amneziawg-go" "$SRC_ROOT/amneziawg-tools"
+tar -C "$SRC_ROOT/amneziawg-go" --strip-components=1 -xzf "$tmpdir/$AWG_GO_ARCHIVE"
+tar -C "$SRC_ROOT/amneziawg-tools" --strip-components=1 -xzf "$tmpdir/$AWG_TOOLS_ARCHIVE"
+
+make -C "$SRC_ROOT/amneziawg-go" clean >/dev/null 2>&1 || true
+make -C "$SRC_ROOT/amneziawg-go"
+make -C "$SRC_ROOT/amneziawg-go" PREFIX=/usr install
+
+make -C "$SRC_ROOT/amneziawg-tools/src" clean >/dev/null 2>&1 || true
+make -C "$SRC_ROOT/amneziawg-tools/src"
+make -C "$SRC_ROOT/amneziawg-tools/src" install PREFIX=/usr WITH_WGQUICK=yes WITH_SYSTEMDUNITS=yes
+systemctl daemon-reload
+
+command -v awg >/dev/null
+command -v awg-quick >/dev/null
+command -v amneziawg-go >/dev/null
+awg --version | grep -Fq 'v3.1.20260812'
+amneziawg-go --version | grep -Fq 'v3.1.20260828'
+
+printf 'AWG_ENGINE=INSTALLED\n'
+printf 'AWG_GO_TAG=%s\n' "$AWG_GO_TAG"
+printf 'AWG_TOOLS_TAG=%s\n' "$AWG_TOOLS_TAG"
+printf 'AWG_ENGINE_SOURCE=%s\n' "$([[ -n "$LOCAL_BUNDLE" ]] && echo local-bundle || echo "$FETCH_MODE")"
