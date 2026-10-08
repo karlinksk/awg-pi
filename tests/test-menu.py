@@ -14,6 +14,7 @@ required = [
     '"Загрузить конфигурацию из файла"',
     '"Откатить предыдущую конфигурацию"',
     '"Mihomo / Multi-Transport"',
+    '"Mihomo Node Failover"',
     '"Заменить ссылку подписки"',
     '"Обновить подписку — AUTO"',
     '"Обновить через выбранный канал"',
@@ -100,6 +101,10 @@ assert '"$AWG_SELECTION" mode auto awg mihomo' in menu
 assert '"$AWG_SELECTION" mode auto mihomo awg' in menu
 assert 'Mihomo node/страна не меняются' in menu
 assert 'MIHOMO_INSTALLER=/usr/local/sbin/awg-mihomo-install' in menu
+assert 'MIHOMO_NODE_POLICY=/usr/local/sbin/awg-mihomo-node-policy' in menu
+assert '"$MIHOMO_NODE_POLICY" mode manual' in menu
+assert '"$MIHOMO_NODE_POLICY" mode fixed "$primary" "$fallback"' in menu
+assert 'Страна автоматически не определяется' in menu
 assert '"$MIHOMO_INSTALLER" --file "$path"' in menu
 assert 'mktemp /run/awg-pbr/mihomo-url.XXXXXX' in menu
 assert 'chmod 600 "$url_tmp"' in menu
