@@ -109,7 +109,18 @@ grep -Fqx 'select:mihomo' "$TMP/log"
 grep -Fqx mihomo "$TMP/transport"
 grep -Fqx '0' "$TMP/run/failures"
 
+echo "=== fallback activation is attempted even when standby health check is down ==="
+run_policy mode fixed awg mihomo >/dev/null
+printf '%s\n' awg >"$TMP/transport"
+: >"$TMP/log"
+printf '2\n' | sudo tee "$TMP/run/failures" >/dev/null
+MOCK_AWG_HEALTH=down MOCK_MIHOMO_HEALTH=down run_monitor || true
+grep -Fqx 'select:mihomo' "$TMP/log"
+grep -Fqx awg "$TMP/transport"
+grep -Fqx '3' "$TMP/run/failures"
+
 echo "=== healthy fallback is sticky; no automatic return to primary ==="
+printf '%s\n' mihomo >"$TMP/transport"
 : >"$TMP/log"
 MOCK_AWG_HEALTH=up MOCK_MIHOMO_HEALTH=up run_monitor
 [[ ! -s "$TMP/log" ]]
