@@ -551,7 +551,10 @@ mihomo_menu(){
         fi
         ;;
       3)
-        run_interactive "Mihomo provider update — AUTO" "$MIHOMO_CONFIGURE" provider update auto
+        title="Mihomo provider update — AUTO"
+        if capture "$MIHOMO_CONFIGURE" provider update auto; then
+          mihomo_candidate_menu
+        fi
         ;;
       4)
         fetch_mode="$(dialog --backtitle "$BACKTITLE" --title "Bootstrap-канал" --item-help --menu \
@@ -561,7 +564,10 @@ mihomo_menu(){
           awg "AmneziaWG" "Запрос принудительно идёт через awg0; используйте только если AWG healthy." \
           0 "Назад" "Не выполнять обновление." 3>&1 1>&2 2>&3)" || continue
         [[ "$fetch_mode" != 0 ]] || continue
-        run_interactive "Mihomo provider update — $fetch_mode" "$MIHOMO_CONFIGURE" provider update "$fetch_mode"
+        title="Mihomo provider update — $fetch_mode"
+        if capture "$MIHOMO_CONFIGURE" provider update "$fetch_mode"; then
+          mihomo_candidate_menu
+        fi
         ;;
       5)
         path="$(input "Mihomo provider" "Полный путь к локальному provider-файлу (Mihomo YAML / VLESS URI / Base64 VLESS):")" || continue
@@ -607,8 +613,8 @@ mihomo_menu(){
         if capture "$MIHOMO_CONFIGURE" init "$init_tmp"; then
           rm -f "$init_tmp"
           init_tmp=""
-          if confirm "Mihomo provider готов" "Provider cache успешно загружен и проверен. Перейти к выбору точки выхода?"; then
-            mihomo_node_menu
+          if confirm "Mihomo candidate готов" "Provider candidate успешно загружен и проверен. Перейти к выбору точки выхода и commit?"; then
+            mihomo_candidate_menu
           fi
         else
           rm -f "$init_tmp"
