@@ -35,6 +35,8 @@ MIHOMO_INSTALL_SCRIPT="/usr/local/sbin/awg-mihomo-install"
 MIHOMO_PREPARE_SCRIPT="/usr/local/sbin/awg-mihomo-prepare"
 MIHOMO_CONFIGURE_SCRIPT="/usr/local/sbin/awg-mihomo-configure"
 FIRST_RUN_CLI="/usr/local/sbin/awg-first-run"
+SELECTION_CLI="/usr/local/sbin/awg-selection"
+SELECTION_MONITOR="/usr/local/sbin/awg-selection-monitor"
 UPDATE_SCRIPT="/usr/local/sbin/awg-update"
 SETUP_SERVICE="/etc/systemd/system/awg-pbr-setup.service"
 HEALTH_SERVICE="/etc/systemd/system/awg-pbr-health.service"
@@ -652,6 +654,8 @@ install_project_helper src/awg-mihomo-install "$MIHOMO_INSTALL_SCRIPT"
 install_project_helper src/awg-mihomo-prepare "$MIHOMO_PREPARE_SCRIPT"
 install_project_helper src/awg-mihomo-configure "$MIHOMO_CONFIGURE_SCRIPT"
 install_project_helper src/awg-first-run "$FIRST_RUN_CLI"
+install_project_helper src/awg-selection "$SELECTION_CLI"
+install_project_helper src/awg-selection-monitor "$SELECTION_MONITOR"
 install_project_helper src/awg-pbr-setup "$SETUP_SCRIPT"
 install_project_helper src/awg-transit-nft /usr/local/sbin/awg-transit-nft
 install_project_helper src/awg-transit-preflight /usr/local/sbin/awg-transit-preflight
@@ -671,6 +675,7 @@ chmod 700 /etc/awg-pbr/transports /etc/awg-pbr/transports/mihomo /var/lib/awg-pb
 install_project_unit units/awg-mihomo.service /etc/systemd/system/awg-mihomo.service
 install_project_unit units/awg-mihomo-update.service /etc/systemd/system/awg-mihomo-update.service
 install_project_unit units/awg-mihomo-update.timer /etc/systemd/system/awg-mihomo-update.timer
+install_project_unit units/awg-selection-monitor.service /etc/systemd/system/awg-selection-monitor.service
 cat >/etc/systemd/system/awg-opencck-update.service <<'EOF'
 [Unit]
 Description=AWG Pi Gateway OpenCCK source updater
@@ -752,7 +757,7 @@ ok "Компоненты управления v$AWG_PI_VERSION установл�
 STAGE="первый запуск и критические проверки"
 log "[11/12] Первый запуск"
 systemctl daemon-reload
-systemctl enable awg-pbr-setup.service dnsmasq.service awg-pbr-health.service awg-opencck-update.timer >/dev/null
+systemctl enable awg-pbr-setup.service dnsmasq.service awg-pbr-health.service awg-selection-monitor.service awg-opencck-update.timer >/dev/null
 
 # Base control plane comes up before any VPN backend. This is what keeps SSH,
 # TUI, DNS and recovery available even with zero working transports.
@@ -816,6 +821,8 @@ esac
 
 systemctl restart awg-pbr-health.service
 systemctl is-active --quiet awg-pbr-health.service || die "health monitor не запустился"
+systemctl restart awg-selection-monitor.service
+systemctl is-active --quiet awg-selection-monitor.service || die "selection monitor не запустился"
 systemctl start awg-opencck-update.timer
 systemctl is-active --quiet awg-opencck-update.timer || warn "OpenCCK timer не активен; ручное обновление останется доступно"
 
