@@ -87,13 +87,14 @@ try_failover(){
   IFS=',' read -ra _items <<<"$csv"
   for candidate in "${_items[@]}"; do
     [[ -n "$candidate" && "$candidate" != "$current" ]] || continue
-    if transport_healthy "$candidate"; then
-      if "$AWG_TRANSPORT_CLI" select "$candidate" >/dev/null; then
-        log_event "Automatic failover: $current -> $candidate (mode=$SELECTION_MODE)"
-        reset_failures
-        printf 'FAILOVER=%s->%s\n' "$current" "$candidate"
-        return 0
-      fi
+    # A fallback backend may be intentionally stopped while on standby.
+    # awg-transport select starts it, validates health/preflight and rolls
+    # back safely if activation fails.
+    if "$AWG_TRANSPORT_CLI" select "$candidate" >/dev/null; then
+      log_event "Automatic failover: $current -> $candidate (mode=$SELECTION_MODE)"
+      reset_failures
+      printf 'FAILOVER=%s->%s\n' "$current" "$candidate"
+      return 0
     fi
   done
   return 1
