@@ -60,19 +60,22 @@ validate_node_name(){
 }
 
 validate_nodes(){
-  local node seen=$'\n'
+  local node existing
+  local -a seen_nodes=()
   (( $# > 0 )) || { echo "fixed mode requires at least one exact node name" >&2; return 2; }
   for node in "$@"; do
     validate_node_name "$node" || { echo "Invalid node name" >&2; return 2; }
-    [[ "$seen" != *$'\n'"$node"$'\n'* ]] || {
-      echo "Duplicate node in failover order: $node" >&2
-      return 2
-    }
+    for existing in "${seen_nodes[@]}"; do
+      [[ "$existing" != "$node" ]] || {
+        echo "Duplicate node in failover order: $node" >&2
+        return 2
+      }
+    done
     "$MIHOMO_CONFIGURE" node prepare "$node" >/dev/null || {
       echo "Node is not present/resolvable in the live provider: $node" >&2
       return 2
     }
-    seen+="$node"$'\n'
+    seen_nodes+=("$node")
   done
 }
 
