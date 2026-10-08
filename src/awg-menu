@@ -998,3 +998,194 @@ dns_menu(){
         ;;
       0) return 0 ;;
     esac
+  done
+}
+
+update_menu(){
+  local choice
+  while true; do
+    choice="$(dialog --backtitle "$BACKTITLE" --title "Обновления" --item-help --menu \
+      "Обновления проверяются по стабильным версиям проекта." 21 100 8 \
+      1 "Показать версии" "Показывает установленную и доступную версию AWG Pi Gateway и наличие updater для AmneziaWG core." \
+      2 "Обновить AWG Pi Gateway" "Проверяет и устанавливает новый стабильный релиз gateway; меню после успешного обновления перезапускается." \
+      3 "Обновить AmneziaWG core" "Проверяет и устанавливает поддерживаемую стабильную версию AmneziaWG tools/core." \
+      4 "Проверить/обновить всё" "Последовательно проверяет Gateway и AmneziaWG core и устанавливает доступные стабильные обновления." \
+      0 "Назад" "Возвращает в главное меню без изменений." 3>&1 1>&2 2>&3)" || return 0
+    case "$choice" in
+      1)
+        title="Версии"
+        capture "$AWG_UPDATE" status || true
+        ;;
+      2)
+        confirm "Gateway update" "Проверить новый релиз AWG Pi Gateway и установить его при наличии?" || continue
+        run_interactive "AWG Pi Gateway update" "$AWG_UPDATE" --yes gateway
+        _old_menu_self="$0"
+        unset AWG_MENU_REEXEC
+        rm -f "$_old_menu_self" 2>/dev/null || true
+        exec /usr/local/sbin/awg-menu
+        ;;
+      3)
+        confirm "Core update" "Проверить и обновить AmneziaWG core при наличии новой стабильной версии?" || continue
+        run_interactive "AmneziaWG core update" "$AWG_UPDATE" --yes core
+        ;;
+      4)
+        confirm "Полное обновление" "Проверить обновления AWG Pi Gateway и AmneziaWG core?" || continue
+        run_interactive "Полное обновление" "$AWG_UPDATE" --yes all
+        _old_menu_self="$0"
+        unset AWG_MENU_REEXEC
+        rm -f "$_old_menu_self" 2>/dev/null || true
+        exec /usr/local/sbin/awg-menu
+        ;;
+      0) return 0 ;;
+    esac
+  done
+}
+
+operating_mode_menu(){
+  local choice current current_id selective_label transit_label
+  while true; do
+    current_id="$(operating_mode_id)"
+    current="$(operating_mode_label "$current_id")"
+    selective_label="Selective Gateway"
+    transit_label="MikroTik Transit / Backup VPN"
+    [[ "$current_id" == selective ]] && selective_label="$selective_label [ТЕКУЩИЙ]"
+    [[ "$current_id" == transit ]] && transit_label="$transit_label [ТЕКУЩИЙ]"
+    refresh_backtitle
+    choice="$(dialog --backtitle "$BACKTITLE" --title "Operating mode [$(operating_mode_badge "$current_id")]" --item-help --menu \
+      "Текущий режим: $current\n\nВыберите архитектуру маршрутизации. Сохранённые Selective-списки не удаляются при Transit." \
+      21 100 6 \
+      1 "$selective_label" "Raspberry Pi сама классифицирует VPN/DIRECT/OpenCCK/client трафик и применяет FAIL-OPEN при отказе active transport." \
+      2 "$transit_label" "MikroTik выбирает трафик; Pi принимает его только от доверенного роутера и отправляет через active transport с FAIL-CLOSED/LOCKDOWN." \
+      0 "Назад" "Возвращает в системное меню без изменения режима." 3>&1 1>&2 2>&3)" || return 0
+    case "$choice" in
+      1)
+        confirm "Selective Gateway" "Переключить Pi в Selective Gateway? Списки OpenCCK/VPN/DIRECT и clients будут снова активны." || continue
+        title="Operating mode"
+        capture "$AWG_ROUTE" mode selective || true
+        refresh_backtitle
+        ;;
+      2)
+        confirm "MikroTik Transit" "Переключить Pi в Transit?\n\nПри готовом transport выполняются health/DIRECT/preflight. Если transport ещё не настроен, Transit войдёт в безопасный LOCKDOWN.\n\nMikroTik должен быть настроен отдельно как источник backup-трафика." || continue
+        title="Operating mode"
+        capture "$AWG_ROUTE" mode transit || true
+        refresh_backtitle
+        ;;
+      0) return 0 ;;
+    esac
+  done
+}
+
+timezone_menu(){
+  local choice current zone
+  while true; do
+    current="$(current_timezone)"
+    choice="$(dialog --backtitle "$BACKTITLE" --title "Часовой пояс" --item-help --menu \
+      "Текущий timezone: $current" 20 96 6 \
+      1 "Показать текущий timezone" "Показывает текущий системный часовой пояс и локальное время." \
+      2 "Показать список timezone" "Показывает все IANA timezone, доступные через timedatectl." \
+      3 "Изменить timezone" "Введите точное имя, например Asia/Novosibirsk или Europe/Amsterdam." \
+      0 "Назад" "Не менять часовой пояс." 3>&1 1>&2 2>&3)" || return 0
+    case "$choice" in
+      1)
+        msg "Часовой пояс" "Timezone: $current\nLocal time: $(date '+%Y-%m-%d %H:%M:%S %Z')"
+        ;;
+      2)
+        title="Доступные timezone"
+        capture timedatectl list-timezones || true
+        ;;
+      3)
+        zone="$(input "Часовой пояс" "Введите точное IANA имя timezone:" "$current")" || continue
+        [[ -n "$zone" ]] || continue
+        if ! timedatectl list-timezones 2>/dev/null | grep -Fxq -- "$zone"; then
+          msg "Часовой пояс" "Неизвестный timezone: $zone"
+          continue
+        fi
+        confirm "Часовой пояс" "Изменить timezone:\n$current → $zone ?" || continue
+        if timedatectl set-timezone "$zone"; then
+          msg "Часовой пояс" "Timezone установлен: $zone\nLocal time: $(date '+%Y-%m-%d %H:%M:%S %Z')"
+        else
+          msg "Часовой пояс" "Не удалось изменить timezone."
+        fi
+        ;;
+      0) return 0 ;;
+    esac
+  done
+}
+
+traffic_screen(){
+  title="Статистика traffic"
+  capture "$AWG_TRAFFIC" status full || true
+}
+
+system_menu(){
+  local choice mode_badge
+  while true; do
+    mode_badge="$(operating_mode_badge)"
+    choice="$(dialog --backtitle "$BACKTITLE" --title "Система [$mode_badge]" --item-help --menu \
+      "Системные функции AWG Pi Gateway. Опасные действия требуют отдельного подтверждения." 27 104 12 \
+      1 "Перезагрузить конфигурацию AWG Gateway" "Повторно применяет текущие правила nftables/DNS/маршрутизации и перезапускает health monitor без reboot Pi." \
+      2 "Перезагрузить Raspberry Pi" "Полностью перезагружает ОС Raspberry Pi. SSH и backup VPN будут временно недоступны." \
+      3 "Выключить Raspberry Pi" "Корректно завершает работу ОС и выключает Pi. Для включения потребуется подача/перезапуск питания." \
+      4 "Перенастроить LAN gateway" "Повторно определяет LAN interface, адрес Pi, подсеть и основной роутер; операция транзакционная и может повлиять на SSH." \
+      5 "DNS upstream" "Просмотр и изменение DNS-серверов, которыми пользуется локальный dnsmasq Pi." \
+      6 "Operating mode [$mode_badge]" "Переключение между Selective Gateway и MikroTik Transit / Backup VPN с безопасными проверками. Метка показывает текущий режим." \
+      7 "Часовой пояс" "Просмотр списка IANA timezone и безопасное изменение системного timezone." \
+      8 "Статистика traffic" "Today/month RX+TX только по transport-интерфейсам Pi: awg0 и mihomo0; детализация по backend." \
+      0 "Назад" "Возвращает в главное меню без изменений." 3>&1 1>&2 2>&3)" || return 0
+    case "$choice" in
+      1)
+        title="Reload"
+        capture "$AWG_ROUTE" reload || true
+        ;;
+      2)
+        confirm "Reboot" "Перезагрузить Raspberry Pi?\n\nSSH и Transit backup через эту Pi будут временно недоступны до завершения загрузки." && systemctl reboot
+        ;;
+      3)
+        confirm "Poweroff" "Выключить Raspberry Pi?\n\nSSH и Transit backup перестанут работать. Для последующего запуска потребуется питание/перезапуск питания." && systemctl poweroff
+        ;;
+      4) run_interactive "Перенастройка сети" "$AWG_ROUTE" network reconfigure ;;
+      5) dns_menu ;;
+      6) operating_mode_menu ;;
+      7) timezone_menu ;;
+      8) traffic_screen ;;
+      0) return 0 ;;
+    esac
+  done
+}
+
+while true; do
+  refresh_backtitle
+  mode_badge="$(operating_mode_badge)"
+  summary="$(quick_summary)"
+  choice="$(dialog --clear --backtitle "$BACKTITLE" --title "Главное меню — [$mode_badge]" --item-help --menu \
+    "$summary
+
+Стрелки — выбор, Enter — открыть. Внизу показано пояснение выделенного пункта." 32 106 15 \
+    1 "Состояние системы" "Сводка режима, health, сервисов, списков и безопасно отредактированного состояния AmneziaWG; ничего не меняет." \
+    2 "VPN-маршрутизация" "Управление Selective/Transit, transport backends, AmneziaWG и Mihomo/recovery." \
+    3 "VPN-сервисы / домены" "Единый ввод Selective VPN-направлений: ручной домен или OpenCCK group/site без повторного ввода имени." \
+    4 "DIRECT-исключения" "Ручной список доменов, которые в Selective всегда должны идти напрямую, даже при пересечении с VPN-правилами." \
+    5 "OpenCCK" "Подключение и обслуживание внешних списков доменов/IP/CIDR для Selective-классификации." \
+    6 "Клиенты" "Allow-list устройств для Selective PBR. Пустой список означает всех клиентов, использующих Pi как gateway." \
+    7 "Диагностика" "Запускает расширенную проверку сети, active transport и fail-open/fail-closed логики; формирует локальный отчёт." \
+    8 "Обновления" "Проверка и установка стабильных обновлений AWG Pi Gateway и AmneziaWG core." \
+    9 "Журналы" "Показывает последние записи systemd для AWG, health monitor, dnsmasq, setup и OpenCCK updater." \
+    10 "Системные функции" "Reload, reboot/poweroff, перенастройка LAN/DNS и выбор Operating mode." \
+    11 "Выйти в обычный Shell" "Закрывает меню, но оставляет текущую SSH-сессию открытой в командной строке." \
+    0 "Завершить SSH-сессию" "Закрывает меню и завершает текущий сеанс в соответствии с оболочкой входа." 3>&1 1>&2 2>&3)" || exit 20
+
+  case "$choice" in
+    1) status_screen ;;
+    2) vpn_menu ;;
+    3) vpn_destination_menu ;;
+    4) domain_menu direct "DIRECT-исключения" ;;
+    5) opencck_menu ;;
+    6) client_menu ;;
+    7) diagnostics_screen ;;
+    8) update_menu ;;
+    9) logs_screen ;;
+    10) system_menu ;;
+    11) clear; exit 10 ;;
+    0) clear; exit 20 ;;
+  esac
+done
