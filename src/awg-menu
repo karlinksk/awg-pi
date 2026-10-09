@@ -422,7 +422,7 @@ vpn_destination_menu(){
 }
 
 opencck_menu(){
-  local choice name type kind action
+  local choice name type kind action action_title
   while true; do
     choice="$(dialog --backtitle "$BACKTITLE" --title "OpenCCK" --item-help --menu \
       "Управление внешними списками OpenCCK. Подсказка для выделенного пункта показана внизу." 26 100 13 \
@@ -453,7 +453,7 @@ opencck_menu(){
         capture "$AWG_ROUTE" source add opencck "$name" --type "$type" --kind "$kind" || true
         ;;
       3)
-        name="$(input "OpenCCK" "Имя источника:")" || continue
+        name="$(select_opencck_source "OpenCCK" "Выберите источник для просмотра.")" || continue
         title="OpenCCK: $name"
         capture "$AWG_ROUTE" source show opencck "$name" || true
         ;;
@@ -462,12 +462,12 @@ opencck_menu(){
         capture "$AWG_ROUTE" source update || true
         ;;
       5)
-        name="$(input "OpenCCK" "Имя источника:")" || continue
+        name="$(select_opencck_source "OpenCCK" "Выберите источник для обновления.")" || continue
         title="Обновление OpenCCK"
         capture "$AWG_ROUTE" source update "$name" || true
         ;;
       6|7|8)
-        name="$(input "OpenCCK" "Имя источника:")" || continue
+        name="$(select_opencck_source "OpenCCK" "Выберите источник.")" || continue
         action=enable
         action_title="Включение источника OpenCCK"
         [[ "$choice" == 7 ]] && { action=disable; action_title="Отключение источника OpenCCK"; }
@@ -503,7 +503,8 @@ client_menu(){
         capture "$AWG_ROUTE" client add "$ip" || true
         ;;
       3)
-        ip="$(input "Клиенты" "IPv4 клиента:")" || continue
+        ip="$(select_client)" || continue
+        confirm "Удаление клиента" "Удалить клиент $ip из списка SELECTIVE?" || continue
         title="Удаление клиента"
         capture "$AWG_ROUTE" client del "$ip" || true
         ;;
@@ -603,16 +604,78 @@ resolve_tsv_node_choice(){
   fi
   printf '%s\n' "${resolved:-$choice}"
 }
+select_tsv_node_dialog(){
+  local dialog_title="$1" prompt="$2" listing="$3" pick idx name type endpoint duplicate description tab
+  local -a items=()
+  tab="$(printf '\t')"
+  while IFS="$tab" read -r idx name type endpoint duplicate; do
+    [[ "$idx" =~ ^[0-9]+$ && -n "$name" ]] || continue
+    description="$type | $endpoint"
+    [[ "$duplicate" == DUPLICATE ]] && description="$description | ДУБЛИКАТ ИМЕНИ"
+    items+=("$idx" "$name — $description")
+  done <<<"$listing"
+  (( ${#items[@]} > 0 )) || {
+    msg "$dialog_title" "Доступные узлы не найдены."
+    return 1
+  }
+  pick="$(dialog --backtitle "$BACKTITLE" --title "$dialog_title" --menu "$prompt" 26 112 16 "${items[@]}" 3>&1 1>&2 2>&3)" || return 1
+  resolve_tsv_node_choice "$listing" "$pick"
+}
+
+select_opencck_source(){
+  local dialog_title="$1" prompt="$2" listing line name rest pick
+  local -a items=()
+  local -A seen=()
+  listing="$("$AWG_ROUTE" source list 2>/dev/null)" || return 1
+  while IFS= read -r line; do
+    [[ -n "$line" && "$line" != "=== OpenCCK sources ===" && "$line" != \(* ]] || continue
+    read -r name rest <<<"$line"
+    [[ -n "$name" && -z "${seen[$name]:-}" ]] || continue
+    seen["$name"]=1
+    items+=("$name" "${rest:-источник OpenCCK}")
+  done <<<"$listing"
+  (( ${#items[@]} > 0 )) || {
+    msg "$dialog_title" "Источники OpenCCK пока не настроены."
+    return 1
+  }
+  pick="$(dialog --backtitle "$BACKTITLE" --title "$dialog_title" --menu "$prompt" 24 112 14 "${items[@]}" 3>&1 1>&2 2>&3)" || return 1
+  printf '%s\n' "$pick"
+}
+
+select_client(){
+  local listing line pick
+  local -a items=()
+  listing="$("$AWG_ROUTE" client list 2>/dev/null)" || return 1
+  while IFS= read -r line; do
+    [[ "$line" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]] || continue
+    items+=("$line" "Клиент SELECTIVE")
+  done <<<"$listing"
+  (( ${#items[@]} > 0 )) || {
+    msg "Клиенты" "Список клиентов пуст — удалять нечего."
+    return 1
+  }
+  pick="$(dialog --backtitle "$BACKTITLE" --title "Удалить клиента" --menu "Выберите IPv4 клиента для удаления." 22 90 12 "${items[@]}" 3>&1 1>&2 2>&3)" || return 1
+  printf '%s\n' "$pick"
+}
+
+select_chain_index(){
+  local dialog_title="$1" prompt="$2" min="$3" max="$4" i pick
+  shift 4
+  local -a nodes=("$@") items=()
+  for (( i=1; i<=${#nodes[@]}; i++ )); do
+    (( i >= min && i <= max )) || continue
+    items+=("$i" "${nodes[i-1]}")
+  done
+  (( ${#items[@]} > 0 )) || return 1
+  pick="$(dialog --backtitle "$BACKTITLE" --title "$dialog_title" --menu "$prompt" 22 100 12 "${items[@]}" 3>&1 1>&2 2>&3)" || return 1
+  printf '%s\n' "$pick"
+}
 
 mihomo_node_menu(){
   local node_name info_tmp current rc listing
 
-  title="Доступные узлы Mihomo"
-  capture "$MIHOMO_CONFIGURE" node list || return 0
   listing="$("$MIHOMO_CONFIGURE" node list 2>/dev/null)" || return 0
-
-  node_name="$(input "Точка выхода Mihomo" "Введите номер или ТОЧНОЕ имя узла из списка выше:")" || return 0
-  node_name="$(resolve_tsv_node_choice "$listing" "$node_name")"
+  node_name="$(select_tsv_node_dialog "Точка выхода Mihomo" "Выберите узел. В строке сразу показаны тип и адрес сервера." "$listing")" || return 0
   [[ -n "$node_name" ]] || { msg "Mihomo" "Имя узла не задано."; return 0; }
 
   info_tmp="$(mktemp)"
@@ -645,14 +708,8 @@ mihomo_node_menu(){
 mihomo_candidate_menu(){
   local behavior="${1:-normal}" node_name info_tmp current rc listing
 
-  title="Подготовленный профиль Mihomo"
-  if ! capture "$MIHOMO_CONFIGURE" provider candidate list; then
-    return 0
-  fi
   listing="$("$MIHOMO_CONFIGURE" provider candidate list 2>/dev/null)" || return 0
-
-  node_name="$(input "Узел подготовленного профиля" "Введите номер или ТОЧНОЕ имя узла из подготовленного профиля:")" || return 0
-  node_name="$(resolve_tsv_node_choice "$listing" "$node_name")"
+  node_name="$(select_tsv_node_dialog "Узел подготовленного профиля" "Выберите основной узел. В строке сразу показаны тип и адрес сервера." "$listing")" || return 0
   [[ -n "$node_name" ]] || { msg "Mihomo" "Имя узла не задано."; return 0; }
 
   info_tmp="$(mktemp)"
@@ -777,11 +834,8 @@ mihomo_node_chain_editor(){
       0 "Отмена" "Выход без изменения сохранённой политики." 3>&1 1>&2 2>&3)" || return 0
     case "$choice" in
       1)
-        title="Доступные узлы Mihomo"
-        capture "$MIHOMO_CONFIGURE" node list || true
         listing="$("$MIHOMO_CONFIGURE" node list 2>/dev/null)" || continue
-        node="$(input "Добавить узел" "Введите номер или ТОЧНОЕ имя узла из списка:")" || continue
-        node="$(resolve_tsv_node_choice "$listing" "$node")"
+        node="$(select_tsv_node_dialog "Добавить резервный узел" "Выберите узел для добавления в конец цепочки." "$listing")" || continue
         [[ -n "$node" ]] || continue
         if printf '%s\n' "${nodes[@]}" | grep -Fxq -- "$node"; then
           msg "Резервирование узлов Mihomo" "Этот узел уже есть в цепочке."
@@ -795,21 +849,18 @@ mihomo_node_chain_editor(){
         ;;
       2)
         (( ${#nodes[@]} > 0 )) || { msg "Резервирование узлов Mihomo" "Цепочка пуста."; continue; }
-        idx="$(input "Удалить узел" "Номер элемента 1..${#nodes[@]}:")" || continue
-        [[ "$idx" =~ ^[0-9]+$ ]] && (( idx>=1 && idx<=${#nodes[@]} )) || { msg "Резервирование узлов Mihomo" "Некорректный номер."; continue; }
+        idx="$(select_chain_index "Удалить узел" "Выберите узел для удаления." 1 "${#nodes[@]}" "${nodes[@]}")" || continue
         unset 'nodes[idx-1]'
         nodes=("${nodes[@]}")
         ;;
       3)
         (( ${#nodes[@]} > 1 )) || continue
-        idx="$(input "Переместить выше" "Номер элемента 2..${#nodes[@]}:")" || continue
-        [[ "$idx" =~ ^[0-9]+$ ]] && (( idx>=2 && idx<=${#nodes[@]} )) || { msg "Резервирование узлов Mihomo" "Некорректный номер."; continue; }
+        idx="$(select_chain_index "Переместить выше" "Выберите узел, который нужно поднять на одну позицию." 2 "${#nodes[@]}" "${nodes[@]}")" || continue
         node="${nodes[idx-1]}"; nodes[idx-1]="${nodes[idx-2]}"; nodes[idx-2]="$node"
         ;;
       4)
         (( ${#nodes[@]} > 1 )) || continue
-        idx="$(input "Переместить ниже" "Номер элемента 1..$((${#nodes[@]}-1)):")" || continue
-        [[ "$idx" =~ ^[0-9]+$ ]] && (( idx>=1 && idx<${#nodes[@]} )) || { msg "Резервирование узлов Mihomo" "Некорректный номер."; continue; }
+        idx="$(select_chain_index "Переместить ниже" "Выберите узел, который нужно опустить на одну позицию." 1 "$((${#nodes[@]}-1))" "${nodes[@]}")" || continue
         node="${nodes[idx-1]}"; nodes[idx-1]="${nodes[idx]}"; nodes[idx]="$node"
         ;;
       5)
@@ -1394,6 +1445,47 @@ operating_mode_menu(){
   done
 }
 
+
+select_timezone(){
+  local current="$1" zone region current_region pick
+  local -a zones=() regions=() region_items=() zone_items=()
+  local -A seen=() counts=()
+  mapfile -t zones < <(timedatectl list-timezones 2>/dev/null)
+  (( ${#zones[@]} > 0 )) || return 1
+
+  if [[ "$current" == */* ]]; then
+    current_region="${current%%/*}"
+  else
+    current_region="Прочие"
+  fi
+
+  for zone in "${zones[@]}"; do
+    if [[ "$zone" == */* ]]; then region="${zone%%/*}"; else region="Прочие"; fi
+    counts["$region"]=$(( ${counts[$region]:-0} + 1 ))
+    if [[ -z "${seen[$region]:-}" ]]; then
+      seen["$region"]=1
+      regions+=("$region")
+    fi
+  done
+
+  for region in "${regions[@]}"; do
+    region_items+=("$region" "Часовых поясов: ${counts[$region]}")
+  done
+  pick="$(dialog --backtitle "$BACKTITLE" --title "Часовой пояс — регион" --default-item "$current_region" --menu "Сначала выберите регион." 24 92 14 "${region_items[@]}" 3>&1 1>&2 2>&3)" || return 1
+  region="$pick"
+
+  for zone in "${zones[@]}"; do
+    if [[ "$region" == "Прочие" ]]; then
+      [[ "$zone" != */* ]] || continue
+      zone_items+=("$zone" "Системный часовой пояс")
+    else
+      [[ "$zone" == "$region/"* ]] || continue
+      zone_items+=("$zone" "${zone#*/}")
+    fi
+  done
+  (( ${#zone_items[@]} > 0 )) || return 1
+  dialog --backtitle "$BACKTITLE" --title "Часовой пояс — $region" --default-item "$current" --menu "Выберите часовой пояс." 28 100 18 "${zone_items[@]}" 3>&1 1>&2 2>&3
+}
 timezone_menu(){
   local choice current zone
   while true; do
@@ -1402,7 +1494,7 @@ timezone_menu(){
       "Текущий часовой пояс: $current" 20 96 6 \
       1 "Показать текущий часовой пояс" "Показывает текущий системный часовой пояс и местное время." \
       2 "Показать список часовых поясов" "Показывает все часовые пояса IANA, доступные в системе." \
-      3 "Изменить часовой пояс" "Введите точное имя IANA, например Asia/Novosibirsk или Europe/Amsterdam." \
+      3 "Изменить часовой пояс" "Выберите регион, затем нужный часовой пояс IANA из списка." \
       0 "Назад" "Не менять часовой пояс." 3>&1 1>&2 2>&3)" || return 0
     case "$choice" in
       1)
@@ -1413,12 +1505,8 @@ timezone_menu(){
         capture timedatectl list-timezones || true
         ;;
       3)
-        zone="$(input "Часовой пояс" "Введите точное имя часового пояса IANA:" "$current")" || continue
+        zone="$(select_timezone "$current")" || continue
         [[ -n "$zone" ]] || continue
-        if ! timedatectl list-timezones 2>/dev/null | grep -Fxq -- "$zone"; then
-          msg "Часовой пояс" "Неизвестный часовой пояс: $zone"
-          continue
-        fi
         confirm "Часовой пояс" "Изменить часовой пояс:\n$current → $zone ? " || continue
         if timedatectl set-timezone "$zone"; then
           msg "Часовой пояс" "Часовой пояс установлен: $zone\nМестное время: $(date '+%Y-%m-%d %H:%M:%S %Z')"
