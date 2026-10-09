@@ -1030,8 +1030,13 @@ mihomo_node_chain_editor(){
       0 "Отмена" "Выход без изменения сохранённой политики." 3>&1 1>&2 2>&3)" || return 0
     case "$choice" in
       1)
-        listing="$("$MIHOMO_CONFIGURE" node list 2>/dev/null)" || continue
-        node="$(select_tsv_node_dialog "Добавить резервный узел" "Выберите узел для добавления в конец цепочки." "$listing")" || continue
+        title="Проверка живых узлов Mihomo"
+        if ! run_with_progress "$title" "$MIHOMO_POOL" ensure live --geo-if-policy; then
+          dialog --backtitle "$BACKTITLE" --title "$title" --textbox "$TMP" 30 110
+          continue
+        fi
+        listing="$("$MIHOMO_POOL" list live --ignore-policy 2>/dev/null)" || continue
+        node="$(select_tsv_node_dialog "Добавить резервный узел" "Выберите живой узел для явной FIXED-цепочки. Геофильтр «Только Европа» здесь намеренно не ограничивает список." "$listing")" || continue
         [[ -n "$node" ]] || continue
         if printf '%s\n' "${nodes[@]}" | grep -Fxq -- "$node"; then
           msg "Резервирование узлов Mihomo" "Этот узел уже есть в цепочке."
@@ -1072,8 +1077,12 @@ mihomo_node_chain_editor(){
         [[ -n "$current" ]] && nodes=("$current") || nodes=()
         ;;
       7)
-        title="Доступные узлы Mihomo"
-        capture "$MIHOMO_CONFIGURE" node list || true
+        title="Живые узлы для FIXED"
+        if run_with_progress "$title" "$MIHOMO_POOL" ensure live --geo-if-policy; then
+          capture "$MIHOMO_POOL" list live --ignore-policy || true
+        else
+          dialog --backtitle "$BACKTITLE" --title "$title" --textbox "$TMP" 30 110
+        fi
         ;;
       0) return 0 ;;
     esac
