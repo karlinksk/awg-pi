@@ -16,6 +16,7 @@ AWG_ROUTE=/usr/local/sbin/awg-route
 AWG_TRANSPORT=/usr/local/sbin/awg-transport
 MIHOMO_CONFIGURE=/usr/local/sbin/awg-mihomo-configure
 MIHOMO_INSTALLER=/usr/local/sbin/awg-mihomo-install
+MIHOMO_ENV_FILE=/etc/awg-pbr/transports/mihomo/provider.env
 MIHOMO_NODE_POLICY=/usr/local/sbin/awg-mihomo-node-policy
 AWG_FIRST_RUN=/usr/local/sbin/awg-first-run
 AWG_SELECTION=/usr/local/sbin/awg-selection
@@ -80,7 +81,17 @@ confirm(){
 
 input(){
   local title="$1" prompt="$2" initial="${3:-}"
-  dialog --backtitle "$BACKTITLE" --title "$title" --inputbox "$prompt" 10 80 "$initial" 3>&1 1>&2 2>&3
+  dialog --backtitle "$BACKTITLE" --title "$title" --inputbox "$prompt" 11 110 "$initial" 3>&1 1>&2 2>&3
+}
+
+current_mihomo_provider_url(){
+  local MIHOMO_PROVIDER_URL=""
+  if [[ -r "$MIHOMO_ENV_FILE" ]]; then
+    # Root-owned application state; sourced here only to prefill the setup field.
+    # shellcheck disable=SC1090
+    source "$MIHOMO_ENV_FILE"
+  fi
+  printf '%s\n' "${MIHOMO_PROVIDER_URL:-}"
 }
 
 capture(){
@@ -1006,7 +1017,7 @@ secondary_transport_setup(){
 }
 
 mihomo_replace_subscription(){
-  local url url_tmp status
+  local url url_tmp status current_url
   status="$("$MIHOMO_CONFIGURE" status 2>/dev/null || true)"
   if grep -Fqx 'Configured: no' <<<"$status"; then
     if grep -Fqx 'Provider candidate: staged' <<<"$status"; then
@@ -1019,7 +1030,9 @@ mihomo_replace_subscription(){
     return 0
   fi
 
-  url="$(input "Подписка Mihomo" "Вставьте полный URL подписки. Ввод отображается полностью.\n\nПосле применения полный URL не выводится в обычном статусе и диагностике.")" || return 0
+  current_url="$(current_mihomo_provider_url)"
+  url="$(input "Подписка Mihomo" "Введите или отредактируйте полный URL подписки. Ввод отображается полностью.\n\nТекущий URL подставлен в поле, если он сохранён. После применения полный URL не выводится в обычном статусе и диагностике." "$current_url")" || return 0
+  unset current_url
   [[ -n "$url" ]] || { msg "Mihomo" "Пустая ссылка не применена."; return 0; }
   if ! confirm "Подписка Mihomo" "Скачать и проверить профиль по новой ссылке через AUTO?\n\nПри ошибке текущая ссылка и кэш профиля останутся без изменений."; then
     unset url
