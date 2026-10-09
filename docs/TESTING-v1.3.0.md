@@ -455,17 +455,74 @@ occurred. This provides live evidence for ordered exact-node recovery before
 transport-level fallback and no country inference. The working baseline was
 subsequently restored to Mihomo node policy MANUAL with Finland selected.
 
+### Additional live multi-protocol validation — 2026-10-09
+
+The same Raspberry Pi 4 / Debian 13 ARM64 stand was then used to validate the
+final Mihomo health-pool and multi-protocol work on the public
+`Au1rxx/free-vpn-subscriptions` Clash provider.
+
+The provider contained 1772 nodes. A full all-protocol isolated scan completed
+in 15m16s and found 188 healthy nodes:
+
+- Trojan: 81 healthy;
+- Hysteria2: 45 healthy;
+- VLESS: 30 healthy;
+- VMess: 18 healthy;
+- Shadowsocks: 14 healthy.
+
+Protocol-scoped scanning was also validated. For example, the same provider
+contained 786 VLESS nodes and the isolated VLESS scan found 38 healthy nodes
+without disturbing the live transport.
+
+Real runtime activation was confirmed for all protocol filters exposed by the
+v1.3 TUI:
+
+- VLESS;
+- Trojan;
+- Hysteria2;
+- Shadowsocks;
+- VMess.
+
+The all-protocol AUTO node policy was then tested end-to-end. With VMess active,
+`awg-mihomo-pool best live` selected a Hysteria2 node, and
+`awg-mihomo-node-policy failover` switched
+`vmess-197954839 -> hysteria2-1725316146`. The previous node entered
+cooldown, the new public egress changed, and the active Mihomo transport
+remained healthy. This confirms that AUTO can choose the best healthy node
+across protocol types when `MIHOMO_POOL_PROTOCOL=all`.
+
+Earlier in the same validation sequence, automatic exact-node recovery also
+switched a failed Estonia node to Sweden after repeated active-Mihomo health
+failure, without transport fallback. This confirms selection-monitor integration
+with the health pool and cooldown behavior.
+
+The daily provider refresh path was upgraded to a transactional safe auto-refresh
+and tested against the live public subscription. An unchanged refresh reported
+`MIHOMO_PROVIDER_AUTO_REFRESH=UNCHANGED`, created no candidate, preserved the
+current node and left the Mihomo service/transport healthy. Changed-provider
+promotion, rollback and MANUAL/FIXED/AUTO policy cases remain regression-tested
+in CI.
+
+The TUI was also hardened so an already-applied candidate is not confused with
+a missing prepared profile: after successful commit the candidate is promoted
+to live and cleared, while the menu explicitly shows whether a prepared profile
+exists and directs live search/filter/statistics to the live-node menu.
+
 ### Still required before stable v1.3.0
 
-These live results do not replace the remaining release gates that require a
-separate environment or external input:
+The multi-transport implementation and real Pi runtime validation are now
+substantially complete, but stable tagging must still wait for the remaining
+release gates that require a separate environment or planned interruption:
 
 1. one destructive clean install from a fresh Debian image using the current
    v1.3 head (the first-run logic is regression-tested, but the working Pi was
    not wiped for this test);
-2. one live non-Citadel provider using plain VLESS URI or Base64 VLESS, to
-   complement the already-tested native Mihomo/Citadel provider path;
+2. one live non-Citadel provider specifically using the plain VLESS URI or
+   Base64 VLESS adapter path. The public Clash YAML provider validates a
+   non-Citadel native Mihomo source, but does not replace this adapter-specific
+   gate;
 3. a deliberate post-v1.3 reboot/persistence hardware check after scheduling an
    acceptable gateway interruption.
 
-Stable tagging must wait for those gates.
+Until those three gates pass, `main` / the latest stable GitHub release should
+remain v1.2.0 and the stable updater target must not move to v1.3.0.
