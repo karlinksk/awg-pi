@@ -18,6 +18,16 @@ assert spec is not None and spec.loader is not None
 poolmod = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(poolmod)
 
+source_text = CLI.read_text(encoding="utf-8")
+for marker in (
+    'MIHOMO_POOL_READY=',
+    'MIHOMO_POOL_HEALTH_PROGRESS=',
+    'MIHOMO_POOL_GEO_PROGRESS=',
+):
+    lines = [line for line in source_text.splitlines() if marker in line and "print(" in line]
+    assert lines, f"missing progress marker print: {marker}"
+    assert all("flush=True" in line for line in lines), f"progress marker must flush immediately: {marker}"
+
 
 class FakeProc:
     stdout = None
