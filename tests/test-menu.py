@@ -162,6 +162,11 @@ assert 'select_opencck_source' in menu
 assert 'name="$(input "OpenCCK" "Имя источника:")"' not in menu
 assert 'select_client' in menu
 assert 'ip="$(input "Клиенты" "IPv4 клиента:")"' not in menu
+assert 'select_chain_index' in menu
+assert 'Номер элемента 1..' not in menu
+assert 'Номер элемента 2..' not in menu
+assert 'select_timezone' in menu
+assert 'Введите точное имя часового пояса IANA:' not in menu
 
 # OpenCCK unified input and system helpers.
 assert '"$AWG_ROUTE" source add opencck "$target" --type domains --kind "$method"' in menu
