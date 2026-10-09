@@ -211,6 +211,11 @@ assert 'ui_idx=$((ui_idx + 1))' in menu
 assert 'choice_name["$ui_idx"]="$name"' in menu
 assert 'items+=("$ui_idx" "$name — $description"' in menu
 assert 'Статистика пула узлов' in menu
+assert 'MIHOMO_POOL_PICKED_NODE=""' in menu
+assert 'MIHOMO_POOL_PICKED_NODE="$node"' in menu
+assert 'if ! mihomo_pool_pick live' in menu
+assert 'if ! mihomo_pool_pick candidate' in menu
+assert 'node_name="$(mihomo_pool_pick' not in menu
 assert 'mihomo_pool_status_dialog "$target"' in menu
 assert 'Работоспособных: $healthy' in menu
 assert 'Европейских точек выхода: $europe' in menu
