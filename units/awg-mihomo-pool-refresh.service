@@ -7,7 +7,7 @@ ConditionPathExists=/var/lib/awg-pbr/mihomo/providers/subscription.yaml
 
 [Service]
 Type=oneshot
-SuccessExitStatus=3
+SuccessExitStatus=3 143
 ExecStart=/usr/local/sbin/awg-mihomo-pool scan live --geo-if-policy
 UMask=0077
 Nice=10
