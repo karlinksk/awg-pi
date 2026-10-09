@@ -16,6 +16,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import signal
 import socket
 import subprocess
 import sys
@@ -39,7 +40,7 @@ COOLDOWN_FILE = Path(os.environ.get("MIHOMO_POOL_COOLDOWN_FILE", str(POOL_DIR / 
 HEALTH_URL = os.environ.get("MIHOMO_POOL_HEALTH_URL", "https://www.gstatic.com/generate_204")
 GEO_URL = os.environ.get("MIHOMO_POOL_GEO_URL", "https://www.cloudflare.com/cdn-cgi/trace")
 DELAY_TIMEOUT_MS = int(os.environ.get("MIHOMO_POOL_DELAY_TIMEOUT_MS", "4500"))
-WORKERS = max(1, min(64, int(os.environ.get("MIHOMO_POOL_WORKERS", "8"))))
+WORKERS_OVERRIDE = os.environ.get("MIHOMO_POOL_WORKERS")
 READY_TIMEOUT = max(1.0, float(os.environ.get("MIHOMO_POOL_READY_TIMEOUT", "15")))
 COOLDOWN_SECONDS = int(os.environ.get("MIHOMO_POOL_COOLDOWN_SECONDS", "900"))
 
@@ -58,6 +59,25 @@ EUROPE_CODES = {
 def die(message: str, code: int = 2) -> None:
     print(message, file=sys.stderr)
     raise SystemExit(code)
+
+
+def signal_exit(signum, _frame) -> None:
+    """Turn termination signals into normal unwinding so probe cleanup runs."""
+    raise SystemExit(128 + int(signum))
+
+
+def effective_worker_count(node_count: int, override: str | None = None) -> int:
+    """Scale concurrent delay probes for large public feeds, capped at 64."""
+    selected = WORKERS_OVERRIDE if override is None else override
+    if selected is not None:
+        return max(1, min(64, int(selected)))
+    if node_count >= 1000:
+        return 64
+    if node_count >= 500:
+        return 32
+    if node_count >= 200:
+        return 16
+    return 8
 
 
 def target_paths(target: str) -> tuple[Path, Path]:
@@ -424,7 +444,9 @@ def scan(target: str, geo: bool) -> dict:
             if completed:
                 print(f"MIHOMO_POOL_HEALTH_PROGRESS={completed}/{len(probeable)}", flush=True)
 
-            with concurrent.futures.ThreadPoolExecutor(max_workers=WORKERS) as executor:
+            workers = effective_worker_count(len(ready_probeable))
+            print(f"MIHOMO_POOL_WORKERS={workers}", flush=True)
+            with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as executor:
                 futures = {executor.submit(probe_delay, controller_port, item): item for item in ready_probeable}
                 for future in concurrent.futures.as_completed(futures):
                     item = futures[future]
@@ -796,6 +818,12 @@ def cmd_promote(_args) -> None:
 
 
 def main() -> None:
+    # SIGTERM is how systemd and maintenance tooling stop a scan. Converting it
+    # to SystemExit lets scan() unwind its finally block, terminate the isolated
+    # Mihomo probe, and let TemporaryDirectory remove /tmp state.
+    signal.signal(signal.SIGTERM, signal_exit)
+    signal.signal(signal.SIGINT, signal_exit)
+
     parser = argparse.ArgumentParser(description="AWG Pi Gateway Mihomo health pool")
     sub = parser.add_subparsers(dest="command", required=True)
 
