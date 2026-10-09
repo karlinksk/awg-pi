@@ -209,7 +209,7 @@ assert 'grep -iF -- "$query"' in menu
 assert 'Показано: $count из $total' in menu
 assert 'ui_idx=$((ui_idx + 1))' in menu
 assert 'choice_name["$ui_idx"]="$name"' in menu
-assert 'items+=("$ui_idx" "$name — $description"' in menu
+assert 'items+=("$ui_idx" "$display_name — $description"' in menu
 assert 'Статистика пула узлов' in menu
 assert 'MIHOMO_POOL_PICKED_NODE=""' in menu
 assert 'MIHOMO_POOL_PICKED_NODE="$node"' in menu
