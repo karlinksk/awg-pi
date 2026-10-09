@@ -8,7 +8,7 @@ echo "=== setup input must remain visible ==="
 
 # The project intentionally shows values while the user is configuring them.
 # Redaction still applies to status/diagnostics after values are stored.
-if grep -RInE -- 'passwordbox|--insecure|secret_input|secret_ask|read[[:space:]]+-[^[:space:]]*s([^[:space:]]*)?[[:space:]]' src install.sh; then
+if grep -RInE -- 'passwordbox|--insecure|secret_input|secret_ask|read[[:space:]].*-[^[:space:]]*s([[:space:]]|$)' src install.sh; then
   echo 'FAIL: masked input primitive found in setup/runtime sources' >&2
   exit 1
 fi
