@@ -196,19 +196,18 @@ choose_mihomo_node(){
   fi
   ui_print "$prepared"
   endpoint="${AWG_FIRST_RUN_ENDPOINT:-}"
-  if [[ -z "$endpoint" ]]; then
-    ask "Введите один из показанных IPv4-адресов сервера"
-    endpoint="$REPLY"
-  fi
-  [[ -n "$endpoint" ]] || {
-    echo "Необходимо указать IPv4-адрес сервера." >&2
-    return 2
-  }
-
   if [[ "$source" == candidate ]]; then
-    "$MIHOMO_CONFIGURE" provider candidate commit "$name" "$endpoint"
+    if [[ -n "$endpoint" ]]; then
+      "$MIHOMO_CONFIGURE" provider candidate commit "$name" "$endpoint"
+    else
+      "$MIHOMO_CONFIGURE" provider candidate commit-auto "$name"
+    fi
   else
-    "$MIHOMO_CONFIGURE" node select "$name" "$endpoint"
+    if [[ -n "$endpoint" ]]; then
+      "$MIHOMO_CONFIGURE" node select "$name" "$endpoint"
+    else
+      "$MIHOMO_CONFIGURE" node select-auto "$name"
+    fi
   fi
   "$AWG_TRANSPORT" select mihomo
   configure_mihomo_node_chain "$name"
