@@ -825,7 +825,7 @@ mihomo_node_chain_editor(){
     choice="$(dialog --backtitle "$BACKTITLE" --title "Цепочка резервных узлов Mihomo" --item-help --menu \
       "Текущая цепочка:\n$chain\n\nПри отказе переход выполняется только слева направо; автоматического возврата назад нет." 26 110 10 \
       1 "Добавить узел" "Добавляет выбранный узел в конец резервной цепочки." \
-      2 "Удалить узел" "Удаляет узел по его номеру в цепочке." \
+      2 "Удалить узел" "Позволяет выбрать и удалить узел из текущей цепочки." \
       3 "Переместить выше" "Меняет выбранный узел местами с предыдущим." \
       4 "Переместить ниже" "Меняет выбранный узел местами со следующим." \
       5 "Применить цепочку FIXED" "Проверяет все узлы и сохраняет однонаправленную резервную цепочку." \
@@ -1484,7 +1484,11 @@ select_timezone(){
     fi
   done
   (( ${#zone_items[@]} > 0 )) || return 1
-  dialog --backtitle "$BACKTITLE" --title "Часовой пояс — $region" --default-item "$current" --menu "Выберите часовой пояс." 28 100 18 "${zone_items[@]}" 3>&1 1>&2 2>&3
+  if [[ ("$region" == "Прочие" && "$current" != */*) || "$current" == "$region/"* ]]; then
+    dialog --backtitle "$BACKTITLE" --title "Часовой пояс — $region" --default-item "$current" --menu "Выберите часовой пояс." 28 100 18 "${zone_items[@]}" 3>&1 1>&2 2>&3
+  else
+    dialog --backtitle "$BACKTITLE" --title "Часовой пояс — $region" --menu "Выберите часовой пояс." 28 100 18 "${zone_items[@]}" 3>&1 1>&2 2>&3
+  fi
 }
 timezone_menu(){
   local choice current zone
