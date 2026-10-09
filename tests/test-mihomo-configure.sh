@@ -129,6 +129,41 @@ printf 'transit:%s\n' "$*" >>"${MOCK_DATAPLANE_LOG:?}"
 [[ "$1" == disable ]]
 MOCK
 
+cat >"$tmp/bin/pool" <<'MOCK'
+#!/usr/bin/env bash
+set -Eeuo pipefail
+case "${1:-}" in
+  scan|ensure|clear)
+    exit 0
+    ;;
+  promote)
+    exit 0
+    ;;
+  list)
+    target="${2:-}"
+    case "$target" in
+      candidate) file="${MIHOMO_CANDIDATE_FILE:?}" ;;
+      live) file="${MIHOMO_PROVIDER_FILE:?}" ;;
+      *) exit 2 ;;
+    esac
+    python3 "${MOCK_PROVIDER_HELPER:?}" list "$file" --format tsv
+    ;;
+  policy)
+    case "${2:-}" in
+      get) printf 'all\n' ;;
+      status) printf 'MIHOMO_POOL_REGION=all\nEurope only: no\n' ;;
+      *) exit 0 ;;
+    esac
+    ;;
+  status)
+    printf 'Pool state: ready\n'
+    ;;
+  *)
+    exit 2
+    ;;
+esac
+MOCK
+
 chmod +x "$tmp/bin/"*
 
 run_cli(){
@@ -144,6 +179,7 @@ run_cli(){
     MIHOMO_ENDPOINT_IP_FILE="$tmp/etc/endpoint-ip" \
     MIHOMO_EXPECTED_EGRESS_IP_FILE="$tmp/etc/expected-egress-ip" \
     MIHOMO_NODE_NAME_FILE="$tmp/etc/node-name" \
+    MIHOMO_REMNAWAVE_HWID_FILE="$tmp/etc/remnawave.hwid" \
     MIHOMO_LAST_FETCH_FILE="$tmp/state/last-fetch-path" \
     MIHOMO_LAST_FORMAT_FILE="$tmp/state/last-provider-format" \
     MIHOMO_PROVIDER_FILE="$tmp/state/providers/subscription.yaml" \
@@ -156,6 +192,7 @@ run_cli(){
     MIHOMO_UPDATER="$tmp/bin/updater" \
     MIHOMO_PREPARE="$tmp/bin/prepare" \
     MIHOMO_PROVIDER_HELPER="$repo_root/src/awg-mihomo-provider.py" \
+    MIHOMO_POOL_CLI="$tmp/bin/pool" \
     PYTHON_BIN=python3 \
     AWG_TRANSPORT_CLI="$tmp/bin/transport" \
     SYSTEMCTL_BIN="$tmp/bin/systemctl" \
@@ -170,6 +207,7 @@ run_cli(){
     MOCK_UPDATE_LOG="$tmp/update.log" \
     MOCK_UPDATE_FAIL="${MOCK_UPDATE_FAIL:-0}" \
     MOCK_CONFIG_FILE="$tmp/etc/config.yaml" \
+    MOCK_PROVIDER_HELPER="$repo_root/src/awg-mihomo-provider.py" \
     MOCK_HEALTH="${MOCK_HEALTH:-up}" \
     bash "$repo_root/src/awg-mihomo-configure" "$@"
 }
