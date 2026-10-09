@@ -361,7 +361,10 @@ out="$(run_cli provider stage-url-file "$tmp/etc/stage-url.env")"
 grep -Fqx 'MIHOMO_PROVIDER_SOURCE=URL_STAGED' <<<"$out"
 sudo grep -Fqx 'MIHOMO_PROVIDER_PROFILE=remnawave' "$tmp/state/providers/candidate.env"
 sudo grep -Fqx 'MIHOMO_UPDATE_SUFFIX=mihomo' "$tmp/state/providers/candidate.env"
-sudo grep -Eq '^MIHOMO_PROVIDER_HWID=[A-Za-z0-9._:-]{8,128}
+sudo grep -Eq '^MIHOMO_PROVIDER_HWID=[A-Za-z0-9._:-]{8,128}$' "$tmp/state/providers/candidate.env"
+
+echo "=== local staged provider can preserve live source URL ==="
+printf 'offline-profile\n' >"$tmp/local-provider.txt"
 : >"$tmp/update.log"
 out="$(run_cli provider stage-file "$tmp/local-provider.txt" keep-source)"
 grep -Fqx 'MIHOMO_PROVIDER_SOURCE=keep-source' <<<"$out"
