@@ -61,7 +61,7 @@ Resolved IPv4 endpoints:
   - 45.86.66.170
 OUT
     ;;
-  "provider candidate commit Finland 45.86.66.170")
+  "provider candidate commit Finland 45.86.66.170"|"provider candidate commit-auto Finland")
     mkdir -p "$(dirname "${MIHOMO_ENV_FILE:?}")"
     printf '%s\n' 'MIHOMO_PROVIDER_PROFILE=standard' 'MIHOMO_PROVIDER_FORMAT=auto' >"$MIHOMO_ENV_FILE"
     chmod 600 "$MIHOMO_ENV_FILE"
@@ -78,7 +78,7 @@ Resolved IPv4 endpoints:
   - 45.86.66.170
 OUT
     ;;
-  "node select Finland 45.86.66.170"|"provider candidate commit Finland 45.86.66.170")
+  "node select Finland 45.86.66.170"|"node select-auto Finland"|"provider candidate commit Finland 45.86.66.170"|"provider candidate commit-auto Finland")
     printf 'MIHOMO_HEALTH=healthy\n'
     ;;
   *) exit 2 ;;
@@ -99,7 +99,7 @@ MOCK
 chmod +x "$TMP/bin/"*
 
 run_first(){
-  sudo env     AWG_ROUTE_BIN="$TMP/bin/route"     AWG_TRANSPORT_BIN="$TMP/bin/transport"     MIHOMO_CONFIGURE_BIN="$TMP/bin/mihomo-configure"     MIHOMO_INSTALLER_BIN="$TMP/bin/mihomo-install"     MIHOMO_ENV_FILE="$TMP/etc/provider.env"     MIHOMO_BIN="$TMP/bin/mihomo"     AWG_FIRST_RUN_NODE=Finland     AWG_FIRST_RUN_ENDPOINT=45.86.66.170     MOCK_TRANSPORT_STATE="$TMP/transport"     MOCK_LOG="$TMP/log"     bash "$ROOT/src/awg-first-run" "$@"
+  sudo env     AWG_ROUTE_BIN="$TMP/bin/route"     AWG_TRANSPORT_BIN="$TMP/bin/transport"     MIHOMO_CONFIGURE_BIN="$TMP/bin/mihomo-configure"     MIHOMO_INSTALLER_BIN="$TMP/bin/mihomo-install"     MIHOMO_ENV_FILE="$TMP/etc/provider.env"     MIHOMO_BIN="$TMP/bin/mihomo"     AWG_FIRST_RUN_NODE=Finland     MOCK_TRANSPORT_STATE="$TMP/transport"     MOCK_LOG="$TMP/log"     bash "$ROOT/src/awg-first-run" "$@"
 }
 
 echo "=== AWG first transport ==="
@@ -127,7 +127,7 @@ out="$(run_first mihomo-url 'https://subscription.example/token' standard auto)"
 grep -Fqx 'FIRST_TRANSPORT=mihomo' <<<"$out"
 grep -Eq '^mihomo:init ' "$TMP/log"
 grep -Fqx 'mihomo:provider candidate list' "$TMP/log"
-grep -Fqx 'mihomo:provider candidate commit Finland 45.86.66.170' "$TMP/log"
+grep -Fqx 'mihomo:provider candidate commit-auto Finland' "$TMP/log"
 grep -Fqx 'transport-select:mihomo' "$TMP/log"
 grep -Fqx mihomo "$TMP/transport"
 
@@ -142,13 +142,18 @@ grep -Fqx 'mihomo-install:' "$TMP/log"
 grep -Fq "mihomo:provider stage-file $TMP/provider.txt local-only auto" "$TMP/log"
 grep -Fqx 'mihomo:provider candidate list' "$TMP/log"
 grep -Fqx 'mihomo:provider candidate prepare Finland' "$TMP/log"
-grep -Fqx 'mihomo:provider candidate commit Finland 45.86.66.170' "$TMP/log"
+grep -Fqx 'mihomo:provider candidate commit-auto Finland' "$TMP/log"
 grep -Fqx 'transport-select:mihomo' "$TMP/log"
 grep -Fqx mihomo "$TMP/transport"
 sudo grep -Fqx 'MIHOMO_PROVIDER_PROFILE=standard' "$TMP/etc/provider.env"
 sudo grep -Fqx 'MIHOMO_PROVIDER_FORMAT=auto' "$TMP/etc/provider.env"
 if sudo grep -q '^MIHOMO_PROVIDER_URL=' "$TMP/etc/provider.env"; then
   echo 'FAIL: local-only provider unexpectedly gained a network URL' >&2
+  exit 1
+fi
+
+if grep -Fq 'Введите один из показанных IPv4-адресов сервера' "$ROOT/src/awg-first-run"; then
+  echo 'FAIL: first-run still asks the user to retype a resolved Mihomo endpoint' >&2
   exit 1
 fi
 
