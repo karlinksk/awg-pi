@@ -54,6 +54,7 @@ Usage:
   awg-mihomo-configure provider candidate list
   awg-mihomo-configure provider candidate prepare NAME
   awg-mihomo-configure provider candidate commit NAME ENDPOINT_IP
+  awg-mihomo-configure provider candidate commit-auto NAME
   awg-mihomo-configure provider candidate clear
   awg-mihomo-configure provider format set auto|mihomo|vless|base64
   awg-mihomo-configure node list
@@ -522,6 +523,17 @@ candidate_commit(){
   printf 'MIHOMO_ENDPOINT_IP=%s\n' "$endpoint"
   printf 'MIHOMO_HEALTH=healthy\n'
   printf 'ACTIVE_TRANSPORT=%s\n' "$(awg_transport_get)"
+}
+
+candidate_commit_auto(){
+  local name="$1" info endpoint
+  info="$(candidate_info_json "$name")" || return
+  endpoint="$(jq -r '.endpoint_ips[0] // empty' <<<"$info")"
+  valid_ipv4 "$endpoint" || {
+    echo "Candidate node has no valid IPv4 endpoint: $name" >&2
+    return 1
+  }
+  candidate_commit "$name" "$endpoint"
 }
 
 provider_format_set(){
@@ -1112,6 +1124,10 @@ case "${1:-}" in
           commit)
             [[ $# -eq 5 ]] || { usage >&2; exit 2; }
             candidate_commit "$4" "$5"
+            ;;
+          commit-auto)
+            [[ $# -eq 4 ]] || { usage >&2; exit 2; }
+            candidate_commit_auto "$4"
             ;;
           clear)
             [[ $# -eq 3 ]] || { usage >&2; exit 2; }
