@@ -346,7 +346,7 @@ domain_menu(){
         capture "$AWG_ROUTE" "$kind" add "$d" || true
         ;;
       3)
-        d="$(input "$label" "Введите домен для удаления:")" || continue
+        d="$(select_manual_domain "$kind" "$label")" || continue
         title="Удаление"
         capture "$AWG_ROUTE" "$kind" del "$d" || true
         ;;
@@ -409,7 +409,7 @@ vpn_destination_menu(){
         esac
         ;;
       3)
-        target="$(input "VPN-домен" "Введите домен для удаления из ручного списка:")" || continue
+        target="$(select_manual_domain vpn "VPN-домен")" || continue
         [[ -n "$target" ]] || continue
         title="Удаление VPN-домена"
         capture "$AWG_ROUTE" vpn del "$target" || true
@@ -658,6 +658,34 @@ select_client(){
   printf '%s\n' "$pick"
 }
 
+
+select_manual_domain(){
+  local kind="$1" dialog_title="$2" listing domain count
+  local -a domains=() items=()
+  listing="$("$AWG_ROUTE" list 2>/dev/null)" || return 1
+  case "$kind" in
+    vpn)
+      mapfile -t domains < <(awk '/^=== VPN domains ===$/{show=1;next} /^=== DIRECT exceptions ===$/{show=0} show && NF {print}' <<<"$listing")
+      ;;
+    direct)
+      mapfile -t domains < <(awk '/^=== DIRECT exceptions ===$/{show=1;next} /^=== OpenCCK sources ===$/{show=0} show && NF {print}' <<<"$listing")
+      ;;
+    *) return 2 ;;
+  esac
+  count="${#domains[@]}"
+  (( count > 0 )) || {
+    msg "$dialog_title" "Ручной список пуст — удалять нечего."
+    return 1
+  }
+  if (( count > 200 )); then
+    input "$dialog_title" "В списке $count записей. Введите точный домен для удаления:"
+    return
+  fi
+  for domain in "${domains[@]}"; do
+    items+=("$domain" "ручная запись")
+  done
+  dialog --backtitle "$BACKTITLE" --title "$dialog_title" --menu "Выберите домен для удаления." 26 100 16 "${items[@]}" 3>&1 1>&2 2>&3
+}
 select_chain_index(){
   local dialog_title="$1" prompt="$2" min="$3" max="$4" i pick
   shift 4
