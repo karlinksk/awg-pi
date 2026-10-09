@@ -678,18 +678,11 @@ awg_config_menu(){
   done
 }
 
-resolve_tsv_node_choice(){
-  local listing="$1" choice="$2" resolved
-  resolved=""
-  if [[ "$choice" =~ ^[0-9]+$ ]]; then
-    resolved="$(awk -F '\t' -v pick="$choice" '$1 == pick {print $2; exit}' <<<"$listing")"
-  fi
-  printf '%s\n' "${resolved:-$choice}"
-}
 select_tsv_node_dialog(){
-  local dialog_title="$1" prompt="$2" listing="$3" pick idx name type endpoint duplicate health country delay description tab
+  local dialog_title="$1" prompt="$2" listing="$3" pick provider_idx ui_idx name type endpoint duplicate health country delay description tab
   local query="" filtered count total search_prompt
   local -a items=()
+  local -A choice_name=()
   tab="$(printf '\t')"
   total="$(awk -F '\t' '$1 ~ /^[0-9]+$/ {n++} END{print n+0}' <<<"$listing")"
   while true; do
@@ -700,19 +693,23 @@ select_tsv_node_dialog(){
     fi
     count="$(awk -F '\t' '$1 ~ /^[0-9]+$/ {n++} END{print n+0}' <<<"$filtered")"
     items=(
-      "__search__" "🔎 Поиск / фильтр" "Поиск без учёта регистра по имени, протоколу, hostname/IP, стране или задержке."
+      "__search__" "🔎 Поиск / фильтр" "Поиск без учёта регистра по имени, протоколу, адресу, стране точки выхода или задержке."
     )
     if [[ -n "$query" ]]; then
-      items+=("__clear__" "Сбросить поиск [$query]" "Вернуть полный список живых узлов текущего географического фильтра.")
+      items+=("__clear__" "Сбросить поиск [$query]" "Вернуть полный список работоспособных узлов текущего географического фильтра.")
     fi
-    while IFS="$tab" read -r idx name type endpoint duplicate health country delay; do
-      [[ "$idx" =~ ^[0-9]+$ && -n "$name" ]] || continue
+    choice_name=()
+    ui_idx=0
+    while IFS="$tab" read -r provider_idx name type endpoint duplicate health country delay; do
+      [[ "$provider_idx" =~ ^[0-9]+$ && -n "$name" ]] || continue
+      ui_idx=$((ui_idx + 1))
+      choice_name["$ui_idx"]="$name"
       description="$type | $endpoint"
-      [[ -z "$country" || "$country" == "??" ]] || description="$description | $country"
+      [[ -z "$country" || "$country" == "??" ]] || description="$description | страна выхода: $country"
       [[ -z "$delay" || "$delay" == "-" ]] || description="$description | $delay"
       [[ "$health" == DEAD ]] && description="$description | НЕДОСТУПЕН"
       [[ "$duplicate" == DUPLICATE ]] && description="$description | ДУБЛИКАТ ИМЕНИ"
-      items+=("$idx" "$name — $description" "Выбрать этот узел Mihomo.")
+      items+=("$ui_idx" "$name — $description" "Выбрать этот узел Mihomo.")
     done <<<"$filtered"
     search_prompt="$prompt\n\nПоказано: $count из $total"
     [[ -z "$query" ]] || search_prompt="$search_prompt | поиск: $query"
@@ -725,11 +722,52 @@ select_tsv_node_dialog(){
         query=""
         ;;
       *)
-        resolve_tsv_node_choice "$listing" "$pick"
+        [[ -n "${choice_name[$pick]:-}" ]] || continue
+        printf '%s\n' "${choice_name[$pick]}"
         return 0
         ;;
     esac
   done
+}
+
+mihomo_pool_status_dialog(){
+  local target="$1" raw region state age total healthy europe geo region_ru state_ru geo_ru
+
+  if ! raw="$("$MIHOMO_POOL" status "$target" 2>&1)"; then
+    msg "Статистика пула узлов Mihomo" "Не удалось получить состояние пула узлов.\n\n$raw"
+    return 1
+  fi
+
+  region="$(sed -n 's/^Region filter: //p' <<<"$raw" | head -n1)"
+  state="$(sed -n 's/^Pool state: //p' <<<"$raw" | head -n1)"
+  age="$(sed -n 's/^Pool age: //p' <<<"$raw" | head -n1)"
+  total="$(sed -n 's/^Nodes total: //p' <<<"$raw" | head -n1)"
+  healthy="$(sed -n 's/^Nodes healthy: //p' <<<"$raw" | head -n1)"
+  europe="$(sed -n 's/^Nodes Europe: //p' <<<"$raw" | head -n1)"
+  geo="$(sed -n 's/^Geo enriched: //p' <<<"$raw" | head -n1)"
+
+  case "$region" in
+    europe) region_ru="только Европа" ;;
+    all) region_ru="все страны" ;;
+    *) region_ru="${region:-неизвестно}" ;;
+  esac
+  case "$state" in
+    ready) state_ru="готов" ;;
+    missing) state_ru="ещё не создан" ;;
+    *) state_ru="${state:-неизвестно}" ;;
+  esac
+  case "$geo" in
+    yes) geo_ru="выполнена" ;;
+    no) geo_ru="не выполнена" ;;
+    *) geo_ru="${geo:-неизвестно}" ;;
+  esac
+
+  [[ -n "$age" ]] || age="—"
+  [[ -n "$total" ]] || total="0"
+  [[ -n "$healthy" ]] || healthy="0"
+  [[ -n "$europe" ]] || europe="0"
+
+  msg "Статистика пула узлов Mihomo"     "Состояние: $state_ru\nФильтр региона: $region_ru\nВозраст последней проверки: $age\n\nВсего узлов: $total\nРаботоспособных: $healthy\nЕвропейских точек выхода: $europe\n\nОпределение фактической страны выхода: $geo_ru"
 }
 
 mihomo_pool_pick(){
@@ -742,12 +780,12 @@ mihomo_pool_pick(){
       region_label="любая страна"
     fi
     choice="$(dialog --backtitle "$BACKTITLE" --title "$dialog_title" --item-help --menu \
-      "Сначала показываются только узлы, прошедшие реальную проверку через Mihomo. Геофильтр использует фактический egress, когда включена Европа." 24 114 10 \
-      1 "Выбрать живой узел [$region_label]" "Открыть список HEALTHY-узлов; внутри доступен поиск по имени, типу, адресу и стране." \
-      2 "Фильтр: Только Европа [$region_label]" "Переключить между любыми живыми узлами и только подтверждёнными европейскими egress." \
-      3 "Обновить проверку сейчас" "Повторно проверить узлы через изолированный Mihomo probe, не затрагивая рабочий TUN/транспорт." \
-      4 "Статистика health-pool" "Количество узлов, живых точек, европейских точек и возраст последней проверки." \
-      5 "Показать все результаты" "Диагностика: показать также недоступные узлы и причины, без применения." \
+      "Показываются только узлы, прошедшие реальную проверку через Mihomo. Фильтр «Только Европа» использует фактическую страну точки выхода." 24 114 10 \
+      1 "Выбрать работоспособный узел [$region_label]" "Открыть список проверенных узлов; внутри доступен поиск по имени, протоколу, адресу и стране точки выхода." \
+      2 "Фильтр: Только Европа [$region_label]" "Переключить между всеми работоспособными узлами и только подтверждёнными европейскими точками выхода." \
+      3 "Обновить проверку сейчас" "Повторно проверить узлы через отдельный экземпляр Mihomo, не затрагивая рабочий транспорт." \
+      4 "Статистика пула узлов" "Показать состояние пула, количество узлов, работоспособных и европейских точек, а также возраст проверки." \
+      5 "Показать все результаты" "Диагностика: показать также недоступные узлы и причины, ничего не применяя." \
       0 "Назад" "Вернуться без выбора узла." 3>&1 1>&2 2>&3)" || return 1
     case "$choice" in
       1)
@@ -780,8 +818,7 @@ mihomo_pool_pick(){
         capture "$MIHOMO_POOL" scan "$target" --geo-if-policy || true
         ;;
       4)
-        title="Health-pool Mihomo"
-        capture "$MIHOMO_POOL" status "$target" || true
+        mihomo_pool_status_dialog "$target" || true
         ;;
       5)
         title="Все результаты проверки Mihomo"
@@ -872,7 +909,7 @@ select_chain_index(){
 mihomo_node_menu(){
   local node_name info_tmp current rc preview fixed_chain="" confirm_text sync_out updated_chain=""
 
-  node_name="$(mihomo_pool_pick live "Точка выхода Mihomo" "Выберите живой узел. В строке показаны тип, адрес, страна egress и задержка.")" || return 0
+  node_name="$(mihomo_pool_pick live "Точка выхода Mihomo" "Выберите работоспособный узел. В строке показаны протокол, адрес, страна точки выхода и задержка.")" || return 0
   [[ -n "$node_name" ]] || { msg "Mihomo" "Имя узла не задано."; return 0; }
 
   info_tmp="$(mktemp)"
@@ -1110,13 +1147,13 @@ mihomo_node_policy_menu(){
   local choice
   while true; do
     choice="$(dialog --backtitle "$BACKTITLE" --title "Резервирование узлов Mihomo" --item-help --menu \
-      "MANUAL — ручной выбор. FIXED — явно заданная однонаправленная цепочка. AUTO — следующий лучший HEALTHY-узел из health-pool с учётом фильтра «Только Европа»." \
+      "MANUAL — ручной выбор. FIXED — явно заданная однонаправленная цепочка. AUTO — следующий лучший работоспособный узел из проверенного пула с учётом фильтра «Только Европа»." \
       24 112 9 \
-      1 "Показать политику" "Показывает текущий режим, FIXED-цепочку либо состояние AUTO/health-pool." \
+      1 "Показать политику" "Показывает текущий режим, FIXED-цепочку либо состояние AUTO и пула узлов." \
       2 "MANUAL" "Отключает автоматическую смену узла Mihomo и удаляет сохранённую резервную цепочку." \
       3 "Редактировать цепочку FIXED" "Добавление, удаление и перестановка узлов в однонаправленной резервной цепочке." \
-      4 "AUTO — health-pool" "При отказе выбирает следующий живой узел по свежести/задержке; неудачные временно уходят в cooldown. Геофильтр задаётся в выборе точки выхода." \
-      5 "Выбрать / фильтровать живые узлы" "Открывает health-pool, поиск и переключатель «Только Европа» без обязательной смены политики." \
+      4 "AUTO — пул узлов" "При отказе выбирает следующий работоспособный узел по свежести и задержке; неудачные временно исключаются. Геофильтр задаётся в выборе точки выхода." \
+      5 "Выбрать / фильтровать живые узлы" "Открывает пул узлов, поиск и переключатель «Только Европа» без обязательной смены политики." \
       0 "Назад" "Не менять политику узлов." 3>&1 1>&2 2>&3)" || return 0
     case "$choice" in
       1)
@@ -1130,7 +1167,7 @@ mihomo_node_policy_menu(){
         ;;
       3) mihomo_node_chain_editor ;;
       4)
-        confirm "AUTO — health-pool" "Включить автоматическую смену узлов Mihomo?\n\nПри повторном отказе текущего узла будет выбран следующий HEALTHY-узел из проверенного пула. Если включён фильтр «Только Европа», AUTO не выйдет за его пределы. Если подходящих узлов не останется, транспортный fallback сможет перейти на AmneziaWG." || continue
+        confirm "AUTO — пул узлов" "Включить автоматическую смену узлов Mihomo?\n\nПри повторном отказе текущего узла будет выбран следующий работоспособный узел из проверенного пула. Если включён фильтр «Только Европа», AUTO не выйдет за его пределы. Если подходящих узлов не останется, будет разрешён резервный переход транспорта на AmneziaWG." || continue
         title="Политика узлов Mihomo → AUTO"
         capture "$MIHOMO_NODE_POLICY" mode auto || true
         ;;
@@ -1414,7 +1451,7 @@ mihomo_menu(){
       1 "Состояние Mihomo" "Показывает текущий профиль, выбранный узел, адрес сервера, состояние службы и последний канал загрузки без вывода секретов." \
       2 "Подписка / источник" "Заменить URL, обновить через AUTO или импортировать профиль/подписку из файла либо текста." \
       3 "Точка выхода / узел" "Показать узлы текущего источника и безопасно выбрать рабочий узел Mihomo." \
-      4 "Резервирование узлов Mihomo" "MANUAL, FIXED или AUTO по health-pool. AUTO может ограничиваться только европейскими egress и при исчерпании передаёт отказ транспортному fallback." \
+      4 "Резервирование узлов Mihomo" "MANUAL, FIXED или AUTO по проверенному пулу узлов. AUTO может ограничиваться только европейскими точками выхода и при исчерпании разрешает резервный переход транспорта." \
       5 "Расширенные / восстановление" "Ручной канал загрузки, формат подписки, подготовленный профиль и локальное восстановление Mihomo." \
       0 "Назад" "Вернуться в меню VPN без изменений." 3>&1 1>&2 2>&3)" || return 0
 
