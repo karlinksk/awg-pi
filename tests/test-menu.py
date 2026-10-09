@@ -89,7 +89,7 @@ assert 'поддерживаемой версии Mihomo' in main_block
 assert '--passwordbox "$prompt"' in menu
 assert '"$MIHOMO_CONFIGURE" provider stage-url-file "$url_tmp"' in menu
 assert '"$MIHOMO_CONFIGURE" provider stage-file "$path" "$source_mode"' in menu
-assert '"$MIHOMO_CONFIGURE" provider candidate commit "$node_name" "$endpoint"' in menu
+assert '"$MIHOMO_CONFIGURE" provider candidate commit-auto "$node_name"' in menu
 assert 'provider-url set-file "$url_tmp"' not in menu
 assert '"$MIHOMO_CONFIGURE" provider update auto' in menu
 assert 'direct "DIRECT"' in menu
@@ -106,11 +106,13 @@ assert 'active_transport_menu' in menu
 assert 'mihomo_active_transport_menu' not in menu
 
 # Mihomo node selection and DIRECT invariant.
-assert '"$MIHOMO_CONFIGURE" node select "$node_name" "$endpoint"' in menu
+assert '"$MIHOMO_CONFIGURE" node select-auto "$node_name"' in menu
 assert '--direct-confirmed' not in menu
 assert '"$MIHOMO_CONFIGURE" node prepare "$node_name"' in menu
 assert 'Отдельное правило MikroTik для этого IP не требуется' in menu
 assert 'постоянное DIRECT-исключение на уровне шлюза' in menu
+assert 'Введите один из показанных выше IPv4-адресов сервера:' not in menu
+assert 'повторно вводить его не нужно' in menu
 
 # Secondary-transport onboarding is state-aware; first-run is not called directly
 # by the normal VPN menus.
