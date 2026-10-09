@@ -219,14 +219,14 @@ def wait_probe_inventory(proc: subprocess.Popen, port: int, expected_names: list
             if isinstance(proxies, dict):
                 loaded = expected.intersection(proxies.keys())
                 if loaded == expected:
-                    print(f"MIHOMO_POOL_READY={len(loaded)}/{len(expected)}")
+                    print(f"MIHOMO_POOL_READY={len(loaded)}/{len(expected)}", flush=True)
                     return loaded
         except Exception as exc:
             last_error = str(exc)
         time.sleep(0.1)
 
     if loaded:
-        print(f"MIHOMO_POOL_READY={len(loaded)}/{len(expected)}")
+        print(f"MIHOMO_POOL_READY={len(loaded)}/{len(expected)}", flush=True)
         return loaded
 
     try:
@@ -407,7 +407,7 @@ def scan(target: str, geo: bool) -> dict:
                     completed += 1
 
             if completed:
-                print(f"MIHOMO_POOL_HEALTH_PROGRESS={completed}/{len(probeable)}")
+                print(f"MIHOMO_POOL_HEALTH_PROGRESS={completed}/{len(probeable)}", flush=True)
 
             with concurrent.futures.ThreadPoolExecutor(max_workers=WORKERS) as executor:
                 futures = {executor.submit(probe_delay, controller_port, item): item for item in ready_probeable}
@@ -419,7 +419,7 @@ def scan(target: str, geo: bool) -> dict:
                     item["error"] = error
                     completed += 1
                     if completed == 1 or completed % 25 == 0 or completed == len(probeable):
-                        print(f"MIHOMO_POOL_HEALTH_PROGRESS={completed}/{len(probeable)}")
+                        print(f"MIHOMO_POOL_HEALTH_PROGRESS={completed}/{len(probeable)}", flush=True)
 
             for item in nodes:
                 if not item.get("valid"):
@@ -442,7 +442,7 @@ def scan(target: str, geo: bool) -> dict:
                     if geo_error and not item.get("error"):
                         item["geo_error"] = geo_error
                     if n == 1 or n % 10 == 0 or n == len(healthy_nodes):
-                        print(f"MIHOMO_POOL_GEO_PROGRESS={n}/{len(healthy_nodes)}")
+                        print(f"MIHOMO_POOL_GEO_PROGRESS={n}/{len(healthy_nodes)}", flush=True)
         finally:
             proc.terminate()
             try:
