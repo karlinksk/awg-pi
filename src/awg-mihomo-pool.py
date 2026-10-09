@@ -39,7 +39,8 @@ COOLDOWN_FILE = Path(os.environ.get("MIHOMO_POOL_COOLDOWN_FILE", str(POOL_DIR / 
 HEALTH_URL = os.environ.get("MIHOMO_POOL_HEALTH_URL", "https://www.gstatic.com/generate_204")
 GEO_URL = os.environ.get("MIHOMO_POOL_GEO_URL", "https://www.cloudflare.com/cdn-cgi/trace")
 DELAY_TIMEOUT_MS = int(os.environ.get("MIHOMO_POOL_DELAY_TIMEOUT_MS", "4500"))
-WORKERS = max(1, min(64, int(os.environ.get("MIHOMO_POOL_WORKERS", "24"))))
+WORKERS = max(1, min(64, int(os.environ.get("MIHOMO_POOL_WORKERS", "8"))))
+READY_TIMEOUT = max(1.0, float(os.environ.get("MIHOMO_POOL_READY_TIMEOUT", "15")))
 COOLDOWN_SECONDS = int(os.environ.get("MIHOMO_POOL_COOLDOWN_SECONDS", "900"))
 
 # Geographic Europe, intentionally excluding RU for the anti-blocking pool.
@@ -182,6 +183,45 @@ def wait_controller(proc: subprocess.Popen, port: int, timeout: float = 10.0) ->
         output = ""
     detail = output[-1500:].strip() or last_error or "unknown startup error"
     die(f"Isolated Mihomo probe failed to start: {detail}", 1)
+
+
+def wait_probe_inventory(proc: subprocess.Popen, port: int, expected_names: list[str], timeout: float = READY_TIMEOUT) -> set[str]:
+    """Wait until Mihomo publishes generated probe proxies via /proxies.
+
+    /version can become available before the complete proxy inventory is
+    registered. Starting delay tests at that point causes false HTTP 404
+    "proxy not found" results, especially on slower ARM systems.
+    """
+    expected = set(expected_names)
+    deadline = time.monotonic() + timeout
+    loaded: set[str] = set()
+    last_error = ""
+
+    while time.monotonic() < deadline:
+        if proc.poll() is not None:
+            break
+        try:
+            result = controller_request(port, "/proxies", timeout=1.0)
+            proxies = result.get("proxies", {}) if isinstance(result, dict) else {}
+            if isinstance(proxies, dict):
+                loaded = expected.intersection(proxies.keys())
+                if loaded == expected:
+                    print(f"MIHOMO_POOL_READY={len(loaded)}/{len(expected)}")
+                    return loaded
+        except Exception as exc:
+            last_error = str(exc)
+        time.sleep(0.1)
+
+    if loaded:
+        print(f"MIHOMO_POOL_READY={len(loaded)}/{len(expected)}")
+        return loaded
+
+    try:
+        output = proc.stdout.read() if proc.stdout is not None else ""
+    except Exception:
+        output = ""
+    detail = output[-1500:].strip() or last_error or "proxy inventory never became ready"
+    die(f"Isolated Mihomo probe inventory is unavailable: {detail}", 1)
 
 
 def make_probe_config(raw_nodes: list[dict], mixed_port: int, controller_port: int) -> tuple[dict, list[dict]]:
@@ -331,9 +371,27 @@ def scan(target: str, geo: bool) -> dict:
         try:
             wait_controller(proc, controller_port)
             probeable = [item for item in nodes if item.get("valid")]
+            loaded = wait_probe_inventory(
+                proc,
+                controller_port,
+                [item["probe_name"] for item in probeable],
+            )
+            ready_probeable: list[dict] = []
             completed = 0
+            for item in probeable:
+                if item["probe_name"] in loaded:
+                    ready_probeable.append(item)
+                else:
+                    item["healthy"] = False
+                    item["delay_ms"] = None
+                    item["error"] = "proxy-not-loaded"
+                    completed += 1
+
+            if completed:
+                print(f"MIHOMO_POOL_HEALTH_PROGRESS={completed}/{len(probeable)}")
+
             with concurrent.futures.ThreadPoolExecutor(max_workers=WORKERS) as executor:
-                futures = {executor.submit(probe_delay, controller_port, item): item for item in probeable}
+                futures = {executor.submit(probe_delay, controller_port, item): item for item in ready_probeable}
                 for future in concurrent.futures.as_completed(futures):
                     item = futures[future]
                     healthy, delay, error = future.result()
