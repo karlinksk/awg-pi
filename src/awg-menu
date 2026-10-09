@@ -18,6 +18,7 @@ MIHOMO_CONFIGURE=/usr/local/sbin/awg-mihomo-configure
 MIHOMO_INSTALLER=/usr/local/sbin/awg-mihomo-install
 MIHOMO_ENV_FILE=/etc/awg-pbr/transports/mihomo/provider.env
 MIHOMO_NODE_POLICY=/usr/local/sbin/awg-mihomo-node-policy
+MIHOMO_POOL=/usr/local/sbin/awg-mihomo-pool
 AWG_FIRST_RUN=/usr/local/sbin/awg-first-run
 AWG_SELECTION=/usr/local/sbin/awg-selection
 AWG_UPDATE=/usr/local/sbin/awg-update
@@ -686,21 +687,109 @@ resolve_tsv_node_choice(){
   printf '%s\n' "${resolved:-$choice}"
 }
 select_tsv_node_dialog(){
-  local dialog_title="$1" prompt="$2" listing="$3" pick idx name type endpoint duplicate description tab
+  local dialog_title="$1" prompt="$2" listing="$3" pick idx name type endpoint duplicate health country delay description tab
+  local query="" filtered count total search_prompt
   local -a items=()
   tab="$(printf '\t')"
-  while IFS="$tab" read -r idx name type endpoint duplicate; do
-    [[ "$idx" =~ ^[0-9]+$ && -n "$name" ]] || continue
-    description="$type | $endpoint"
-    [[ "$duplicate" == DUPLICATE ]] && description="$description | ДУБЛИКАТ ИМЕНИ"
-    items+=("$idx" "$name — $description" "Выбрать этот узел Mihomo.")
-  done <<<"$listing"
-  (( ${#items[@]} > 0 )) || {
-    msg "$dialog_title" "Доступные узлы не найдены."
-    return 1
-  }
-  pick="$(dialog --backtitle "$BACKTITLE" --title "$dialog_title" --item-help --menu "$prompt" 26 112 16 "${items[@]}" 3>&1 1>&2 2>&3)" || return 1
-  resolve_tsv_node_choice "$listing" "$pick"
+  total="$(awk -F '\t' '$1 ~ /^[0-9]+$/ {n++} END{print n+0}' <<<"$listing")"
+  while true; do
+    if [[ -n "$query" ]]; then
+      filtered="$(grep -iF -- "$query" <<<"$listing" || true)"
+    else
+      filtered="$listing"
+    fi
+    count="$(awk -F '\t' '$1 ~ /^[0-9]+$/ {n++} END{print n+0}' <<<"$filtered")"
+    items=(
+      "__search__" "🔎 Поиск / фильтр" "Поиск без учёта регистра по имени, протоколу, hostname/IP, стране или задержке."
+    )
+    if [[ -n "$query" ]]; then
+      items+=("__clear__" "Сбросить поиск [$query]" "Вернуть полный список живых узлов текущего географического фильтра.")
+    fi
+    while IFS="$tab" read -r idx name type endpoint duplicate health country delay; do
+      [[ "$idx" =~ ^[0-9]+$ && -n "$name" ]] || continue
+      description="$type | $endpoint"
+      [[ -z "$country" || "$country" == "??" ]] || description="$description | $country"
+      [[ -z "$delay" || "$delay" == "-" ]] || description="$description | $delay"
+      [[ "$health" == DEAD ]] && description="$description | НЕДОСТУПЕН"
+      [[ "$duplicate" == DUPLICATE ]] && description="$description | ДУБЛИКАТ ИМЕНИ"
+      items+=("$idx" "$name — $description" "Выбрать этот узел Mihomo.")
+    done <<<"$filtered"
+    search_prompt="$prompt\n\nПоказано: $count из $total"
+    [[ -z "$query" ]] || search_prompt="$search_prompt | поиск: $query"
+    pick="$(dialog --backtitle "$BACKTITLE" --title "$dialog_title" --item-help --menu "$search_prompt" 28 116 17 "${items[@]}" 3>&1 1>&2 2>&3)" || return 1
+    case "$pick" in
+      __search__)
+        query="$(input "$dialog_title — поиск" "Введите часть имени узла, протокол (например vless), hostname/IP, код страны или часть адреса:" "$query")" || continue
+        ;;
+      __clear__)
+        query=""
+        ;;
+      *)
+        resolve_tsv_node_choice "$listing" "$pick"
+        return 0
+        ;;
+    esac
+  done
+}
+
+mihomo_pool_pick(){
+  local target="$1" dialog_title="$2" prompt="$3" choice region region_label listing node
+  while true; do
+    region="$("$MIHOMO_POOL" policy get 2>/dev/null || echo all)"
+    if [[ "$region" == europe ]]; then
+      region_label="✓ ТОЛЬКО ЕВРОПА"
+    else
+      region_label="любая страна"
+    fi
+    choice="$(dialog --backtitle "$BACKTITLE" --title "$dialog_title" --item-help --menu \
+      "Сначала показываются только узлы, прошедшие реальную проверку через Mihomo. Геофильтр использует фактический egress, когда включена Европа." 24 114 10 \
+      1 "Выбрать живой узел [$region_label]" "Открыть список HEALTHY-узлов; внутри доступен поиск по имени, типу, адресу и стране." \
+      2 "Фильтр: Только Европа [$region_label]" "Переключить между любыми живыми узлами и только подтверждёнными европейскими egress." \
+      3 "Обновить проверку сейчас" "Повторно проверить узлы через изолированный Mihomo probe, не затрагивая рабочий TUN/транспорт." \
+      4 "Статистика health-pool" "Количество узлов, живых точек, европейских точек и возраст последней проверки." \
+      5 "Показать все результаты" "Диагностика: показать также недоступные узлы и причины, без применения." \
+      0 "Назад" "Вернуться без выбора узла." 3>&1 1>&2 2>&3)" || return 1
+    case "$choice" in
+      1)
+        title="Проверка пула Mihomo"
+        if ! run_with_progress "$title" "$MIHOMO_POOL" ensure "$target" --geo-if-policy; then
+          dialog --backtitle "$BACKTITLE" --title "$title" --textbox "$TMP" 30 110
+          continue
+        fi
+        listing="$("$MIHOMO_POOL" list "$target" 2>/dev/null)" || {
+          msg "$dialog_title" "Нет живых узлов, подходящих под текущий фильтр. Обновите проверку или измените геофильтр."
+          continue
+        }
+        node="$(select_tsv_node_dialog "$dialog_title" "$prompt" "$listing")" || continue
+        printf '%s\n' "$node"
+        return 0
+        ;;
+      2)
+        if [[ "$region" == europe ]]; then
+          "$MIHOMO_POOL" policy set all >/dev/null
+        else
+          "$MIHOMO_POOL" policy set europe >/dev/null
+          title="Определение европейских точек"
+          if ! run_with_progress "$title" "$MIHOMO_POOL" ensure "$target" --geo-if-policy; then
+            dialog --backtitle "$BACKTITLE" --title "$title" --textbox "$TMP" 30 110
+          fi
+        fi
+        ;;
+      3)
+        title="Проверка узлов Mihomo"
+        capture "$MIHOMO_POOL" scan "$target" --geo-if-policy || true
+        ;;
+      4)
+        title="Health-pool Mihomo"
+        capture "$MIHOMO_POOL" status "$target" || true
+        ;;
+      5)
+        title="Все результаты проверки Mihomo"
+        capture "$MIHOMO_POOL" list "$target" --all --ignore-policy || true
+        ;;
+      0) return 1 ;;
+    esac
+  done
 }
 
 select_opencck_source(){
@@ -781,10 +870,9 @@ select_chain_index(){
 }
 
 mihomo_node_menu(){
-  local node_name info_tmp current rc listing
+  local node_name info_tmp current rc
 
-  listing="$("$MIHOMO_CONFIGURE" node list 2>/dev/null)" || return 0
-  node_name="$(select_tsv_node_dialog "Точка выхода Mihomo" "Выберите узел. В строке сразу показаны тип и адрес сервера." "$listing")" || return 0
+  node_name="$(mihomo_pool_pick live "Точка выхода Mihomo" "Выберите живой узел. В строке показаны тип, адрес, страна egress и задержка.")" || return 0
   [[ -n "$node_name" ]] || { msg "Mihomo" "Имя узла не задано."; return 0; }
 
   info_tmp="$(mktemp)"
@@ -815,10 +903,9 @@ mihomo_node_menu(){
 }
 
 mihomo_candidate_menu(){
-  local behavior="${1:-normal}" node_name info_tmp current rc listing
+  local behavior="${1:-normal}" node_name info_tmp current rc
 
-  listing="$("$MIHOMO_CONFIGURE" provider candidate list 2>/dev/null)" || return 0
-  node_name="$(select_tsv_node_dialog "Узел подготовленного профиля" "Выберите основной узел. В строке сразу показаны тип и адрес сервера." "$listing")" || return 0
+  node_name="$(mihomo_pool_pick candidate "Узел подготовленного профиля" "Выберите основной живой узел подготовленной подписки.")" || return 0
   [[ -n "$node_name" ]] || { msg "Mihomo" "Имя узла не задано."; return 0; }
 
   info_tmp="$(mktemp)"
@@ -852,7 +939,7 @@ mihomo_candidate_menu(){
       msg "Профиль Mihomo" "Новый профиль и узел применены. Активный транспорт не изменён; переключение выполняется через «VPN-маршрутизация → Активный транспорт»."
     fi
   else
-    msg "Подготовленный профиль Mihomo" "Профиль не применён. Предыдущий рабочий профиль сохранён или восстановлен; подготовленный профиль оставлен для повторной попытки."
+    msg "Подготовленный профиль Mihomo" "Профиль не применён: выбранный узел не прошёл финальный health-check или запуск Mihomo завершился ошибкой. Предыдущий рабочий профиль и активный транспорт сохранены/восстановлены; подготовленный профиль оставлен для повторной попытки."
   fi
 }
 
