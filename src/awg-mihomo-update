@@ -258,6 +258,21 @@ clear_candidate(){
 }
 
 if (( stage_only == 1 )); then
+  # Periodic refreshes use the live source metadata. If the validated payload
+  # is byte-for-byte identical to the current live provider, there is no
+  # pending update to present to the user. Explicit manual staging uses
+  # candidate.env and must remain staged even when the payload happens to
+  # match, because its source metadata may have changed.
+  if [[ "$MIHOMO_ENV_FILE" != "$MIHOMO_CANDIDATE_ENV_FILE" ]] &&
+     [[ -r "$MIHOMO_PROVIDER_FILE" ]] &&
+     cmp -s "$tmp" "$MIHOMO_PROVIDER_FILE"; then
+    clear_candidate
+    printf 'MIHOMO_PROVIDER=UNCHANGED\n'
+    printf 'MIHOMO_CANDIDATE_NODE_COUNT=0\n'
+    printf 'MIHOMO_CANDIDATE_FORMAT=%s\n' "$detected_format"
+    printf 'MIHOMO_CANDIDATE_FETCH_PATH=%s\n' "$fetch_path"
+    exit 0
+  fi
   stage_candidate
   exit 0
 fi
