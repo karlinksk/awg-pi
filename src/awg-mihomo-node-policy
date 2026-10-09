@@ -191,13 +191,18 @@ failover_fixed(){
 }
 
 failover_auto(){
-  local current="$1" candidate
-  local -a excludes=("$current")
+  local current="$1" candidate item
+  local -a excludes=("$current") best_args=()
 
   "$MIHOMO_POOL_CLI" ensure live --geo-if-policy >/dev/null 2>&1 || return 1
   "$MIHOMO_POOL_CLI" cooldown add "$current" >/dev/null 2>&1 || true
 
-  while candidate="$("$MIHOMO_POOL_CLI" best live "$(printf -- '--exclude=%s ' "${excludes[@]}")" 2>/dev/null)"; do
+  while true; do
+    best_args=(best live)
+    for item in "${excludes[@]}"; do
+      best_args+=(--exclude "$item")
+    done
+    candidate="$("$MIHOMO_POOL_CLI" "${best_args[@]}" 2>/dev/null)" || break
     [[ -n "$candidate" ]] || break
     if "$MIHOMO_CONFIGURE" node select-auto "$candidate" >/dev/null; then
       printf 'MIHOMO_NODE_FAILOVER=%s->%s\n' "$current" "$candidate"
