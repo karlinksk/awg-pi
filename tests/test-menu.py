@@ -91,6 +91,11 @@ assert '--passwordbox' not in menu
 assert '--insecure' not in menu
 assert 'secret_input' not in menu
 assert 'Ввод отображается полностью.' in menu
+assert '--inputbox "$prompt" 11 110 "$initial"' in menu
+assert 'MIHOMO_ENV_FILE=/etc/awg-pbr/transports/mihomo/provider.env' in menu
+assert 'current_mihomo_provider_url' in menu
+assert '"$current_url"' in menu
+assert 'Текущий URL подставлен в поле, если он сохранён.' in menu
 assert '"$MIHOMO_CONFIGURE" provider stage-url-file "$url_tmp"' in menu
 assert '"$MIHOMO_CONFIGURE" provider stage-file "$path" "$source_mode"' in menu
 assert '"$MIHOMO_CONFIGURE" provider candidate commit-auto "$node_name"' in menu
