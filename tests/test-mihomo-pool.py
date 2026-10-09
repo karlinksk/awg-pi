@@ -23,6 +23,7 @@ for marker in (
     'MIHOMO_POOL_READY=',
     'MIHOMO_POOL_HEALTH_PROGRESS=',
     'MIHOMO_POOL_GEO_PROGRESS=',
+    'MIHOMO_POOL_WORKERS=',
 ):
     lines = [line for line in source_text.splitlines() if marker in line and "print(" in line]
     assert lines, f"missing progress marker print: {marker}"
@@ -81,6 +82,23 @@ assert [n["name"] for n in poolmod.filter_provider_nodes(sample_nodes, "trojan")
 assert [n["name"] for n in poolmod.filter_provider_nodes(sample_nodes, "ss")] == ["C"]
 assert [n["name"] for n in poolmod.filter_provider_nodes(sample_nodes, "vmess")] == ["D"]
 assert len(poolmod.filter_provider_nodes(sample_nodes, "all")) == 4
+
+print("=== adaptive worker count scales large feeds and honors override ===")
+assert poolmod.effective_worker_count(41) == 8
+assert poolmod.effective_worker_count(200) == 16
+assert poolmod.effective_worker_count(500) == 32
+assert poolmod.effective_worker_count(1000) == 64
+assert poolmod.effective_worker_count(1810) == 64
+assert poolmod.effective_worker_count(1810, "12") == 12
+assert poolmod.effective_worker_count(1810, "999") == 64
+
+print("=== termination signal converts to unwindable SystemExit ===")
+try:
+    poolmod.signal_exit(15, None)
+except SystemExit as exc:
+    assert exc.code == 143
+else:
+    raise AssertionError("SIGTERM handler must unwind scan cleanup")
 
 print("=== all-dead scan result preserves previous pool state ===")
 with tempfile.TemporaryDirectory() as td:
