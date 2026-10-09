@@ -366,7 +366,7 @@ restore_candidate_state(){
 }
 
 provider_stage_url_file(){
-  local source_file="$1" format_override="${2:-}" MIHOMO_PROVIDER_URL="" MIHOMO_PROVIDER_PROFILE=""
+  local source_file="$1" format_override="${2:-}" MIHOMO_PROVIDER_URL="" MIHOMO_PROVIDER_PROFILE="" MIHOMO_PROVIDER_HWID=""
   local snapshot rc new_url profile_override hwid=""
   trusted_config_file "$source_file" || {
     echo "Provider URL file must be root-owned mode 0600: $source_file" >&2
@@ -397,28 +397,27 @@ provider_stage_url_file(){
     write_env_key "$MIHOMO_CANDIDATE_ENV_FILE" MIHOMO_PROVIDER_PROFILE "$profile_override"
     case "$profile_override" in
       standard)
-        # Switching away from Citadel/Remnawave must not inherit its /mihomo
-        # suffix or HWID headers. Otherwise an ordinary URL is silently mutated
-        # and typically returns 404.
+        # Persist a previously issued Remnawave/Citadel device identity before
+        # removing provider-specific headers from the ordinary subscription.
+        saved_remnawave_hwid >/dev/null 2>&1 || true
         remove_env_key "$MIHOMO_CANDIDATE_ENV_FILE" MIHOMO_PROVIDER_HWID
         remove_env_key "$MIHOMO_CANDIDATE_ENV_FILE" MIHOMO_UPDATE_SUFFIX
         ;;
       remnawave)
-        hwid="$(
-          MIHOMO_PROVIDER_HWID=""
-          # shellcheck disable=SC1090
-          source "$MIHOMO_CANDIDATE_ENV_FILE"
-          printf '%s' "${MIHOMO_PROVIDER_HWID:-}"
-        )"
+        hwid="${MIHOMO_PROVIDER_HWID:-}"
+        if [[ -z "$hwid" ]]; then
+          hwid="$(saved_remnawave_hwid 2>/dev/null || true)"
+        fi
         if [[ -z "$hwid" ]]; then
           hwid="$("$OPENSSL_BIN" rand -hex 16)"
         fi
-        [[ "$hwid" =~ ^[A-Za-z0-9._:-]{8,128}$ ]] || {
+        valid_hwid "$hwid" || {
           restore_candidate_state "$snapshot"
           rm -rf "$snapshot"
           echo "MIHOMO_PROVIDER_HWID has an invalid format" >&2
           return 2
         }
+        persist_remnawave_hwid "$hwid"
         write_env_key "$MIHOMO_CANDIDATE_ENV_FILE" MIHOMO_PROVIDER_HWID "$hwid"
         if [[ "${new_url%/}" == */mihomo ]]; then
           remove_env_key "$MIHOMO_CANDIDATE_ENV_FILE" MIHOMO_UPDATE_SUFFIX
@@ -439,11 +438,12 @@ provider_stage_url_file(){
        MIHOMO_CANDIDATE_FETCH_FILE="$MIHOMO_CANDIDATE_FETCH_FILE" \
        MIHOMO_CANDIDATE_FORMAT_FILE="$MIHOMO_CANDIDATE_FORMAT_FILE" \
        MIHOMO_BIN="$MIHOMO_BIN" MIHOMO_PROVIDER_HELPER="$MIHOMO_PROVIDER_HELPER" \
-       "$MIHOMO_UPDATER" --stage-only --mode auto; then
+       "$MIHOMO_UPDATER" --stage-only --mode auto && scan_candidate_pool; then
     rc=0
   else
     rc=$?
     restore_candidate_state "$snapshot"
+    [[ ! -x "$MIHOMO_POOL_CLI" ]] || "$MIHOMO_POOL_CLI" clear candidate >/dev/null 2>&1 || true
   fi
   rm -rf "$snapshot"
   (( rc == 0 )) || return "$rc"
@@ -475,11 +475,12 @@ provider_stage_file(){
        MIHOMO_CANDIDATE_FETCH_FILE="$MIHOMO_CANDIDATE_FETCH_FILE" \
        MIHOMO_CANDIDATE_FORMAT_FILE="$MIHOMO_CANDIDATE_FORMAT_FILE" \
        MIHOMO_BIN="$MIHOMO_BIN" MIHOMO_PROVIDER_HELPER="$MIHOMO_PROVIDER_HELPER" \
-       "$MIHOMO_UPDATER" --stage-only --file "$file" --format "$format"; then
+       "$MIHOMO_UPDATER" --stage-only --file "$file" --format "$format" && scan_candidate_pool; then
     rc=0
   else
     rc=$?
     restore_candidate_state "$snapshot"
+    [[ ! -x "$MIHOMO_POOL_CLI" ]] || "$MIHOMO_POOL_CLI" clear candidate >/dev/null 2>&1 || true
   fi
   rm -rf "$snapshot"
   (( rc == 0 )) || return "$rc"
