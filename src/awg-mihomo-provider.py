@@ -405,4 +405,13 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except BrokenPipeError:
+        # Normal Unix pipelines such as "candidate list | head" close stdout
+        # early. Treat that as successful consumer termination, not a traceback.
+        try:
+            sys.stdout.close()
+        except OSError:
+            pass
+        raise SystemExit(0)
