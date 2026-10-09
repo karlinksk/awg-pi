@@ -479,6 +479,8 @@ def write_policy(value: str) -> None:
 
 def load_cooldown() -> dict[str, int]:
     now = int(time.time())
+    if not COOLDOWN_FILE.is_file():
+        return {}
     try:
         data = load_json(COOLDOWN_FILE)
     except SystemExit:
