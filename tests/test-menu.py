@@ -36,7 +36,7 @@ required = [
     '"Добавить / настроить транспорт"',
     '"Политика выбора транспорта"',
     '"Citadel / Remnawave"',
-    '"AUTO — health-pool"',
+    '"AUTO — пул узлов"',
     '"Фильтр: Только Европа',
     '"Проверка узлов Mihomo"',
     '"Формат подписки"',
@@ -198,15 +198,22 @@ assert '"$MIHOMO_NODE_POLICY" mode auto' in menu
 assert '"$MIHOMO_NODE_POLICY" mode manual' in menu
 assert '"$MIHOMO_NODE_POLICY" mode fixed "${nodes[@]}"' in menu
 assert 'При отказе переход выполняется только слева направо' in menu
-assert 'resolve_tsv_node_choice' in menu
+assert 'resolve_tsv_node_choice' not in menu
 assert 'select_tsv_node_dialog' in menu
 assert 'Введите номер или ТОЧНОЕ имя узла из списка выше:' not in menu
 assert 'Введите номер или ТОЧНОЕ имя узла из списка:' not in menu
-assert 'Выберите живой узел. В строке показаны тип, адрес, страна egress и задержка.' in menu
+assert 'Выберите работоспособный узел. В строке показаны протокол, адрес, страна точки выхода и задержка.' in menu
 assert 'Выберите основной живой узел подготовленной подписки.' in menu
 assert '🔎 Поиск / фильтр' in menu
 assert 'grep -iF -- "$query"' in menu
 assert 'Показано: $count из $total' in menu
+assert 'ui_idx=$((ui_idx + 1))' in menu
+assert 'choice_name["$ui_idx"]="$name"' in menu
+assert 'items+=("$ui_idx" "$name — $description"' in menu
+assert 'Статистика пула узлов' in menu
+assert 'mihomo_pool_status_dialog "$target"' in menu
+assert 'Работоспособных: $healthy' in menu
+assert 'Европейских точек выхода: $europe' in menu
 assert '"$MIHOMO_NODE_POLICY" manual-selection preview "$node_name"' in menu
 assert '"$MIHOMO_NODE_POLICY" manual-selection apply "$node_name"' in menu
 assert 'После успешной проверки выбранный узел автоматически станет первым элементом цепочки' in menu
@@ -370,3 +377,15 @@ for forbidden in (
     assert forbidden not in menu, f"untranslated UI label returned: {forbidden}"
 
 print("menu localization/safety checks: OK")
+
+assert "Статистика health-pool" not in menu
+
+assert "HEALTHY-узлов" not in menu
+
+assert "страна egress" not in menu
+
+assert "health-pool" not in menu
+
+assert "cooldown" not in menu
+
+assert "транспортный fallback" not in menu
