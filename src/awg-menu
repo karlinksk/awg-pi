@@ -612,13 +612,13 @@ select_tsv_node_dialog(){
     [[ "$idx" =~ ^[0-9]+$ && -n "$name" ]] || continue
     description="$type | $endpoint"
     [[ "$duplicate" == DUPLICATE ]] && description="$description | ДУБЛИКАТ ИМЕНИ"
-    items+=("$idx" "$name — $description")
+    items+=("$idx" "$name — $description" "Выбрать этот узел Mihomo.")
   done <<<"$listing"
   (( ${#items[@]} > 0 )) || {
     msg "$dialog_title" "Доступные узлы не найдены."
     return 1
   }
-  pick="$(dialog --backtitle "$BACKTITLE" --title "$dialog_title" --menu "$prompt" 26 112 16 "${items[@]}" 3>&1 1>&2 2>&3)" || return 1
+  pick="$(dialog --backtitle "$BACKTITLE" --title "$dialog_title" --item-help --menu "$prompt" 26 112 16 "${items[@]}" 3>&1 1>&2 2>&3)" || return 1
   resolve_tsv_node_choice "$listing" "$pick"
 }
 
@@ -632,13 +632,13 @@ select_opencck_source(){
     read -r name rest <<<"$line"
     [[ -n "$name" && -z "${seen[$name]:-}" ]] || continue
     seen["$name"]=1
-    items+=("$name" "${rest:-источник OpenCCK}")
+    items+=("$name" "${rest:-источник OpenCCK}" "Выбрать источник $name.")
   done <<<"$listing"
   (( ${#items[@]} > 0 )) || {
     msg "$dialog_title" "Источники OpenCCK пока не настроены."
     return 1
   }
-  pick="$(dialog --backtitle "$BACKTITLE" --title "$dialog_title" --menu "$prompt" 24 112 14 "${items[@]}" 3>&1 1>&2 2>&3)" || return 1
+  pick="$(dialog --backtitle "$BACKTITLE" --title "$dialog_title" --item-help --menu "$prompt" 24 112 14 "${items[@]}" 3>&1 1>&2 2>&3)" || return 1
   printf '%s\n' "$pick"
 }
 
@@ -648,13 +648,13 @@ select_client(){
   listing="$("$AWG_ROUTE" client list 2>/dev/null)" || return 1
   while IFS= read -r line; do
     [[ "$line" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]] || continue
-    items+=("$line" "Клиент SELECTIVE")
+    items+=("$line" "Клиент SELECTIVE" "Удалить этот IPv4 из списка клиентов SELECTIVE.")
   done <<<"$listing"
   (( ${#items[@]} > 0 )) || {
     msg "Клиенты" "Список клиентов пуст — удалять нечего."
     return 1
   }
-  pick="$(dialog --backtitle "$BACKTITLE" --title "Удалить клиента" --menu "Выберите IPv4 клиента для удаления." 22 90 12 "${items[@]}" 3>&1 1>&2 2>&3)" || return 1
+  pick="$(dialog --backtitle "$BACKTITLE" --title "Удалить клиента" --item-help --menu "Выберите IPv4 клиента для удаления." 22 90 12 "${items[@]}" 3>&1 1>&2 2>&3)" || return 1
   printf '%s\n' "$pick"
 }
 
@@ -682,9 +682,9 @@ select_manual_domain(){
     return
   fi
   for domain in "${domains[@]}"; do
-    items+=("$domain" "ручная запись")
+    items+=("$domain" "ручная запись" "Удалить этот домен из выбранного ручного списка.")
   done
-  dialog --backtitle "$BACKTITLE" --title "$dialog_title" --menu "Выберите домен для удаления." 26 100 16 "${items[@]}" 3>&1 1>&2 2>&3
+  dialog --backtitle "$BACKTITLE" --title "$dialog_title" --item-help --menu "Выберите домен для удаления." 26 100 16 "${items[@]}" 3>&1 1>&2 2>&3
 }
 select_chain_index(){
   local dialog_title="$1" prompt="$2" min="$3" max="$4" i pick
@@ -692,10 +692,10 @@ select_chain_index(){
   local -a nodes=("$@") items=()
   for (( i=1; i<=${#nodes[@]}; i++ )); do
     (( i >= min && i <= max )) || continue
-    items+=("$i" "${nodes[i-1]}")
+    items+=("$i" "${nodes[i-1]}" "Выбрать этот элемент резервной цепочки.")
   done
   (( ${#items[@]} > 0 )) || return 1
-  pick="$(dialog --backtitle "$BACKTITLE" --title "$dialog_title" --menu "$prompt" 22 100 12 "${items[@]}" 3>&1 1>&2 2>&3)" || return 1
+  pick="$(dialog --backtitle "$BACKTITLE" --title "$dialog_title" --item-help --menu "$prompt" 22 100 12 "${items[@]}" 3>&1 1>&2 2>&3)" || return 1
   printf '%s\n' "$pick"
 }
 
@@ -1497,25 +1497,25 @@ select_timezone(){
   done
 
   for region in "${regions[@]}"; do
-    region_items+=("$region" "Часовых поясов: ${counts[$region]}")
+    region_items+=("$region" "Часовых поясов: ${counts[$region]}" "Открыть часовые пояса этого региона.")
   done
-  pick="$(dialog --backtitle "$BACKTITLE" --title "Часовой пояс — регион" --default-item "$current_region" --menu "Сначала выберите регион." 24 92 14 "${region_items[@]}" 3>&1 1>&2 2>&3)" || return 1
+  pick="$(dialog --backtitle "$BACKTITLE" --title "Часовой пояс — регион" --default-item "$current_region" --item-help --menu "Сначала выберите регион." 24 92 14 "${region_items[@]}" 3>&1 1>&2 2>&3)" || return 1
   region="$pick"
 
   for zone in "${zones[@]}"; do
     if [[ "$region" == "Прочие" ]]; then
       [[ "$zone" != */* ]] || continue
-      zone_items+=("$zone" "Системный часовой пояс")
+      zone_items+=("$zone" "Системный часовой пояс" "Выбрать $zone.")
     else
       [[ "$zone" == "$region/"* ]] || continue
-      zone_items+=("$zone" "${zone#*/}")
+      zone_items+=("$zone" "${zone#*/}" "Выбрать $zone.")
     fi
   done
   (( ${#zone_items[@]} > 0 )) || return 1
   if [[ ("$region" == "Прочие" && "$current" != */*) || "$current" == "$region/"* ]]; then
-    dialog --backtitle "$BACKTITLE" --title "Часовой пояс — $region" --default-item "$current" --menu "Выберите часовой пояс." 28 100 18 "${zone_items[@]}" 3>&1 1>&2 2>&3
+    dialog --backtitle "$BACKTITLE" --title "Часовой пояс — $region" --default-item "$current" --item-help --menu "Выберите часовой пояс." 28 100 18 "${zone_items[@]}" 3>&1 1>&2 2>&3
   else
-    dialog --backtitle "$BACKTITLE" --title "Часовой пояс — $region" --menu "Выберите часовой пояс." 28 100 18 "${zone_items[@]}" 3>&1 1>&2 2>&3
+    dialog --backtitle "$BACKTITLE" --title "Часовой пояс — $region" --item-help --menu "Выберите часовой пояс." 28 100 18 "${zone_items[@]}" 3>&1 1>&2 2>&3
   fi
 }
 timezone_menu(){
