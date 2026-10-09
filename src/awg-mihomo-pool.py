@@ -38,7 +38,7 @@ POOL_DIR = Path(os.environ.get("MIHOMO_POOL_DIR", "/run/awg-pbr/mihomo-pool"))
 LIVE_POOL = Path(os.environ.get("MIHOMO_LIVE_POOL_FILE", str(POOL_DIR / "live.json")))
 CANDIDATE_POOL = Path(os.environ.get("MIHOMO_CANDIDATE_POOL_FILE", str(POOL_DIR / "candidate.json")))
 LIVE_POOL_SNAPSHOT = Path(
-    os.environ.get("MIHOMO_LIVE_POOL_SNAPSHOT_FILE", "/var/lib/awg-pbr/mihomo/pool-live-lkg.json.gz")
+    os.environ.get("MIHOMO_LIVE_POOL_SNAPSHOT_FILE", "/var/lib/awg-pbr/mihomo/pool-state/live-lkg.json.gz")
 )
 SNAPSHOT_MIN_INTERVAL = max(0, int(os.environ.get("MIHOMO_POOL_SNAPSHOT_MIN_INTERVAL", "21600")))
 POLICY_FILE = Path(os.environ.get("MIHOMO_POOL_POLICY_FILE", "/etc/awg-pbr/transports/mihomo/pool-policy.env"))
