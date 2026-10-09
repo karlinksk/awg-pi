@@ -896,7 +896,7 @@ log "[12/12] Полная диагностика"
 # reflects the version whose components are actually running. Transactional
 # update rollback restores the previous /etc/awg-pbr tree if this stage fails.
 printf '%s\n' "$AWG_PI_VERSION" >/etc/awg-pbr/version
-chmod 600 /etc/awg-pbr/version
+chmod 644 /etc/awg-pbr/version
 ok "Версия AWG Pi Gateway зафиксирована: $AWG_PI_VERSION"
 
 "$ROUTE_CLI" reload
