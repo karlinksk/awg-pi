@@ -220,6 +220,7 @@ with tempfile.TemporaryDirectory() as td:
     assert "Japan Trojan" not in out
 
     print("=== a protocol-scoped pool exposes only that protocol ===")
+    run(env, "policy", "set", "all")
     run(env, "protocol", "set", "trojan")
     trojan_payload = dict(payload)
     trojan_payload["protocol_filter"] = "trojan"
