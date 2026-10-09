@@ -7,6 +7,7 @@ MIHOMO_NODE_POLICY_MODE_FILE="${MIHOMO_NODE_POLICY_MODE_FILE:-/etc/awg-pbr/trans
 MIHOMO_NODE_POLICY_ORDER_FILE="${MIHOMO_NODE_POLICY_ORDER_FILE:-/etc/awg-pbr/transports/mihomo/node-policy.nodes}"
 MIHOMO_NODE_NAME_FILE="${MIHOMO_NODE_NAME_FILE:-/etc/awg-pbr/transports/mihomo/node-name}"
 MIHOMO_CONFIGURE="${MIHOMO_CONFIGURE_BIN:-/usr/local/sbin/awg-mihomo-configure}"
+MIHOMO_POOL_CLI="${MIHOMO_POOL_CLI:-/usr/local/sbin/awg-mihomo-pool}"
 
 usage(){
   cat <<'USAGE'
@@ -14,6 +15,7 @@ Usage:
   awg-mihomo-node-policy status
   awg-mihomo-node-policy mode manual
   awg-mihomo-node-policy mode fixed NODE [FALLBACK_NODE...]
+  awg-mihomo-node-policy mode auto
 
 FIXED uses exact node names from the current live provider. The first name is
 the preferred/primary node; later names form an explicit one-way fallback chain.
@@ -23,13 +25,17 @@ A healthy current allowed node is sticky. No automatic return for performance.
 This policy never infers country from a node name and never adds an unlisted
 node. Therefore a country change can happen automatically only if the user
 explicitly placed a node from another country in the fallback list.
+
+AUTO uses the live Mihomo health pool, prefers the lowest-latency healthy node,
+honors the optional Europe-only pool filter, and places failed nodes in a
+temporary cooldown before trying another node.
 USAGE
 }
 
 mode_get(){
   local mode
   mode="$(cat "$MIHOMO_NODE_POLICY_MODE_FILE" 2>/dev/null || echo manual)"
-  case "$mode" in manual|fixed) printf '%s\n' "$mode" ;; *) return 1 ;; esac
+  case "$mode" in manual|fixed|auto) printf '%s\n' "$mode" ;; *) return 1 ;; esac
 }
 
 atomic_mode(){
@@ -101,6 +107,17 @@ set_fixed(){
   printf '\n'
 }
 
+set_auto(){
+  [[ -x "$MIHOMO_POOL_CLI" ]] || {
+    echo "Mihomo health-pool helper is unavailable: $MIHOMO_POOL_CLI" >&2
+    return 2
+  }
+  rm -f "$MIHOMO_NODE_POLICY_ORDER_FILE"
+  atomic_mode auto
+  printf 'MIHOMO_NODE_POLICY=auto\n'
+  "$MIHOMO_POOL_CLI" policy status 2>/dev/null || true
+}
+
 status(){
   local mode current node n=0
   mode="$(mode_get)" || {
@@ -110,21 +127,33 @@ status(){
   current="$(cat "$MIHOMO_NODE_NAME_FILE" 2>/dev/null || echo unknown)"
   printf 'Mihomo node policy: %s\n' "$mode"
   printf 'Current Mihomo node: %s\n' "$current"
-  if [[ "$mode" == fixed ]]; then
-    printf 'Allowed exact-node order:\n'
-    if [[ -r "$MIHOMO_NODE_POLICY_ORDER_FILE" ]]; then
-      while IFS= read -r node || [[ -n "$node" ]]; do
-        [[ -n "$node" ]] || continue
-        n=$((n+1))
-        printf '  %d. %s\n' "$n" "$node"
-      done <"$MIHOMO_NODE_POLICY_ORDER_FILE"
-    fi
-    (( n > 0 )) || printf '  (invalid/empty)\n'
-    printf 'Automatic trigger: repeated active-Mihomo health failure\n'
-  else
-    printf 'Automatic Mihomo node switching: disabled\n'
-  fi
-  printf 'Country inference: disabled\n'
+  case "$mode" in
+    fixed)
+      printf 'Allowed exact-node order:\n'
+      if [[ -r "$MIHOMO_NODE_POLICY_ORDER_FILE" ]]; then
+        while IFS= read -r node || [[ -n "$node" ]]; do
+          [[ -n "$node" ]] || continue
+          n=$((n+1))
+          printf '  %d. %s\n' "$n" "$node"
+        done <"$MIHOMO_NODE_POLICY_ORDER_FILE"
+      fi
+      (( n > 0 )) || printf '  (invalid/empty)\n'
+      printf 'Automatic trigger: repeated active-Mihomo health failure\n'
+      printf 'Pool region filter: ignored by explicit FIXED chain\n'
+      ;;
+    auto)
+      printf 'Automatic Mihomo node switching: health-pool AUTO\n'
+      printf 'Automatic trigger: repeated active-Mihomo health failure\n'
+      if [[ -x "$MIHOMO_POOL_CLI" ]]; then
+        "$MIHOMO_POOL_CLI" policy status 2>/dev/null || true
+        "$MIHOMO_POOL_CLI" status live 2>/dev/null || true
+      fi
+      ;;
+    *)
+      printf 'Automatic Mihomo node switching: disabled\n'
+      ;;
+  esac
+  printf 'Country inference from node names: disabled\n'
 }
 
 is_fixed(){
@@ -132,15 +161,18 @@ is_fixed(){
     [[ -s "$MIHOMO_NODE_POLICY_ORDER_FILE" ]]
 }
 
-failover(){
-  local current node found_current=0
-  is_fixed || return 1
-  current="$(cat "$MIHOMO_NODE_NAME_FILE" 2>/dev/null || true)"
-  [[ -n "$current" ]] || return 1
+is_enabled(){
+  local mode
+  mode="$(mode_get 2>/dev/null || echo invalid)"
+  case "$mode" in
+    fixed) [[ -s "$MIHOMO_NODE_POLICY_ORDER_FILE" ]] ;;
+    auto) [[ -x "$MIHOMO_POOL_CLI" ]] ;;
+    *) return 1 ;;
+  esac
+}
 
-  # FIXED is an ordered one-way failover chain. Only nodes after the current
-  # exact node may be tried automatically. Earlier nodes are never revisited;
-  # if the tail is exhausted, transport-level failover gets the next chance.
+failover_fixed(){
+  local current="$1" node found_current=0
   while IFS= read -r node || [[ -n "$node" ]]; do
     [[ -n "$node" ]] || continue
     if (( found_current == 0 )); then
@@ -154,9 +186,39 @@ failover(){
       return 0
     fi
   done <"$MIHOMO_NODE_POLICY_ORDER_FILE"
-
   (( found_current == 1 )) || return 1
   return 1
+}
+
+failover_auto(){
+  local current="$1" candidate
+  local -a excludes=("$current")
+
+  "$MIHOMO_POOL_CLI" ensure live --geo-if-policy >/dev/null 2>&1 || return 1
+  "$MIHOMO_POOL_CLI" cooldown add "$current" >/dev/null 2>&1 || true
+
+  while candidate="$("$MIHOMO_POOL_CLI" best live "$(printf -- '--exclude=%s ' "${excludes[@]}")" 2>/dev/null)"; do
+    [[ -n "$candidate" ]] || break
+    if "$MIHOMO_CONFIGURE" node select-auto "$candidate" >/dev/null; then
+      printf 'MIHOMO_NODE_FAILOVER=%s->%s\n' "$current" "$candidate"
+      return 0
+    fi
+    "$MIHOMO_POOL_CLI" cooldown add "$candidate" >/dev/null 2>&1 || true
+    excludes+=("$candidate")
+  done
+  return 1
+}
+
+failover(){
+  local current mode
+  mode="$(mode_get 2>/dev/null || echo invalid)"
+  current="$(cat "$MIHOMO_NODE_NAME_FILE" 2>/dev/null || true)"
+  [[ -n "$current" ]] || return 1
+  case "$mode" in
+    fixed) is_fixed && failover_fixed "$current" ;;
+    auto) is_enabled && failover_auto "$current" ;;
+    *) return 1 ;;
+  esac
 }
 
 case "${1:-status}" in
@@ -175,6 +237,10 @@ case "${1:-status}" in
         shift 2
         set_fixed "$@"
         ;;
+      auto)
+        [[ $# -eq 2 ]] || { usage >&2; exit 2; }
+        set_auto
+        ;;
       *)
         usage >&2
         exit 2
@@ -183,7 +249,7 @@ case "${1:-status}" in
     ;;
   enabled)
     [[ $# -eq 1 ]] || { usage >&2; exit 2; }
-    is_fixed
+    is_enabled
     ;;
   failover)
     [[ $# -eq 1 ]] || { usage >&2; exit 2; }
