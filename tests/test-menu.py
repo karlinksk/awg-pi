@@ -219,6 +219,17 @@ assert 'node_name="$(mihomo_pool_pick' not in menu
 assert 'mihomo_pool_status_dialog "$target"' in menu
 assert 'Работоспособных: $healthy' in menu
 assert 'Европейских точек выхода: $europe' in menu
+assert 'mihomo_display_node_name(){' in menu
+assert 'mihomo_display_chain(){' in menu
+assert 'mihomo_pool_results_dialog(){' in menu
+assert 'display_name="$(mihomo_display_node_name "$name")"' in menu
+assert 'items+=("$ui_idx" "$display_name — $description"' in menu
+assert 'capture "$MIHOMO_POOL" list "$target" --all --ignore-policy' not in menu
+assert 'mihomo_pool_results_dialog "$target"' in menu
+assert 'mihomo_pool_results_dialog live' in menu
+assert 'Причина:' in menu
+assert 'Состояние' in menu
+assert 'Задержка' in menu
 assert '"$MIHOMO_NODE_POLICY" manual-selection preview "$node_name"' in menu
 assert '"$MIHOMO_NODE_POLICY" manual-selection apply "$node_name"' in menu
 assert 'После успешной проверки выбранный узел автоматически станет первым элементом цепочки' in menu
