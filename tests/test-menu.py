@@ -150,8 +150,23 @@ assert '"$MIHOMO_NODE_POLICY" mode manual' in menu
 assert '"$MIHOMO_NODE_POLICY" mode fixed "${nodes[@]}"' in menu
 assert 'При отказе переход выполняется только слева направо' in menu
 assert 'resolve_tsv_node_choice' in menu
-assert 'Введите номер или ТОЧНОЕ имя узла из списка выше:' in menu
-assert 'Введите номер или ТОЧНОЕ имя узла из списка:' in menu
+assert 'select_tsv_node_dialog' in menu
+assert 'Введите номер или ТОЧНОЕ имя узла из списка выше:' not in menu
+assert 'Введите номер или ТОЧНОЕ имя узла из списка:' not in menu
+assert 'Выберите узел. В строке сразу показаны тип и адрес сервера.' in menu
+assert 'Выберите основной узел. В строке сразу показаны тип и адрес сервера.' in menu
+
+# Existing-item operations use selectors instead of asking the user to
+# remember and retype values already known to the gateway.
+assert 'select_opencck_source' in menu
+assert 'name="$(input "OpenCCK" "Имя источника:")"' not in menu
+assert 'select_client' in menu
+assert menu.count('ip="$(input "Клиенты" "IPv4 клиента:")"') == 1  # add only
+assert 'select_chain_index' in menu
+assert 'Номер элемента 1..' not in menu
+assert 'Номер элемента 2..' not in menu
+assert 'select_timezone' in menu
+assert 'Введите точное имя часового пояса IANA:' not in menu
 
 # OpenCCK unified input and system helpers.
 assert '"$AWG_ROUTE" source add opencck "$target" --type domains --kind "$method"' in menu
