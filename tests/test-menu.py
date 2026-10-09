@@ -192,6 +192,8 @@ assert 'MIHOMO_POOL=/usr/local/sbin/awg-mihomo-pool' in menu
 assert '"$MIHOMO_POOL" ensure "$target" --geo-if-policy' in menu
 assert '"$MIHOMO_POOL" policy set europe' in menu
 assert '"$MIHOMO_POOL" policy set all' in menu
+assert '"$MIHOMO_POOL" list live --ignore-policy' in menu
+assert 'Геофильтр «Только Европа» здесь намеренно не ограничивает список.' in menu
 assert '"$MIHOMO_NODE_POLICY" mode auto' in menu
 assert '"$MIHOMO_NODE_POLICY" mode manual' in menu
 assert '"$MIHOMO_NODE_POLICY" mode fixed "${nodes[@]}"' in menu
