@@ -606,9 +606,59 @@ resolve_tsv_node_choice(){
 }
 
 select_tsv_node_dialog(){
-  local dialog_title="$1" prompt="$2" listing="$3" pick idx name type endpoint duplicate description
+  local dialog_title="$1" prompt="$2" listing="$3" pick idx name type endpoint duplicate description tab
   local -a items=()
-  while IFS=mihomo_node_menu(){
+  tab="$(printf '\\t')"
+  while IFS="$tab" read -r idx name type endpoint duplicate; do
+    [[ "$idx" =~ ^[0-9]+$ && -n "$name" ]] || continue
+    description="$type | $endpoint"
+    [[ "$duplicate" == DUPLICATE ]] && description="$description | ДУБЛИКАТ ИМЕНИ"
+    items+=("$idx" "$name — $description")
+  done <<<"$listing"
+  (( ${#items[@]} > 0 )) || {
+    msg "$dialog_title" "Доступные узлы не найдены."
+    return 1
+  }
+  pick="$(dialog --backtitle "$BACKTITLE" --title "$dialog_title" --menu "$prompt" 26 112 16 "${items[@]}" 3>&1 1>&2 2>&3)" || return 1
+  resolve_tsv_node_choice "$listing" "$pick"
+}
+
+select_opencck_source(){
+  local dialog_title="$1" prompt="$2" listing line name rest pick
+  local -a items=()
+  local -A seen=()
+  listing="$("$AWG_ROUTE" source list 2>/dev/null)" || return 1
+  while IFS= read -r line; do
+    [[ -n "$line" && "$line" != "=== OpenCCK sources ===" && "$line" != \(* ]] || continue
+    read -r name rest <<<"$line"
+    [[ -n "$name" && -z "${seen[$name]:-}" ]] || continue
+    seen["$name"]=1
+    items+=("$name" "${rest:-источник OpenCCK}")
+  done <<<"$listing"
+  (( ${#items[@]} > 0 )) || {
+    msg "$dialog_title" "Источники OpenCCK пока не настроены."
+    return 1
+  }
+  pick="$(dialog --backtitle "$BACKTITLE" --title "$dialog_title" --menu "$prompt" 24 112 14 "${items[@]}" 3>&1 1>&2 2>&3)" || return 1
+  printf '%s\n' "$pick"
+}
+
+select_client(){
+  local listing line pick
+  local -a items=()
+  listing="$("$AWG_ROUTE" client list 2>/dev/null)" || return 1
+  while IFS= read -r line; do
+    [[ "$line" =~ ^([0-9]{1,3}\\.){3}[0-9]{1,3}$ ]] || continue
+    items+=("$line" "Клиент SELECTIVE")
+  done <<<"$listing"
+  (( ${#items[@]} > 0 )) || {
+    msg "Клиенты" "Список клиентов пуст — удалять нечего."
+    return 1
+  }
+  pick="$(dialog --backtitle "$BACKTITLE" --title "Удалить клиента" --menu "Выберите IPv4 клиента для удаления." 22 90 12 "${items[@]}" 3>&1 1>&2 2>&3)" || return 1
+  printf '%s\n' "$pick"
+}
+mihomo_node_menu(){
   local node_name info_tmp current rc listing
 
   listing="$("$MIHOMO_CONFIGURE" node list 2>/dev/null)" || return 0
