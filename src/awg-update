@@ -17,6 +17,7 @@ REPO=karlinksk/awg-pi
 API="https://api.github.com/repos/$REPO/releases/latest"
 RAW="https://raw.githubusercontent.com/$REPO"
 VERSION_FILE=/etc/awg-pbr/version
+PUBLIC_VERSION_FILE=/usr/share/awg-pbr/version
 BACKUP_ROOT=/var/backups/awg-gateway
 CORE_UPDATE=/usr/local/sbin/awg-core-update
 MIHOMO_INSTALLER=/usr/local/sbin/awg-mihomo-install
@@ -30,7 +31,7 @@ confirm(){
   [[ "$ans" =~ ^[YyДд] ]]
 }
 current_version(){
-  cat "$VERSION_FILE" 2>/dev/null || echo "0.0.0"
+  cat "$PUBLIC_VERSION_FILE" 2>/dev/null || cat "$VERSION_FILE" 2>/dev/null || echo "0.0.0"
 }
 latest_release(){
   curl -4fsSL --retry 3 --connect-timeout 8 --max-time 20 "$API" |
@@ -67,6 +68,7 @@ backup_gateway(){
     var/lib/awg-pbr/mihomo \
     var/lib/awg-pbr/traffic \
     usr/local/lib/awg-pi \
+    usr/share/awg-pbr \
     usr/local/bin/mihomo \
     usr/local/sbin/awg-route \
     usr/local/sbin/awg-transport \
@@ -112,7 +114,7 @@ restore_gateway(){
     awg-pbr-health.service \
     2>/dev/null || true
 
-  rm -rf /etc/awg-pbr /var/lib/awg-pbr/mihomo /var/lib/awg-pbr/traffic /usr/local/lib/awg-pi
+  rm -rf /etc/awg-pbr /var/lib/awg-pbr/mihomo /var/lib/awg-pbr/traffic /usr/local/lib/awg-pi /usr/share/awg-pbr
   rm -f \
     /usr/local/bin/mihomo \
     /usr/local/sbin/awg-route \
