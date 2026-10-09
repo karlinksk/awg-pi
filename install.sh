@@ -802,7 +802,7 @@ ok "Компоненты управления v$AWG_PI_VERSION установл�
 STAGE="первый запуск и критические проверки"
 log "[11/12] Первый запуск"
 systemctl daemon-reload
-systemctl enable awg-pbr-setup.service dnsmasq.service awg-pbr-health.service awg-selection-monitor.service awg-traffic.service awg-opencck-update.timer awg-mihomo-pool-refresh.timer >/dev/null
+systemctl enable awg-pbr-setup.service dnsmasq.service awg-pbr-health.service awg-selection-monitor.service awg-traffic.service awg-opencck-update.timer >/dev/null
 
 # Base control plane comes up before any VPN backend. This is what keeps SSH,
 # TUI, DNS and recovery available even with zero working transports.
@@ -872,8 +872,15 @@ systemctl restart awg-traffic.service
 systemctl is-active --quiet awg-traffic.service || warn "traffic accounting не запустился; маршрутизация продолжит работу"
 systemctl start awg-opencck-update.timer
 systemctl is-active --quiet awg-opencck-update.timer || warn "OpenCCK timer не активен; ручное обновление останется доступно"
-systemctl start awg-mihomo-pool-refresh.timer
-systemctl is-active --quiet awg-mihomo-pool-refresh.timer || warn "Mihomo health-pool timer не активен; ручная проверка останется доступна"
+
+# The health-pool timer is useful only after a Mihomo provider exists. Keep a
+# fresh AWG-only installation completely passive with respect to Mihomo.
+if [[ -r /var/lib/awg-pbr/mihomo/providers/subscription.yaml ]]; then
+  systemctl enable --now awg-mihomo-pool-refresh.timer >/dev/null
+  systemctl is-active --quiet awg-mihomo-pool-refresh.timer || warn "Mihomo health-pool timer не активен; ручная проверка останется доступна"
+else
+  systemctl disable --now awg-mihomo-pool-refresh.timer >/dev/null 2>&1 || true
+fi
 
 ACTIVE_TRANSPORT="$(cat "$TRANSPORT_FILE" 2>/dev/null || echo unconfigured)"
 if [[ "$ACTIVE_TRANSPORT" != unconfigured ]]; then
