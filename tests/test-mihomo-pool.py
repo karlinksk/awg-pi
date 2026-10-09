@@ -82,6 +82,31 @@ assert [n["name"] for n in poolmod.filter_provider_nodes(sample_nodes, "ss")] ==
 assert [n["name"] for n in poolmod.filter_provider_nodes(sample_nodes, "vmess")] == ["D"]
 assert len(poolmod.filter_provider_nodes(sample_nodes, "all")) == 4
 
+print("=== all-dead scan result preserves previous pool state ===")
+with tempfile.TemporaryDirectory() as td:
+    preserved = Path(td) / "live.json"
+    preserved.write_text('{"known_good":true}\n', encoding="utf-8")
+    try:
+        poolmod.persist_healthy_pool(preserved, {"healthy": 0})
+    except SystemExit as exc:
+        assert exc.code == 3
+    else:
+        raise AssertionError("zero-healthy pool result must return reserved exit code 3")
+    assert preserved.read_text(encoding="utf-8") == '{"known_good":true}\n'
+
+    missing = Path(td) / "candidate.json"
+    try:
+        poolmod.persist_healthy_pool(missing, {"healthy": 0})
+    except SystemExit as exc:
+        assert exc.code == 3
+    else:
+        raise AssertionError("zero-healthy initial result must return reserved exit code 3")
+    assert not missing.exists()
+
+refresh_unit = (ROOT / "units" / "awg-mihomo-pool-refresh.service").read_text(encoding="utf-8")
+assert "SuccessExitStatus=3" in refresh_unit
+
+
 def run(env, *args, check=True):
     result = subprocess.run(
         [sys.executable, str(CLI), *args],
