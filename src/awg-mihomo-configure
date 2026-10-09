@@ -21,6 +21,8 @@ MIHOMO_UPDATER="${MIHOMO_UPDATER:-/usr/local/sbin/awg-mihomo-update}"
 MIHOMO_PREPARE="${MIHOMO_PREPARE:-/usr/local/sbin/awg-mihomo-prepare}"
 MIHOMO_PROVIDER_HELPER="${MIHOMO_PROVIDER_HELPER:-/usr/local/lib/awg-pi/mihomo-provider.py}"
 MIHOMO_NODE_NAME_FILE="${MIHOMO_NODE_NAME_FILE:-/etc/awg-pbr/transports/mihomo/node-name}"
+MIHOMO_REMNAWAVE_HWID_FILE="${MIHOMO_REMNAWAVE_HWID_FILE:-/etc/awg-pbr/transports/mihomo/remnawave.hwid}"
+MIHOMO_POOL_CLI="${MIHOMO_POOL_CLI:-/usr/local/sbin/awg-mihomo-pool}"
 PYTHON_BIN="${PYTHON_BIN:-python3}"
 TRANSPORT_CLI="${AWG_TRANSPORT_CLI:-/usr/local/sbin/awg-transport}"
 SYSTEMCTL_BIN="${SYSTEMCTL_BIN:-systemctl}"
@@ -91,6 +93,60 @@ valid_ipv4(){
   for octet in "$a" "$b" "$c" "$d"; do
     (( 10#$octet >= 0 && 10#$octet <= 255 )) || return 1
   done
+}
+
+valid_hwid(){
+  [[ "${1:-}" =~ ^[A-Za-z0-9._:-]{8,128}$ ]]
+}
+
+persist_remnawave_hwid(){
+  local value="$1" dir tmp
+  valid_hwid "$value" || {
+    echo "MIHOMO_PROVIDER_HWID has an invalid format" >&2
+    return 2
+  }
+  dir="$(dirname "$MIHOMO_REMNAWAVE_HWID_FILE")"
+  mkdir -p "$dir"
+  chmod 700 "$dir"
+  tmp="$(mktemp "$dir/.remnawave-hwid.XXXXXX")"
+  printf '%s\n' "$value" >"$tmp"
+  chmod 600 "$tmp"
+  mv -f "$tmp" "$MIHOMO_REMNAWAVE_HWID_FILE"
+}
+
+saved_remnawave_hwid(){
+  local value=""
+  if [[ -r "$MIHOMO_REMNAWAVE_HWID_FILE" ]]; then
+    value="$(tr -d '\r\n' <"$MIHOMO_REMNAWAVE_HWID_FILE")"
+    valid_hwid "$value" || {
+      echo "Stored Remnawave HWID is invalid: $MIHOMO_REMNAWAVE_HWID_FILE" >&2
+      return 1
+    }
+    printf '%s\n' "$value"
+    return 0
+  fi
+  if [[ -r "$MIHOMO_ENV_FILE" ]]; then
+    value="$(
+      MIHOMO_PROVIDER_HWID=""
+      # shellcheck disable=SC1090
+      source "$MIHOMO_ENV_FILE"
+      printf '%s' "${MIHOMO_PROVIDER_HWID:-}"
+    )"
+    if [[ -n "$value" ]] && valid_hwid "$value"; then
+      persist_remnawave_hwid "$value"
+      printf '%s\n' "$value"
+      return 0
+    fi
+  fi
+  return 1
+}
+
+scan_candidate_pool(){
+  [[ -x "$MIHOMO_POOL_CLI" ]] || {
+    echo "Mihomo health-pool scanner is unavailable: $MIHOMO_POOL_CLI" >&2
+    return 2
+  }
+  "$MIHOMO_POOL_CLI" scan candidate --geo-if-policy
 }
 
 trusted_config_file(){
@@ -289,6 +345,7 @@ prepare_candidate_env(){
 candidate_clear(){
   rm -f "$MIHOMO_CANDIDATE_FILE" "$MIHOMO_CANDIDATE_ENV_FILE" \
     "$MIHOMO_CANDIDATE_FETCH_FILE" "$MIHOMO_CANDIDATE_FORMAT_FILE"
+  [[ ! -x "$MIHOMO_POOL_CLI" ]] || "$MIHOMO_POOL_CLI" clear candidate >/dev/null 2>&1 || true
   printf 'MIHOMO_PROVIDER_CANDIDATE=CLEARED\n'
 }
 
@@ -443,7 +500,8 @@ candidate_list(){
     echo "No staged Mihomo provider candidate" >&2
     return 1
   }
-  "$PYTHON_BIN" "$MIHOMO_PROVIDER_HELPER" list "$MIHOMO_CANDIDATE_FILE" --format tsv
+  "$MIHOMO_POOL_CLI" ensure candidate --geo-if-policy >/dev/null
+  "$MIHOMO_POOL_CLI" list candidate
 }
 
 candidate_prepare(){
@@ -644,7 +702,8 @@ node_list(){
     echo "Provider cache is missing: $MIHOMO_PROVIDER_FILE" >&2
     return 1
   }
-  "$PYTHON_BIN" "$MIHOMO_PROVIDER_HELPER" list "$MIHOMO_PROVIDER_FILE" --format tsv
+  "$MIHOMO_POOL_CLI" ensure live --geo-if-policy >/dev/null
+  "$MIHOMO_POOL_CLI" list live
 }
 
 node_prepare(){
