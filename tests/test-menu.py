@@ -52,6 +52,35 @@ assert 'PASTE_TMP=""' in menu
 assert 'PASTE_OUT=""' in menu
 assert 'trap cleanup EXIT' in menu
 
+# Long/silent menu commands must expose a live heartbeat instead of leaving a
+# blank terminal while the user waits.
+assert 'run_with_progress(){' in menu
+assert '--infobox' in menu
+assert 'Прошло: ${elapsed} с' in menu
+assert 'SSH-сессию не закрывайте' in menu
+assert 'kill -0 "$pid"' in menu
+assert 'wait "$pid"' in menu
+assert 'run_with_progress "$heading" "$@"' in menu
+assert 'run_with_progress "Перезапуск $label" systemctl restart "$service"' in menu
+assert 'run_with_progress "Перезапуск монитора состояния" systemctl restart awg-pbr-health.service' in menu
+
+# Non-interactive long operations should use the progress-aware capture path.
+assert 'run_interactive "Переключение на Mihomo"' not in menu
+assert 'run_interactive "Переключение на AmneziaWG"' not in menu
+assert 'run_interactive "Обновление AWG Pi Gateway"' not in menu
+assert 'run_interactive "Обновление AmneziaWG"' not in menu
+assert 'run_interactive "Проверка Mihomo"' not in menu
+assert 'run_interactive "Полное обновление"' not in menu
+assert 'run_interactive "Изменение DNS"' not in menu
+assert '"$AWG_ROUTE" dns set "$servers" --yes' in menu
+assert '"$AWG_ROUTE" config replace "$path" --yes' in menu
+assert '"$AWG_ROUTE" config rollback --yes' in menu
+
+# Truly interactive wizards still keep a terminal screen, but explicitly tell
+# the user that silent stages may take time.
+assert 'Операция запущена. Сообщения и запросы появятся ниже.' in menu
+assert 'процесс не завис' in menu
+
 # dialog --editbox returns edited text on its output stream; it does not modify
 # the input file. Both paste flows must capture that output into a root-only
 # temporary file before validating/using it.
