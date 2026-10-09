@@ -325,7 +325,9 @@ def reconfigure(args, env):
         raise ValueError('Неоднозначная dnsmasq конфигурация; ожидается один LAN interface/listen-address')
     tx = Transaction('network', [ENV, DNS, NFT, DOMAINS, CLIENTS])
     try:
+        print('[1/4] Приостанавливаю policy/health и сохраняю rollback...', flush=True)
         tx.pause()
+        print('[2/4] Применяю LAN и DNS-конфигурацию...', flush=True)
         atomic(ENV, new_env)
         atomic(DNS, dns)
         run('dnsmasq', '--test')
@@ -333,10 +335,12 @@ def reconfigure(args, env):
         # reload regenerates domain/static sets and restarts health, so keep it
         # gated until all network checks have completed.
         run('systemctl', 'restart', 'dnsmasq.service')
+        print('[3/4] Проверяю роутер и DNS через новый адрес Pi...', flush=True)
         run('ping', '-4', '-n', '-c1', '-W3', actual['ROUTER_IP'])
         answer = run('dig', '+time=3', '+tries=1', '+short', 'A', 'example.com', '@' + actual['PI_IP']).stdout
         if not any(re.fullmatch(r'\d+(\.\d+){3}', x) for x in answer.splitlines()):
             raise RuntimeError('DNS через новый адрес Pi не отвечает')
+        print('[4/4] Восстанавливаю маршрутизацию и монитор состояния...', flush=True)
         run(ROUTE, 'reload')
         if not tx.health:
             run('systemctl', 'stop', HEALTH)

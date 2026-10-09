@@ -94,24 +94,66 @@ current_mihomo_provider_url(){
   printf '%s\n' "${MIHOMO_PROVIDER_URL:-}"
 }
 
-capture(){
-  local rc
+run_with_progress(){
+  local heading="$1"
+  shift
+  local pid rc elapsed=0 dots tick=0
+  : >"$TMP"
+
   set +e
-  "$@" >"$TMP" 2>&1
+  "$@" >"$TMP" 2>&1 &
+  pid=$!
+  set -e
+
+  # Fast operations should not flash a progress window. After ~0.4 s the user
+  # gets a live heartbeat until the command really exits.
+  for _ in 1 2; do
+    kill -0 "$pid" 2>/dev/null || break
+    sleep 0.2
+  done
+
+  while kill -0 "$pid" 2>/dev/null; do
+    case $((tick % 4)) in
+      0) dots="" ;;
+      1) dots="." ;;
+      2) dots=".." ;;
+      3) dots="..." ;;
+    esac
+    dialog --backtitle "$BACKTITLE" --title "$heading" --infobox       "Выполняется$dots\n\nПрошло: ${elapsed} с\n\nПожалуйста, дождитесь завершения. SSH-сессию не закрывайте."       10 84 || true
+    sleep 1
+    elapsed=$((elapsed + 1))
+    tick=$((tick + 1))
+  done
+
+  set +e
+  wait "$pid"
   rc=$?
   set -e
-  dialog --backtitle "$BACKTITLE" --title "${title:-Результат}" --textbox "$TMP" 30 110
+  return "$rc"
+}
+
+capture(){
+  local rc heading="${title:-Результат}"
+  if run_with_progress "$heading" "$@"; then
+    rc=0
+  else
+    rc=$?
+  fi
+  [[ -s "$TMP" ]] || printf '%s\n' "Операция завершена без дополнительного текстового вывода." >"$TMP"
+  dialog --backtitle "$BACKTITLE" --title "$heading" --textbox "$TMP" 30 110
   return "$rc"
 }
 
 capture_mode_change(){
-  local rc
-  set +e
-  "$@" >"$TMP" 2>&1
-  rc=$?
-  set -e
+  local rc heading="${title:-Режим работы}"
+  if run_with_progress "$heading" "$@"; then
+    rc=0
+  else
+    rc=$?
+  fi
   refresh_backtitle
-  dialog --backtitle "$BACKTITLE" --title "${title:-Режим работы}" --textbox "$TMP" 30 110
+  [[ -s "$TMP" ]] || printf '%s\n' "Операция завершена без дополнительного текстового вывода." >"$TMP"
+  dialog --backtitle "$BACKTITLE" --title "$heading" --textbox "$TMP" 30 110
   return "$rc"
 }
 
@@ -205,13 +247,15 @@ localize_status_file(){
 }
 
 capture_ru(){
-  local rc
-  set +e
-  "$@" >"$TMP" 2>&1
-  rc=$?
-  set -e
+  local rc heading="${title:-Результат}"
+  if run_with_progress "$heading" "$@"; then
+    rc=0
+  else
+    rc=$?
+  fi
   localize_status_file
-  dialog --backtitle "$BACKTITLE" --title "${title:-Результат}" --textbox "$TMP" 30 110
+  [[ -s "$TMP" ]] || printf '%s\n' "Операция завершена без дополнительного текстового вывода." >"$TMP"
+  dialog --backtitle "$BACKTITLE" --title "$heading" --textbox "$TMP" 30 110
   return "$rc"
 }
 
@@ -220,6 +264,8 @@ run_interactive(){
   shift
   clear
   printf '=== %s ===\n\n' "$heading"
+  printf 'Операция запущена. Сообщения и запросы появятся ниже.\n'
+  printf 'Если отдельный этап выполняется без вывода, дождитесь его завершения — процесс не завис.\n\n'
   set +e
   "$@"
   local rc=$?
@@ -588,14 +634,19 @@ awg_config_menu(){
       1) paste_awg_config ;;
       2)
         path="$(input "AmneziaWG" "Полный путь к файлу .conf:")" || continue
-        run_interactive "Замена профиля" "$AWG_ROUTE" config replace "$path"
+        [[ -n "$path" ]] || continue
+        confirm "Установить AmneziaWG" "Проверить и установить конфигурацию из файла:\n$path\n\nТекущий профиль будет сохранён для быстрого отката." || continue
+        title="Замена профиля"
+        capture "$AWG_ROUTE" config replace "$path" --yes || true
         ;;
       3)
         if [[ ! -s "$previous" ]]; then
           msg "Откат профиля" "Предыдущий AWG-профиль для быстрого отката отсутствует.\n\nОн появится автоматически после первой успешной замены профиля через этот v1.3 мастер.\n\nАрхивные резервные копии установки и обновлений не используются для автоматического отката, чтобы случайно не активировать устаревшую конфигурацию."
           continue
         fi
-        run_interactive "Откат профиля" "$AWG_ROUTE" config rollback
+        confirm "Откат профиля" "Поменять текущий и предыдущий AWG-профили местами и проверить соединение?" || continue
+        title="Откат профиля"
+        capture "$AWG_ROUTE" config rollback --yes || true
         ;;
       0) return 0 ;;
     esac
@@ -1154,7 +1205,8 @@ active_transport_menu(){
           continue
         fi
         confirm "Переключение на Mihomo" "Сделать Mihomo активным транспортом?\n\nСначала выполняется предварительная проверка. При ошибке текущий транспорт останется без изменений." || continue
-        run_interactive "Переключение на Mihomo" "$AWG_TRANSPORT" select mihomo
+        title="Переключение на Mihomo"
+        capture "$AWG_TRANSPORT" select mihomo || true
         ;;
       2)
         if [[ "$current" == awg ]]; then
@@ -1162,7 +1214,8 @@ active_transport_menu(){
           continue
         fi
         confirm "Переключение на AmneziaWG" "Сделать AmneziaWG активным транспортом?\n\nПереключение выполняется безопасно с автоматическим возвратом при ошибке." || continue
-        run_interactive "Переключение на AmneziaWG" "$AWG_TRANSPORT" select awg
+        title="Переключение на AmneziaWG"
+        capture "$AWG_TRANSPORT" select awg || true
         ;;
       0) return 0 ;;
     esac
@@ -1195,7 +1248,8 @@ mihomo_advanced_menu(){
       4)
         path="$(input "Локальное восстановление Mihomo" "Полный путь к локальному архиву Mihomo .gz для поддерживаемой версии и текущей архитектуры:")" || continue
         [[ -n "$path" ]] || continue
-        run_interactive "Установка Mihomo из локального архива" "$MIHOMO_INSTALLER" --file "$path"
+        title="Установка Mihomo из локального архива"
+        capture "$MIHOMO_INSTALLER" --file "$path" || true
         ;;
       0) return 0 ;;
     esac
@@ -1299,8 +1353,8 @@ restart_active_transport(){
   esac
 
   confirm "Перезапуск" "Перезапустить активный транспорт $label и монитор состояния?" || return 0
-  if systemctl restart "$service" >/dev/null 2>&1; then
-    if systemctl restart awg-pbr-health.service >/dev/null 2>&1; then
+  if run_with_progress "Перезапуск $label" systemctl restart "$service"; then
+    if run_with_progress "Перезапуск монитора состояния" systemctl restart awg-pbr-health.service; then
       msg "VPN" "$label и монитор состояния перезапущены."
     else
       msg "VPN" "$label перезапущен, но монитор состояния запустить не удалось.\n\nОткройте «Диагностика» или журналы перед дальнейшими изменениями."
@@ -1397,7 +1451,9 @@ dns_menu(){
         ;;
       2)
         servers="$(input "Внешние DNS-серверы" "IPv4 DNS через запятую:" "$current")" || continue
-        run_interactive "Изменение DNS" "$AWG_ROUTE" dns set "$servers"
+        confirm "Изменение DNS" "Проверить и применить внешние DNS:\n$servers ?" || continue
+        title="Изменение DNS"
+        capture "$AWG_ROUTE" dns set "$servers" --yes || true
         ;;
       0) return 0 ;;
     esac
@@ -1422,7 +1478,8 @@ update_menu(){
         ;;
       2)
         confirm "Обновление AWG Pi Gateway" "Проверить новый релиз AWG Pi Gateway и установить его при наличии?" || continue
-        run_interactive "Обновление AWG Pi Gateway" "$AWG_UPDATE" --yes gateway
+        title="Обновление AWG Pi Gateway"
+        capture "$AWG_UPDATE" --yes gateway || true
         _old_menu_self="$0"
         unset AWG_MENU_REEXEC
         rm -f "$_old_menu_self" 2>/dev/null || true
@@ -1430,15 +1487,18 @@ update_menu(){
         ;;
       3)
         confirm "Обновление AmneziaWG" "Проверить и обновить AmneziaWG при наличии новой поддерживаемой стабильной версии?" || continue
-        run_interactive "Обновление AmneziaWG" "$AWG_UPDATE" --yes core
+        title="Обновление AmneziaWG"
+        capture "$AWG_UPDATE" --yes core || true
         ;;
       4)
         confirm "Mihomo" "Проверить установленную версию Mihomo и при необходимости привести её к версии, поддерживаемой текущим AWG Pi Gateway?\n\nПроизвольная самая новая версия из интернета не устанавливается." || continue
-        run_interactive "Проверка Mihomo" "$AWG_UPDATE" --yes mihomo
+        title="Проверка / восстановление Mihomo"
+        capture "$AWG_UPDATE" --yes mihomo || true
         ;;
       5)
         confirm "Полное обновление" "Проверить AWG Pi Gateway, AmneziaWG и поддерживаемую версию Mihomo?" || continue
-        run_interactive "Полное обновление" "$AWG_UPDATE" --yes all
+        title="Полное обновление"
+        capture "$AWG_UPDATE" --yes all || true
         _old_menu_self="$0"
         unset AWG_MENU_REEXEC
         rm -f "$_old_menu_self" 2>/dev/null || true
