@@ -16,6 +16,7 @@ AWG_ROUTE=/usr/local/sbin/awg-route
 AWG_TRANSPORT=/usr/local/sbin/awg-transport
 MIHOMO_CONFIGURE=/usr/local/sbin/awg-mihomo-configure
 MIHOMO_INSTALLER=/usr/local/sbin/awg-mihomo-install
+MIHOMO_ENV_FILE=/etc/awg-pbr/transports/mihomo/provider.env
 MIHOMO_NODE_POLICY=/usr/local/sbin/awg-mihomo-node-policy
 AWG_FIRST_RUN=/usr/local/sbin/awg-first-run
 AWG_SELECTION=/usr/local/sbin/awg-selection
@@ -80,12 +81,17 @@ confirm(){
 
 input(){
   local title="$1" prompt="$2" initial="${3:-}"
-  dialog --backtitle "$BACKTITLE" --title "$title" --inputbox "$prompt" 10 80 "$initial" 3>&1 1>&2 2>&3
+  dialog --backtitle "$BACKTITLE" --title "$title" --inputbox "$prompt" 11 110 "$initial" 3>&1 1>&2 2>&3
 }
 
-secret_input(){
-  local title="$1" prompt="$2"
-  dialog --backtitle "$BACKTITLE" --title "$title" --insecure --passwordbox "$prompt" 11 90 3>&1 1>&2 2>&3
+current_mihomo_provider_url(){
+  local MIHOMO_PROVIDER_URL=""
+  if [[ -r "$MIHOMO_ENV_FILE" ]]; then
+    # Root-owned application state; sourced here only to prefill the setup field.
+    # shellcheck disable=SC1090
+    source "$MIHOMO_ENV_FILE"
+  fi
+  printf '%s\n' "${MIHOMO_PROVIDER_URL:-}"
 }
 
 capture(){
@@ -574,7 +580,7 @@ awg_config_menu(){
     choice="$(dialog --backtitle "$BACKTITLE" --title "Конфигурация AmneziaWG" --item-help --menu \
       "Выберите способ установки файла .conf AmneziaWG. Перед заменой профиль проходит безопасную проверку." \
       21 110 8 \
-      1 "Вставить конфигурацию текстом" "Открывает защищённое многострочное поле: вставьте конфигурацию AmneziaWG .conf из буфера обмена. Сначала выполняется проверка." \
+      1 "Вставить конфигурацию текстом" "Открывает многострочное поле с видимым содержимым: вставьте конфигурацию AmneziaWG .conf из буфера обмена. Сначала выполняется проверка." \
       2 "Загрузить конфигурацию из файла" "Использует существующий файл .conf на Raspberry Pi и выполняет безопасную замену с возможностью отката." \
       3 "Откатить предыдущую конфигурацию [$rollback_state]" "Доступен после первой успешной замены профиля через v1.3; меняет текущий и предыдущий профили местами и проверяет соединение." \
       0 "Назад" "Возвращает в меню VPN без изменений." 3>&1 1>&2 2>&3)" || return 0
@@ -956,7 +962,7 @@ mihomo_initial_setup_flow(){
   provider_format="$(mihomo_provider_format_dialog)" || return 0
   [[ "$provider_format" != 0 ]] || return 0
 
-  url="$(secret_input "Настройка Mihomo" "Вставьте полный URL подписки.\n\nДля Citadel/Remnawave можно вставить базовую ссылку: /mihomo будет добавлен автоматически.")" || return 0
+  url="$(input "Настройка Mihomo" "Вставьте полный URL подписки. Ввод отображается полностью.\n\nДля Citadel/Remnawave можно вставить базовую ссылку: /mihomo будет добавлен автоматически.")" || return 0
   [[ -n "$url" ]] || { msg "Mihomo" "Пустая ссылка не применена."; return 0; }
 
   install -d -m 700 /run/awg-pbr
@@ -1011,7 +1017,7 @@ secondary_transport_setup(){
 }
 
 mihomo_replace_subscription(){
-  local url url_tmp status
+  local url url_tmp status current_url
   status="$("$MIHOMO_CONFIGURE" status 2>/dev/null || true)"
   if grep -Fqx 'Configured: no' <<<"$status"; then
     if grep -Fqx 'Provider candidate: staged' <<<"$status"; then
@@ -1024,7 +1030,9 @@ mihomo_replace_subscription(){
     return 0
   fi
 
-  url="$(secret_input "Подписка Mihomo" "Вставьте полный URL подписки.\n\nВведённые символы отображаются как *; сама ссылка не будет показана в итоговом статусе.")" || return 0
+  current_url="$(current_mihomo_provider_url)"
+  url="$(input "Подписка Mihomo" "Введите или отредактируйте полный URL подписки. Ввод отображается полностью.\n\nТекущий URL подставлен в поле, если он сохранён. После применения полный URL не выводится в обычном статусе и диагностике." "$current_url")" || return 0
+  unset current_url
   [[ -n "$url" ]] || { msg "Mihomo" "Пустая ссылка не применена."; return 0; }
   if ! confirm "Подписка Mihomo" "Скачать и проверить профиль по новой ссылке через AUTO?\n\nПри ошибке текущая ссылка и кэш профиля останутся без изменений."; then
     unset url
@@ -1090,7 +1098,7 @@ mihomo_import_menu(){
     choice="$(dialog --backtitle "$BACKTITLE" --title "Импорт профиля / подписки" --item-help --menu \
       "Оба варианта проходят преобразование и проверку. Текущий профиль не меняется до явного применения подготовленной версии." 20 108 5 \
       1 "Импортировать из файла" "Mihomo YAML, список VLESS URI или Base64 VLESS из локального файла." \
-      2 "Вставить текстом" "Вставить Mihomo YAML, VLESS URI или Base64 в защищённое многострочное поле." \
+      2 "Вставить текстом" "Вставить Mihomo YAML, VLESS URI или Base64 в многострочное поле; содержимое отображается полностью во время настройки." \
       0 "Назад" "Не импортировать профиль." 3>&1 1>&2 2>&3)" || return 0
     case "$choice" in
       1) mihomo_import_file ;;
