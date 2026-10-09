@@ -658,6 +658,18 @@ select_client(){
   pick="$(dialog --backtitle "$BACKTITLE" --title "Удалить клиента" --menu "Выберите IPv4 клиента для удаления." 22 90 12 "${items[@]}" 3>&1 1>&2 2>&3)" || return 1
   printf '%s\n' "$pick"
 }
+select_chain_index(){
+  local dialog_title="$1" prompt="$2" min="$3" max="$4" i pick
+  shift 4
+  local -a nodes=("$@") items=()
+  for (( i=1; i<=${#nodes[@]}; i++ )); do
+    (( i >= min && i <= max )) || continue
+    items+=("$i" "${nodes[i-1]}")
+  done
+  (( ${#items[@]} > 0 )) || return 1
+  pick="$(dialog --backtitle "$BACKTITLE" --title "$dialog_title" --menu "$prompt" 22 100 12 "${items[@]}" 3>&1 1>&2 2>&3)" || return 1
+  printf '%s\n' "$pick"
+}
 
 mihomo_node_menu(){
   local node_name info_tmp current rc listing
@@ -837,21 +849,18 @@ mihomo_node_chain_editor(){
         ;;
       2)
         (( ${#nodes[@]} > 0 )) || { msg "Резервирование узлов Mihomo" "Цепочка пуста."; continue; }
-        idx="$(input "Удалить узел" "Номер элемента 1..${#nodes[@]}:")" || continue
-        [[ "$idx" =~ ^[0-9]+$ ]] && (( idx>=1 && idx<=${#nodes[@]} )) || { msg "Резервирование узлов Mihomo" "Некорректный номер."; continue; }
+        idx="$(select_chain_index "Удалить узел" "Выберите узел для удаления." 1 "${#nodes[@]}" "${nodes[@]}")" || continue
         unset 'nodes[idx-1]'
         nodes=("${nodes[@]}")
         ;;
       3)
         (( ${#nodes[@]} > 1 )) || continue
-        idx="$(input "Переместить выше" "Номер элемента 2..${#nodes[@]}:")" || continue
-        [[ "$idx" =~ ^[0-9]+$ ]] && (( idx>=2 && idx<=${#nodes[@]} )) || { msg "Резервирование узлов Mihomo" "Некорректный номер."; continue; }
+        idx="$(select_chain_index "Переместить выше" "Выберите узел, который нужно поднять на одну позицию." 2 "${#nodes[@]}" "${nodes[@]}")" || continue
         node="${nodes[idx-1]}"; nodes[idx-1]="${nodes[idx-2]}"; nodes[idx-2]="$node"
         ;;
       4)
         (( ${#nodes[@]} > 1 )) || continue
-        idx="$(input "Переместить ниже" "Номер элемента 1..$((${#nodes[@]}-1)):")" || continue
-        [[ "$idx" =~ ^[0-9]+$ ]] && (( idx>=1 && idx<${#nodes[@]} )) || { msg "Резервирование узлов Mihomo" "Некорректный номер."; continue; }
+        idx="$(select_chain_index "Переместить ниже" "Выберите узел, который нужно опустить на одну позицию." 1 "$((${#nodes[@]}-1))" "${nodes[@]}")" || continue
         node="${nodes[idx-1]}"; nodes[idx-1]="${nodes[idx]}"; nodes[idx]="$node"
         ;;
       5)
