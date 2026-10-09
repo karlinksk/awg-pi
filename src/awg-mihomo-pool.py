@@ -93,6 +93,21 @@ def atomic_json(path: Path, payload: dict) -> None:
             pass
 
 
+def persist_healthy_pool(path: Path, payload: dict) -> None:
+    """Replace a pool only when the new scan has at least one healthy node.
+
+    A transient all-dead scan must not destroy a previous last-known-good pool
+    that AUTO failover may still need. Exit code 3 is reserved for this
+    availability condition so the periodic systemd refresh can treat it as a
+    successful no-change run without hiding real scanner errors.
+    """
+    if int(payload.get("healthy", 0)) <= 0:
+        state = "LAST_KNOWN_GOOD" if path.is_file() else "NONE"
+        print(f"MIHOMO_POOL_PRESERVED={state}")
+        die("Mihomo health scan found no working nodes; existing pool preserved", 3)
+    atomic_json(path, payload)
+
+
 def load_json(path: Path) -> dict:
     try:
         with path.open("r", encoding="utf-8") as f:
@@ -500,16 +515,14 @@ def scan(target: str, geo: bool) -> dict:
         "europe": sum(1 for x in result_nodes if x.get("healthy") and x.get("europe")),
         "nodes": result_nodes,
     }
-    atomic_json(pool_path, payload)
     print(f"MIHOMO_POOL_TARGET={target}")
     print(f"MIHOMO_POOL_PROTOCOL={protocol_filter}")
     print(f"MIHOMO_POOL_SOURCE_TOTAL={source_total}")
     print(f"MIHOMO_POOL_TOTAL={payload['total']}")
     print(f"MIHOMO_POOL_HEALTHY={payload['healthy']}")
     print(f"MIHOMO_POOL_EUROPE={payload['europe']}")
+    persist_healthy_pool(pool_path, payload)
     print(f"MIHOMO_POOL_FILE={pool_path}")
-    if payload["healthy"] == 0:
-        die("Mihomo health scan found no working nodes", 1)
     return payload
 
 
