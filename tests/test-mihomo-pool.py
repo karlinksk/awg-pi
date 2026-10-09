@@ -59,6 +59,19 @@ finally:
 assert loaded == {"AWG-PROBE-000001", "AWG-PROBE-000002"}
 assert inventory_calls["count"] >= 2
 
+print("=== protocol filter scopes provider nodes before probing ===")
+sample_nodes = [
+    {"name": "A", "type": "vless"},
+    {"name": "B", "type": "trojan"},
+    {"name": "C", "type": "ss"},
+    {"name": "D", "type": "VMESS"},
+]
+assert [n["name"] for n in poolmod.filter_provider_nodes(sample_nodes, "vless")] == ["A"]
+assert [n["name"] for n in poolmod.filter_provider_nodes(sample_nodes, "trojan")] == ["B"]
+assert [n["name"] for n in poolmod.filter_provider_nodes(sample_nodes, "ss")] == ["C"]
+assert [n["name"] for n in poolmod.filter_provider_nodes(sample_nodes, "vmess")] == ["D"]
+assert len(poolmod.filter_provider_nodes(sample_nodes, "all")) == 4
+
 def run(env, *args, check=True):
     result = subprocess.run(
         [sys.executable, str(CLI), *args],
@@ -107,6 +120,8 @@ with tempfile.TemporaryDirectory() as td:
         "provider_sha256": digest,
         "scanned_at": now,
         "geo_enriched": True,
+        "protocol_filter": "all",
+        "source_total": 3,
         "total": 3,
         "healthy": 2,
         "europe": 1,
@@ -174,6 +189,23 @@ with tempfile.TemporaryDirectory() as td:
         }
     )
 
+    print("=== protocol policy defaults to all and survives region changes ===")
+    assert run(env, "protocol", "get").stdout.strip() == "all"
+    run(env, "protocol", "set", "vless")
+    assert run(env, "protocol", "get").stdout.strip() == "vless"
+    run(env, "policy", "set", "europe")
+    assert run(env, "protocol", "get").stdout.strip() == "vless"
+    status = run(env, "policy", "status").stdout
+    assert "MIHOMO_POOL_PROTOCOL=vless" in status
+
+    print("=== protocol changes invalidate a pool scanned for another protocol ===")
+    stale = run(env, "list", "live", check=False)
+    assert stale.returncode != 0
+    assert "missing or stale" in stale.stderr
+
+    run(env, "protocol", "set", "all")
+    run(env, "policy", "set", "all")
+
     print("=== default list: healthy nodes from any country ===")
     out = run(env, "list", "live").stdout
     assert "Finland VLESS" in out
@@ -186,6 +218,24 @@ with tempfile.TemporaryDirectory() as td:
     out = run(env, "list", "live").stdout
     assert "Finland VLESS" in out
     assert "Japan Trojan" not in out
+
+    print("=== a protocol-scoped pool exposes only that protocol ===")
+    run(env, "policy", "set", "all")
+    run(env, "protocol", "set", "trojan")
+    trojan_payload = dict(payload)
+    trojan_payload["protocol_filter"] = "trojan"
+    trojan_payload["total"] = 1
+    trojan_payload["healthy"] = 1
+    trojan_payload["europe"] = 0
+    trojan_payload["nodes"] = [payload["nodes"][1]]
+    live_pool.write_text(json.dumps(trojan_payload), encoding="utf-8")
+    out = run(env, "list", "live").stdout
+    assert "Japan Trojan" in out
+    assert "Finland VLESS" not in out
+    assert run(env, "best", "live").stdout.strip() == "Japan Trojan"
+
+    run(env, "protocol", "set", "all")
+    live_pool.write_text(json.dumps(payload), encoding="utf-8")
 
     print("=== search is case-insensitive across metadata ===")
     run(env, "policy", "set", "all")

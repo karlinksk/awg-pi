@@ -681,9 +681,9 @@ awg_config_menu(){
 mihomo_display_node_name(){
   local name="$1" prefix
   if [[ "$name" == *" "* ]]; then
-    prefix="\${name%% *}"
+    prefix="${name%% *}"
     if [[ -n "$prefix" && "$prefix" != *[[:alnum:]]* ]]; then
-      printf '%s\n' "\${name#* }"
+      printf '%s\n' "${name#* }"
       return 0
     fi
   fi
@@ -810,8 +810,47 @@ select_tsv_node_dialog(){
   done
 }
 
+mihomo_protocol_label(){
+  case "${1:-all}" in
+    all) printf '%s\n' "Все протоколы" ;;
+    vless) printf '%s\n' "VLESS" ;;
+    trojan) printf '%s\n' "Trojan" ;;
+    hysteria2) printf '%s\n' "Hysteria2" ;;
+    ss) printf '%s\n' "Shadowsocks (SS)" ;;
+    vmess) printf '%s\n' "VMess" ;;
+    *) printf '%s\n' "неизвестно" ;;
+  esac
+}
+
+mihomo_protocol_select(){
+  local current="${1:-all}" choice
+  choice="$(dialog --backtitle "$BACKTITLE" --title "Протокол пула узлов" --default-item "$current" --item-help --menu \
+    "Выберите, какие узлы участвуют в проверке, ручном выборе и AUTO. «Все протоколы» использует весь пул, который понимает Mihomo." 23 108 9 \
+    all "Все протоколы" "Проверять все proxy-узлы из источника, которые может загрузить Mihomo." \
+    vless "VLESS" "Проверять и предлагать только VLESS." \
+    trojan "Trojan" "Проверять и предлагать только Trojan." \
+    hysteria2 "Hysteria2" "Проверять и предлагать только Hysteria2." \
+    ss "Shadowsocks (SS)" "Проверять и предлагать только Shadowsocks." \
+    vmess "VMess" "Проверять и предлагать только VMess." \
+    0 "Назад" "Не менять протокольный фильтр." 3>&1 1>&2 2>&3)" || return 1
+  [[ "$choice" != 0 ]] || return 1
+  printf '%s\n' "$choice"
+}
+
+mihomo_protocol_settings(){
+  local current selected
+  current="$("$MIHOMO_POOL" protocol get 2>/dev/null || echo all)"
+  selected="$(mihomo_protocol_select "$current")" || return 0
+  [[ "$selected" == "$current" ]] && return 0
+  if "$MIHOMO_POOL" protocol set "$selected" >/dev/null; then
+    msg "Протокол пула узлов" "Выбран протокол: $(mihomo_protocol_label "$selected").\n\nНовый фильтр будет использован при следующей проверке пула и режимом AUTO. Текущий активный узел немедленно не переключается."
+  else
+    msg "Протокол пула узлов" "Не удалось сохранить протокольный фильтр."
+  fi
+}
+
 mihomo_pool_status_dialog(){
-  local target="$1" raw region state age total healthy europe geo region_ru state_ru geo_ru
+  local target="$1" raw region protocol state age source_total total healthy europe geo region_ru protocol_ru state_ru geo_ru
 
   if ! raw="$("$MIHOMO_POOL" status "$target" 2>&1)"; then
     msg "Статистика пула узлов Mihomo" "Не удалось получить состояние пула узлов.\n\n$raw"
@@ -819,8 +858,10 @@ mihomo_pool_status_dialog(){
   fi
 
   region="$(sed -n 's/^Region filter: //p' <<<"$raw" | head -n1)"
+  protocol="$(sed -n 's/^Protocol filter: //p' <<<"$raw" | head -n1)"
   state="$(sed -n 's/^Pool state: //p' <<<"$raw" | head -n1)"
   age="$(sed -n 's/^Pool age: //p' <<<"$raw" | head -n1)"
+  source_total="$(sed -n 's/^Provider nodes: //p' <<<"$raw" | head -n1)"
   total="$(sed -n 's/^Nodes total: //p' <<<"$raw" | head -n1)"
   healthy="$(sed -n 's/^Nodes healthy: //p' <<<"$raw" | head -n1)"
   europe="$(sed -n 's/^Nodes Europe: //p' <<<"$raw" | head -n1)"
@@ -831,6 +872,7 @@ mihomo_pool_status_dialog(){
     all) region_ru="все страны" ;;
     *) region_ru="${region:-неизвестно}" ;;
   esac
+  protocol_ru="$(mihomo_protocol_label "${protocol:-all}")"
   case "$state" in
     ready) state_ru="готов" ;;
     missing) state_ru="ещё не создан" ;;
@@ -843,17 +885,18 @@ mihomo_pool_status_dialog(){
   esac
 
   [[ -n "$age" ]] || age="—"
+  [[ -n "$source_total" ]] || source_total="$total"
   [[ -n "$total" ]] || total="0"
   [[ -n "$healthy" ]] || healthy="0"
   [[ -n "$europe" ]] || europe="0"
 
-  msg "Статистика пула узлов Mihomo"     "Состояние: $state_ru\nФильтр региона: $region_ru\nВозраст последней проверки: $age\n\nВсего узлов: $total\nРаботоспособных: $healthy\nЕвропейских точек выхода: $europe\n\nОпределение фактической страны выхода: $geo_ru"
+  msg "Статистика пула узлов Mihomo"     "Состояние: $state_ru\nФильтр региона: $region_ru\nПротокол: $protocol_ru\nВозраст последней проверки: $age\n\nУзлов в источнике: $source_total\nУзлов в выбранном протоколе: $total\nРаботоспособных: $healthy\nЕвропейских точек выхода: $europe\n\nОпределение фактической страны выхода: $geo_ru"
 }
 
 MIHOMO_POOL_PICKED_NODE=""
 
 mihomo_pool_pick(){
-  local target="$1" dialog_title="$2" prompt="$3" choice region region_label listing node
+  local target="$1" dialog_title="$2" prompt="$3" choice region region_label protocol protocol_label selected_protocol listing node
   MIHOMO_POOL_PICKED_NODE=""
   while true; do
     region="$("$MIHOMO_POOL" policy get 2>/dev/null || echo all)"
@@ -862,13 +905,16 @@ mihomo_pool_pick(){
     else
       region_label="любая страна"
     fi
+    protocol="$("$MIHOMO_POOL" protocol get 2>/dev/null || echo all)"
+    protocol_label="$(mihomo_protocol_label "$protocol")"
     choice="$(dialog --backtitle "$BACKTITLE" --title "$dialog_title" --item-help --menu \
-      "Показываются только узлы, прошедшие реальную проверку через Mihomo. Фильтр «Только Европа» использует фактическую страну точки выхода." 24 114 10 \
-      1 "Выбрать работоспособный узел [$region_label]" "Открыть список проверенных узлов; внутри доступен поиск по имени, протоколу, адресу и стране точки выхода." \
+      "Показываются только узлы, прошедшие реальную проверку через Mihomo. Фильтры региона и протокола ограничивают проверяемый и доступный пул." 26 114 12 \
+      1 "Выбрать работоспособный узел [$region_label]" "Открыть список проверенных узлов текущего протокола; внутри доступен поиск по имени, адресу и стране точки выхода." \
       2 "Фильтр: Только Европа [$region_label]" "Переключить между всеми работоспособными узлами и только подтверждёнными европейскими точками выхода." \
-      3 "Обновить проверку сейчас" "Повторно проверить узлы через отдельный экземпляр Mihomo, не затрагивая рабочий транспорт." \
-      4 "Статистика пула узлов" "Показать состояние пула, количество узлов, работоспособных и европейских точек, а также возраст проверки." \
-      5 "Показать все результаты" "Диагностика: показать также недоступные узлы и причины, ничего не применяя." \
+      3 "Протокол [$protocol_label]" "Выбрать: все протоколы, VLESS, Trojan, Hysteria2, Shadowsocks или VMess. Это также ограничивает следующий health-scan и AUTO." \
+      4 "Обновить проверку сейчас" "Повторно проверить только узлы выбранного протокола через отдельный экземпляр Mihomo, не затрагивая рабочий транспорт." \
+      5 "Статистика пула узлов" "Показать протокол, состояние пула, количество узлов, работоспособных и европейских точек, а также возраст проверки." \
+      6 "Показать все результаты" "Диагностика: показать результаты для текущего протокола, включая недоступные узлы и причины, ничего не применяя." \
       0 "Назад" "Вернуться без выбора узла." 3>&1 1>&2 2>&3)" || return 1
     case "$choice" in
       1)
@@ -878,7 +924,7 @@ mihomo_pool_pick(){
           continue
         fi
         listing="$("$MIHOMO_POOL" list "$target" 2>/dev/null)" || {
-          msg "$dialog_title" "Нет живых узлов, подходящих под текущий фильтр. Обновите проверку или измените геофильтр."
+          msg "$dialog_title" "Нет работоспособных узлов, подходящих под текущие фильтры. Обновите проверку или измените фильтр региона/протокола."
           continue
         }
         node="$(select_tsv_node_dialog "$dialog_title" "$prompt" "$listing")" || continue
@@ -897,13 +943,17 @@ mihomo_pool_pick(){
         fi
         ;;
       3)
+        selected_protocol="$(mihomo_protocol_select "$protocol")" || continue
+        [[ "$selected_protocol" == "$protocol" ]] || "$MIHOMO_POOL" protocol set "$selected_protocol" >/dev/null
+        ;;
+      4)
         title="Проверка узлов Mihomo"
         capture "$MIHOMO_POOL" scan "$target" --geo-if-policy || true
         ;;
-      4)
+      5)
         mihomo_pool_status_dialog "$target" || true
         ;;
-      5)
+      6)
         mihomo_pool_results_dialog "$target" || true
         ;;
       0) return 1 ;;
@@ -1235,13 +1285,13 @@ mihomo_node_policy_menu(){
   local choice
   while true; do
     choice="$(dialog --backtitle "$BACKTITLE" --title "Резервирование узлов Mihomo" --item-help --menu \
-      "MANUAL — ручной выбор. FIXED — явно заданная однонаправленная цепочка. AUTO — следующий лучший работоспособный узел из проверенного пула с учётом фильтра «Только Европа»." \
+      "MANUAL — ручной выбор. FIXED — явно заданная однонаправленная цепочка. AUTO — следующий лучший работоспособный узел из проверенного пула с учётом фильтров региона и протокола." \
       24 112 9 \
       1 "Показать политику" "Показывает текущий режим, FIXED-цепочку либо состояние AUTO и пула узлов." \
       2 "MANUAL" "Отключает автоматическую смену узла Mihomo и удаляет сохранённую резервную цепочку." \
       3 "Редактировать цепочку FIXED" "Добавление, удаление и перестановка узлов в однонаправленной резервной цепочке." \
-      4 "AUTO — пул узлов" "При отказе выбирает следующий работоспособный узел по свежести и задержке; неудачные временно исключаются. Геофильтр задаётся в выборе точки выхода." \
-      5 "Выбрать / фильтровать живые узлы" "Открывает пул узлов, поиск и переключатель «Только Европа» без обязательной смены политики." \
+      4 "AUTO — пул узлов" "При отказе выбирает следующий работоспособный узел текущего протокола по свежести и задержке; неудачные временно исключаются. Фильтры задаются в выборе точки выхода." \
+      5 "Выбрать / фильтровать живые узлы" "Открывает пул узлов, поиск и фильтры «Только Европа» / протокол без обязательной смены политики." \
       0 "Назад" "Не менять политику узлов." 3>&1 1>&2 2>&3)" || return 0
     case "$choice" in
       1)
@@ -1255,7 +1305,7 @@ mihomo_node_policy_menu(){
         ;;
       3) mihomo_node_chain_editor ;;
       4)
-        confirm "AUTO — пул узлов" "Включить автоматическую смену узлов Mihomo?\n\nПри повторном отказе текущего узла будет выбран следующий работоспособный узел из проверенного пула. Если включён фильтр «Только Европа», AUTO не выйдет за его пределы. Если подходящих узлов не останется, будет разрешён резервный переход транспорта на AmneziaWG." || continue
+        confirm "AUTO — пул узлов" "Включить автоматическую смену узлов Mihomo?\n\nПри повторном отказе текущего узла будет выбран следующий работоспособный узел из проверенного пула. Если включены фильтры региона или протокола, AUTO не выйдет за их пределы. Если подходящих узлов не останется, будет разрешён резервный переход транспорта на AmneziaWG." || continue
         title="Политика узлов Mihomo → AUTO"
         capture "$MIHOMO_NODE_POLICY" mode auto || true
         ;;
@@ -1438,15 +1488,17 @@ mihomo_subscription_menu(){
   local choice
   while true; do
     choice="$(dialog --backtitle "$BACKTITLE" --title "Подписка / источник" --item-help --menu \
-      "Повседневное управление источником Mihomo. AUTO сначала пробует DIRECT, затем текущий работоспособный транспорт и другие доступные транспорты. Изменения сначала проверяются и применяются только после выбора узла." 23 110 7 \
+      "Повседневное управление источником Mihomo. AUTO сначала пробует DIRECT, затем доступные транспорты. Перед загрузкой большого источника можно ограничить проверку нужным протоколом. Изменения применяются только после выбора узла." 24 110 8 \
       1 "Заменить URL подписки" "Новый URL загружается через AUTO и проверяется отдельно; текущий профиль сохраняется до явного применения нового." \
       2 "Обновить подписку — AUTO" "Повторно загружает текущий URL: сначала DIRECT, затем доступные транспорты. Рабочий профиль не меняется до выбора узла и применения." \
       3 "Импорт профиля / подписки" "Импорт из локального файла или вставленного текста: YAML / VLESS URI / Base64 VLESS." \
+      4 "Протокол пула узлов" "Выбрать все протоколы либо только VLESS / Trojan / Hysteria2 / Shadowsocks / VMess для следующих проверок и AUTO." \
       0 "Назад" "Вернуться в меню Mihomo." 3>&1 1>&2 2>&3)" || return 0
     case "$choice" in
       1) mihomo_replace_subscription ;;
       2) mihomo_update_auto ;;
       3) mihomo_import_menu ;;
+      4) mihomo_protocol_settings ;;
       0) return 0 ;;
     esac
   done
