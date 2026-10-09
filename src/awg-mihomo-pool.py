@@ -134,8 +134,6 @@ def persist_healthy_pool(path: Path, payload: dict) -> None:
         print(f"MIHOMO_POOL_PRESERVED={state}")
         die("Mihomo health scan found no working nodes; existing pool preserved", 3)
     atomic_json(path, payload)
-    if path == LIVE_POOL:
-        persist_live_pool_snapshot(payload)
 
 
 def load_json(path: Path) -> dict:
@@ -804,6 +802,21 @@ def cmd_list(args) -> None:
         )
 
 
+def cmd_snapshot(args) -> None:
+    if args.action != "sync":
+        die("Unsupported snapshot action")
+    if not LIVE_POOL.is_file():
+        if restore_live_pool_snapshot():
+            print("MIHOMO_POOL_SNAPSHOT=RESTORED")
+        else:
+            print("MIHOMO_POOL_SNAPSHOT=MISSING")
+        return
+    if not pool_current("live", require_geo=False):
+        print("MIHOMO_POOL_SNAPSHOT=STALE")
+        return
+    persist_live_pool_snapshot(load_json(LIVE_POOL))
+
+
 def cmd_status(args) -> None:
     _, pool_path = target_paths(args.target)
     restored = False
@@ -941,6 +954,10 @@ def main() -> None:
     p = sub.add_parser("status")
     p.add_argument("target", choices=("live", "candidate"))
     p.set_defaults(func=cmd_status)
+
+    p = sub.add_parser("snapshot")
+    p.add_argument("action", choices=("sync",))
+    p.set_defaults(func=cmd_snapshot)
 
     p = sub.add_parser("best")
     p.add_argument("target", choices=("live", "candidate"), default="live", nargs="?")
