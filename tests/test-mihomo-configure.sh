@@ -319,6 +319,57 @@ sudo grep -Fqx 'MIHOMO_PROVIDER_URL=https://candidate.example/private-token' "$t
 sudo test -e "$tmp/state/providers/candidate.yaml"
 grep -Fq 'update --stage-only --mode auto' "$tmp/update.log"
 
+echo "=== switching Remnawave URL to standard clears inherited suffix/HWID ==="
+sudo sh -c "printf '%s\n' \\
+  'MIHOMO_PROVIDER_URL=https://citadel.example/token' \\
+  'MIHOMO_PROVIDER_PROFILE=remnawave' \\
+  'MIHOMO_PROVIDER_FORMAT=auto' \\
+  'MIHOMO_PROVIDER_HWID=0123456789abcdef0123456789abcdef' \\
+  'MIHOMO_UPDATE_SUFFIX=mihomo' >'$tmp/etc/provider.env'"
+sudo chmod 600 "$tmp/etc/provider.env"
+sudo sh -c "printf '%s\n' \\
+  'MIHOMO_PROVIDER_URL=https://raw.example/subscription.yaml' \\
+  'MIHOMO_PROVIDER_PROFILE=standard' >'$tmp/etc/stage-url.env'"
+sudo chmod 600 "$tmp/etc/stage-url.env"
+: >"$tmp/update.log"
+out="$(run_cli provider stage-url-file "$tmp/etc/stage-url.env")"
+grep -Fqx 'MIHOMO_PROVIDER_SOURCE=URL_STAGED' <<<"$out"
+sudo grep -Fqx 'MIHOMO_PROVIDER_URL=https://citadel.example/token' "$tmp/etc/provider.env"
+sudo grep -Fqx 'MIHOMO_PROVIDER_URL=https://raw.example/subscription.yaml' "$tmp/state/providers/candidate.env"
+sudo grep -Fqx 'MIHOMO_PROVIDER_PROFILE=standard' "$tmp/state/providers/candidate.env"
+if sudo grep -q '^MIHOMO_UPDATE_SUFFIX=' "$tmp/state/providers/candidate.env"; then
+  echo 'FAIL: standard candidate inherited Remnawave /mihomo suffix' >&2
+  exit 1
+fi
+if sudo grep -q '^MIHOMO_PROVIDER_HWID=' "$tmp/state/providers/candidate.env"; then
+  echo 'FAIL: standard candidate inherited Remnawave HWID' >&2
+  exit 1
+fi
+
+echo "=== switching standard URL to Remnawave creates stable staging metadata ==="
+sudo sh -c "printf '%s\n' \\
+  'MIHOMO_PROVIDER_URL=https://plain.example/subscription.yaml' \\
+  'MIHOMO_PROVIDER_PROFILE=standard' \\
+  'MIHOMO_PROVIDER_FORMAT=auto' >'$tmp/etc/provider.env'"
+sudo chmod 600 "$tmp/etc/provider.env"
+sudo sh -c "printf '%s\n' \\
+  'MIHOMO_PROVIDER_URL=https://new-citadel.example/token' \\
+  'MIHOMO_PROVIDER_PROFILE=remnawave' >'$tmp/etc/stage-url.env'"
+sudo chmod 600 "$tmp/etc/stage-url.env"
+: >"$tmp/update.log"
+out="$(run_cli provider stage-url-file "$tmp/etc/stage-url.env")"
+grep -Fqx 'MIHOMO_PROVIDER_SOURCE=URL_STAGED' <<<"$out"
+sudo grep -Fqx 'MIHOMO_PROVIDER_PROFILE=remnawave' "$tmp/state/providers/candidate.env"
+sudo grep -Fqx 'MIHOMO_UPDATE_SUFFIX=mihomo' "$tmp/state/providers/candidate.env"
+sudo grep -Eq "^MIHOMO_PROVIDER_HWID=[A-Za-z0-9._:-]{8,128}$" "$tmp/state/providers/candidate.env"
+
+# Restore the original live source for the existing keep-source regression below.
+sudo sh -c "printf '%s\n' \\
+  'MIHOMO_PROVIDER_URL=https://live.example/token' \\
+  'MIHOMO_PROVIDER_PROFILE=standard' \\
+  'MIHOMO_PROVIDER_FORMAT=auto' >'$tmp/etc/provider.env'"
+sudo chmod 600 "$tmp/etc/provider.env"
+
 echo "=== local staged provider can preserve live source URL ==="
 printf 'offline-profile\n' >"$tmp/local-provider.txt"
 : >"$tmp/update.log"

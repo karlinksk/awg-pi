@@ -94,6 +94,30 @@ current_mihomo_provider_url(){
   printf '%s\n' "${MIHOMO_PROVIDER_URL:-}"
 }
 
+current_mihomo_provider_profile(){
+  local MIHOMO_PROVIDER_PROFILE="standard"
+  if [[ -r "$MIHOMO_ENV_FILE" ]]; then
+    # Root-owned application state; sourced only to label the current source type.
+    # shellcheck disable=SC1090
+    source "$MIHOMO_ENV_FILE"
+  fi
+  case "${MIHOMO_PROVIDER_PROFILE:-standard}" in
+    standard|remnawave) printf '%s\n' "${MIHOMO_PROVIDER_PROFILE:-standard}" ;;
+    *) printf '%s\n' standard ;;
+  esac
+}
+
+mihomo_source_profile_dialog(){
+  local current="${1:-}" standard_label="Обычная подписка Mihomo/Clash" remnawave_label="Citadel / Remnawave"
+  [[ "$current" == standard ]] && standard_label="$standard_label [ТЕКУЩИЙ]"
+  [[ "$current" == remnawave ]] && remnawave_label="$remnawave_label [ТЕКУЩИЙ]"
+  dialog --backtitle "$BACKTITLE" --title "Тип подписки" --item-help --menu \
+    "Выберите тип нового источника. Это важно при переходе между Citadel/Remnawave и обычной подпиской." 20 108 5 \
+    standard "$standard_label" "URL используется как есть; HWID и служебный суффикс /mihomo не добавляются." \
+    remnawave "$remnawave_label" "Используется постоянный HWID; к базовой ссылке при необходимости добавляется /mihomo." \
+    0 "Назад" "Не менять источник." 3>&1 1>&2 2>&3
+}
+
 run_with_progress(){
   local heading="$1"
   shift
@@ -1003,11 +1027,7 @@ mihomo_node_policy_menu(){
 mihomo_initial_setup_flow(){
   local behavior="${1:-secondary}" profile provider_format url init_tmp
 
-  profile="$(dialog --backtitle "$BACKTITLE" --title "Тип подписки" --item-help --menu \
-    "Выберите профиль первичной настройки Mihomo." 19 104 5 \
-    standard "Обычная подписка Mihomo/Clash" "URL используется как есть; HWID не добавляется." \
-    remnawave "Citadel / Remnawave" "Создаётся один постоянный HWID и используется путь /mihomo. HWID сохраняется и не показывается." \
-    0 "Назад" "Не выполнять настройку." 3>&1 1>&2 2>&3)" || return 0
+  profile="$(mihomo_source_profile_dialog)" || return 0
   [[ "$profile" != 0 ]] || return 0
 
   provider_format="$(mihomo_provider_format_dialog)" || return 0
@@ -1068,7 +1088,7 @@ secondary_transport_setup(){
 }
 
 mihomo_replace_subscription(){
-  local url url_tmp status current_url
+  local url url_tmp status current_url current_profile profile profile_label
   status="$("$MIHOMO_CONFIGURE" status 2>/dev/null || true)"
   if grep -Fqx 'Configured: no' <<<"$status"; then
     if grep -Fqx 'Provider candidate: staged' <<<"$status"; then
@@ -1081,18 +1101,30 @@ mihomo_replace_subscription(){
     return 0
   fi
 
+  current_profile="$(current_mihomo_provider_profile)"
+  profile="$(mihomo_source_profile_dialog "$current_profile")" || return 0
+  [[ "$profile" != 0 ]] || return 0
+  case "$profile" in
+    standard) profile_label="Обычная Mihomo/Clash" ;;
+    remnawave) profile_label="Citadel / Remnawave" ;;
+    *) return 1 ;;
+  esac
+
   current_url="$(current_mihomo_provider_url)"
-  url="$(input "Подписка Mihomo" "Введите или отредактируйте полный URL подписки. Ввод отображается полностью.\n\nТекущий URL подставлен в поле, если он сохранён. После применения полный URL не выводится в обычном статусе и диагностике." "$current_url")" || return 0
+  url="$(input "Подписка Mihomo" "Введите или отредактируйте полный URL подписки. Ввод отображается полностью.\n\nТип нового источника: $profile_label.\nТекущий URL подставлен в поле, если он сохранён. После применения полный URL не выводится в обычном статусе и диагностике." "$current_url")" || return 0
   unset current_url
   [[ -n "$url" ]] || { msg "Mihomo" "Пустая ссылка не применена."; return 0; }
-  if ! confirm "Подписка Mihomo" "Скачать и проверить профиль по новой ссылке через AUTO?\n\nПри ошибке текущая ссылка и кэш профиля останутся без изменений."; then
+  if ! confirm "Подписка Mihomo" "Скачать и проверить новый источник через AUTO?\n\nТип: $profile_label\n\nПри ошибке текущая ссылка, тип источника и рабочий кэш останутся без изменений."; then
     unset url
     return 0
   fi
   install -d -m 700 /run/awg-pbr
   url_tmp="$(mktemp /run/awg-pbr/mihomo-url.XXXXXX)"
   chmod 600 "$url_tmp"
-  printf 'MIHOMO_PROVIDER_URL=%q\n' "$url" >"$url_tmp"
+  {
+    printf 'MIHOMO_PROVIDER_URL=%q\n' "$url"
+    printf 'MIHOMO_PROVIDER_PROFILE=%q\n' "$profile"
+  } >"$url_tmp"
   unset url
   title="Подготовка нового URL Mihomo"
   if capture "$MIHOMO_CONFIGURE" provider stage-url-file "$url_tmp"; then

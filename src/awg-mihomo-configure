@@ -309,17 +309,23 @@ restore_candidate_state(){
 }
 
 provider_stage_url_file(){
-  local source_file="$1" format_override="${2:-}" MIHOMO_PROVIDER_URL="" snapshot rc
+  local source_file="$1" format_override="${2:-}" MIHOMO_PROVIDER_URL="" MIHOMO_PROVIDER_PROFILE=""
+  local snapshot rc new_url profile_override hwid=""
   trusted_config_file "$source_file" || {
     echo "Provider URL file must be root-owned mode 0600: $source_file" >&2
     return 2
   }
   # shellcheck disable=SC1090
   source "$source_file"
-  [[ "$MIHOMO_PROVIDER_URL" =~ ^https?://[^[:space:]]+$ ]] || {
+  new_url="$MIHOMO_PROVIDER_URL"
+  profile_override="${MIHOMO_PROVIDER_PROFILE:-}"
+  [[ "$new_url" =~ ^https?://[^[:space:]]+$ ]] || {
     echo "Provider URL file does not contain a valid MIHOMO_PROVIDER_URL" >&2
     return 2
   }
+  if [[ -n "$profile_override" ]]; then
+    case "$profile_override" in standard|remnawave) ;; *) echo "Unsupported MIHOMO_PROVIDER_PROFILE: $profile_override" >&2; return 2 ;; esac
+  fi
   if [[ -n "$format_override" ]]; then
     case "$format_override" in auto|mihomo|vless|base64) ;; *) return 2 ;; esac
   fi
@@ -328,7 +334,44 @@ provider_stage_url_file(){
   chmod 700 "$snapshot"
   snapshot_candidate_state "$snapshot"
   prepare_candidate_env
-  write_env_key "$MIHOMO_CANDIDATE_ENV_FILE" MIHOMO_PROVIDER_URL "$MIHOMO_PROVIDER_URL"
+  write_env_key "$MIHOMO_CANDIDATE_ENV_FILE" MIHOMO_PROVIDER_URL "$new_url"
+
+  if [[ -n "$profile_override" ]]; then
+    write_env_key "$MIHOMO_CANDIDATE_ENV_FILE" MIHOMO_PROVIDER_PROFILE "$profile_override"
+    case "$profile_override" in
+      standard)
+        # Switching away from Citadel/Remnawave must not inherit its /mihomo
+        # suffix or HWID headers. Otherwise an ordinary URL is silently mutated
+        # and typically returns 404.
+        remove_env_key "$MIHOMO_CANDIDATE_ENV_FILE" MIHOMO_PROVIDER_HWID
+        remove_env_key "$MIHOMO_CANDIDATE_ENV_FILE" MIHOMO_UPDATE_SUFFIX
+        ;;
+      remnawave)
+        hwid="$(
+          MIHOMO_PROVIDER_HWID=""
+          # shellcheck disable=SC1090
+          source "$MIHOMO_CANDIDATE_ENV_FILE"
+          printf '%s' "${MIHOMO_PROVIDER_HWID:-}"
+        )"
+        if [[ -z "$hwid" ]]; then
+          hwid="$("$OPENSSL_BIN" rand -hex 16)"
+        fi
+        [[ "$hwid" =~ ^[A-Za-z0-9._:-]{8,128}$ ]] || {
+          restore_candidate_state "$snapshot"
+          rm -rf "$snapshot"
+          echo "MIHOMO_PROVIDER_HWID has an invalid format" >&2
+          return 2
+        }
+        write_env_key "$MIHOMO_CANDIDATE_ENV_FILE" MIHOMO_PROVIDER_HWID "$hwid"
+        if [[ "${new_url%/}" == */mihomo ]]; then
+          remove_env_key "$MIHOMO_CANDIDATE_ENV_FILE" MIHOMO_UPDATE_SUFFIX
+        else
+          write_env_key "$MIHOMO_CANDIDATE_ENV_FILE" MIHOMO_UPDATE_SUFFIX mihomo
+        fi
+        ;;
+    esac
+  fi
+
   if [[ -n "$format_override" ]]; then
     write_env_key "$MIHOMO_CANDIDATE_ENV_FILE" MIHOMO_PROVIDER_FORMAT "$format_override"
   fi

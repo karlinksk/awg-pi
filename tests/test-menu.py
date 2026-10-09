@@ -240,6 +240,10 @@ assert "grep -Fqx 'Configured: no'" in menu
 assert '"$MIHOMO_CONFIGURE" provider candidate clear' in menu
 assert 'mihomo_initial_setup_flow secondary' in menu
 assert 'Citadel / Remnawave' in menu
+assert 'mihomo_source_profile_dialog' in menu
+assert 'current_mihomo_provider_profile' in menu
+assert 'Тип нового источника:' in menu
+assert 'URL используется как есть; HWID и служебный суффикс /mihomo не добавляются.' in menu
 
 # URL entry is intentionally visible during setup, while post-apply handling
 # stays file-based and ordinary status/diagnostics continue to redact it.
@@ -250,7 +254,8 @@ assert 'содержимым' in menu or 'содержимое отобража�
 # URL handling stays file-based.
 assert 'mktemp /run/awg-pbr/mihomo-url.XXXXXX' in menu
 assert 'chmod 600 "$url_tmp"' in menu
-assert "printf 'MIHOMO_PROVIDER_URL=%q\\n' \"$url\" >\"$url_tmp\"" in menu
+assert "printf 'MIHOMO_PROVIDER_URL=%q\\n' \"$url\"" in menu
+assert "printf 'MIHOMO_PROVIDER_PROFILE=%q\\n' \"$profile\"" in menu
 assert 'provider-url set "$url"' not in menu
 assert 'mktemp /run/awg-pbr/mihomo-init.XXXXXX' in menu
 assert 'chmod 600 "$init_tmp"' in menu
