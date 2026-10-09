@@ -4,7 +4,8 @@
 The scanner launches an isolated Mihomo instance with no TUN interface, probes
 all provider nodes through Mihomo's controller API, and optionally determines
 actual egress country through the selected proxy. Runtime health data lives in
-/run by default so periodic scans do not create microSD write churn.
+/run. A compressed last-known-good live snapshot is rate-limited on persistent
+storage so AUTO survives reboot without turning periodic scans into microSD churn.
 """
 
 from __future__ import annotations
@@ -202,7 +203,6 @@ def restore_live_pool_snapshot() -> bool:
     if not snapshot_matches_live_provider(payload):
         return False
     atomic_json(LIVE_POOL, payload)
-    print("MIHOMO_POOL_RESTORED=LAST_KNOWN_GOOD")
     return True
 
 
@@ -806,13 +806,16 @@ def cmd_list(args) -> None:
 
 def cmd_status(args) -> None:
     _, pool_path = target_paths(args.target)
+    restored = False
     if args.target == "live" and not pool_path.is_file():
-        restore_live_pool_snapshot()
+        restored = restore_live_pool_snapshot()
     region = read_policy()
     protocol = read_protocol_policy()
     print(f"Mihomo pool target: {args.target}")
     print(f"Region filter: {region}")
     print(f"Protocol filter: {protocol}")
+    if restored:
+        print("MIHOMO_POOL_RESTORED=LAST_KNOWN_GOOD")
     if not pool_path.is_file():
         print("Pool state: missing")
         return
