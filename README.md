@@ -23,9 +23,11 @@ v1.3.0 is the current multi-transport development line. It keeps the v1.2
 Selective/Transit semantics and adds a transport abstraction with AmneziaWG and
 Mihomo backends, transactional AWG <-> Mihomo switching, provider-cache
 bootstrap/rollback, secure first-run onboarding, ordered exact-node failover,
-conservative availability-only transport AUTO, and a provider adapter layer for
-native Mihomo/Clash YAML, plain VLESS URI subscriptions and Base64 VLESS
-subscriptions.
+conservative availability-only transport AUTO, protocol-scoped health pools
+(VLESS / Trojan / Hysteria2 / Shadowsocks / VMess / all), cross-protocol AUTO
+node failover, safe periodic subscription refresh/promotion, and a provider
+adapter layer for native Mihomo/Clash YAML, plain VLESS URI subscriptions and
+Base64 VLESS subscriptions.
 
 The fresh-install wizard can choose AWG or Mihomo as the first transport. When
 Mihomo is chosen it interactively selects the first live node and may configure
@@ -47,6 +49,11 @@ complete. Do not treat develop/v1.3.0 as a stable installation source without an
 explicit ref and rollback plan.
 
 Release/hardware gate: [TESTING-v1.3.0.md](docs/TESTING-v1.3.0.md)
+
+Real Raspberry Pi validation now includes live VLESS, Trojan, Hysteria2,
+Shadowsocks and VMess transports, plus all-protocol AUTO failover across protocol
+types. Stable v1.3.0 tagging is still intentionally blocked on the remaining
+clean-install, plain-VLESS/Base64 adapter and reboot/persistence release gates.
 
 ## Install / upgrade
 
