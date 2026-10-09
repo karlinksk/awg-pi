@@ -166,6 +166,40 @@ if run_policy failover >"$TMP/out" 2>"$TMP/err"; then
 fi
 [[ ! -s "$TMP/log" ]]
 
+echo "=== manual selection previews FIXED head replacement without mutating policy ==="
+run_policy mode fixed '🇫🇮 Finland' 'DE (backup)+1' 'NL [test]*' >/dev/null
+printf '%s\n' '🇫🇮 Finland' | sudo tee "$TMP/etc/node-name" >/dev/null
+sudo cp "$TMP/etc/node-policy.nodes" "$TMP/order.before-manual"
+out="$(run_policy manual-selection preview 'DE (backup)+1')"
+grep -Fqx 'FIXED_CHAIN_CHANGE=yes' <<<"$out"
+grep -Fqx 'FIXED_CHAIN_NEW=DE (backup)+1 -> NL [test]*' <<<"$out"
+sudo cmp -s "$TMP/order.before-manual" "$TMP/etc/node-policy.nodes"
+
+echo "=== FIXED head changes only after the selected node is actually active ==="
+if run_policy manual-selection apply 'DE (backup)+1' >"$TMP/out" 2>"$TMP/err"; then
+  echo 'FAIL: FIXED head changed before manual node activation' >&2
+  exit 1
+fi
+grep -Fq 'selected node is not the active Mihomo node' "$TMP/err"
+sudo cmp -s "$TMP/order.before-manual" "$TMP/etc/node-policy.nodes"
+
+printf '%s\n' 'DE (backup)+1' | sudo tee "$TMP/etc/node-name" >/dev/null
+out="$(run_policy manual-selection apply 'DE (backup)+1')"
+grep -Fqx 'FIXED_CHAIN_UPDATED=yes' <<<"$out"
+grep -Fqx 'MIHOMO_NODE_ORDER=DE (backup)+1 -> NL [test]*' <<<"$out"
+sudo sed -n '1p' "$TMP/etc/node-policy.nodes" | grep -Fqx 'DE (backup)+1'
+sudo sed -n '2p' "$TMP/etc/node-policy.nodes" | grep -Fqx 'NL [test]*'
+[[ "$(sudo wc -l <"$TMP/etc/node-policy.nodes")" -eq 2 ]]
+
+echo "=== manual selection of an external healthy node replaces only old primary ==="
+run_policy mode fixed '🇫🇮 Finland' 'DE (backup)+1' 'NL [test]*' >/dev/null
+printf '%s\n' 'Kazakhstan manual' | sudo tee "$TMP/etc/node-name" >/dev/null
+out="$(run_policy manual-selection apply 'Kazakhstan manual')"
+grep -Fqx 'MIHOMO_NODE_ORDER=Kazakhstan manual -> DE (backup)+1 -> NL [test]*' <<<"$out"
+sudo sed -n '1p' "$TMP/etc/node-policy.nodes" | grep -Fqx 'Kazakhstan manual'
+sudo sed -n '2p' "$TMP/etc/node-policy.nodes" | grep -Fqx 'DE (backup)+1'
+sudo sed -n '3p' "$TMP/etc/node-policy.nodes" | grep -Fqx 'NL [test]*'
+
 echo "=== AUTO uses health-pool best node and honors pool policy ==="
 printf '%s\n' '🇫🇮 Finland' | sudo tee "$TMP/etc/node-name" >/dev/null
 : >"$TMP/log"; : >"$TMP/pool.log"
