@@ -347,6 +347,33 @@ sudo grep -Fqx "MIHOMO_PROVIDER_URL=https://file.example/private-token" "$tmp/st
 grep -Fq "update --stage-only --mode auto" "$tmp/update.log"
 grep -Fqx "MIHOMO_PROVIDER_URL=STAGED" <<<"$out"
 
+echo "=== legacy URL replacement drops inherited Remnawave metadata ==="
+sudo sh -c "printf '%s\n' \
+  'MIHOMO_PROVIDER_URL=https://citadel.example/token' \
+  'MIHOMO_PROVIDER_PROFILE=remnawave' \
+  'MIHOMO_PROVIDER_FORMAT=auto' \
+  'MIHOMO_PROVIDER_HWID=0123456789abcdef0123456789abcdef' \
+  'MIHOMO_UPDATE_SUFFIX=mihomo' >'$tmp/etc/provider.env'"
+sudo chmod 600 "$tmp/etc/provider.env"
+out="$(run_cli provider-url set "https://raw.example/subscription.yaml")"
+sudo grep -Fqx 'MIHOMO_PROVIDER_PROFILE=standard' "$tmp/state/providers/candidate.env"
+if sudo grep -q '^MIHOMO_UPDATE_SUFFIX=' "$tmp/state/providers/candidate.env"; then
+  echo 'FAIL: legacy generic URL inherited Remnawave suffix' >&2
+  exit 1
+fi
+if sudo grep -q '^MIHOMO_PROVIDER_HWID=' "$tmp/state/providers/candidate.env"; then
+  echo 'FAIL: legacy generic URL inherited Remnawave HWID' >&2
+  exit 1
+fi
+sudo grep -Fqx '0123456789abcdef0123456789abcdef' "$tmp/etc/remnawave.hwid"
+
+# Restore the earlier generic live source for the following rollback checks.
+printf "%s\n" \
+  "MIHOMO_PROVIDER_URL='https://old.example/profile'" \
+  "MIHOMO_NODE_FILTER='Finland'" \
+  "MIHOMO_ENDPOINT_IP='45.86.66.170'" | sudo tee "$tmp/etc/provider.env" >/dev/null
+sudo chmod 600 "$tmp/etc/provider.env"
+
 echo "=== provider URL file must be trusted root 0600 ==="
 sudo chmod 644 "$tmp/etc/url-input.env"
 if run_cli provider-url set-file "$tmp/etc/url-input.env" >"$tmp/out" 2>"$tmp/err"; then
@@ -608,7 +635,7 @@ sudo grep -Fq 'name: Best Node' "$tmp/state/providers/subscription.yaml"
 echo "=== no healthy candidate never replaces live ==="
 sudo cp "$tmp/state/providers/subscription.yaml" "$tmp/live.before-no-healthy"
 sudo rm -f "$tmp/state/providers/candidate.env"
-out="$(MIHOMO_PERIODIC_REFRESH=1 MOCK_POOL_SCAN_RC=1 run_cli provider auto-refresh)"
+out="$(MIHOMO_PERIODIC_REFRESH=1 MOCK_POOL_SCAN_RC=3 run_cli provider auto-refresh)"
 grep -Fqx 'MIHOMO_PROVIDER_AUTO_REFRESH=STAGED_NO_HEALTHY_NODE' <<<"$out"
 grep -Fqx 'LIVE_PROVIDER=UNCHANGED' <<<"$out"
 sudo cmp -s "$tmp/live.before-no-healthy" "$tmp/state/providers/subscription.yaml"
