@@ -226,7 +226,7 @@ def wait_probe_inventory(proc: subprocess.Popen, port: int, expected_names: list
         time.sleep(0.1)
 
     if loaded:
-        print(f"MIHOMO_POOL_READY={len(loaded)}/{len(expected)}")
+        print(f"MIHOMO_POOL_READY={len(loaded)}/{len(expected)}", flush=True)
         return loaded
 
     try:
@@ -419,7 +419,7 @@ def scan(target: str, geo: bool) -> dict:
                     item["error"] = error
                     completed += 1
                     if completed == 1 or completed % 25 == 0 or completed == len(probeable):
-                        print(f"MIHOMO_POOL_HEALTH_PROGRESS={completed}/{len(probeable)}")
+                        print(f"MIHOMO_POOL_HEALTH_PROGRESS={completed}/{len(probeable)}", flush=True)
 
             for item in nodes:
                 if not item.get("valid"):
