@@ -287,7 +287,12 @@ provider_url_set(){
   }
   tmp="$(mktemp)"
   chmod 600 "$tmp"
-  printf 'MIHOMO_PROVIDER_URL=%q\n' "$url" >"$tmp"
+  {
+    printf 'MIHOMO_PROVIDER_URL=%q\n' "$url"
+    # The legacy provider-url command is the generic/standard path. Do not
+    # inherit provider-specific Remnawave headers/suffixes from an old source.
+    printf 'MIHOMO_PROVIDER_PROFILE=%q\n' standard
+  } >"$tmp"
   if provider_stage_url_file "$tmp"; then
     rc=0
   else
@@ -300,7 +305,26 @@ provider_url_set(){
 }
 
 provider_url_set_file(){
-  provider_stage_url_file "$1"
+  local source_file="$1" tmp rc
+  trusted_config_file "$source_file" || {
+    echo "Provider URL file must be root-owned mode 0600: $source_file" >&2
+    return 2
+  }
+  tmp="$(mktemp)"
+  chmod 600 "$tmp"
+  cat "$source_file" >"$tmp"
+  if ! grep -q '^MIHOMO_PROVIDER_PROFILE=' "$tmp"; then
+    # Legacy URL-only files are generic subscriptions. Explicit profile files
+    # still keep their requested standard/remnawave behavior.
+    printf 'MIHOMO_PROVIDER_PROFILE=%q\n' standard >>"$tmp"
+  fi
+  if provider_stage_url_file "$tmp"; then
+    rc=0
+  else
+    rc=$?
+  fi
+  rm -f "$tmp"
+  (( rc == 0 )) || return "$rc"
   printf 'MIHOMO_PROVIDER_URL=STAGED\n'
   printf 'NEXT=awg-mihomo-configure provider candidate list\n'
 }
@@ -385,7 +409,9 @@ provider_auto_refresh(){
     scan_rc=$?
   fi
   if (( scan_rc != 0 )); then
-    if (( scan_rc == 1 )); then
+    if (( scan_rc == 1 || scan_rc == 3 )); then
+      # Exit 3 is the v1.3 reserved all-dead/no-change result. Accept exit 1
+      # as well for compatibility with older pool helpers during upgrades.
       printf 'MIHOMO_PROVIDER_AUTO_REFRESH=STAGED_NO_HEALTHY_NODE\n'
       printf 'LIVE_PROVIDER=UNCHANGED\n'
       return 0
