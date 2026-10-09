@@ -7,7 +7,7 @@ ConditionPathExists=/var/lib/awg-pbr/mihomo/providers/subscription.yaml
 
 [Service]
 Type=simple
-ExecStartPre=/usr/local/sbin/awg-mihomo-prepare
+ExecStartPre=/usr/local/sbin/awg-mihomo-prepare --check-bind
 ExecStart=/usr/local/bin/mihomo -d /var/lib/awg-pbr/mihomo -f /etc/awg-pbr/transports/mihomo/config.yaml
 Restart=on-failure
 RestartSec=2
