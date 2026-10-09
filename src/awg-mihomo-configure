@@ -671,7 +671,11 @@ candidate_commit(){
   rollback_candidate(){
     rc=$?
     trap - ERR
-    "$SYSTEMCTL_BIN" stop "$MIHOMO_UPDATE_TIMER" "$MIHOMO_UPDATE_SERVICE" "$MIHOMO_SERVICE" >/dev/null 2>&1 || true
+    if [[ "$MIHOMO_PERIODIC_REFRESH" == 1 ]]; then
+      "$SYSTEMCTL_BIN" stop "$MIHOMO_SERVICE" >/dev/null 2>&1 || true
+    else
+      "$SYSTEMCTL_BIN" stop "$MIHOMO_UPDATE_TIMER" "$MIHOMO_UPDATE_SERVICE" "$MIHOMO_SERVICE" >/dev/null 2>&1 || true
+    fi
     restore_path "$MIHOMO_ENV_FILE" env "$snapshot"
     restore_path "$MIHOMO_PROVIDER_FILE" provider "$snapshot"
     restore_path "$MIHOMO_ENDPOINT_IP_FILE" endpoint "$snapshot"
@@ -701,7 +705,11 @@ candidate_commit(){
     esac
   fi
 
-  "$SYSTEMCTL_BIN" stop "$MIHOMO_UPDATE_TIMER" "$MIHOMO_UPDATE_SERVICE" "$MIHOMO_SERVICE" >/dev/null 2>&1 || true
+  if [[ "$MIHOMO_PERIODIC_REFRESH" == 1 ]]; then
+    "$SYSTEMCTL_BIN" stop "$MIHOMO_SERVICE" >/dev/null 2>&1 || true
+  else
+    "$SYSTEMCTL_BIN" stop "$MIHOMO_UPDATE_TIMER" "$MIHOMO_UPDATE_SERVICE" "$MIHOMO_SERVICE" >/dev/null 2>&1 || true
+  fi
   mkdir -p "$(dirname "$MIHOMO_PROVIDER_FILE")" "$(dirname "$MIHOMO_ENV_FILE")" \
     "$(dirname "$MIHOMO_ENDPOINT_IP_FILE")" "$(dirname "$MIHOMO_NODE_NAME_FILE")"
   chmod 700 "$(dirname "$MIHOMO_PROVIDER_FILE")" "$(dirname "$MIHOMO_ENV_FILE")"
