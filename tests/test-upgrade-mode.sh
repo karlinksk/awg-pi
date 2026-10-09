@@ -21,6 +21,13 @@ grep -Fq 'FIRST_RUN_CLI="/usr/local/sbin/awg-first-run"' install.sh
 grep -Fq '"$FIRST_RUN_CLI" wizard' install.sh
 grep -Fq 'Active transport не настроен. Это допустимое recovery-состояние' install.sh
 
+# Installed version is public metadata and must be readable without sudo.
+grep -Fq 'chmod 644 /etc/awg-pbr/version' install.sh
+if grep -Fq 'chmod 600 /etc/awg-pbr/version' install.sh; then
+  echo 'FAIL: version file is not world-readable' >&2
+  exit 1
+fi
+
 # Interactive confirmations must tolerate CR/whitespace from SSH terminals and
 # accept common English/Russian affirmative forms.
 confirm_parser="$(awk '/^confirm_yes\(\)\{/{capture=1} capture{print} capture && /^}$/{exit}' install.sh)"
