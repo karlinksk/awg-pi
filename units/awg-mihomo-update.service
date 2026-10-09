@@ -1,8 +1,11 @@
 [Unit]
-Description=AWG Pi Gateway Mihomo provider updater
+Description=AWG Pi Gateway safe Mihomo provider auto-refresh
 Wants=network-online.target
 After=network-online.target
 
 [Service]
 Type=oneshot
-ExecStart=/usr/local/sbin/awg-mihomo-update --stage-only
+Environment=MIHOMO_PERIODIC_REFRESH=1
+ExecStart=/usr/local/sbin/awg-mihomo-configure provider auto-refresh
+TimeoutStartSec=30min
+Nice=10

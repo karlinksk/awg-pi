@@ -21,6 +21,7 @@ MIHOMO_UPDATER="${MIHOMO_UPDATER:-/usr/local/sbin/awg-mihomo-update}"
 MIHOMO_PREPARE="${MIHOMO_PREPARE:-/usr/local/sbin/awg-mihomo-prepare}"
 MIHOMO_PROVIDER_HELPER="${MIHOMO_PROVIDER_HELPER:-/usr/local/lib/awg-pi/mihomo-provider.py}"
 MIHOMO_NODE_NAME_FILE="${MIHOMO_NODE_NAME_FILE:-/etc/awg-pbr/transports/mihomo/node-name}"
+MIHOMO_NODE_POLICY_MODE_FILE="${MIHOMO_NODE_POLICY_MODE_FILE:-/etc/awg-pbr/transports/mihomo/node-policy.mode}"
 MIHOMO_REMNAWAVE_HWID_FILE="${MIHOMO_REMNAWAVE_HWID_FILE:-/etc/awg-pbr/transports/mihomo/remnawave.hwid}"
 MIHOMO_POOL_CLI="${MIHOMO_POOL_CLI:-/usr/local/sbin/awg-mihomo-pool}"
 PYTHON_BIN="${PYTHON_BIN:-python3}"
@@ -37,6 +38,7 @@ SLEEP_BIN="${SLEEP_BIN:-sleep}"
 OPENSSL_BIN="${OPENSSL_BIN:-openssl}"
 MIHOMO_HEALTH_ATTEMPTS="${MIHOMO_HEALTH_ATTEMPTS:-5}"
 MIHOMO_HEALTH_SLEEP="${MIHOMO_HEALTH_SLEEP:-0.5}"
+MIHOMO_PERIODIC_REFRESH="${MIHOMO_PERIODIC_REFRESH:-0}"
 
 # shellcheck disable=SC1090
 source "$AWG_COMMON_FILE"
@@ -50,6 +52,7 @@ Usage:
   awg-mihomo-configure provider-url set URL
   awg-mihomo-configure provider-url set-file FILE
   awg-mihomo-configure provider update [auto|mihomo|awg|router]
+  awg-mihomo-configure provider auto-refresh
   awg-mihomo-configure provider import FILE
   awg-mihomo-configure provider stage-url-file FILE [auto|mihomo|vless|base64]
   awg-mihomo-configure provider stage-file FILE [keep-source|local-only] [auto|mihomo|vless|base64]
@@ -302,22 +305,140 @@ provider_url_set_file(){
   printf 'NEXT=awg-mihomo-configure provider candidate list\n'
 }
 
+stage_provider_update(){
+  local mode="$1" output rc
+  if output="$(
+    MIHOMO_ENV_FILE="$MIHOMO_ENV_FILE" \
+    MIHOMO_PROVIDER_FILE="$MIHOMO_PROVIDER_FILE" \
+    MIHOMO_CANDIDATE_FILE="$MIHOMO_CANDIDATE_FILE" \
+    MIHOMO_CANDIDATE_ENV_FILE="$MIHOMO_CANDIDATE_ENV_FILE" \
+    MIHOMO_CANDIDATE_FETCH_FILE="$MIHOMO_CANDIDATE_FETCH_FILE" \
+    MIHOMO_CANDIDATE_FORMAT_FILE="$MIHOMO_CANDIDATE_FORMAT_FILE" \
+    MIHOMO_BIN="$MIHOMO_BIN" \
+    MIHOMO_PROVIDER_HELPER="$MIHOMO_PROVIDER_HELPER" \
+      "$MIHOMO_UPDATER" --stage-only --mode "$mode" 2>&1
+  )"; then
+    rc=0
+  else
+    rc=$?
+  fi
+  printf '%s\n' "$output"
+  (( rc == 0 )) || return "$rc"
+  if grep -Fqx 'MIHOMO_PROVIDER=UNCHANGED' <<<"$output"; then
+    return 10
+  fi
+  grep -Fqx 'MIHOMO_PROVIDER=STAGED' <<<"$output" || {
+    echo "Mihomo updater did not stage or confirm an unchanged provider" >&2
+    return 2
+  }
+}
+
 provider_update(){
-  local mode="${1:-auto}"
+  local mode="${1:-auto}" stage_output stage_rc
   [[ "$mode" == router ]] && mode=direct
   case "$mode" in auto|direct|mihomo|awg) ;; *) return 2 ;; esac
-  MIHOMO_ENV_FILE="$MIHOMO_ENV_FILE" \
-  MIHOMO_PROVIDER_FILE="$MIHOMO_PROVIDER_FILE" \
-  MIHOMO_CANDIDATE_FILE="$MIHOMO_CANDIDATE_FILE" \
-  MIHOMO_CANDIDATE_ENV_FILE="$MIHOMO_CANDIDATE_ENV_FILE" \
-  MIHOMO_CANDIDATE_FETCH_FILE="$MIHOMO_CANDIDATE_FETCH_FILE" \
-  MIHOMO_CANDIDATE_FORMAT_FILE="$MIHOMO_CANDIDATE_FORMAT_FILE" \
-  MIHOMO_BIN="$MIHOMO_BIN" \
-  MIHOMO_PROVIDER_HELPER="$MIHOMO_PROVIDER_HELPER" \
-    "$MIHOMO_UPDATER" --stage-only --mode "$mode"
+
+  if stage_output="$(stage_provider_update "$mode")"; then
+    stage_rc=0
+  else
+    stage_rc=$?
+  fi
+  printf '%s\n' "$stage_output"
+  case "$stage_rc" in
+    0) ;;
+    10)
+      printf 'MIHOMO_PROVIDER_REFRESH=UNCHANGED\n'
+      return 0
+      ;;
+    *) return "$stage_rc" ;;
+  esac
+
   scan_candidate_pool
   printf 'MIHOMO_PROVIDER_REFRESH=STAGED\n'
   printf 'NEXT=awg-mihomo-configure provider candidate list\n'
+}
+
+provider_auto_refresh(){
+  local stage_output stage_rc scan_rc current policy candidate_json selected reason
+
+  if stage_output="$(stage_provider_update auto)"; then
+    stage_rc=0
+  else
+    stage_rc=$?
+  fi
+  printf '%s\n' "$stage_output"
+  case "$stage_rc" in
+    0) ;;
+    10)
+      printf 'MIHOMO_PROVIDER_AUTO_REFRESH=UNCHANGED\n'
+      return 0
+      ;;
+    *)
+      printf 'MIHOMO_PROVIDER_AUTO_REFRESH=FETCH_FAILED\n' >&2
+      return "$stage_rc"
+      ;;
+  esac
+
+  if scan_candidate_pool; then
+    scan_rc=0
+  else
+    scan_rc=$?
+  fi
+  if (( scan_rc != 0 )); then
+    if (( scan_rc == 1 )); then
+      printf 'MIHOMO_PROVIDER_AUTO_REFRESH=STAGED_NO_HEALTHY_NODE\n'
+      printf 'LIVE_PROVIDER=UNCHANGED\n'
+      return 0
+    fi
+    printf 'MIHOMO_PROVIDER_AUTO_REFRESH=SCAN_FAILED\n' >&2
+    printf 'LIVE_PROVIDER=UNCHANGED\n' >&2
+    return "$scan_rc"
+  fi
+
+  current="$(cat "$MIHOMO_NODE_NAME_FILE" 2>/dev/null || true)"
+  policy="$(cat "$MIHOMO_NODE_POLICY_MODE_FILE" 2>/dev/null || echo manual)"
+  case "$policy" in manual|fixed|auto) ;; *) policy=manual ;; esac
+
+  # FIXED is an explicit exact-name contract. A provider refresh could remove
+  # or redefine a fallback node even when the current head still works, so it
+  # is never promoted unattended.
+  if [[ "$policy" == fixed ]]; then
+    printf 'MIHOMO_PROVIDER_AUTO_REFRESH=STAGED_FIXED_REVIEW\n'
+    printf 'LIVE_PROVIDER=UNCHANGED\n'
+    return 0
+  fi
+
+  candidate_json="$("$MIHOMO_POOL_CLI" list candidate --format json 2>/dev/null || true)"
+  selected=""
+  reason=""
+
+  if [[ -n "$current" ]] && jq -e --arg name "$current"       '[.[] | select(.name == $name)] | length == 1' <<<"$candidate_json" >/dev/null 2>&1; then
+    selected="$current"
+    reason="keep-current"
+  else
+    case "$policy" in
+      auto)
+        selected="$("$MIHOMO_POOL_CLI" best candidate 2>/dev/null || true)"
+        [[ -n "$selected" ]] && reason="auto-best"
+        ;;
+      *)
+        printf 'MIHOMO_PROVIDER_AUTO_REFRESH=STAGED_CURRENT_UNAVAILABLE\n'
+        printf 'LIVE_PROVIDER=UNCHANGED\n'
+        return 0
+        ;;
+    esac
+  fi
+
+  if [[ -z "$selected" ]]; then
+    printf 'MIHOMO_PROVIDER_AUTO_REFRESH=STAGED_NO_ALLOWED_NODE\n'
+    printf 'LIVE_PROVIDER=UNCHANGED\n'
+    return 0
+  fi
+
+  printf 'MIHOMO_PROVIDER_AUTO_TARGET=%s\n' "$selected"
+  printf 'MIHOMO_PROVIDER_AUTO_REASON=%s\n' "$reason"
+  candidate_commit_auto "$selected"
+  printf 'MIHOMO_PROVIDER_AUTO_REFRESH=APPLIED\n'
 }
 
 provider_import(){
@@ -554,7 +675,11 @@ candidate_commit(){
   rollback_candidate(){
     rc=$?
     trap - ERR
-    "$SYSTEMCTL_BIN" stop "$MIHOMO_UPDATE_TIMER" "$MIHOMO_UPDATE_SERVICE" "$MIHOMO_SERVICE" >/dev/null 2>&1 || true
+    if [[ "$MIHOMO_PERIODIC_REFRESH" == 1 ]]; then
+      "$SYSTEMCTL_BIN" stop "$MIHOMO_SERVICE" >/dev/null 2>&1 || true
+    else
+      "$SYSTEMCTL_BIN" stop "$MIHOMO_UPDATE_TIMER" "$MIHOMO_UPDATE_SERVICE" "$MIHOMO_SERVICE" >/dev/null 2>&1 || true
+    fi
     restore_path "$MIHOMO_ENV_FILE" env "$snapshot"
     restore_path "$MIHOMO_PROVIDER_FILE" provider "$snapshot"
     restore_path "$MIHOMO_ENDPOINT_IP_FILE" endpoint "$snapshot"
@@ -584,7 +709,11 @@ candidate_commit(){
     esac
   fi
 
-  "$SYSTEMCTL_BIN" stop "$MIHOMO_UPDATE_TIMER" "$MIHOMO_UPDATE_SERVICE" "$MIHOMO_SERVICE" >/dev/null 2>&1 || true
+  if [[ "$MIHOMO_PERIODIC_REFRESH" == 1 ]]; then
+    "$SYSTEMCTL_BIN" stop "$MIHOMO_SERVICE" >/dev/null 2>&1 || true
+  else
+    "$SYSTEMCTL_BIN" stop "$MIHOMO_UPDATE_TIMER" "$MIHOMO_UPDATE_SERVICE" "$MIHOMO_SERVICE" >/dev/null 2>&1 || true
+  fi
   mkdir -p "$(dirname "$MIHOMO_PROVIDER_FILE")" "$(dirname "$MIHOMO_ENV_FILE")" \
     "$(dirname "$MIHOMO_ENDPOINT_IP_FILE")" "$(dirname "$MIHOMO_NODE_NAME_FILE")"
   chmod 700 "$(dirname "$MIHOMO_PROVIDER_FILE")" "$(dirname "$MIHOMO_ENV_FILE")"
@@ -1209,6 +1338,10 @@ case "${1:-}" in
       update)
         [[ $# -le 3 ]] || { usage >&2; exit 2; }
         provider_update "${3:-auto}"
+        ;;
+      auto-refresh)
+        [[ $# -eq 2 ]] || { usage >&2; exit 2; }
+        provider_auto_refresh
         ;;
       import)
         [[ $# -eq 3 ]] || { usage >&2; exit 2; }
