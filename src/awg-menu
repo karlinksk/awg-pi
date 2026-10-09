@@ -1109,7 +1109,7 @@ mihomo_node_policy_menu(){
         capture "$MIHOMO_NODE_POLICY" mode auto || true
         ;;
       5)
-        mihomo_pool_pick live "Живые узлы Mihomo" "Выберите узел, если хотите сменить точку выхода; Cancel вернёт в меню." >/dev/null || true
+        mihomo_node_menu
         ;;
       0) return 0 ;;
     esac
