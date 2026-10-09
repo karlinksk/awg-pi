@@ -422,7 +422,7 @@ vpn_destination_menu(){
 }
 
 opencck_menu(){
-  local choice name type kind action
+  local choice name type kind action action_title
   while true; do
     choice="$(dialog --backtitle "$BACKTITLE" --title "OpenCCK" --item-help --menu \
       "Управление внешними списками OpenCCK. Подсказка для выделенного пункта показана внизу." 26 100 13 \
@@ -1445,6 +1445,48 @@ operating_mode_menu(){
   done
 }
 
+
+select_timezone(){
+  local current="$1" zone region current_region pick
+  local -a zones=() regions=() region_items=() zone_items=()
+  local -A seen=() counts=()
+  mapfile -t zones < <(timedatectl list-timezones 2>/dev/null)
+  (( ${#zones[@]} > 0 )) || return 1
+
+  if [[ "$current" == */* ]]; then
+    current_region="${current%%/*}"
+  else
+    current_region="Прочие"
+  fi
+
+  for zone in "${zones[@]}"; do
+    if [[ "$zone" == */* ]]; then region="${zone%%/*}"; else region="Прочие"; fi
+    counts["$region"]=$(( ${counts[$region]:-0} + 1 ))
+    if [[ -z "${seen[$region]:-}" ]]; then
+      seen["$region"]=1
+      regions+=("$region")
+    fi
+  done
+
+  for region in "${regions[@]}"; do
+    region_items+=("$region" "Часовых поясов: ${counts[$region]}")
+  done
+  pick="$(dialog --backtitle "$BACKTITLE" --title "Часовой пояс — регион" --default-item "$current_region" --menu "Сначала выберите регион." 24 92 14 "${region_items[@]}" 3>&1 1>&2 2>&3)" || return 1
+  region="$pick"
+
+  for zone in "${zones[@]}"; do
+    if [[ "$region" == "Прочие" ]]; then
+      [[ "$zone" != */* ]] || continue
+      zone_items+=("$zone" "Системный часовой пояс")
+    else
+      [[ "$zone" == "$region/"* ]] || continue
+      zone_items+=("$zone" "${zone#*/}")
+    fi
+  done
+  (( ${#zone_items[@]} > 0 )) || return 1
+  dialog --backtitle "$BACKTITLE" --title "Часовой пояс — $region" --default-item "$current" --menu "Выберите часовой пояс." 28 100 18 "${zone_items[@]}" 3>&1 1>&2 2>&3
+}
+
 timezone_menu(){
   local choice current zone
   while true; do
@@ -1464,12 +1506,8 @@ timezone_menu(){
         capture timedatectl list-timezones || true
         ;;
       3)
-        zone="$(input "Часовой пояс" "Введите точное имя часового пояса IANA:" "$current")" || continue
+        zone="$(select_timezone "$current")" || continue
         [[ -n "$zone" ]] || continue
-        if ! timedatectl list-timezones 2>/dev/null | grep -Fxq -- "$zone"; then
-          msg "Часовой пояс" "Неизвестный часовой пояс: $zone"
-          continue
-        fi
         confirm "Часовой пояс" "Изменить часовой пояс:\n$current → $zone ? " || continue
         if timedatectl set-timezone "$zone"; then
           msg "Часовой пояс" "Часовой пояс установлен: $zone\nМестное время: $(date '+%Y-%m-%d %H:%M:%S %Z')"
