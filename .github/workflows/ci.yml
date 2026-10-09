@@ -52,6 +52,7 @@ jobs:
           bash -n src/awg-mihomo-update
           bash -n src/awg-mihomo-config
           python3 -m py_compile src/awg-mihomo-provider.py
+          python3 -m py_compile src/awg-mihomo-pool.py
           bash -n tests/test-common.sh
           bash -n tests/test-transport.sh
           bash -n tests/test-bootstrap-fetch.sh
@@ -119,6 +120,7 @@ jobs:
           bash tests/test-diagnostics-hardening.sh
           bash tests/test-visible-inputs.sh
           python3 tests/test-mihomo-provider.py
+          python3 tests/test-mihomo-pool.py
           python3 tests/test-maintenance.py
           python3 tests/test-confirm.py
           python3 tests/test-menu.py
