@@ -38,6 +38,7 @@ required = [
     '"Citadel / Remnawave"',
     '"AUTO — пул узлов"',
     '"Фильтр: Только Европа',
+    '"Протокол пула узлов"',
     '"Проверка узлов Mihomo"',
     '"Формат подписки"',
     '"Mihomo / Clash YAML"',
@@ -134,6 +135,8 @@ assert '"$MIHOMO_CONFIGURE" provider candidate commit-auto "$node_name"' in menu
 assert 'не прошёл финальный health-check' in menu
 assert 'provider-url set-file "$url_tmp"' not in menu
 assert '"$MIHOMO_CONFIGURE" provider update auto' in menu
+assert '4 "Протокол пула узлов"' in menu
+assert 'Перед загрузкой большого источника можно ограничить проверку нужным протоколом.' in menu
 assert 'direct "DIRECT"' in menu
 assert 'router "Router/default"' not in menu
 assert 'сначала пробует DIRECT' in menu
@@ -192,6 +195,19 @@ assert 'MIHOMO_POOL=/usr/local/sbin/awg-mihomo-pool' in menu
 assert '"$MIHOMO_POOL" ensure "$target" --geo-if-policy' in menu
 assert '"$MIHOMO_POOL" policy set europe' in menu
 assert '"$MIHOMO_POOL" policy set all' in menu
+assert '"$MIHOMO_POOL" protocol get' in menu
+assert '"$MIHOMO_POOL" protocol set "$selected_protocol"' in menu
+assert 'mihomo_protocol_select(){' in menu
+assert 'mihomo_protocol_settings(){' in menu
+assert 'all "Все протоколы"' in menu
+assert 'vless "VLESS"' in menu
+assert 'trojan "Trojan"' in menu
+assert 'hysteria2 "Hysteria2"' in menu
+assert 'ss "Shadowsocks (SS)"' in menu
+assert 'vmess "VMess"' in menu
+assert 'Протокол [$protocol_label]' in menu
+assert 'Узлов в выбранном протоколе: $total' in menu
+assert 'Узлов в источнике: $source_total' in menu
 assert '"$MIHOMO_POOL" list live --ignore-policy' in menu
 assert 'Геофильтр «Только Европа» здесь намеренно не ограничивает список.' in menu
 assert '"$MIHOMO_NODE_POLICY" mode auto' in menu
