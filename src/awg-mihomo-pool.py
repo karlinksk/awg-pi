@@ -139,6 +139,17 @@ def clean_node(raw: object, index: int) -> dict:
     }
 
 
+def filter_provider_nodes(raw_nodes: list[dict], protocol_filter: str) -> list[dict]:
+    if protocol_filter == "all":
+        return list(raw_nodes)
+    return [
+        raw
+        for raw in raw_nodes
+        if isinstance(raw, dict)
+        and str(raw.get("type", "")).strip().casefold() == protocol_filter
+    ]
+
+
 def choose_free_port() -> int:
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     try:
@@ -352,15 +363,9 @@ def scan(target: str, geo: bool) -> dict:
     raw_nodes = read_provider(provider)
     source_total = len(raw_nodes)
     protocol_filter = read_protocol_policy()
-    if protocol_filter != "all":
-        raw_nodes = [
-            raw
-            for raw in raw_nodes
-            if isinstance(raw, dict)
-            and str(raw.get("type", "")).strip().casefold() == protocol_filter
-        ]
-        if not raw_nodes:
-            die(f"Mihomo provider has no nodes for protocol: {protocol_filter}", 1)
+    raw_nodes = filter_provider_nodes(raw_nodes, protocol_filter)
+    if not raw_nodes:
+        die(f"Mihomo provider has no nodes for protocol: {protocol_filter}", 1)
 
     mixed_port = choose_free_port()
     controller_port = choose_free_port()
