@@ -86,8 +86,25 @@ set -Eeuo pipefail
 printf 'update %s\n' "$*" >>"${MOCK_UPDATE_LOG:?}"
 [[ "${MOCK_UPDATE_FAIL:-0}" != 1 ]] || exit 1
 if [[ " $* " == *" --stage-only "* ]]; then
+  if [[ "${MOCK_UPDATE_UNCHANGED:-0}" == 1 ]]; then
+    rm -f "${MIHOMO_CANDIDATE_FILE:?}" "${MIHOMO_CANDIDATE_FETCH_FILE:?}" "${MIHOMO_CANDIDATE_FORMAT_FILE:?}"
+    printf 'MIHOMO_PROVIDER=UNCHANGED\n'
+    exit 0
+  fi
   mkdir -p "$(dirname "${MIHOMO_CANDIDATE_FILE:?}")"
-  printf 'candidate-provider\n' >"$MIHOMO_CANDIDATE_FILE"
+  cat >"$MIHOMO_CANDIDATE_FILE" <<'YAML'
+proxies:
+  - name: Current Node
+    type: vless
+    server: 198.51.100.10
+    port: 443
+    uuid: 11111111-1111-1111-1111-111111111111
+  - name: Best Node
+    type: vless
+    server: 198.51.100.20
+    port: 443
+    uuid: 22222222-2222-2222-2222-222222222222
+YAML
   printf 'file\n' >"${MIHOMO_CANDIDATE_FETCH_FILE:?}"
   printf 'mihomo\n' >"${MIHOMO_CANDIDATE_FORMAT_FILE:?}"
   printf 'MIHOMO_PROVIDER=STAGED\n'
@@ -134,6 +151,7 @@ cat >"$tmp/bin/pool" <<'MOCK'
 set -Eeuo pipefail
 case "${1:-}" in
   scan|ensure|clear)
+    [[ "${MOCK_POOL_SCAN_RC:-0}" == 0 ]] || exit "${MOCK_POOL_SCAN_RC}"
     exit 0
     ;;
   promote)
@@ -141,12 +159,23 @@ case "${1:-}" in
     ;;
   list)
     target="${2:-}"
+    if [[ " $* " == *" --format json "* ]]; then
+      if [[ "${MOCK_POOL_CURRENT_HEALTHY:-1}" == 1 ]]; then
+        printf '%s\n' '[{"name":"Current Node","healthy":true,"delay_ms":50},{"name":"Best Node","healthy":true,"delay_ms":20}]'
+      else
+        printf '%s\n' '[{"name":"Best Node","healthy":true,"delay_ms":20}]'
+      fi
+      exit 0
+    fi
     case "$target" in
       candidate) file="${MIHOMO_CANDIDATE_FILE:?}" ;;
       live) file="${MIHOMO_PROVIDER_FILE:?}" ;;
       *) exit 2 ;;
     esac
     python3 "${MOCK_PROVIDER_HELPER:?}" list "$file" --format tsv
+    ;;
+  best)
+    printf '%s\n' 'Best Node'
     ;;
   policy)
     case "${2:-}" in
@@ -179,6 +208,7 @@ run_cli(){
     MIHOMO_ENDPOINT_IP_FILE="$tmp/etc/endpoint-ip" \
     MIHOMO_EXPECTED_EGRESS_IP_FILE="$tmp/etc/expected-egress-ip" \
     MIHOMO_NODE_NAME_FILE="$tmp/etc/node-name" \
+    MIHOMO_NODE_POLICY_MODE_FILE="$tmp/etc/node-policy.mode" \
     MIHOMO_REMNAWAVE_HWID_FILE="$tmp/etc/remnawave.hwid" \
     MIHOMO_LAST_FETCH_FILE="$tmp/state/last-fetch-path" \
     MIHOMO_LAST_FORMAT_FILE="$tmp/state/last-provider-format" \
@@ -206,6 +236,10 @@ run_cli(){
     MOCK_INSTALL_LOG="$tmp/install.log" \
     MOCK_UPDATE_LOG="$tmp/update.log" \
     MOCK_UPDATE_FAIL="${MOCK_UPDATE_FAIL:-0}" \
+    MOCK_UPDATE_UNCHANGED="${MOCK_UPDATE_UNCHANGED:-0}" \
+    MOCK_POOL_CURRENT_HEALTHY="${MOCK_POOL_CURRENT_HEALTHY:-1}" \
+    MOCK_POOL_SCAN_RC="${MOCK_POOL_SCAN_RC:-0}" \
+    MIHOMO_PERIODIC_REFRESH="${MIHOMO_PERIODIC_REFRESH:-0}" \
     MOCK_CONFIG_FILE="$tmp/etc/config.yaml" \
     MOCK_PROVIDER_HELPER="$repo_root/src/awg-mihomo-provider.py" \
     MOCK_HEALTH="${MOCK_HEALTH:-up}" \
