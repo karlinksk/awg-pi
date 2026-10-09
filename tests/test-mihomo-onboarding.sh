@@ -52,6 +52,15 @@ set -Eeuo pipefail
 [[ "$*" == "rand -hex 16" ]] || exit 2
 printf '%s\n' 0123456789abcdef0123456789abcdef
 MOCK
+
+cat >"$tmp/bin/pool" <<'MOCK'
+#!/usr/bin/env bash
+set -Eeuo pipefail
+case "${1:-}" in
+  scan|clear|promote) exit 0 ;;
+  *) exit 2 ;;
+esac
+MOCK
 chmod +x "$tmp/bin/"*
 
 prepare_case(){
@@ -88,6 +97,8 @@ run_init(){
     MIHOMO_LAST_FETCH_FILE="$CASE/state/last-fetch-path" \
     MIHOMO_LAST_FORMAT_FILE="$CASE/state/last-provider-format" \
     MIHOMO_PROVIDER_HELPER="$repo_root/src/awg-mihomo-provider.py" \
+    MIHOMO_POOL_CLI="$tmp/bin/pool" \
+    MIHOMO_REMNAWAVE_HWID_FILE="$CASE/etc/remnawave.hwid" \
     MIHOMO_INSTALLER="$tmp/bin/installer" \
     MIHOMO_UPDATER="$tmp/bin/updater" \
     MIHOMO_BIN="$CASE/mihomo" \
@@ -137,6 +148,7 @@ grep -Fqx 'profile=remnawave' "$CASE/update.log"
 grep -Fqx 'suffix=mihomo' "$CASE/update.log"
 grep -Fqx 'has_hwid=yes' "$CASE/update.log"
 sudo grep -Fqx 'MIHOMO_PROVIDER_HWID=0123456789abcdef0123456789abcdef' "$CASE/state/providers/candidate.env"
+sudo grep -Fqx '0123456789abcdef0123456789abcdef' "$CASE/etc/remnawave.hwid"
 if grep -Fq '0123456789abcdef' <<<"$out"; then
   echo 'FAIL: generated HWID leaked in init output' >&2
   exit 1
@@ -148,6 +160,7 @@ write_init remnawave 'https://subscription.example/token' 'existing-hwid-1234567
 out="$(run_init)"
 grep -Fqx 'MIHOMO_HWID_GENERATED=0' <<<"$out"
 sudo grep -Fqx 'MIHOMO_PROVIDER_HWID=existing-hwid-12345678' "$CASE/state/providers/candidate.env"
+sudo grep -Fqx 'existing-hwid-12345678' "$CASE/etc/remnawave.hwid"
 
 echo "=== URL already ending in /mihomo is not doubled ==="
 prepare_case suffix

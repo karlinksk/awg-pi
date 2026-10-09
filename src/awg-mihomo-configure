@@ -21,6 +21,8 @@ MIHOMO_UPDATER="${MIHOMO_UPDATER:-/usr/local/sbin/awg-mihomo-update}"
 MIHOMO_PREPARE="${MIHOMO_PREPARE:-/usr/local/sbin/awg-mihomo-prepare}"
 MIHOMO_PROVIDER_HELPER="${MIHOMO_PROVIDER_HELPER:-/usr/local/lib/awg-pi/mihomo-provider.py}"
 MIHOMO_NODE_NAME_FILE="${MIHOMO_NODE_NAME_FILE:-/etc/awg-pbr/transports/mihomo/node-name}"
+MIHOMO_REMNAWAVE_HWID_FILE="${MIHOMO_REMNAWAVE_HWID_FILE:-/etc/awg-pbr/transports/mihomo/remnawave.hwid}"
+MIHOMO_POOL_CLI="${MIHOMO_POOL_CLI:-/usr/local/sbin/awg-mihomo-pool}"
 PYTHON_BIN="${PYTHON_BIN:-python3}"
 TRANSPORT_CLI="${AWG_TRANSPORT_CLI:-/usr/local/sbin/awg-transport}"
 SYSTEMCTL_BIN="${SYSTEMCTL_BIN:-systemctl}"
@@ -91,6 +93,60 @@ valid_ipv4(){
   for octet in "$a" "$b" "$c" "$d"; do
     (( 10#$octet >= 0 && 10#$octet <= 255 )) || return 1
   done
+}
+
+valid_hwid(){
+  [[ "${1:-}" =~ ^[A-Za-z0-9._:-]{8,128}$ ]]
+}
+
+persist_remnawave_hwid(){
+  local value="$1" dir tmp
+  valid_hwid "$value" || {
+    echo "MIHOMO_PROVIDER_HWID has an invalid format" >&2
+    return 2
+  }
+  dir="$(dirname "$MIHOMO_REMNAWAVE_HWID_FILE")"
+  mkdir -p "$dir"
+  chmod 700 "$dir"
+  tmp="$(mktemp "$dir/.remnawave-hwid.XXXXXX")"
+  printf '%s\n' "$value" >"$tmp"
+  chmod 600 "$tmp"
+  mv -f "$tmp" "$MIHOMO_REMNAWAVE_HWID_FILE"
+}
+
+saved_remnawave_hwid(){
+  local value=""
+  if [[ -r "$MIHOMO_REMNAWAVE_HWID_FILE" ]]; then
+    value="$(tr -d '\r\n' <"$MIHOMO_REMNAWAVE_HWID_FILE")"
+    valid_hwid "$value" || {
+      echo "Stored Remnawave HWID is invalid: $MIHOMO_REMNAWAVE_HWID_FILE" >&2
+      return 1
+    }
+    printf '%s\n' "$value"
+    return 0
+  fi
+  if [[ -r "$MIHOMO_ENV_FILE" ]]; then
+    value="$(
+      MIHOMO_PROVIDER_HWID=""
+      # shellcheck disable=SC1090
+      source "$MIHOMO_ENV_FILE"
+      printf '%s' "${MIHOMO_PROVIDER_HWID:-}"
+    )"
+    if [[ -n "$value" ]] && valid_hwid "$value"; then
+      persist_remnawave_hwid "$value"
+      printf '%s\n' "$value"
+      return 0
+    fi
+  fi
+  return 1
+}
+
+scan_candidate_pool(){
+  [[ -x "$MIHOMO_POOL_CLI" ]] || {
+    echo "Mihomo health-pool scanner is unavailable: $MIHOMO_POOL_CLI" >&2
+    return 2
+  }
+  "$MIHOMO_POOL_CLI" scan candidate --geo-if-policy
 }
 
 trusted_config_file(){
@@ -259,6 +315,7 @@ provider_update(){
   MIHOMO_BIN="$MIHOMO_BIN" \
   MIHOMO_PROVIDER_HELPER="$MIHOMO_PROVIDER_HELPER" \
     "$MIHOMO_UPDATER" --stage-only --mode "$mode"
+  scan_candidate_pool
   printf 'MIHOMO_PROVIDER_REFRESH=STAGED\n'
   printf 'NEXT=awg-mihomo-configure provider candidate list\n'
 }
@@ -289,6 +346,7 @@ prepare_candidate_env(){
 candidate_clear(){
   rm -f "$MIHOMO_CANDIDATE_FILE" "$MIHOMO_CANDIDATE_ENV_FILE" \
     "$MIHOMO_CANDIDATE_FETCH_FILE" "$MIHOMO_CANDIDATE_FORMAT_FILE"
+  [[ ! -x "$MIHOMO_POOL_CLI" ]] || "$MIHOMO_POOL_CLI" clear candidate >/dev/null 2>&1 || true
   printf 'MIHOMO_PROVIDER_CANDIDATE=CLEARED\n'
 }
 
@@ -309,7 +367,7 @@ restore_candidate_state(){
 }
 
 provider_stage_url_file(){
-  local source_file="$1" format_override="${2:-}" MIHOMO_PROVIDER_URL="" MIHOMO_PROVIDER_PROFILE=""
+  local source_file="$1" format_override="${2:-}" MIHOMO_PROVIDER_URL="" MIHOMO_PROVIDER_PROFILE="" MIHOMO_PROVIDER_HWID=""
   local snapshot rc new_url profile_override hwid=""
   trusted_config_file "$source_file" || {
     echo "Provider URL file must be root-owned mode 0600: $source_file" >&2
@@ -340,28 +398,27 @@ provider_stage_url_file(){
     write_env_key "$MIHOMO_CANDIDATE_ENV_FILE" MIHOMO_PROVIDER_PROFILE "$profile_override"
     case "$profile_override" in
       standard)
-        # Switching away from Citadel/Remnawave must not inherit its /mihomo
-        # suffix or HWID headers. Otherwise an ordinary URL is silently mutated
-        # and typically returns 404.
+        # Persist a previously issued Remnawave/Citadel device identity before
+        # removing provider-specific headers from the ordinary subscription.
+        saved_remnawave_hwid >/dev/null 2>&1 || true
         remove_env_key "$MIHOMO_CANDIDATE_ENV_FILE" MIHOMO_PROVIDER_HWID
         remove_env_key "$MIHOMO_CANDIDATE_ENV_FILE" MIHOMO_UPDATE_SUFFIX
         ;;
       remnawave)
-        hwid="$(
-          MIHOMO_PROVIDER_HWID=""
-          # shellcheck disable=SC1090
-          source "$MIHOMO_CANDIDATE_ENV_FILE"
-          printf '%s' "${MIHOMO_PROVIDER_HWID:-}"
-        )"
+        hwid="${MIHOMO_PROVIDER_HWID:-}"
+        if [[ -z "$hwid" ]]; then
+          hwid="$(saved_remnawave_hwid 2>/dev/null || true)"
+        fi
         if [[ -z "$hwid" ]]; then
           hwid="$("$OPENSSL_BIN" rand -hex 16)"
         fi
-        [[ "$hwid" =~ ^[A-Za-z0-9._:-]{8,128}$ ]] || {
+        valid_hwid "$hwid" || {
           restore_candidate_state "$snapshot"
           rm -rf "$snapshot"
           echo "MIHOMO_PROVIDER_HWID has an invalid format" >&2
           return 2
         }
+        persist_remnawave_hwid "$hwid"
         write_env_key "$MIHOMO_CANDIDATE_ENV_FILE" MIHOMO_PROVIDER_HWID "$hwid"
         if [[ "${new_url%/}" == */mihomo ]]; then
           remove_env_key "$MIHOMO_CANDIDATE_ENV_FILE" MIHOMO_UPDATE_SUFFIX
@@ -382,11 +439,12 @@ provider_stage_url_file(){
        MIHOMO_CANDIDATE_FETCH_FILE="$MIHOMO_CANDIDATE_FETCH_FILE" \
        MIHOMO_CANDIDATE_FORMAT_FILE="$MIHOMO_CANDIDATE_FORMAT_FILE" \
        MIHOMO_BIN="$MIHOMO_BIN" MIHOMO_PROVIDER_HELPER="$MIHOMO_PROVIDER_HELPER" \
-       "$MIHOMO_UPDATER" --stage-only --mode auto; then
+       "$MIHOMO_UPDATER" --stage-only --mode auto && scan_candidate_pool; then
     rc=0
   else
     rc=$?
     restore_candidate_state "$snapshot"
+    [[ ! -x "$MIHOMO_POOL_CLI" ]] || "$MIHOMO_POOL_CLI" clear candidate >/dev/null 2>&1 || true
   fi
   rm -rf "$snapshot"
   (( rc == 0 )) || return "$rc"
@@ -418,11 +476,12 @@ provider_stage_file(){
        MIHOMO_CANDIDATE_FETCH_FILE="$MIHOMO_CANDIDATE_FETCH_FILE" \
        MIHOMO_CANDIDATE_FORMAT_FILE="$MIHOMO_CANDIDATE_FORMAT_FILE" \
        MIHOMO_BIN="$MIHOMO_BIN" MIHOMO_PROVIDER_HELPER="$MIHOMO_PROVIDER_HELPER" \
-       "$MIHOMO_UPDATER" --stage-only --file "$file" --format "$format"; then
+       "$MIHOMO_UPDATER" --stage-only --file "$file" --format "$format" && scan_candidate_pool; then
     rc=0
   else
     rc=$?
     restore_candidate_state "$snapshot"
+    [[ ! -x "$MIHOMO_POOL_CLI" ]] || "$MIHOMO_POOL_CLI" clear candidate >/dev/null 2>&1 || true
   fi
   rm -rf "$snapshot"
   (( rc == 0 )) || return "$rc"
@@ -443,7 +502,8 @@ candidate_list(){
     echo "No staged Mihomo provider candidate" >&2
     return 1
   }
-  "$PYTHON_BIN" "$MIHOMO_PROVIDER_HELPER" list "$MIHOMO_CANDIDATE_FILE" --format tsv
+  "$MIHOMO_POOL_CLI" ensure candidate --geo-if-policy >/dev/null
+  "$MIHOMO_POOL_CLI" list candidate
 }
 
 candidate_prepare(){
@@ -560,6 +620,7 @@ candidate_commit(){
 
   trap - ERR
   rm -rf "$snapshot"
+  [[ ! -x "$MIHOMO_POOL_CLI" ]] || "$MIHOMO_POOL_CLI" promote >/dev/null 2>&1 || true
   candidate_clear >/dev/null
   printf 'MIHOMO_PROVIDER=COMMITTED\n'
   printf 'MIHOMO_NODE=%s\n' "$name"
@@ -644,7 +705,8 @@ node_list(){
     echo "Provider cache is missing: $MIHOMO_PROVIDER_FILE" >&2
     return 1
   }
-  "$PYTHON_BIN" "$MIHOMO_PROVIDER_HELPER" list "$MIHOMO_PROVIDER_FILE" --format tsv
+  "$MIHOMO_POOL_CLI" ensure live --geo-if-policy >/dev/null
+  "$MIHOMO_POOL_CLI" list live
 }
 
 node_prepare(){
@@ -850,15 +912,19 @@ init_cmd(){
     remnawave)
       hwid="${MIHOMO_PROVIDER_HWID:-}"
       if [[ -z "$hwid" ]]; then
+        hwid="$(saved_remnawave_hwid 2>/dev/null || true)"
+      fi
+      if [[ -z "$hwid" ]]; then
         hwid="$("$OPENSSL_BIN" rand -hex 16)"
         hwid_generated=1
       fi
-      [[ "$hwid" =~ ^[A-Za-z0-9._:-]{8,128}$ ]] || {
+      valid_hwid "$hwid" || {
         echo "MIHOMO_PROVIDER_HWID has an invalid format" >&2
         rm -f "$tmp_input" "$tmp_env"
         rm -rf "$snapshot"
         return 2
       }
+      persist_remnawave_hwid "$hwid"
       if [[ "${url%/}" != */mihomo ]]; then
         suffix=mihomo
       fi
@@ -914,6 +980,8 @@ init_cmd(){
   MIHOMO_BIN="$MIHOMO_BIN" \
   MIHOMO_PROVIDER_HELPER="$MIHOMO_PROVIDER_HELPER" \
     "$MIHOMO_UPDATER" --stage-only --mode auto --format "$provider_format"
+
+  scan_candidate_pool
 
   if [[ -r "$MIHOMO_CANDIDATE_FILE" && -r "$MIHOMO_PROVIDER_HELPER" ]]; then
     node_count="$("$PYTHON_BIN" "$MIHOMO_PROVIDER_HELPER" list "$MIHOMO_CANDIDATE_FILE" 2>/dev/null |

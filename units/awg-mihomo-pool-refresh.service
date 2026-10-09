@@ -1,0 +1,23 @@
+[Unit]
+Description=AWG Pi Gateway Mihomo live health-pool refresh
+Wants=network-online.target
+After=network-online.target
+ConditionPathExists=/usr/local/bin/mihomo
+ConditionPathExists=/var/lib/awg-pbr/mihomo/providers/subscription.yaml
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/awg-mihomo-pool scan live --geo-if-policy
+UMask=0077
+Nice=10
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictRealtime=true
+LockPersonality=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+ReadWritePaths=/run/awg-pbr

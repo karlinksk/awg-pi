@@ -34,13 +34,51 @@ esac
 MOCK
 chmod +x "$TMP/bin/configure"
 
+cat >"$TMP/bin/pool" <<'MOCK'
+#!/usr/bin/env bash
+set -Eeuo pipefail
+printf '%s\n' "$*" >>"${MOCK_POOL_LOG:?}"
+case "${1:-}" in
+  policy)
+    case "${2:-}" in
+      status) printf 'MIHOMO_POOL_REGION=europe\nEurope only: yes\n' ;;
+      get) printf 'europe\n' ;;
+      *) exit 2 ;;
+    esac
+    ;;
+  status)
+    printf 'Mihomo pool target: live\nPool state: ready\nNodes healthy: 2\nNodes Europe: 2\n'
+    ;;
+  ensure)
+    exit 0
+    ;;
+  cooldown)
+    exit 0
+    ;;
+  best)
+    if [[ " $* " == *" --exclude DE (backup)+1 "* ]]; then
+      printf '%s\n' 'NL [test]*'
+    else
+      printf '%s\n' 'DE (backup)+1'
+    fi
+    ;;
+  *)
+    exit 2
+    ;;
+esac
+MOCK
+chmod +x "$TMP/bin/pool"
+: >"$TMP/pool.log"
+
 run_policy(){
   sudo env \
     MIHOMO_NODE_POLICY_MODE_FILE="$TMP/etc/node-policy.mode" \
     MIHOMO_NODE_POLICY_ORDER_FILE="$TMP/etc/node-policy.nodes" \
     MIHOMO_NODE_NAME_FILE="$TMP/etc/node-name" \
     MIHOMO_CONFIGURE_BIN="$TMP/bin/configure" \
+    MIHOMO_POOL_CLI="$TMP/bin/pool" \
     MOCK_NODE_LOG="$TMP/log" \
+    MOCK_POOL_LOG="$TMP/pool.log" \
     MOCK_NODE_NAME_FILE="$TMP/etc/node-name" \
     MOCK_DE_OK="${MOCK_DE_OK:-1}" \
     MOCK_NL_OK="${MOCK_NL_OK:-1}" \
@@ -51,7 +89,7 @@ echo "=== MANUAL is the node-policy default ==="
 out="$(run_policy status)"
 grep -Fqx 'Mihomo node policy: manual' <<<"$out"
 grep -Fqx 'Automatic Mihomo node switching: disabled' <<<"$out"
-grep -Fqx 'Country inference: disabled' <<<"$out"
+grep -Fqx 'Country inference from node names: disabled' <<<"$out"
 
 echo "=== FIXED validates exact user-listed nodes ==="
 : >"$TMP/log"
@@ -127,6 +165,31 @@ if run_policy failover >"$TMP/out" 2>"$TMP/err"; then
   exit 1
 fi
 [[ ! -s "$TMP/log" ]]
+
+echo "=== AUTO uses health-pool best node and honors pool policy ==="
+printf '%s\n' '🇫🇮 Finland' | sudo tee "$TMP/etc/node-name" >/dev/null
+: >"$TMP/log"; : >"$TMP/pool.log"
+out="$(run_policy mode auto)"
+grep -Fqx 'MIHOMO_NODE_POLICY=auto' <<<"$out"
+run_policy enabled
+status="$(run_policy status)"
+grep -Fqx 'Mihomo node policy: auto' <<<"$status"
+grep -Fqx 'Automatic Mihomo node switching: health-pool AUTO' <<<"$status"
+grep -Fqx 'MIHOMO_POOL_REGION=europe' <<<"$status"
+out="$(run_policy failover)"
+grep -Fqx 'MIHOMO_NODE_FAILOVER=🇫🇮 Finland->DE (backup)+1' <<<"$out"
+grep -Fqx 'node select-auto DE (backup)+1' "$TMP/log"
+grep -Fq 'ensure live --geo-if-policy' "$TMP/pool.log"
+grep -Fq 'cooldown add 🇫🇮 Finland' "$TMP/pool.log"
+
+echo "=== AUTO cools a failed candidate and tries the next healthy node ==="
+printf '%s\n' '🇫🇮 Finland' | sudo tee "$TMP/etc/node-name" >/dev/null
+: >"$TMP/log"; : >"$TMP/pool.log"
+out="$(MOCK_DE_OK=0 MOCK_NL_OK=1 run_policy failover)"
+grep -Fqx 'MIHOMO_NODE_FAILOVER=🇫🇮 Finland->NL [test]*' <<<"$out"
+grep -Fqx 'node select-auto DE (backup)+1' "$TMP/log"
+grep -Fqx 'node select-auto NL [test]*' "$TMP/log"
+grep -Fq 'cooldown add DE (backup)+1' "$TMP/pool.log"
 
 echo "=== MANUAL clears the fallback allow-list ==="
 out="$(run_policy mode manual)"

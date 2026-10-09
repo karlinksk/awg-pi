@@ -37,6 +37,7 @@ MIHOMO_UPDATE_SCRIPT="/usr/local/sbin/awg-mihomo-update"
 MIHOMO_INSTALL_SCRIPT="/usr/local/sbin/awg-mihomo-install"
 MIHOMO_PREPARE_SCRIPT="/usr/local/sbin/awg-mihomo-prepare"
 MIHOMO_CONFIGURE_SCRIPT="/usr/local/sbin/awg-mihomo-configure"
+MIHOMO_POOL_CLI="/usr/local/sbin/awg-mihomo-pool"
 FIRST_RUN_CLI="/usr/local/sbin/awg-first-run"
 SELECTION_CLI="/usr/local/sbin/awg-selection"
 SELECTION_MONITOR="/usr/local/sbin/awg-selection-monitor"
@@ -658,6 +659,13 @@ curl -4fLsS --retry 3 --connect-timeout 8 --max-time 45 "$PROJECT_RAW_BASE/src/a
 python3 -m py_compile "$_mihomo_provider_tmp" || die "Ошибка синтаксиса awg-mihomo-provider.py"
 install -m 755 "$_mihomo_provider_tmp" /usr/local/lib/awg-pi/mihomo-provider.py
 rm -f "$_mihomo_provider_tmp"
+
+_mihomo_pool_tmp="$(mktemp)"
+curl -4fLsS --retry 3 --connect-timeout 8 --max-time 45 "$PROJECT_RAW_BASE/src/awg-mihomo-pool.py" -o "$_mihomo_pool_tmp" \
+  || die "Не удалось загрузить awg-mihomo-pool.py"
+python3 -m py_compile "$_mihomo_pool_tmp" || die "Ошибка синтаксиса awg-mihomo-pool.py"
+install -m 755 "$_mihomo_pool_tmp" "$MIHOMO_POOL_CLI"
+rm -f "$_mihomo_pool_tmp"
 install_project_helper src/awg-route "$ROUTE_CLI"
 install_project_helper src/awg-transport "$TRANSPORT_CLI"
 install_project_helper src/awg-fetch "$FETCH_CLI"
@@ -688,9 +696,27 @@ mkdir -p /etc/awg-pbr/transports/mihomo /var/lib/awg-pbr/mihomo/providers /var/l
 install -d -o root -g root -m 755 "$PUBLIC_VERSION_DIR"
 chmod 700 /etc/awg-pbr/sources /etc/awg-pbr/sources/opencck /etc/awg-pbr/sources/opencck/metadata
 chmod 700 /etc/awg-pbr/transports /etc/awg-pbr/transports/mihomo /var/lib/awg-pbr/mihomo /var/lib/awg-pbr/mihomo/providers /var/lib/awg-pbr/traffic
+
+# Migrate an already-issued Citadel/Remnawave device identity out of the
+# provider-specific env so switching to an ordinary subscription cannot lose it.
+if [[ ! -s /etc/awg-pbr/transports/mihomo/remnawave.hwid && -r /etc/awg-pbr/transports/mihomo/provider.env ]]; then
+  _existing_hwid="$(
+    MIHOMO_PROVIDER_HWID=""
+    # shellcheck disable=SC1091
+    source /etc/awg-pbr/transports/mihomo/provider.env
+    printf '%s' "${MIHOMO_PROVIDER_HWID:-}"
+  )"
+  if [[ "$_existing_hwid" =~ ^[A-Za-z0-9._:-]{8,128}$ ]]; then
+    printf '%s\n' "$_existing_hwid" >/etc/awg-pbr/transports/mihomo/remnawave.hwid
+    chmod 600 /etc/awg-pbr/transports/mihomo/remnawave.hwid
+  fi
+  unset _existing_hwid
+fi
 install_project_unit units/awg-mihomo.service /etc/systemd/system/awg-mihomo.service
 install_project_unit units/awg-mihomo-update.service /etc/systemd/system/awg-mihomo-update.service
 install_project_unit units/awg-mihomo-update.timer /etc/systemd/system/awg-mihomo-update.timer
+install_project_unit units/awg-mihomo-pool-refresh.service /etc/systemd/system/awg-mihomo-pool-refresh.service
+install_project_unit units/awg-mihomo-pool-refresh.timer /etc/systemd/system/awg-mihomo-pool-refresh.timer
 install_project_unit units/awg-selection-monitor.service /etc/systemd/system/awg-selection-monitor.service
 install_project_unit units/awg-traffic.service /etc/systemd/system/awg-traffic.service
 cat >/etc/systemd/system/awg-opencck-update.service <<'EOF'
@@ -766,6 +792,8 @@ for f in "$ROUTE_CLI" "$TRANSPORT_CLI" "$FETCH_CLI" "$MIHOMO_CONFIG_SCRIPT" "$MI
   [[ -x "$f" ]] || die "Не установлен исполняемый компонент: $f"
   bash -n "$f" || die "Синтаксическая проверка компонента не пройдена: $f"
 done
+[[ -x "$MIHOMO_POOL_CLI" ]] || die "Не установлен исполняемый компонент: $MIHOMO_POOL_CLI"
+python3 -m py_compile "$MIHOMO_POOL_CLI" || die "Синтаксическая проверка компонента не пройдена: $MIHOMO_POOL_CLI"
 ok "Компоненты управления v$AWG_PI_VERSION установлены"
 
 # -----------------------------------------------------------------------------
@@ -844,6 +872,15 @@ systemctl restart awg-traffic.service
 systemctl is-active --quiet awg-traffic.service || warn "traffic accounting не запустился; маршрутизация продолжит работу"
 systemctl start awg-opencck-update.timer
 systemctl is-active --quiet awg-opencck-update.timer || warn "OpenCCK timer не активен; ручное обновление останется доступно"
+
+# The health-pool timer is useful only after a Mihomo provider exists. Keep a
+# fresh AWG-only installation completely passive with respect to Mihomo.
+if [[ -r /var/lib/awg-pbr/mihomo/providers/subscription.yaml ]]; then
+  systemctl enable --now awg-mihomo-pool-refresh.timer >/dev/null
+  systemctl is-active --quiet awg-mihomo-pool-refresh.timer || warn "Mihomo health-pool timer не активен; ручная проверка останется доступна"
+else
+  systemctl disable --now awg-mihomo-pool-refresh.timer >/dev/null 2>&1 || true
+fi
 
 ACTIVE_TRANSPORT="$(cat "$TRANSPORT_FILE" 2>/dev/null || echo unconfigured)"
 if [[ "$ACTIVE_TRANSPORT" != unconfigured ]]; then

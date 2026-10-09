@@ -338,10 +338,12 @@ sudo grep -Fqx 'allow-lan: false' "$tmp/etc/config.yaml"
 grep -Fqx 'MIHOMO_CONFIG=UPDATED' "$tmp/prepare.out"
 
 echo "=== installer keeps Mihomo passive unless transport state explicitly selects it ==="
-if grep -Eq 'systemctl[[:space:]]+(enable|restart).*awg-mihomo' "$repo_root/install.sh"; then
-  echo 'FAIL: installer enables/restarts Mihomo as an implicit default' >&2
+if grep -Eq 'systemctl[[:space:]]+(enable|restart)([[:space:]]+--now)?[[:space:]]+["'\''"]?awg-mihomo\.service' "$repo_root/install.sh"; then
+  echo 'FAIL: installer enables/restarts the Mihomo transport as an implicit default' >&2
   exit 1
 fi
+grep -Fq 'if [[ -r /var/lib/awg-pbr/mihomo/providers/subscription.yaml ]]; then' "$repo_root/install.sh"
+grep -Fq 'systemctl enable --now awg-mihomo-pool-refresh.timer' "$repo_root/install.sh"
 grep -Fq 'ACTIVE_TRANSPORT="$(cat "$TRANSPORT_FILE" 2>/dev/null || echo unconfigured)"' "$repo_root/install.sh"
 grep -Fq 'systemctl start awg-mihomo.service' "$repo_root/install.sh"
 grep -Fq 'install_project_helper src/awg-mihomo-config' "$repo_root/install.sh"
