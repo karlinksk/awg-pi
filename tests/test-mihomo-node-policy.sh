@@ -189,7 +189,7 @@ grep -Fqx 'FIXED_CHAIN_UPDATED=yes' <<<"$out"
 grep -Fqx 'MIHOMO_NODE_ORDER=DE (backup)+1 -> NL [test]*' <<<"$out"
 sudo sed -n '1p' "$TMP/etc/node-policy.nodes" | grep -Fqx 'DE (backup)+1'
 sudo sed -n '2p' "$TMP/etc/node-policy.nodes" | grep -Fqx 'NL [test]*'
-[[ "$(sudo wc -l <"$TMP/etc/node-policy.nodes")" -eq 2 ]]
+[[ "$(sudo wc -l "$TMP/etc/node-policy.nodes" | awk '{print $1}')" -eq 2 ]]
 
 echo "=== manual selection of an external healthy node replaces only old primary ==="
 run_policy mode fixed '🇫🇮 Finland' 'DE (backup)+1' 'NL [test]*' >/dev/null
