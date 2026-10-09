@@ -11,6 +11,7 @@ AWG_SELECTION_INTERVAL="${AWG_SELECTION_INTERVAL:-10}"
 AWG_SELECTION_FAILURE_THRESHOLD="${AWG_SELECTION_FAILURE_THRESHOLD:-3}"
 LOGGER_BIN="${LOGGER_BIN:-logger}"
 SLEEP_BIN="${SLEEP_BIN:-sleep}"
+MAINTENANCE_LOCK="${AWG_LOCK_FILE:-/run/awg-maintenance.lock}"
 
 # shellcheck disable=SC1090
 source "$AWG_COMMON_FILE"
@@ -45,6 +46,15 @@ write_failures(){
 
 reset_failures(){
   write_failures 0
+}
+
+maintenance_in_progress(){
+  exec 8>"$MAINTENANCE_LOCK"
+  if flock -n 8; then
+    flock -u 8
+    return 1
+  fi
+  return 0
 }
 
 transport_healthy(){
@@ -102,6 +112,12 @@ try_failover(){
 
 selection_cycle(){
   local current failures node_policy_enabled=0 transport_policy_enabled=0
+
+  # Configuration/node transactions hold the same maintenance lock. Never
+  # interpret their intentional short outage as a real transport failure.
+  if maintenance_in_progress; then
+    return 0
+  fi
 
   if ! load_policy; then
     log_event "Invalid transport selection policy; transport auto-switching disabled"
