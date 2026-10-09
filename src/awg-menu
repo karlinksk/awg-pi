@@ -678,8 +678,87 @@ awg_config_menu(){
   done
 }
 
+mihomo_display_node_name(){
+  local name="$1" prefix
+  if [[ "$name" == *" "* ]]; then
+    prefix="\${name%% *}"
+    if [[ -n "$prefix" && "$prefix" != *[[:alnum:]]* ]]; then
+      printf '%s\n' "\${name#* }"
+      return 0
+    fi
+  fi
+  printf '%s\n' "$name"
+}
+
+mihomo_display_chain(){
+  local node shown first=1
+  for node in "$@"; do
+    shown="$(mihomo_display_node_name "$node")"
+    (( first == 1 )) || printf ' → '
+    printf '%s' "$shown"
+    first=0
+  done
+  printf '\n'
+}
+
+mihomo_pool_results_dialog(){
+  local target="$1" json_tmp
+  json_tmp="$(mktemp /run/awg-pbr/mihomo-results.XXXXXX.json)"
+  chmod 600 "$json_tmp"
+
+  if ! "$MIHOMO_POOL" list "$target" --all --ignore-policy --format json >"$json_tmp" 2>"$TMP"; then
+    rm -f "$json_tmp"
+    dialog --backtitle "$BACKTITLE" --title "Все результаты проверки Mihomo" --textbox "$TMP" 30 110
+    return 1
+  fi
+
+  python3 - "$json_tmp" >"$TMP" <<'PY'
+import json
+import sys
+
+path = sys.argv[1]
+with open(path, encoding="utf-8") as f:
+    nodes = json.load(f)
+
+def display_name(value):
+    value = str(value or "")
+    head, sep, tail = value.partition(" ")
+    if sep and head and not any(ch.isalnum() for ch in head):
+        return tail
+    return value
+
+def clip(value, width):
+    value = str(value or "")
+    if len(value) <= width:
+        return value
+    if width <= 1:
+        return value[:width]
+    return value[: width - 1] + "…"
+
+print(f"{'№':>3}  {'Узел':<22} {'Протокол':<9} {'Сервер':<31} {'Состояние':<12} {'Страна':<6} {'Задержка':>9}")
+print("-" * 101)
+
+for i, node in enumerate(nodes, 1):
+    name = clip(display_name(node.get("name")), 22)
+    proto = clip(node.get("type"), 9)
+    endpoint = clip(f"{node.get('server', '')}:{node.get('port', '')}", 31)
+    healthy = bool(node.get("healthy"))
+    state = "работает" if healthy else "недоступен"
+    country = node.get("country_code") or "—"
+    delay = f"{node.get('delay_ms')} мс" if isinstance(node.get("delay_ms"), int) else "—"
+    print(f"{i:>3}  {name:<22} {proto:<9} {endpoint:<31} {state:<12} {country:<6} {delay:>9}")
+    if not healthy:
+        reason = node.get("error") or node.get("geo_error") or ""
+        if reason:
+            print(f"     Причина: {reason}")
+PY
+  rm -f "$json_tmp"
+
+  dialog --backtitle "$BACKTITLE" --title "Все результаты проверки Mihomo" --textbox "$TMP" 32 112
+}
+
 select_tsv_node_dialog(){
-  local dialog_title="$1" prompt="$2" listing="$3" pick provider_idx ui_idx name type endpoint duplicate health country delay description tab
+  local dialog_title="$1" prompt="$2" listing="$3" pick provider_idx ui_idx name display_name type endpoint duplicate health country delay description tab
   local query="" filtered count total search_prompt
   local -a items=()
   local -A choice_name=()
@@ -704,12 +783,13 @@ select_tsv_node_dialog(){
       [[ "$provider_idx" =~ ^[0-9]+$ && -n "$name" ]] || continue
       ui_idx=$((ui_idx + 1))
       choice_name["$ui_idx"]="$name"
+      display_name="$(mihomo_display_node_name "$name")"
       description="$type | $endpoint"
       [[ -z "$country" || "$country" == "??" ]] || description="$description | страна выхода: $country"
       [[ -z "$delay" || "$delay" == "-" ]] || description="$description | $delay"
       [[ "$health" == DEAD ]] && description="$description | НЕДОСТУПЕН"
       [[ "$duplicate" == DUPLICATE ]] && description="$description | ДУБЛИКАТ ИМЕНИ"
-      items+=("$ui_idx" "$name — $description" "Выбрать этот узел Mihomo.")
+      items+=("$ui_idx" "$display_name — $description" "Выбрать этот узел Mihomo.")
     done <<<"$filtered"
     search_prompt="$prompt\n\nПоказано: $count из $total"
     [[ -z "$query" ]] || search_prompt="$search_prompt | поиск: $query"
@@ -824,8 +904,7 @@ mihomo_pool_pick(){
         mihomo_pool_status_dialog "$target" || true
         ;;
       5)
-        title="Все результаты проверки Mihomo"
-        capture "$MIHOMO_POOL" list "$target" --all --ignore-policy || true
+        mihomo_pool_results_dialog "$target" || true
         ;;
       0) return 1 ;;
     esac
@@ -897,12 +976,13 @@ select_manual_domain(){
   dialog --backtitle "$BACKTITLE" --title "$dialog_title" --item-help --menu "Выберите домен для удаления." 26 100 16 "${items[@]}" 3>&1 1>&2 2>&3
 }
 select_chain_index(){
-  local dialog_title="$1" prompt="$2" min="$3" max="$4" i pick
+  local dialog_title="$1" prompt="$2" min="$3" max="$4" i pick display_name
   shift 4
   local -a nodes=("$@") items=()
   for (( i=1; i<=${#nodes[@]}; i++ )); do
     (( i >= min && i <= max )) || continue
-    items+=("$i" "${nodes[i-1]}" "Выбрать этот элемент резервной цепочки.")
+    display_name="$(mihomo_display_node_name "${nodes[i-1]}")"
+    items+=("$i" "$display_name" "Выбрать этот элемент резервной цепочки.")
   done
   (( ${#items[@]} > 0 )) || return 1
   pick="$(dialog --backtitle "$BACKTITLE" --title "$dialog_title" --item-help --menu "$prompt" 22 100 12 "${items[@]}" 3>&1 1>&2 2>&3)" || return 1
@@ -1078,8 +1158,7 @@ mihomo_node_chain_editor(){
   while true; do
     chain="(пусто)"
     if (( ${#nodes[@]} > 0 )); then
-      chain="$(printf ' -> %s' "${nodes[@]}")"
-      chain="${chain# -> }"
+      chain="$(mihomo_display_chain "${nodes[@]}")"
     fi
     choice="$(dialog --backtitle "$BACKTITLE" --title "Цепочка резервных узлов Mihomo" --item-help --menu \
       "Текущая цепочка:\n$chain\n\nПри отказе переход выполняется только слева направо; автоматического возврата назад нет." 26 110 10 \
@@ -1129,7 +1208,7 @@ mihomo_node_chain_editor(){
         ;;
       5)
         (( ${#nodes[@]} >= 2 )) || { msg "Резервирование узлов Mihomo" "Для автоматического переключения при отказе нужно минимум два узла."; continue; }
-        chain="$(printf ' -> %s' "${nodes[@]}")"; chain="${chain# -> }"
+        chain="$(mihomo_display_chain "${nodes[@]}")"
         confirm "Применить цепочку FIXED" "Сохранить цепочку узлов:\n\n$chain\n\nАвтоматический переход разрешён только слева направо; страна узла не определяется автоматически." || continue
         title="Политика узлов Mihomo → FIXED"
         capture "$MIHOMO_NODE_POLICY" mode fixed "${nodes[@]}" || true
@@ -1142,7 +1221,7 @@ mihomo_node_chain_editor(){
       7)
         title="Живые узлы для FIXED"
         if run_with_progress "$title" "$MIHOMO_POOL" ensure live --geo-if-policy; then
-          capture "$MIHOMO_POOL" list live --ignore-policy || true
+          mihomo_pool_results_dialog live || true
         else
           dialog --backtitle "$BACKTITLE" --title "$title" --textbox "$TMP" 30 110
         fi
