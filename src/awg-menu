@@ -770,8 +770,11 @@ mihomo_pool_status_dialog(){
   msg "Статистика пула узлов Mihomo"     "Состояние: $state_ru\nФильтр региона: $region_ru\nВозраст последней проверки: $age\n\nВсего узлов: $total\nРаботоспособных: $healthy\nЕвропейских точек выхода: $europe\n\nОпределение фактической страны выхода: $geo_ru"
 }
 
+MIHOMO_POOL_PICKED_NODE=""
+
 mihomo_pool_pick(){
   local target="$1" dialog_title="$2" prompt="$3" choice region region_label listing node
+  MIHOMO_POOL_PICKED_NODE=""
   while true; do
     region="$("$MIHOMO_POOL" policy get 2>/dev/null || echo all)"
     if [[ "$region" == europe ]]; then
@@ -799,7 +802,7 @@ mihomo_pool_pick(){
           continue
         }
         node="$(select_tsv_node_dialog "$dialog_title" "$prompt" "$listing")" || continue
-        printf '%s\n' "$node"
+        MIHOMO_POOL_PICKED_NODE="$node"
         return 0
         ;;
       2)
@@ -909,7 +912,10 @@ select_chain_index(){
 mihomo_node_menu(){
   local node_name info_tmp current rc preview fixed_chain="" confirm_text sync_out updated_chain=""
 
-  node_name="$(mihomo_pool_pick live "Точка выхода Mihomo" "Выберите работоспособный узел. В строке показаны протокол, адрес, страна точки выхода и задержка.")" || return 0
+  if ! mihomo_pool_pick live "Точка выхода Mihomo" "Выберите работоспособный узел. В строке показаны протокол, адрес, страна точки выхода и задержка."; then
+    return 0
+  fi
+  node_name="$MIHOMO_POOL_PICKED_NODE"
   [[ -n "$node_name" ]] || { msg "Mihomo" "Имя узла не задано."; return 0; }
 
   info_tmp="$(mktemp)"
@@ -959,7 +965,10 @@ mihomo_node_menu(){
 mihomo_candidate_menu(){
   local behavior="${1:-normal}" node_name info_tmp current rc
 
-  node_name="$(mihomo_pool_pick candidate "Узел подготовленного профиля" "Выберите основной живой узел подготовленной подписки.")" || return 0
+  if ! mihomo_pool_pick candidate "Узел подготовленного профиля" "Выберите основной живой узел подготовленной подписки."; then
+    return 0
+  fi
+  node_name="$MIHOMO_POOL_PICKED_NODE"
   [[ -n "$node_name" ]] || { msg "Mihomo" "Имя узла не задано."; return 0; }
 
   info_tmp="$(mktemp)"
