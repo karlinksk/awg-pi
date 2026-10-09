@@ -870,7 +870,7 @@ select_chain_index(){
 }
 
 mihomo_node_menu(){
-  local node_name info_tmp current rc
+  local node_name info_tmp current rc preview fixed_chain="" confirm_text sync_out updated_chain=""
 
   node_name="$(mihomo_pool_pick live "Точка выхода Mihomo" "Выберите живой узел. В строке показаны тип, адрес, страна egress и задержка.")" || return 0
   [[ -n "$node_name" ]] || { msg "Mihomo" "Имя узла не задано."; return 0; }
@@ -885,7 +885,13 @@ mihomo_node_menu(){
   dialog --backtitle "$BACKTITLE" --title "Подготовка узла" --textbox "$info_tmp" 24 108
   rm -f "$info_tmp"
 
-  confirm "Применить узел Mihomo?"     "Узел: $node_name\nIPv4 сервера будет выбран автоматически из показанных данных профиля — повторно вводить его не нужно.\n\nОтдельное правило MikroTik для этого IP не требуется. Для исходящего трафика самой Pi действует постоянное DIRECT-исключение на уровне шлюза.\n\nЕсли Mihomo сейчас активен, маршрутизация клиентского трафика будет безопасно приостановлена и восстановлена после проверки нового узла." || return 0
+  preview="$("$MIHOMO_NODE_POLICY" manual-selection preview "$node_name" 2>/dev/null || true)"
+  fixed_chain="$(sed -n 's/^FIXED_CHAIN_NEW=//p' <<<"$preview" | head -n1)"
+  confirm_text="Узел: $node_name\nIPv4 сервера будет выбран автоматически из показанных данных профиля — повторно вводить его не нужно.\n\nОтдельное правило MikroTik для этого IP не требуется. Для исходящего трафика самой Pi действует постоянное DIRECT-исключение на уровне шлюза.\n\nЕсли Mihomo сейчас активен, маршрутизация клиентского трафика будет безопасно приостановлена и восстановлена после проверки нового узла."
+  if [[ -n "$fixed_chain" ]]; then
+    confirm_text="$confirm_text\n\nПолитика узлов: FIXED. После успешной проверки выбранный узел автоматически станет первым элементом цепочки, хвост сохранится:\n\n$fixed_chain"
+  fi
+  confirm "Применить узел Mihomo?" "$confirm_text" || return 0
 
   current="$("$AWG_TRANSPORT" get 2>/dev/null || echo unconfigured)"
   title="Выбор узла Mihomo"
@@ -895,10 +901,21 @@ mihomo_node_menu(){
     rc=$?
   fi
 
-  if (( rc == 0 )) && [[ "$current" != mihomo ]]; then
+  if (( rc == 0 )) && [[ -n "$fixed_chain" ]]; then
+    if sync_out="$("$MIHOMO_NODE_POLICY" manual-selection apply "$node_name" 2>&1)"; then
+      updated_chain="$(sed -n 's/^MIHOMO_NODE_ORDER=//p' <<<"$sync_out" | head -n1)"
+    else
+      msg "FIXED-цепочка Mihomo" "Узел успешно переключён, но автоматическое обновление головы FIXED-цепочки завершилось ошибкой. Проверьте «Резервирование узлов Mihomo → Показать политику» перед тестом отказоустойчивости."
+      return 0
+    fi
+  fi
+
+  if (( rc == 0 )) && [[ -n "$updated_chain" ]]; then
+    msg "Узел Mihomo" "Новый узел успешно применён.\n\nFIXED-цепочка автоматически обновлена:\n$updated_chain"
+  elif (( rc == 0 )) && [[ "$current" != mihomo ]]; then
     msg "Узел Mihomo" "Новый узел применён. Активный транспорт не изменён; при необходимости переключите его через «VPN-маршрутизация → Активный транспорт»."
   elif (( rc != 0 )); then
-    msg "Узел Mihomo" "Новый узел не применён; предыдущая конфигурация сохранена или восстановлена."
+    msg "Узел Mihomo" "Новый узел не применён; предыдущая конфигурация и FIXED-цепочка сохранены."
   fi
 }
 

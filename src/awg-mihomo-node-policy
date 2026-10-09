@@ -16,6 +16,8 @@ Usage:
   awg-mihomo-node-policy mode manual
   awg-mihomo-node-policy mode fixed NODE [FALLBACK_NODE...]
   awg-mihomo-node-policy mode auto
+  awg-mihomo-node-policy manual-selection preview NODE
+  awg-mihomo-node-policy manual-selection apply NODE
 
 FIXED uses exact node names from the current live provider. The first name is
 the preferred/primary node; later names form an explicit one-way fallback chain.
@@ -116,6 +118,89 @@ set_auto(){
   atomic_mode auto
   printf 'MIHOMO_NODE_POLICY=auto\n'
   "$MIHOMO_POOL_CLI" policy status 2>/dev/null || true
+}
+
+manual_selection_order(){
+  local selected="$1" mode first=1 node
+  local -a old_nodes=() new_nodes=()
+
+  validate_node_name "$selected" || {
+    echo "Invalid node name" >&2
+    return 2
+  }
+
+  mode="$(mode_get)" || return 1
+  [[ "$mode" == fixed ]] || {
+    printf 'FIXED_CHAIN_CHANGE=no\n'
+    return 0
+  }
+  [[ -s "$MIHOMO_NODE_POLICY_ORDER_FILE" ]] || {
+    echo "FIXED policy has no saved node order" >&2
+    return 1
+  }
+
+  mapfile -t old_nodes <"$MIHOMO_NODE_POLICY_ORDER_FILE"
+  new_nodes=("$selected")
+  # Manual selection replaces only the old primary (position 1). Preserve the
+  # existing tail exactly, except for a duplicate of the newly selected node.
+  for (( i=1; i<${#old_nodes[@]}; i++ )); do
+    node="${old_nodes[i]}"
+    [[ -n "$node" && "$node" != "$selected" ]] || continue
+    new_nodes+=("$node")
+  done
+
+  printf 'FIXED_CHAIN_CHANGE=yes\n'
+  printf 'FIXED_CHAIN_NEW='
+  for node in "${new_nodes[@]}"; do
+    (( first == 1 )) || printf ' -> '
+    printf '%s' "$node"
+    first=0
+  done
+  printf '\n'
+}
+
+manual_selection_apply(){
+  local selected="$1" current node
+  local -a old_nodes=() new_nodes=()
+
+  validate_node_name "$selected" || {
+    echo "Invalid node name" >&2
+    return 2
+  }
+
+  [[ "$(mode_get)" == fixed ]] || {
+    printf 'FIXED_CHAIN_UPDATED=no\n'
+    return 0
+  }
+  [[ -s "$MIHOMO_NODE_POLICY_ORDER_FILE" ]] || {
+    echo "FIXED policy has no saved node order" >&2
+    return 1
+  }
+
+  current="$(cat "$MIHOMO_NODE_NAME_FILE" 2>/dev/null || true)"
+  [[ "$current" == "$selected" ]] || {
+    echo "Refusing FIXED head update: selected node is not the active Mihomo node" >&2
+    return 1
+  }
+
+  mapfile -t old_nodes <"$MIHOMO_NODE_POLICY_ORDER_FILE"
+  new_nodes=("$selected")
+  for (( i=1; i<${#old_nodes[@]}; i++ )); do
+    node="${old_nodes[i]}"
+    [[ -n "$node" && "$node" != "$selected" ]] || continue
+    new_nodes+=("$node")
+  done
+
+  atomic_order "${new_nodes[@]}"
+  printf 'FIXED_CHAIN_UPDATED=yes\n'
+  printf 'MIHOMO_NODE_ORDER='
+  local first=1
+  for node in "${new_nodes[@]}"; do
+    (( first == 1 )) || printf ' -> '
+    printf '%s' "$node"
+    first=0
+  done
+  printf '\n'
 }
 
 status(){
@@ -230,6 +315,22 @@ case "${1:-status}" in
   status)
     [[ $# -eq 1 ]] || { usage >&2; exit 2; }
     status
+    ;;
+  manual-selection)
+    case "${2:-}" in
+      preview)
+        [[ $# -eq 3 ]] || { usage >&2; exit 2; }
+        manual_selection_order "$3"
+        ;;
+      apply)
+        [[ $# -eq 3 ]] || { usage >&2; exit 2; }
+        manual_selection_apply "$3"
+        ;;
+      *)
+        usage >&2
+        exit 2
+        ;;
+    esac
     ;;
   mode)
     case "${2:-}" in
