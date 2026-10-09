@@ -85,8 +85,12 @@ assert '5 "OpenCCK"' not in main_block
 assert 'OpenCCK — расширенно' in menu
 assert 'поддерживаемой версии Mihomo' in main_block
 
-# Provider/subscription staging remains transactional.
-assert '--passwordbox "$prompt"' in menu
+# Provider/subscription staging remains transactional. Setup input is visible
+# by design; secrets remain redacted only after they have been applied.
+assert '--passwordbox' not in menu
+assert '--insecure' not in menu
+assert 'secret_input' not in menu
+assert 'Ввод отображается полностью.' in menu
 assert '"$MIHOMO_CONFIGURE" provider stage-url-file "$url_tmp"' in menu
 assert '"$MIHOMO_CONFIGURE" provider stage-file "$path" "$source_mode"' in menu
 assert '"$MIHOMO_CONFIGURE" provider candidate commit-auto "$node_name"' in menu
@@ -203,11 +207,13 @@ assert '"$MIHOMO_CONFIGURE" provider candidate clear' in menu
 assert 'mihomo_initial_setup_flow secondary' in menu
 assert 'Citadel / Remnawave' in menu
 
-# Secret URL entry remains masked but gives visible feedback for typing/paste.
-assert '--insecure --passwordbox "$prompt"' in menu
-assert 'Введённые символы отображаются как *' in menu
+# URL entry is intentionally visible during setup, while post-apply handling
+# stays file-based and ordinary status/diagnostics continue to redact it.
+assert 'Введённые символы отображаются как *' not in menu
+assert 'После применения полный URL не выводится в обычном статусе и диагностике.' in menu
+assert 'содержимым' in menu or 'содержимое отображается полностью' in menu
 
-# Secret URL handling stays file-based.
+# URL handling stays file-based.
 assert 'mktemp /run/awg-pbr/mihomo-url.XXXXXX' in menu
 assert 'chmod 600 "$url_tmp"' in menu
 assert "printf 'MIHOMO_PROVIDER_URL=%q\\n' \"$url\" >\"$url_tmp\"" in menu
