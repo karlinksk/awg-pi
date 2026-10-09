@@ -399,6 +399,15 @@ provider_auto_refresh(){
   policy="$(cat "$MIHOMO_NODE_POLICY_MODE_FILE" 2>/dev/null || echo manual)"
   case "$policy" in manual|fixed|auto) ;; *) policy=manual ;; esac
 
+  # FIXED is an explicit exact-name contract. A provider refresh could remove
+  # or redefine a fallback node even when the current head still works, so it
+  # is never promoted unattended.
+  if [[ "$policy" == fixed ]]; then
+    printf 'MIHOMO_PROVIDER_AUTO_REFRESH=STAGED_FIXED_REVIEW\n'
+    printf 'LIVE_PROVIDER=UNCHANGED\n'
+    return 0
+  fi
+
   candidate_json="$("$MIHOMO_POOL_CLI" list candidate --format json 2>/dev/null || true)"
   selected=""
   reason=""
@@ -411,11 +420,6 @@ provider_auto_refresh(){
       auto)
         selected="$("$MIHOMO_POOL_CLI" best candidate 2>/dev/null || true)"
         [[ -n "$selected" ]] && reason="auto-best"
-        ;;
-      fixed)
-        printf 'MIHOMO_PROVIDER_AUTO_REFRESH=STAGED_FIXED_REVIEW\n'
-        printf 'LIVE_PROVIDER=UNCHANGED\n'
-        return 0
         ;;
       *)
         printf 'MIHOMO_PROVIDER_AUTO_REFRESH=STAGED_CURRENT_UNAVAILABLE\n'
