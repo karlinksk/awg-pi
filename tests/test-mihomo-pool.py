@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import hashlib
+import importlib.util
 import json
 import os
 from pathlib import Path
@@ -11,6 +12,52 @@ import time
 ROOT = Path(__file__).resolve().parents[1]
 CLI = ROOT / "src" / "awg-mihomo-pool.py"
 
+
+spec = importlib.util.spec_from_file_location("awg_mihomo_pool", CLI)
+assert spec is not None and spec.loader is not None
+poolmod = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(poolmod)
+
+
+class FakeProc:
+    stdout = None
+
+    @staticmethod
+    def poll():
+        return None
+
+
+print("=== probe waits for complete Mihomo controller inventory ===")
+inventory_calls = {"count": 0}
+
+
+def fake_controller_request(_port, path, **_kwargs):
+    assert path == "/proxies"
+    inventory_calls["count"] += 1
+    if inventory_calls["count"] == 1:
+        return {"proxies": {"AWG-PROBE-000001": {}}}
+    return {
+        "proxies": {
+            "AWG-PROBE-000001": {},
+            "AWG-PROBE-000002": {},
+        }
+    }
+
+
+real_controller_request = poolmod.controller_request
+poolmod.controller_request = fake_controller_request
+try:
+    loaded = poolmod.wait_probe_inventory(
+        FakeProc(),
+        9090,
+        ["AWG-PROBE-000001", "AWG-PROBE-000002"],
+        timeout=0.5,
+    )
+finally:
+    poolmod.controller_request = real_controller_request
+
+assert loaded == {"AWG-PROBE-000001", "AWG-PROBE-000002"}
+assert inventory_calls["count"] >= 2
 
 def run(env, *args, check=True):
     result = subprocess.run(
