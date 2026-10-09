@@ -332,6 +332,7 @@ cat >"$tmp/bin/render" <<'MOCK'
 #!/usr/bin/env bash
 cat <<'YAML'
 mixed-port: 7890
+external-controller: 127.0.0.1:9090
 allow-lan: false
 rules:
   - MATCH,DIRECT
