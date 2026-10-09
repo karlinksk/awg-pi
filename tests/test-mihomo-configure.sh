@@ -154,7 +154,7 @@ case "${1:-}" in
     [[ "${MOCK_POOL_SCAN_RC:-0}" == 0 ]] || exit "${MOCK_POOL_SCAN_RC}"
     exit 0
     ;;
-  promote)
+  promote|snapshot)
     exit 0
     ;;
   list)
