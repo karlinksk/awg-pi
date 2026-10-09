@@ -254,7 +254,8 @@ assert 'содержимым' in menu or 'содержимое отобража�
 # URL handling stays file-based.
 assert 'mktemp /run/awg-pbr/mihomo-url.XXXXXX' in menu
 assert 'chmod 600 "$url_tmp"' in menu
-assert "printf 'MIHOMO_PROVIDER_URL=%q\\n' \"$url\" >\"$url_tmp\"" in menu
+assert "printf 'MIHOMO_PROVIDER_URL=%q\\n' \"$url\"" in menu
+assert "printf 'MIHOMO_PROVIDER_PROFILE=%q\\n' \"$profile\"" in menu
 assert 'provider-url set "$url"' not in menu
 assert 'mktemp /run/awg-pbr/mihomo-init.XXXXXX' in menu
 assert 'chmod 600 "$init_tmp"' in menu
