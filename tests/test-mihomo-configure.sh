@@ -368,7 +368,7 @@ printf 'offline-profile\n' >"$tmp/local-provider.txt"
 : >"$tmp/update.log"
 out="$(run_cli provider stage-file "$tmp/local-provider.txt" keep-source)"
 grep -Fqx 'MIHOMO_PROVIDER_SOURCE=keep-source' <<<"$out"
-sudo grep -Fqx 'MIHOMO_PROVIDER_URL=https://live.example/token' "$tmp/state/providers/candidate.env"
+sudo grep -Fqx 'MIHOMO_PROVIDER_URL=https://plain.example/subscription.yaml' "$tmp/state/providers/candidate.env"
 grep -Fq "update --stage-only --file $tmp/local-provider.txt" "$tmp/update.log"
 
 echo "=== local-only staged provider removes network source ==="
