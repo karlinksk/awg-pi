@@ -122,7 +122,7 @@ with tempfile.TemporaryDirectory() as td:
     assert not missing.exists()
 
 refresh_unit = (ROOT / "units" / "awg-mihomo-pool-refresh.service").read_text(encoding="utf-8")
-assert "SuccessExitStatus=3" in refresh_unit
+assert "SuccessExitStatus=3 143" in refresh_unit
 
 
 def run(env, *args, check=True):
