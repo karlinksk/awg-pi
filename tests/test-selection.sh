@@ -5,6 +5,8 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 TMP="$(mktemp -d)"
 trap 'sudo rm -rf "$TMP"' EXIT
 mkdir -p "$TMP/bin" "$TMP/run"
+: >"$TMP/run/maintenance.lock"
+chmod 666 "$TMP/run/maintenance.lock"
 printf '%s\n' awg >"$TMP/transport"
 : >"$TMP/log"
 
