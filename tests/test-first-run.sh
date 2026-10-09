@@ -172,6 +172,13 @@ mode_line="$(grep -n -F 'log "[11b/12] Operating Mode selection"' "$ROOT/install
 grep -Fq '1) AmneziaWG / WireGuard .conf — файл' "$ROOT/src/awg-first-run"
 grep -Fq '2) AmneziaWG / WireGuard .conf — вставить текст' "$ROOT/src/awg-first-run"
 grep -Fq '3) Mihomo / VLESS — URL подписки' "$ROOT/src/awg-first-run"
+if grep -Eq 'read -r -s|secret_ask' "$ROOT/src/awg-first-run"; then
+  echo 'FAIL: first-run still masks setup input' >&2
+  exit 1
+fi
+grep -Fq 'Вставьте полный URL подписки (ввод отображается)' "$ROOT/src/awg-first-run"
+grep -Fq 'AmneziaWG / WireGuard .conf (ввод отображается полностью)' "$ROOT/src/awg-first-run"
+grep -Fq 'Mihomo YAML, VLESS URI или Base64-подписку (ввод отображается полностью)' "$ROOT/src/awg-first-run"
 grep -Fq '4) Mihomo — профиль/подписка из локального файла' "$ROOT/src/awg-first-run"
 grep -Fq '5) Mihomo — вставить профиль/подписку текстом' "$ROOT/src/awg-first-run"
 grep -Fq '6) Пока ничего не настраивать' "$ROOT/src/awg-first-run"
