@@ -872,10 +872,16 @@ mihomo_protocol_settings(){
 }
 
 mihomo_pool_status_dialog(){
-  local target="$1" raw region protocol state age source_total total healthy europe geo region_ru protocol_ru state_ru geo_ru
+  local target="$1" raw region protocol state age source_total total healthy europe geo region_ru protocol_ru state_ru geo_ru target_ru title_text
+
+  case "$target" in
+    live) target_ru="рабочий профиль"; title_text="Статистика рабочего пула Mihomo" ;;
+    candidate) target_ru="подготовленный профиль"; title_text="Статистика подготовленного пула Mihomo" ;;
+    *) target_ru="$target"; title_text="Статистика пула узлов Mihomo" ;;
+  esac
 
   if ! raw="$("$MIHOMO_POOL" status "$target" 2>&1)"; then
-    msg "Статистика пула узлов Mihomo" "Не удалось получить состояние пула узлов.\n\n$raw"
+    msg "$title_text" "Не удалось получить состояние пула узлов.\n\n$raw"
     return 1
   fi
 
@@ -912,7 +918,7 @@ mihomo_pool_status_dialog(){
   [[ -n "$healthy" ]] || healthy="0"
   [[ -n "$europe" ]] || europe="0"
 
-  msg "Статистика пула узлов Mihomo"     "Состояние: $state_ru\nФильтр региона: $region_ru\nПротокол: $protocol_ru\nВозраст последней проверки: $age\n\nУзлов в источнике: $source_total\nУзлов в выбранном протоколе: $total\nРаботоспособных: $healthy\nЕвропейских точек выхода: $europe\n\nОпределение фактической страны выхода: $geo_ru"
+  msg "$title_text"     "Пул: $target_ru\nСостояние: $state_ru\nФильтр региона: $region_ru\nПротокол: $protocol_ru\nВозраст последней проверки: $age\n\nУзлов в источнике: $source_total\nУзлов в выбранном протоколе: $total\nРаботоспособных: $healthy\nЕвропейских точек выхода: $europe\n\nОпределение фактической страны выхода: $geo_ru"
 }
 
 MIHOMO_POOL_PICKED_NODE=""
@@ -1114,8 +1120,30 @@ mihomo_node_menu(){
   fi
 }
 
+mihomo_candidate_is_staged(){
+  "$MIHOMO_CONFIGURE" status 2>/dev/null | grep -Fqx 'Provider candidate: staged'
+}
+
+mihomo_candidate_require(){
+  if mihomo_candidate_is_staged; then
+    return 0
+  fi
+  msg "Подготовленный профиль Mihomo" "Подготовленного профиля сейчас нет.\n\nПосле успешного применения временный candidate становится рабочим профилем и автоматически удаляется.\n\nДля фильтрации, поиска, статистики и выбора узлов текущего профиля используйте «Точка выхода / узел»."
+  return 1
+}
+
+mihomo_open_candidate_after_update(){
+  if mihomo_candidate_is_staged; then
+    mihomo_candidate_menu
+  else
+    msg "Обновление источника Mihomo" "Источник не изменился, поэтому новый подготовленный профиль не создавался. Текущий рабочий профиль и выбранный узел сохранены."
+  fi
+}
+
 mihomo_candidate_menu(){
   local behavior="${1:-normal}" node_name info_tmp current rc
+
+  mihomo_candidate_require || return 0
 
   if ! mihomo_pool_pick candidate "Узел подготовленного профиля" "Выберите основной живой узел подготовленной подписки."; then
     return 0
@@ -1453,7 +1481,7 @@ mihomo_replace_subscription(){
 mihomo_update_auto(){
   title="Обновление источника Mihomo — AUTO"
   if capture "$MIHOMO_CONFIGURE" provider update auto; then
-    mihomo_candidate_menu
+    mihomo_open_candidate_after_update
   fi
 }
 
@@ -1474,7 +1502,7 @@ mihomo_update_selected_channel(){
   esac
   title="Обновление источника Mihomo — $fetch_label"
   if capture "$MIHOMO_CONFIGURE" provider update "$fetch_mode"; then
-    mihomo_candidate_menu
+    mihomo_open_candidate_after_update
   fi
 }
 
@@ -1572,13 +1600,20 @@ active_transport_menu(){
 }
 
 mihomo_advanced_menu(){
-  local choice provider_format path
+  local choice provider_format path candidate_label candidate_help
   while true; do
+    if mihomo_candidate_is_staged; then
+      candidate_label="Подготовленный профиль [ЕСТЬ]"
+      candidate_help="Вернуться к уже загруженному и проверенному профилю, выбрать узел и применить его."
+    else
+      candidate_label="Подготовленный профиль [НЕТ]"
+      candidate_help="Сейчас подготовленного профиля нет. После применения candidate становится рабочим профилем и удаляется."
+    fi
     choice="$(dialog --backtitle "$BACKTITLE" --title "Mihomo — Расширенные / восстановление" --item-help --menu \
       "Технические и восстановительные функции. Для обычной работы используйте «Подписка / источник», «Точка выхода / узел» и «Резервирование узлов Mihomo»." 24 112 8 \
       1 "Обновить через выбранный канал" "Принудительно выбрать DIRECT / Mihomo / AWG только для одной загрузки подписки, без автоматического перехода на резервный канал." \
       2 "Формат подписки" "Вручную выбрать AUTO / Mihomo YAML / VLESS URI / Base64 VLESS, если автоопределение работает неоднозначно." \
-      3 "Подготовленный профиль" "Вернуться к уже загруженному и проверенному профилю, выбрать узел и применить его." \
+      3 "$candidate_label" "$candidate_help" \
       4 "Локальное восстановление Mihomo (.gz)" "Установить локальный архив только для поддерживаемой версии Mihomo после проверки версии и SHA256." \
       0 "Назад" "Вернуться в меню Mihomo." 3>&1 1>&2 2>&3)" || return 0
 
@@ -1590,7 +1625,7 @@ mihomo_advanced_menu(){
         confirm "Формат подписки" "Загрузить текущий URL в формате «$provider_format» как подготовленный профиль?\n\nРабочий профиль не изменится до выбора узла и успешной проверки." || continue
         title="Подготовка профиля Mihomo"
         if capture "$MIHOMO_CONFIGURE" provider format set "$provider_format"; then
-          mihomo_candidate_menu
+          mihomo_open_candidate_after_update
         fi
         ;;
       3) mihomo_candidate_menu ;;
