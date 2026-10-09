@@ -320,15 +320,15 @@ sudo test -e "$tmp/state/providers/candidate.yaml"
 grep -Fq 'update --stage-only --mode auto' "$tmp/update.log"
 
 echo "=== switching Remnawave URL to standard clears inherited suffix/HWID ==="
-sudo sh -c "printf '%s\n' \
-  'MIHOMO_PROVIDER_URL=https://citadel.example/token' \
-  'MIHOMO_PROVIDER_PROFILE=remnawave' \
-  'MIHOMO_PROVIDER_FORMAT=auto' \
-  'MIHOMO_PROVIDER_HWID=0123456789abcdef0123456789abcdef' \
+sudo sh -c "printf '%s\n' \\
+  'MIHOMO_PROVIDER_URL=https://citadel.example/token' \\
+  'MIHOMO_PROVIDER_PROFILE=remnawave' \\
+  'MIHOMO_PROVIDER_FORMAT=auto' \\
+  'MIHOMO_PROVIDER_HWID=0123456789abcdef0123456789abcdef' \\
   'MIHOMO_UPDATE_SUFFIX=mihomo' >'$tmp/etc/provider.env'"
 sudo chmod 600 "$tmp/etc/provider.env"
-sudo sh -c "printf '%s\n' \
-  'MIHOMO_PROVIDER_URL=https://raw.example/subscription.yaml' \
+sudo sh -c "printf '%s\n' \\
+  'MIHOMO_PROVIDER_URL=https://raw.example/subscription.yaml' \\
   'MIHOMO_PROVIDER_PROFILE=standard' >'$tmp/etc/stage-url.env'"
 sudo chmod 600 "$tmp/etc/stage-url.env"
 : >"$tmp/update.log"
@@ -347,13 +347,13 @@ if sudo grep -q '^MIHOMO_PROVIDER_HWID=' "$tmp/state/providers/candidate.env"; t
 fi
 
 echo "=== switching standard URL to Remnawave creates stable staging metadata ==="
-sudo sh -c "printf '%s\n' \
-  'MIHOMO_PROVIDER_URL=https://plain.example/subscription.yaml' \
-  'MIHOMO_PROVIDER_PROFILE=standard' \
+sudo sh -c "printf '%s\n' \\
+  'MIHOMO_PROVIDER_URL=https://plain.example/subscription.yaml' \\
+  'MIHOMO_PROVIDER_PROFILE=standard' \\
   'MIHOMO_PROVIDER_FORMAT=auto' >'$tmp/etc/provider.env'"
 sudo chmod 600 "$tmp/etc/provider.env"
-sudo sh -c "printf '%s\n' \
-  'MIHOMO_PROVIDER_URL=https://new-citadel.example/token' \
+sudo sh -c "printf '%s\n' \\
+  'MIHOMO_PROVIDER_URL=https://new-citadel.example/token' \\
   'MIHOMO_PROVIDER_PROFILE=remnawave' >'$tmp/etc/stage-url.env'"
 sudo chmod 600 "$tmp/etc/stage-url.env"
 : >"$tmp/update.log"
@@ -361,116 +361,12 @@ out="$(run_cli provider stage-url-file "$tmp/etc/stage-url.env")"
 grep -Fqx 'MIHOMO_PROVIDER_SOURCE=URL_STAGED' <<<"$out"
 sudo grep -Fqx 'MIHOMO_PROVIDER_PROFILE=remnawave' "$tmp/state/providers/candidate.env"
 sudo grep -Fqx 'MIHOMO_UPDATE_SUFFIX=mihomo' "$tmp/state/providers/candidate.env"
-sudo grep -Eq '^MIHOMO_PROVIDER_HWID=[A-Za-z0-9._:-]{8,128}: >"$tmp/update.log"
-out="$(run_cli provider stage-file "$tmp/local-provider.txt" keep-source)"
-grep -Fqx 'MIHOMO_PROVIDER_SOURCE=keep-source' <<<"$out"
-sudo grep -Fqx 'MIHOMO_PROVIDER_URL=https://live.example/token' "$tmp/state/providers/candidate.env"
-grep -Fq "update --stage-only --file $tmp/local-provider.txt" "$tmp/update.log"
+sudo grep -Eq "^MIHOMO_PROVIDER_HWID=[A-Za-z0-9._:-]{8,128}$" "$tmp/state/providers/candidate.env"
 
-echo "=== local-only staged provider removes network source ==="
-: >"$tmp/update.log"
-out="$(run_cli provider stage-file "$tmp/local-provider.txt" local-only)"
-grep -Fqx 'MIHOMO_PROVIDER_SOURCE=local-only' <<<"$out"
-if sudo grep -q '^MIHOMO_PROVIDER_URL=' "$tmp/state/providers/candidate.env"; then
-  echo 'FAIL: local-only candidate retained provider URL' >&2
-  exit 1
-fi
-if sudo grep -q '^MIHOMO_UPDATE_SUFFIX=' "$tmp/state/providers/candidate.env"; then
-  echo 'FAIL: local-only candidate retained URL suffix' >&2
-  exit 1
-fi
-
-echo "=== failed local staging preserves previous candidate ==="
-sudo cp "$tmp/state/providers/candidate.env" "$tmp/candidate-env.before"
-sudo cp "$tmp/state/providers/candidate.yaml" "$tmp/candidate-provider.before"
-if MOCK_UPDATE_FAIL=1 run_cli provider stage-file "$tmp/local-provider.txt" local-only >"$tmp/out" 2>"$tmp/err"; then
-  echo 'FAIL: failed local staging unexpectedly succeeded' >&2
-  exit 1
-fi
-sudo cmp -s "$tmp/candidate-env.before" "$tmp/state/providers/candidate.env"
-sudo cmp -s "$tmp/candidate-provider.before" "$tmp/state/providers/candidate.yaml"
-
-echo "=== provider format change is staged, not live ==="
-sudo sh -c "printf '%s\n' 'MIHOMO_PROVIDER_URL=https://file.example/private-token' 'MIHOMO_PROVIDER_FORMAT=auto' >'$tmp/etc/provider.env'"
-sudo chmod 600 "$tmp/etc/provider.env"
-: >"$tmp/update.log"
-out="$(run_cli provider format set vless)"
-sudo grep -Fqx 'MIHOMO_PROVIDER_FORMAT=auto' "$tmp/etc/provider.env"
-sudo grep -Fqx 'MIHOMO_PROVIDER_FORMAT=vless' "$tmp/state/providers/candidate.env"
-grep -Fq 'update --stage-only --mode auto' "$tmp/update.log"
-grep -Fqx 'MIHOMO_PROVIDER_FORMAT=vless-STAGED' <<<"$out"
-
-echo "=== failed provider format staging preserves live and prior candidate ==="
-sudo cp "$tmp/state/providers/candidate.env" "$tmp/candidate-env.before"
-sudo cp "$tmp/state/providers/candidate.yaml" "$tmp/candidate-provider.before"
-if MOCK_UPDATE_FAIL=1 run_cli provider format set base64 >"$tmp/out" 2>"$tmp/err"; then
-  echo 'FAIL: failed provider format staging was accepted' >&2
-  exit 1
-fi
-sudo grep -Fqx 'MIHOMO_PROVIDER_FORMAT=auto' "$tmp/etc/provider.env"
-sudo cmp -s "$tmp/candidate-env.before" "$tmp/state/providers/candidate.env"
-sudo cmp -s "$tmp/candidate-provider.before" "$tmp/state/providers/candidate.yaml"
-
-echo "=== staged candidate list/prepare/commit is atomic ==="
-sudo sh -c "cat >'$tmp/state/providers/candidate.yaml' <<'YAML'
-proxies:
-  - name: Candidate Finland
-    type: vless
-    server: 45.86.66.171
-    port: 443
-    uuid: 11111111-1111-1111-1111-111111111111
-YAML"
-sudo sh -c "printf '%s\n' 'MIHOMO_PROVIDER_URL=https://candidate.example/token' 'MIHOMO_PROVIDER_FORMAT=auto' >'$tmp/state/providers/candidate.env'"
-sudo sh -c "printf '%s\n' file >'$tmp/state/candidate-fetch-path'; printf '%s\n' mihomo >'$tmp/state/candidate-provider-format'"
-sudo chmod 600 "$tmp/state/providers/candidate.yaml" "$tmp/state/providers/candidate.env" "$tmp/state/candidate-fetch-path" "$tmp/state/candidate-provider-format"
-out="$(run_cli provider candidate list)"
-grep -Fq $'Candidate Finland\tvless\t45.86.66.171:443' <<<"$out"
-out="$(run_cli provider candidate prepare 'Candidate Finland')"
-grep -Fq '45.86.66.171' <<<"$out"
-sudo sh -c "printf '%s\n' awg >'$tmp/transport'"
-out="$(run_cli provider candidate commit-auto 'Candidate Finland')"
-grep -Fqx 'MIHOMO_PROVIDER=COMMITTED' <<<"$out"
-grep -Fqx 'MIHOMO_HEALTH=healthy' <<<"$out"
-grep -Fqx 'ACTIVE_TRANSPORT=awg' <<<"$out"
-sudo grep -Fq 'name: Candidate Finland' "$tmp/state/providers/subscription.yaml"
-sudo grep -Fqx '45.86.66.171' "$tmp/etc/endpoint-ip"
-sudo grep -Fqx 'Candidate Finland' "$tmp/etc/node-name"
-sudo grep -Fq 'MIHOMO_PROVIDER_URL=https://candidate.example/token' "$tmp/etc/provider.env"
-sudo test ! -e "$tmp/state/providers/candidate.yaml"
-sudo test ! -e "$tmp/state/providers/candidate.env"
-
-echo "=== failed candidate commit restores live and preserves candidate ==="
-sudo cp "$tmp/state/providers/subscription.yaml" "$tmp/live-provider.before"
-sudo cp "$tmp/etc/provider.env" "$tmp/live-env.before"
-sudo cp "$tmp/etc/endpoint-ip" "$tmp/live-endpoint.before"
-sudo sh -c "cat >'$tmp/state/providers/candidate.yaml' <<'YAML'
-proxies:
-  - name: Broken Candidate
-    type: vless
-    server: 203.0.113.88
-    port: 443
-    uuid: 22222222-2222-2222-2222-222222222222
-YAML"
-sudo sh -c "printf '%s\n' 'MIHOMO_PROVIDER_URL=https://broken-candidate.example/token' >'$tmp/state/providers/candidate.env'"
-sudo chmod 600 "$tmp/state/providers/candidate.yaml" "$tmp/state/providers/candidate.env"
-if MOCK_HEALTH=down run_cli provider candidate commit 'Broken Candidate' 203.0.113.88 >"$tmp/out" 2>"$tmp/err"; then
-  echo 'FAIL: unhealthy candidate commit succeeded' >&2
-  exit 1
-fi
-sudo cmp -s "$tmp/live-provider.before" "$tmp/state/providers/subscription.yaml"
-sudo cmp -s "$tmp/live-env.before" "$tmp/etc/provider.env"
-sudo cmp -s "$tmp/live-endpoint.before" "$tmp/etc/endpoint-ip"
-sudo test -e "$tmp/state/providers/candidate.yaml"
-grep -Fq 'candidate preserved' "$tmp/err"
-grep -Fq 'Mihomo health-check failed after 3 attempts.' "$tmp/err"
-
-echo "mihomo configure transaction: OK"
- "$tmp/state/providers/candidate.env"
-
-# Restore a plain live URL for the existing keep-source regression below.
-sudo sh -c "printf '%s\n' \
-  'MIHOMO_PROVIDER_URL=https://live.example/token' \
-  'MIHOMO_PROVIDER_PROFILE=standard' \
+# Restore the original live source for the existing keep-source regression below.
+sudo sh -c "printf '%s\n' \\
+  'MIHOMO_PROVIDER_URL=https://live.example/token' \\
+  'MIHOMO_PROVIDER_PROFILE=standard' \\
   'MIHOMO_PROVIDER_FORMAT=auto' >'$tmp/etc/provider.env'"
 sudo chmod 600 "$tmp/etc/provider.env"
 
