@@ -85,6 +85,16 @@ set -Eeuo pipefail
 exit 0
 MOCK
 
+cat >"$tmp/bin/ss" <<'MOCK'
+#!/usr/bin/env bash
+set -Eeuo pipefail
+port=""
+[[ "$*" =~ sport[[:space:]]=[[:space:]]:([0-9]+) ]] && port="${BASH_REMATCH[1]}" || true
+if [[ -n "${MOCK_BUSY_PORT:-}" && "$port" == "$MOCK_BUSY_PORT" ]]; then
+  printf 'tcp LISTEN 0 4096 127.0.0.1:%s 0.0.0.0:* users:(("legacy-mihomo",pid=567,fd=8))\n' "$port"
+fi
+MOCK
+
 cat >"$tmp/bin/systemctl" <<'MOCK'
 #!/usr/bin/env bash
 set -Eeuo pipefail
@@ -322,6 +332,7 @@ cat >"$tmp/bin/render" <<'MOCK'
 #!/usr/bin/env bash
 cat <<'YAML'
 mixed-port: 7890
+external-controller: 127.0.0.1:9090
 allow-lan: false
 rules:
   - MATCH,DIRECT
@@ -336,6 +347,33 @@ sudo env \
   bash "$repo_root/src/awg-mihomo-prepare" >"$tmp/prepare.out"
 sudo grep -Fqx 'allow-lan: false' "$tmp/etc/config.yaml"
 grep -Fqx 'MIHOMO_CONFIG=UPDATED' "$tmp/prepare.out"
+
+echo "=== service bind preflight rejects a conflicting legacy listener ==="
+if sudo env \
+  MIHOMO_BIN="$tmp/bin/mihomo" \
+  MIHOMO_RENDERER="$tmp/bin/render" \
+  MIHOMO_CONFIG_FILE="$tmp/etc/config.yaml" \
+  MIHOMO_STATE_DIR="$tmp/state" \
+  SS_BIN="$tmp/bin/ss" \
+  MOCK_BUSY_PORT=7890 \
+  bash "$repo_root/src/awg-mihomo-prepare" --check-bind >"$tmp/bind.out" 2>"$tmp/bind.err"; then
+  echo 'FAIL: occupied Mihomo port was accepted' >&2
+  exit 1
+fi
+grep -Fq 'Mihomo listen port is already in use: 7890' "$tmp/bind.err"
+grep -Fq 'legacy-mihomo' "$tmp/bind.err"
+
+echo "=== service bind preflight accepts free ports ==="
+sudo env \
+  MIHOMO_BIN="$tmp/bin/mihomo" \
+  MIHOMO_RENDERER="$tmp/bin/render" \
+  MIHOMO_CONFIG_FILE="$tmp/etc/config.yaml" \
+  MIHOMO_STATE_DIR="$tmp/state" \
+  SS_BIN="$tmp/bin/ss" \
+  bash "$repo_root/src/awg-mihomo-prepare" --check-bind >"$tmp/bind-free.out"
+grep -Eq '^MIHOMO_CONFIG=(UPDATED|UNCHANGED)$' "$tmp/bind-free.out"
+
+grep -Fqx 'ExecStartPre=/usr/local/sbin/awg-mihomo-prepare --check-bind' "$repo_root/units/awg-mihomo.service"
 
 echo "=== installer keeps Mihomo passive unless transport state explicitly selects it ==="
 if grep -Eq 'systemctl[[:space:]]+(enable|restart)([[:space:]]+--now)?[[:space:]]+["'\''"]?awg-mihomo\.service' "$repo_root/install.sh"; then

@@ -7,6 +7,21 @@ MIHOMO_BIN="${MIHOMO_BIN:-/usr/local/bin/mihomo}"
 MIHOMO_RENDERER="${MIHOMO_RENDERER:-/usr/local/sbin/awg-mihomo-config}"
 MIHOMO_CONFIG_FILE="${MIHOMO_CONFIG_FILE:-/etc/awg-pbr/transports/mihomo/config.yaml}"
 MIHOMO_STATE_DIR="${MIHOMO_STATE_DIR:-/var/lib/awg-pbr/mihomo}"
+SS_BIN="${SS_BIN:-/usr/bin/ss}"
+CHECK_BIND=0
+
+case "${1:-}" in
+  "") ;;
+  --check-bind) CHECK_BIND=1 ;;
+  *)
+    echo "Usage: awg-mihomo-prepare [--check-bind]" >&2
+    exit 2
+    ;;
+esac
+[[ $# -le 1 ]] || {
+  echo "Usage: awg-mihomo-prepare [--check-bind]" >&2
+  exit 2
+}
 
 [[ -x "$MIHOMO_BIN" ]] || {
   echo "Mihomo binary is unavailable: $MIHOMO_BIN" >&2
@@ -25,6 +40,30 @@ trap 'rm -f "$tmp"' EXIT
 
 "$MIHOMO_RENDERER" >"$tmp"
 "$MIHOMO_BIN" -t -d "$MIHOMO_STATE_DIR" -f "$tmp" >/dev/null
+
+if (( CHECK_BIND == 1 )); then
+  [[ -x "$SS_BIN" ]] || {
+    echo "Socket inspection tool is unavailable: $SS_BIN" >&2
+    exit 2
+  }
+  mixed_port="$(awk '$1 == "mixed-port:" {print $2; exit}' "$tmp")"
+  controller="$(awk '$1 == "external-controller:" {print $2; exit}' "$tmp")"
+  controller_port="${controller##*:}"
+  for port in "$mixed_port" "$controller_port"; do
+    [[ "$port" =~ ^[0-9]+$ ]] || {
+      echo "Unable to determine Mihomo listen port from rendered config" >&2
+      exit 2
+    }
+    [[ "$port" != "${checked_port:-}" ]] || continue
+    checked_port="$port"
+    listeners="$("$SS_BIN" -H -lntup "( sport = :$port )" 2>/dev/null || true)"
+    if [[ -n "$listeners" ]]; then
+      echo "Mihomo listen port is already in use: $port" >&2
+      printf '%s\n' "$listeners" >&2
+      exit 1
+    fi
+  done
+fi
 
 if [[ -r "$MIHOMO_CONFIG_FILE" ]] && cmp -s "$tmp" "$MIHOMO_CONFIG_FILE"; then
   echo "MIHOMO_CONFIG=UNCHANGED"
