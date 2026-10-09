@@ -634,7 +634,7 @@ run_diagnostics(){
     echo "=== AWG Gateway diagnostics ==="
     echo "Date: $(date -Is)"
     echo "Host: $(hostname)"
-    echo "Version: $(cat /etc/awg-pbr/version 2>/dev/null || echo unknown)"
+    echo "Version: $(cat /usr/share/awg-pbr/version 2>/dev/null || cat /etc/awg-pbr/version 2>/dev/null || echo unknown)"
     echo "Operating mode: $diag_mode_label"
     echo "Mode ID: $diag_mode"
     echo "Active transport: $transport_id"
