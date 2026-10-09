@@ -21,12 +21,17 @@ grep -Fq 'FIRST_RUN_CLI="/usr/local/sbin/awg-first-run"' install.sh
 grep -Fq '"$FIRST_RUN_CLI" wizard' install.sh
 grep -Fq 'Active transport не настроен. Это допустимое recovery-состояние' install.sh
 
-# Installed version is public metadata and must be readable without sudo.
-grep -Fq 'chmod 644 /etc/awg-pbr/version' install.sh
-if grep -Fq 'chmod 600 /etc/awg-pbr/version' install.sh; then
-  echo 'FAIL: version file is not world-readable' >&2
-  exit 1
-fi
+# Installed version is public metadata. Keep /etc/awg-pbr private and
+# publish a separate world-readable copy under /usr/share.
+grep -Fq 'PUBLIC_VERSION_DIR="/usr/share/awg-pbr"' install.sh
+grep -Fq 'PUBLIC_VERSION_FILE="$PUBLIC_VERSION_DIR/version"' install.sh
+grep -Fq 'chmod 700 "$CONF_DIR" "$PBR_DIR"' install.sh
+grep -Fq 'install -d -o root -g root -m 755 "$PUBLIC_VERSION_DIR"' install.sh
+grep -Fq 'install -o root -g root -m 644 "$VERSION_FILE" "$PUBLIC_VERSION_FILE"' install.sh
+grep -Fq 'cat /usr/share/awg-pbr/version 2>/dev/null || cat /etc/awg-pbr/version' src/awg-menu
+grep -Fq 'cat /usr/share/awg-pbr/version 2>/dev/null || cat /etc/awg-pbr/version' src/awg-route
+grep -Fq 'PUBLIC_VERSION_FILE=/usr/share/awg-pbr/version' src/awg-update
+grep -Fq 'usr/share/awg-pbr' src/awg-update
 
 # Interactive confirmations must tolerate CR/whitespace from SSH terminals and
 # accept common English/Russian affirmative forms.

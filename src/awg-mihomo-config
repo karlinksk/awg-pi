@@ -118,7 +118,7 @@ rules:
 tun:
   enable: true
   device: $MIHOMO_TUN_IF
-  stack: mixed
+  stack: mips
   auto-route: false
   auto-redirect: false
   auto-detect-interface: true

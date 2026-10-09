@@ -13,6 +13,9 @@ CONF_DIR="/etc/amnezia/amneziawg"
 CONF_FILE="$CONF_DIR/$VPN_IF.conf"
 SRC_ROOT="/opt/amneziawg-src"
 PBR_DIR="/etc/awg-pbr"
+VERSION_FILE="$PBR_DIR/version"
+PUBLIC_VERSION_DIR="/usr/share/awg-pbr"
+PUBLIC_VERSION_FILE="$PUBLIC_VERSION_DIR/version"
 ENV_FILE="$PBR_DIR/env"
 VPN_DOMAINS="$PBR_DIR/vpn-domains.txt"
 DIRECT_DOMAINS="$PBR_DIR/direct-domains.txt"
@@ -144,7 +147,7 @@ UPGRADE_EXISTING=0
 ACTIVATE_TRANSIT_AFTER_INSTALL=0
 AUTO_UPGRADE="${AWG_PI_UPGRADE_AUTO:-0}"
 AUTO_TRANSIT="${AWG_PI_UPGRADE_TRANSIT:-}"
-EXISTING_VERSION="$(cat /etc/awg-pbr/version 2>/dev/null || true)"
+EXISTING_VERSION="$(cat "$PUBLIC_VERSION_FILE" 2>/dev/null || cat "$VERSION_FILE" 2>/dev/null || true)"
 MODE_PREEXISTED=0
 [[ -f "$MODE_FILE" ]] && MODE_PREEXISTED=1
 if [[ -f "$ENV_FILE" ]]; then
@@ -682,6 +685,7 @@ install_project_helper src/awg-menu /usr/local/sbin/awg-menu
 
 mkdir -p /etc/awg-pbr/sources/opencck/metadata
 mkdir -p /etc/awg-pbr/transports/mihomo /var/lib/awg-pbr/mihomo/providers /var/lib/awg-pbr/traffic
+install -d -o root -g root -m 755 "$PUBLIC_VERSION_DIR"
 chmod 700 /etc/awg-pbr/sources /etc/awg-pbr/sources/opencck /etc/awg-pbr/sources/opencck/metadata
 chmod 700 /etc/awg-pbr/transports /etc/awg-pbr/transports/mihomo /var/lib/awg-pbr/mihomo /var/lib/awg-pbr/mihomo/providers /var/lib/awg-pbr/traffic
 install_project_unit units/awg-mihomo.service /etc/systemd/system/awg-mihomo.service
@@ -894,9 +898,10 @@ log "[12/12] Полная диагностика"
 
 # Publish the new installed version before diagnostics so the final report
 # reflects the version whose components are actually running. Transactional
-# update rollback restores the previous /etc/awg-pbr tree if this stage fails.
-printf '%s\n' "$AWG_PI_VERSION" >/etc/awg-pbr/version
-chmod 644 /etc/awg-pbr/version
+# update rollback restores both private state and public version metadata if this stage fails.
+printf '%s\n' "$AWG_PI_VERSION" >"$VERSION_FILE"
+chmod 644 "$VERSION_FILE"
+install -o root -g root -m 644 "$VERSION_FILE" "$PUBLIC_VERSION_FILE"
 ok "Версия AWG Pi Gateway зафиксирована: $AWG_PI_VERSION"
 
 "$ROUTE_CLI" reload

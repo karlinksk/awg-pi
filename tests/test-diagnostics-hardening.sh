@@ -34,10 +34,11 @@ if grep -Fq 'echo "--- AWG ---"' "$ROUTE"; then
 fi
 
 echo "=== installer publishes version before diagnostics ==="
-version_line="$(grep -n -F "printf '%s\\n' \"\$AWG_PI_VERSION\" >/etc/awg-pbr/version" "$INSTALL" | head -1 | cut -d: -f1)"
+version_line="$(grep -n -F "printf '%s\\n' \"\$AWG_PI_VERSION\" >\"\$VERSION_FILE\"" "$INSTALL" | head -1 | cut -d: -f1)"
+public_version_line="$(grep -n -F 'install -o root -g root -m 644 "$VERSION_FILE" "$PUBLIC_VERSION_FILE"' "$INSTALL" | head -1 | cut -d: -f1)"
 diag_line="$(grep -n -F '"$ROUTE_CLI" diagnostics' "$INSTALL" | head -1 | cut -d: -f1)"
-[[ -n "$version_line" && -n "$diag_line" ]]
-(( version_line < diag_line ))
+[[ -n "$version_line" && -n "$public_version_line" && -n "$diag_line" ]]
+(( version_line < public_version_line && public_version_line < diag_line ))
 
 echo "=== stale v1.2 installer labels removed ==="
 if grep -Fq 'CLI v1.2.0 + Transit + OpenCCK + SSH TUI' "$INSTALL"; then
