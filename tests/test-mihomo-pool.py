@@ -326,6 +326,11 @@ with tempfile.TemporaryDirectory() as td:
     promoted = json.loads(live_pool.read_text(encoding="utf-8"))
     assert promoted["target"] == "live"
     assert not candidate_pool.exists()
+    assert not live_snapshot.exists()
+
+    print("=== explicit unsandboxed snapshot sync persists LKG ===")
+    sync = run(env, "snapshot", "sync").stdout
+    assert "MIHOMO_POOL_SNAPSHOT=UPDATED" in sync
     assert live_snapshot.is_file()
 
     print("=== reboot restores compressed last-known-good live pool ===")

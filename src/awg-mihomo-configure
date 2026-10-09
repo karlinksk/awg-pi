@@ -775,7 +775,10 @@ candidate_commit(){
 
   trap - ERR
   rm -rf "$snapshot"
-  [[ ! -x "$MIHOMO_POOL_CLI" ]] || "$MIHOMO_POOL_CLI" promote >/dev/null 2>&1 || true
+  if [[ -x "$MIHOMO_POOL_CLI" ]]; then
+    "$MIHOMO_POOL_CLI" promote >/dev/null 2>&1 || true
+    "$MIHOMO_POOL_CLI" snapshot sync >/dev/null 2>&1 || true
+  fi
   candidate_clear >/dev/null
   printf 'MIHOMO_PROVIDER=COMMITTED\n'
   printf 'MIHOMO_NODE=%s\n' "$name"
