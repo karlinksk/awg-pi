@@ -43,6 +43,8 @@ WORKERS = max(1, min(64, int(os.environ.get("MIHOMO_POOL_WORKERS", "8"))))
 READY_TIMEOUT = max(1.0, float(os.environ.get("MIHOMO_POOL_READY_TIMEOUT", "15")))
 COOLDOWN_SECONDS = int(os.environ.get("MIHOMO_POOL_COOLDOWN_SECONDS", "900"))
 
+PROTOCOLS = {"all", "vless", "trojan", "hysteria2", "ss", "vmess"}
+
 # Geographic Europe, intentionally excluding RU for the anti-blocking pool.
 EUROPE_CODES = {
     "AD", "AL", "AT", "AX", "BA", "BE", "BG", "BY", "CH", "CY", "CZ",
@@ -348,6 +350,18 @@ def scan(target: str, geo: bool) -> dict:
         die(f"Mihomo binary is unavailable: {MIHOMO_BIN}", 1)
 
     raw_nodes = read_provider(provider)
+    source_total = len(raw_nodes)
+    protocol_filter = read_protocol_policy()
+    if protocol_filter != "all":
+        raw_nodes = [
+            raw
+            for raw in raw_nodes
+            if isinstance(raw, dict)
+            and str(raw.get("type", "")).strip().casefold() == protocol_filter
+        ]
+        if not raw_nodes:
+            die(f"Mihomo provider has no nodes for protocol: {protocol_filter}", 1)
+
     mixed_port = choose_free_port()
     controller_port = choose_free_port()
     while controller_port == mixed_port:
@@ -469,11 +483,13 @@ def scan(target: str, geo: bool) -> dict:
         })
 
     payload = {
-        "version": 1,
+        "version": 2,
         "target": target,
         "provider_sha256": sha256_file(provider),
         "scanned_at": now,
         "geo_enriched": geo,
+        "protocol_filter": protocol_filter,
+        "source_total": source_total,
         "total": len(result_nodes),
         "healthy": sum(1 for x in result_nodes if x.get("healthy")),
         "europe": sum(1 for x in result_nodes if x.get("healthy") and x.get("europe")),
@@ -481,6 +497,8 @@ def scan(target: str, geo: bool) -> dict:
     }
     atomic_json(pool_path, payload)
     print(f"MIHOMO_POOL_TARGET={target}")
+    print(f"MIHOMO_POOL_PROTOCOL={protocol_filter}")
+    print(f"MIHOMO_POOL_SOURCE_TOTAL={source_total}")
     print(f"MIHOMO_POOL_TOTAL={payload['total']}")
     print(f"MIHOMO_POOL_HEALTHY={payload['healthy']}")
     print(f"MIHOMO_POOL_EUROPE={payload['europe']}")
@@ -498,6 +516,8 @@ def pool_current(target: str, require_geo: bool = False) -> bool:
         pool = load_json(pool_path)
         if pool.get("provider_sha256") != sha256_file(provider):
             return False
+        if pool.get("protocol_filter", "all") != read_protocol_policy():
+            return False
         if require_geo and not pool.get("geo_enriched"):
             return False
         return True
@@ -505,27 +525,44 @@ def pool_current(target: str, require_geo: bool = False) -> bool:
         return False
 
 
-def read_policy() -> str:
+def read_policy_values() -> tuple[str, str]:
+    region = "all"
+    protocol = "all"
     try:
         for line in POLICY_FILE.read_text(encoding="utf-8").splitlines():
             if line.startswith("MIHOMO_POOL_REGION="):
                 value = line.split("=", 1)[1].strip()
                 if value in {"all", "europe"}:
-                    return value
+                    region = value
+            elif line.startswith("MIHOMO_POOL_PROTOCOL="):
+                value = line.split("=", 1)[1].strip().casefold()
+                if value in PROTOCOLS:
+                    protocol = value
     except OSError:
         pass
-    return "all"
+    return region, protocol
 
 
-def write_policy(value: str) -> None:
-    if value not in {"all", "europe"}:
+def read_policy() -> str:
+    return read_policy_values()[0]
+
+
+def read_protocol_policy() -> str:
+    return read_policy_values()[1]
+
+
+def write_policy_values(region: str, protocol: str) -> None:
+    if region not in {"all", "europe"}:
         die("Pool region must be all or europe")
+    if protocol not in PROTOCOLS:
+        die("Unsupported Mihomo pool protocol")
     POLICY_FILE.parent.mkdir(parents=True, exist_ok=True)
     os.chmod(POLICY_FILE.parent, 0o700)
     fd, tmp_name = tempfile.mkstemp(prefix=".pool-policy.", dir=str(POLICY_FILE.parent))
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as f:
-            f.write(f"MIHOMO_POOL_REGION={value}\n")
+            f.write(f"MIHOMO_POOL_REGION={region}\n")
+            f.write(f"MIHOMO_POOL_PROTOCOL={protocol}\n")
         os.chmod(tmp_name, 0o600)
         os.replace(tmp_name, POLICY_FILE)
     finally:
@@ -533,6 +570,16 @@ def write_policy(value: str) -> None:
             os.unlink(tmp_name)
         except FileNotFoundError:
             pass
+
+
+def write_policy(value: str) -> None:
+    _, protocol = read_policy_values()
+    write_policy_values(value, protocol)
+
+
+def write_protocol_policy(value: str) -> None:
+    region, _ = read_policy_values()
+    write_policy_values(region, value)
 
 
 def load_cooldown() -> dict[str, int]:
@@ -629,8 +676,10 @@ def cmd_list(args) -> None:
 def cmd_status(args) -> None:
     _, pool_path = target_paths(args.target)
     region = read_policy()
+    protocol = read_protocol_policy()
     print(f"Mihomo pool target: {args.target}")
     print(f"Region filter: {region}")
+    print(f"Protocol filter: {protocol}")
     if not pool_path.is_file():
         print("Pool state: missing")
         return
@@ -638,6 +687,7 @@ def cmd_status(args) -> None:
     age = max(0, int(time.time()) - int(pool.get("scanned_at", 0)))
     print("Pool state: ready")
     print(f"Pool age: {age}s")
+    print(f"Provider nodes: {pool.get('source_total', pool.get('total', 0))}")
     print(f"Nodes total: {pool.get('total', 0)}")
     print(f"Nodes healthy: {pool.get('healthy', 0)}")
     print(f"Nodes Europe: {pool.get('europe', 0)}")
@@ -666,11 +716,23 @@ def cmd_policy(args) -> None:
         print(read_policy())
     elif args.action == "status":
         value = read_policy()
+        protocol = read_protocol_policy()
         print(f"MIHOMO_POOL_REGION={value}")
         print(f"Europe only: {'yes' if value == 'europe' else 'no'}")
+        print(f"MIHOMO_POOL_PROTOCOL={protocol}")
     elif args.action == "set":
         write_policy(args.value)
         print(f"MIHOMO_POOL_REGION={args.value}")
+
+
+def cmd_protocol(args) -> None:
+    if args.action == "get":
+        print(read_protocol_policy())
+    elif args.action == "status":
+        print(f"MIHOMO_POOL_PROTOCOL={read_protocol_policy()}")
+    elif args.action == "set":
+        write_protocol_policy(args.value)
+        print(f"MIHOMO_POOL_PROTOCOL={args.value}")
 
 
 def cmd_cooldown(args) -> None:
@@ -748,6 +810,11 @@ def main() -> None:
     p.add_argument("action", choices=("get", "status", "set"))
     p.add_argument("value", choices=("all", "europe"), nargs="?")
     p.set_defaults(func=cmd_policy)
+
+    p = sub.add_parser("protocol")
+    p.add_argument("action", choices=("get", "status", "set"))
+    p.add_argument("value", choices=tuple(sorted(PROTOCOLS)), nargs="?")
+    p.set_defaults(func=cmd_protocol)
 
     p = sub.add_parser("cooldown")
     p.add_argument("action", choices=("add", "clear", "status"))
