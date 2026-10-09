@@ -61,6 +61,13 @@ assert 'trap cleanup EXIT' in menu
 assert 'run_with_progress(){' in menu
 assert '--infobox' in menu
 assert 'Прошло: ${elapsed} с' in menu
+assert "MIHOMO_POOL_(READY|HEALTH_PROGRESS|GEO_PROGRESS)" in menu
+assert 'Этап: $phase' in menu
+assert 'Прогресс: $current из $total ($percent%)' in menu
+assert 'Загрузка узлов в проверочный Mihomo' in menu
+assert 'Проверка доступности узлов' in menu
+assert 'Определение фактической страны выхода' in menu
+assert 'grep -E' in menu and 'tail -n1' in menu
 assert 'SSH-сессию не закрывайте' in menu
 assert 'kill -0 "$pid"' in menu
 assert 'wait "$pid"' in menu
