@@ -238,6 +238,18 @@ assert 'MIHOMO_POOL_PICKED_NODE=""' in menu
 assert 'MIHOMO_POOL_PICKED_NODE="$node"' in menu
 assert 'if ! mihomo_pool_pick live' in menu
 assert 'if ! mihomo_pool_pick candidate' in menu
+assert 'mihomo_candidate_is_staged(){' in menu
+assert "grep -Fqx 'Provider candidate: staged'" in menu
+assert 'mihomo_candidate_require || return 0' in menu
+assert 'Подготовленного профиля сейчас нет.' in menu
+assert 'Для фильтрации, поиска, статистики и выбора узлов текущего профиля используйте «Точка выхода / узел».' in menu
+assert 'mihomo_open_candidate_after_update' in menu
+assert 'Источник не изменился, поэтому новый подготовленный профиль не создавался.' in menu
+assert 'candidate_label="Подготовленный профиль [ЕСТЬ]"' in menu
+assert 'candidate_label="Подготовленный профиль [НЕТ]"' in menu
+assert 'Пул: $target_ru' in menu
+assert 'Статистика рабочего пула Mihomo' in menu
+assert 'Статистика подготовленного пула Mihomo' in menu
 assert 'node_name="$(mihomo_pool_pick' not in menu
 assert 'mihomo_pool_status_dialog "$target"' in menu
 assert 'Работоспособных: $healthy' in menu
