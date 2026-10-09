@@ -94,24 +94,66 @@ current_mihomo_provider_url(){
   printf '%s\n' "${MIHOMO_PROVIDER_URL:-}"
 }
 
-capture(){
-  local rc
+run_with_progress(){
+  local heading="$1"
+  shift
+  local pid rc elapsed=0 dots tick=0
+  : >"$TMP"
+
   set +e
-  "$@" >"$TMP" 2>&1
+  "$@" >"$TMP" 2>&1 &
+  pid=$!
+  set -e
+
+  # Fast operations should not flash a progress window. After ~0.4 s the user
+  # gets a live heartbeat until the command really exits.
+  for _ in 1 2; do
+    kill -0 "$pid" 2>/dev/null || break
+    sleep 0.2
+  done
+
+  while kill -0 "$pid" 2>/dev/null; do
+    case $((tick % 4)) in
+      0) dots="" ;;
+      1) dots="." ;;
+      2) dots=".." ;;
+      3) dots="..." ;;
+    esac
+    dialog --backtitle "$BACKTITLE" --title "$heading" --infobox       "Выполняется$dots\n\nПрошло: ${elapsed} с\n\nПожалуйста, дождитесь завершения. SSH-сессию не закрывайте."       10 84
+    sleep 1
+    elapsed=$((elapsed + 1))
+    tick=$((tick + 1))
+  done
+
+  set +e
+  wait "$pid"
   rc=$?
   set -e
-  dialog --backtitle "$BACKTITLE" --title "${title:-Результат}" --textbox "$TMP" 30 110
+  return "$rc"
+}
+
+capture(){
+  local rc heading="${title:-Результат}"
+  if run_with_progress "$heading" "$@"; then
+    rc=0
+  else
+    rc=$?
+  fi
+  [[ -s "$TMP" ]] || printf '%s\n' "Операция завершена без дополнительного текстового вывода." >"$TMP"
+  dialog --backtitle "$BACKTITLE" --title "$heading" --textbox "$TMP" 30 110
   return "$rc"
 }
 
 capture_mode_change(){
-  local rc
-  set +e
-  "$@" >"$TMP" 2>&1
-  rc=$?
-  set -e
+  local rc heading="${title:-Режим работы}"
+  if run_with_progress "$heading" "$@"; then
+    rc=0
+  else
+    rc=$?
+  fi
   refresh_backtitle
-  dialog --backtitle "$BACKTITLE" --title "${title:-Режим работы}" --textbox "$TMP" 30 110
+  [[ -s "$TMP" ]] || printf '%s\n' "Операция завершена без дополнительного текстового вывода." >"$TMP"
+  dialog --backtitle "$BACKTITLE" --title "$heading" --textbox "$TMP" 30 110
   return "$rc"
 }
 
@@ -205,13 +247,15 @@ localize_status_file(){
 }
 
 capture_ru(){
-  local rc
-  set +e
-  "$@" >"$TMP" 2>&1
-  rc=$?
-  set -e
+  local rc heading="${title:-Результат}"
+  if run_with_progress "$heading" "$@"; then
+    rc=0
+  else
+    rc=$?
+  fi
   localize_status_file
-  dialog --backtitle "$BACKTITLE" --title "${title:-Результат}" --textbox "$TMP" 30 110
+  [[ -s "$TMP" ]] || printf '%s\n' "Операция завершена без дополнительного текстового вывода." >"$TMP"
+  dialog --backtitle "$BACKTITLE" --title "$heading" --textbox "$TMP" 30 110
   return "$rc"
 }
 
@@ -220,6 +264,8 @@ run_interactive(){
   shift
   clear
   printf '=== %s ===\n\n' "$heading"
+  printf 'Операция запущена. Сообщения и запросы появятся ниже.\n'
+  printf 'Если отдельный этап выполняется без вывода, дождитесь его завершения — процесс не завис.\n\n'
   set +e
   "$@"
   local rc=$?
