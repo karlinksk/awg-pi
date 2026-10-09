@@ -45,13 +45,6 @@ ask(){
   fi
 }
 
-secret_ask(){
-  local prompt="$1" value
-  read -r -s -p "$prompt: " value <"$TTY"
-  printf '\n' >"$TTY"
-  REPLY="$value"
-}
-
 paste_to_temp(){
   local label="$1" tmp
   tmp="$(mktemp /run/awg-pbr/first-run.XXXXXX)"
@@ -303,7 +296,7 @@ TEXT
       activate_awg_file "$REPLY"
       ;;
     2)
-      tmp="$(paste_to_temp 'Вставьте конфигурацию AmneziaWG / WireGuard .conf')" || return
+      tmp="$(paste_to_temp 'Вставьте конфигурацию AmneziaWG / WireGuard .conf (ввод отображается полностью)')" || return
       if activate_awg_file "$tmp"; then
         rm -f "$tmp"
       else
@@ -313,7 +306,7 @@ TEXT
       fi
       ;;
     3)
-      secret_ask "Вставьте полный URL подписки"
+      ask "Вставьте полный URL подписки (ввод отображается)"
       url="$REPLY"
       printf '%s\n' 'Тип источника: 1=обычный/универсальный, 2=совместимый с Remnawave' >"$TTY"
       ask "Тип источника" "1"
@@ -332,7 +325,7 @@ TEXT
       activate_mihomo_file "$path" auto
       ;;
     5)
-      tmp="$(paste_to_temp 'Вставьте Mihomo YAML, VLESS URI или Base64-подписку')" || return
+      tmp="$(paste_to_temp 'Вставьте Mihomo YAML, VLESS URI или Base64-подписку (ввод отображается полностью)')" || return
       if activate_mihomo_file "$tmp" auto; then
         rm -f "$tmp"
       else
