@@ -550,4 +550,76 @@ sudo test -e "$tmp/state/providers/candidate.yaml"
 grep -Fq 'candidate preserved' "$tmp/err"
 grep -Fq 'Mihomo health-check failed after 3 attempts.' "$tmp/err"
 
+echo "=== periodic auto-refresh keeps the current healthy node and promotes safely ==="
+sudo sh -c "cat >'$tmp/state/providers/subscription.yaml' <<'YAML'
+proxies:
+  - name: Current Node
+    type: vless
+    server: 198.51.100.9
+    port: 443
+    uuid: 99999999-9999-9999-9999-999999999999
+YAML"
+sudo sh -c "printf '%s\n' 'MIHOMO_PROVIDER_URL=https://live.example/subscription.yaml' 'MIHOMO_PROVIDER_FORMAT=auto' >'$tmp/etc/provider.env'"
+sudo sh -c "printf '%s\n' 'Current Node' >'$tmp/etc/node-name'; printf '%s\n' '198.51.100.9' >'$tmp/etc/endpoint-ip'; printf '%s\n' manual >'$tmp/etc/node-policy.mode'; printf '%s\n' old-config >'$tmp/etc/config.yaml'"
+sudo chmod 600 "$tmp/state/providers/subscription.yaml" "$tmp/etc/provider.env" "$tmp/etc/node-name" "$tmp/etc/endpoint-ip" "$tmp/etc/node-policy.mode" "$tmp/etc/config.yaml"
+sudo rm -f "$tmp/state/providers/candidate.env"
+sudo touch "$tmp/unit-state/awg-mihomo-update.timer.enabled" "$tmp/unit-state/awg-mihomo-update.timer.active"
+: >"$tmp/systemctl.log"
+out="$(MIHOMO_PERIODIC_REFRESH=1 MOCK_POOL_CURRENT_HEALTHY=1 run_cli provider auto-refresh)"
+grep -Fqx 'MIHOMO_PROVIDER_AUTO_REASON=keep-current' <<<"$out"
+grep -Fqx 'MIHOMO_PROVIDER_AUTO_REFRESH=APPLIED' <<<"$out"
+sudo grep -Fqx 'Current Node' "$tmp/etc/node-name"
+sudo grep -Fq 'name: Current Node' "$tmp/state/providers/subscription.yaml"
+sudo test ! -e "$tmp/state/providers/candidate.yaml"
+if grep -Fq 'stop awg-mihomo-update.timer awg-mihomo-update.service' "$tmp/systemctl.log"; then
+  echo 'FAIL: periodic refresh tried to stop its own systemd service' >&2
+  exit 1
+fi
+
+echo "=== MANUAL keeps a changed provider staged when the current node disappeared ==="
+sudo cp "$tmp/state/providers/subscription.yaml" "$tmp/live.before-auto-manual"
+sudo sh -c "printf '%s\n' 'Missing Node' >'$tmp/etc/node-name'; printf '%s\n' manual >'$tmp/etc/node-policy.mode'"
+sudo rm -f "$tmp/state/providers/candidate.env"
+out="$(MIHOMO_PERIODIC_REFRESH=1 MOCK_POOL_CURRENT_HEALTHY=0 run_cli provider auto-refresh)"
+grep -Fqx 'MIHOMO_PROVIDER_AUTO_REFRESH=STAGED_CURRENT_UNAVAILABLE' <<<"$out"
+grep -Fqx 'LIVE_PROVIDER=UNCHANGED' <<<"$out"
+sudo cmp -s "$tmp/live.before-auto-manual" "$tmp/state/providers/subscription.yaml"
+sudo test -e "$tmp/state/providers/candidate.yaml"
+
+echo "=== FIXED never promotes a provider update unattended ==="
+sudo sh -c "printf '%s\n' 'Current Node' >'$tmp/etc/node-name'; printf '%s\n' fixed >'$tmp/etc/node-policy.mode'"
+sudo cp "$tmp/state/providers/subscription.yaml" "$tmp/live.before-auto-fixed"
+sudo rm -f "$tmp/state/providers/candidate.env"
+out="$(MIHOMO_PERIODIC_REFRESH=1 MOCK_POOL_CURRENT_HEALTHY=1 run_cli provider auto-refresh)"
+grep -Fqx 'MIHOMO_PROVIDER_AUTO_REFRESH=STAGED_FIXED_REVIEW' <<<"$out"
+grep -Fqx 'LIVE_PROVIDER=UNCHANGED' <<<"$out"
+sudo cmp -s "$tmp/live.before-auto-fixed" "$tmp/state/providers/subscription.yaml"
+
+echo "=== AUTO chooses the best allowed candidate when the current node disappeared ==="
+sudo sh -c "printf '%s\n' 'Missing Node' >'$tmp/etc/node-name'; printf '%s\n' auto >'$tmp/etc/node-policy.mode'"
+sudo rm -f "$tmp/state/providers/candidate.env"
+out="$(MIHOMO_PERIODIC_REFRESH=1 MOCK_POOL_CURRENT_HEALTHY=0 run_cli provider auto-refresh)"
+grep -Fqx 'MIHOMO_PROVIDER_AUTO_REASON=auto-best' <<<"$out"
+grep -Fqx 'MIHOMO_PROVIDER_AUTO_TARGET=Best Node' <<<"$out"
+grep -Fqx 'MIHOMO_PROVIDER_AUTO_REFRESH=APPLIED' <<<"$out"
+sudo grep -Fqx 'Best Node' "$tmp/etc/node-name"
+sudo grep -Fq 'name: Best Node' "$tmp/state/providers/subscription.yaml"
+
+echo "=== no healthy candidate never replaces live ==="
+sudo cp "$tmp/state/providers/subscription.yaml" "$tmp/live.before-no-healthy"
+sudo rm -f "$tmp/state/providers/candidate.env"
+out="$(MIHOMO_PERIODIC_REFRESH=1 MOCK_POOL_SCAN_RC=1 run_cli provider auto-refresh)"
+grep -Fqx 'MIHOMO_PROVIDER_AUTO_REFRESH=STAGED_NO_HEALTHY_NODE' <<<"$out"
+grep -Fqx 'LIVE_PROVIDER=UNCHANGED' <<<"$out"
+sudo cmp -s "$tmp/live.before-no-healthy" "$tmp/state/providers/subscription.yaml"
+
+echo "=== unchanged provider is a no-op ==="
+out="$(MIHOMO_PERIODIC_REFRESH=1 MOCK_UPDATE_UNCHANGED=1 run_cli provider auto-refresh)"
+grep -Fqx 'MIHOMO_PROVIDER_AUTO_REFRESH=UNCHANGED' <<<"$out"
+
+echo "=== periodic updater unit runs the safe orchestrator with a long timeout ==="
+grep -Fq 'Environment=MIHOMO_PERIODIC_REFRESH=1' "$repo_root/units/awg-mihomo-update.service"
+grep -Fq 'ExecStart=/usr/local/sbin/awg-mihomo-configure provider auto-refresh' "$repo_root/units/awg-mihomo-update.service"
+grep -Fq 'TimeoutStartSec=30min' "$repo_root/units/awg-mihomo-update.service"
+
 echo "mihomo configure transaction: OK"
