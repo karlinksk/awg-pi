@@ -207,6 +207,11 @@ assert 'Выберите основной живой узел подготовл
 assert '🔎 Поиск / фильтр' in menu
 assert 'grep -iF -- "$query"' in menu
 assert 'Показано: $count из $total' in menu
+assert '"$MIHOMO_NODE_POLICY" manual-selection preview "$node_name"' in menu
+assert '"$MIHOMO_NODE_POLICY" manual-selection apply "$node_name"' in menu
+assert 'После успешной проверки выбранный узел автоматически станет первым элементом цепочки' in menu
+assert 'FIXED-цепочка автоматически обновлена:' in menu
+assert 'предыдущая конфигурация и FIXED-цепочка сохранены' in menu
 
 # Existing-item operations use selectors instead of asking the user to
 # remember and retype values already known to the gateway.
