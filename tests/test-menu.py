@@ -167,6 +167,10 @@ assert 'Номер элемента 1..' not in menu
 assert 'Номер элемента 2..' not in menu
 assert 'select_timezone' in menu
 assert 'Введите точное имя часового пояса IANA:' not in menu
+assert 'select_manual_domain' in menu
+assert 'Введите домен для удаления:' not in menu
+assert 'Введите домен для удаления из ручного списка:' not in menu
+assert 'if (( count > 200 )); then' in menu
 
 # OpenCCK unified input and system helpers.
 assert '"$AWG_ROUTE" source add opencck "$target" --type domains --kind "$method"' in menu
