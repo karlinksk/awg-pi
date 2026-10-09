@@ -4,7 +4,8 @@
 The scanner launches an isolated Mihomo instance with no TUN interface, probes
 all provider nodes through Mihomo's controller API, and optionally determines
 actual egress country through the selected proxy. Runtime health data lives in
-/run by default so periodic scans do not create microSD write churn.
+/run. A compressed last-known-good live snapshot is rate-limited on persistent
+storage so AUTO survives reboot without turning periodic scans into microSD churn.
 """
 
 from __future__ import annotations
@@ -12,6 +13,7 @@ from __future__ import annotations
 import argparse
 import concurrent.futures
 import copy
+import gzip
 import hashlib
 import json
 import os
@@ -35,6 +37,10 @@ CANDIDATE_PROVIDER = Path(os.environ.get("MIHOMO_CANDIDATE_FILE", "/var/lib/awg-
 POOL_DIR = Path(os.environ.get("MIHOMO_POOL_DIR", "/run/awg-pbr/mihomo-pool"))
 LIVE_POOL = Path(os.environ.get("MIHOMO_LIVE_POOL_FILE", str(POOL_DIR / "live.json")))
 CANDIDATE_POOL = Path(os.environ.get("MIHOMO_CANDIDATE_POOL_FILE", str(POOL_DIR / "candidate.json")))
+LIVE_POOL_SNAPSHOT = Path(
+    os.environ.get("MIHOMO_LIVE_POOL_SNAPSHOT_FILE", "/var/lib/awg-pbr/mihomo/pool-live-lkg.json.gz")
+)
+SNAPSHOT_MIN_INTERVAL = max(0, int(os.environ.get("MIHOMO_POOL_SNAPSHOT_MIN_INTERVAL", "21600")))
 POLICY_FILE = Path(os.environ.get("MIHOMO_POOL_POLICY_FILE", "/etc/awg-pbr/transports/mihomo/pool-policy.env"))
 COOLDOWN_FILE = Path(os.environ.get("MIHOMO_POOL_COOLDOWN_FILE", str(POOL_DIR / "cooldown.json")))
 HEALTH_URL = os.environ.get("MIHOMO_POOL_HEALTH_URL", "https://www.gstatic.com/generate_204")
@@ -122,10 +128,14 @@ def persist_healthy_pool(path: Path, payload: dict) -> None:
     successful no-change run without hiding real scanner errors.
     """
     if int(payload.get("healthy", 0)) <= 0:
+        if path == LIVE_POOL and not path.is_file():
+            restore_live_pool_snapshot()
         state = "LAST_KNOWN_GOOD" if path.is_file() else "NONE"
         print(f"MIHOMO_POOL_PRESERVED={state}")
         die("Mihomo health scan found no working nodes; existing pool preserved", 3)
     atomic_json(path, payload)
+    if path == LIVE_POOL:
+        persist_live_pool_snapshot(payload)
 
 
 def load_json(path: Path) -> dict:
@@ -137,6 +147,85 @@ def load_json(path: Path) -> dict:
     if not isinstance(value, dict):
         die(f"Invalid Mihomo pool state: {path}", 1)
     return value
+
+
+def load_gzip_json(path: Path) -> dict:
+    try:
+        with gzip.open(path, "rt", encoding="utf-8") as f:
+            value = json.load(f)
+    except (OSError, EOFError, json.JSONDecodeError) as exc:
+        raise ValueError(f"Unable to read Mihomo pool snapshot {path}: {exc}") from exc
+    if not isinstance(value, dict):
+        raise ValueError(f"Invalid Mihomo pool snapshot: {path}")
+    return value
+
+
+def atomic_gzip_json(path: Path, payload: dict) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    os.chmod(path.parent, 0o700)
+    fd, tmp_name = tempfile.mkstemp(prefix=f".{path.name}.", dir=str(path.parent))
+    os.close(fd)
+    try:
+        with gzip.open(tmp_name, "wt", encoding="utf-8", compresslevel=6) as f:
+            json.dump(payload, f, ensure_ascii=False, separators=(",", ":"))
+            f.write("\n")
+        os.chmod(tmp_name, 0o600)
+        os.replace(tmp_name, path)
+    finally:
+        try:
+            os.unlink(tmp_name)
+        except FileNotFoundError:
+            pass
+
+
+def snapshot_matches_live_provider(payload: dict) -> bool:
+    if int(payload.get("healthy", 0)) <= 0 or not LIVE_PROVIDER.is_file():
+        return False
+    try:
+        if payload.get("provider_sha256") != sha256_file(LIVE_PROVIDER):
+            return False
+    except OSError:
+        return False
+    if payload.get("protocol_filter", "all") != read_protocol_policy():
+        return False
+    return True
+
+
+def restore_live_pool_snapshot() -> bool:
+    if LIVE_POOL.is_file():
+        return True
+    if not LIVE_POOL_SNAPSHOT.is_file():
+        return False
+    try:
+        payload = load_gzip_json(LIVE_POOL_SNAPSHOT)
+    except ValueError:
+        return False
+    if not snapshot_matches_live_provider(payload):
+        return False
+    atomic_json(LIVE_POOL, payload)
+    return True
+
+
+def persist_live_pool_snapshot(payload: dict) -> None:
+    now = int(time.time())
+    rewrite = True
+    if LIVE_POOL_SNAPSHOT.is_file():
+        try:
+            previous = load_gzip_json(LIVE_POOL_SNAPSHOT)
+            same_source = (
+                previous.get("provider_sha256") == payload.get("provider_sha256")
+                and previous.get("protocol_filter", "all") == payload.get("protocol_filter", "all")
+            )
+            age = max(0, now - int(LIVE_POOL_SNAPSHOT.stat().st_mtime))
+            if same_source and age < SNAPSHOT_MIN_INTERVAL:
+                rewrite = False
+        except (OSError, ValueError, TypeError):
+            rewrite = True
+    if rewrite:
+        atomic_gzip_json(LIVE_POOL_SNAPSHOT, payload)
+        print("MIHOMO_POOL_SNAPSHOT=UPDATED")
+    else:
+        print("MIHOMO_POOL_SNAPSHOT=RATE_LIMITED")
 
 
 def read_provider(path: Path) -> list[dict]:
@@ -550,6 +639,8 @@ def scan(target: str, geo: bool) -> dict:
 
 def pool_current(target: str, require_geo: bool = False) -> bool:
     provider, pool_path = target_paths(target)
+    if target == "live" and not pool_path.is_file():
+        restore_live_pool_snapshot()
     if not provider.is_file() or not pool_path.is_file():
         return False
     try:
@@ -715,11 +806,16 @@ def cmd_list(args) -> None:
 
 def cmd_status(args) -> None:
     _, pool_path = target_paths(args.target)
+    restored = False
+    if args.target == "live" and not pool_path.is_file():
+        restored = restore_live_pool_snapshot()
     region = read_policy()
     protocol = read_protocol_policy()
     print(f"Mihomo pool target: {args.target}")
     print(f"Region filter: {region}")
     print(f"Protocol filter: {protocol}")
+    if restored:
+        print("MIHOMO_POOL_RESTORED=LAST_KNOWN_GOOD")
     if not pool_path.is_file():
         print("Pool state: missing")
         return
@@ -809,7 +905,7 @@ def cmd_promote(_args) -> None:
     os.chmod(LIVE_POOL.parent, 0o700)
     payload = load_json(CANDIDATE_POOL)
     payload["target"] = "live"
-    atomic_json(LIVE_POOL, payload)
+    persist_healthy_pool(LIVE_POOL, payload)
     try:
         CANDIDATE_POOL.unlink()
     except FileNotFoundError:

@@ -148,6 +148,7 @@ with tempfile.TemporaryDirectory() as td:
     cooldown = pool_dir / "cooldown.json"
     live_pool = pool_dir / "live.json"
     candidate_pool = pool_dir / "candidate.json"
+    live_snapshot = tmp / "state" / "pool-live-lkg.json.gz"
 
     provider_text = """proxies:
   - name: Finland VLESS
@@ -237,6 +238,8 @@ with tempfile.TemporaryDirectory() as td:
             "MIHOMO_POOL_DIR": str(pool_dir),
             "MIHOMO_LIVE_POOL_FILE": str(live_pool),
             "MIHOMO_CANDIDATE_POOL_FILE": str(candidate_pool),
+            "MIHOMO_LIVE_POOL_SNAPSHOT_FILE": str(live_snapshot),
+            "MIHOMO_POOL_SNAPSHOT_MIN_INTERVAL": "21600",
             "MIHOMO_POOL_POLICY_FILE": str(policy),
             "MIHOMO_POOL_COOLDOWN_FILE": str(cooldown),
         }
@@ -323,5 +326,22 @@ with tempfile.TemporaryDirectory() as td:
     promoted = json.loads(live_pool.read_text(encoding="utf-8"))
     assert promoted["target"] == "live"
     assert not candidate_pool.exists()
+    assert live_snapshot.is_file()
+
+    print("=== reboot restores compressed last-known-good live pool ===")
+    live_pool.unlink()
+    restored = run(env, "status", "live").stdout
+    assert "MIHOMO_POOL_RESTORED=LAST_KNOWN_GOOD" in restored
+    assert "Pool state: ready" in restored
+    restored_payload = json.loads(live_pool.read_text(encoding="utf-8"))
+    assert restored_payload["provider_sha256"] == digest
+    assert restored_payload["healthy"] == 2
+
+    print("=== stale snapshot is rejected after provider change ===")
+    live_pool.unlink()
+    live_provider.write_text(provider_text + "# changed\n", encoding="utf-8")
+    stale_snapshot = run(env, "status", "live").stdout
+    assert "Pool state: missing" in stale_snapshot
+    assert not live_pool.exists()
 
     print("mihomo health-pool policy/list tests: OK")
