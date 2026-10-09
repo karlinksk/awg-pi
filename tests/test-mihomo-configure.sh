@@ -384,6 +384,8 @@ if sudo grep -q '^MIHOMO_PROVIDER_HWID=' "$tmp/state/providers/candidate.env"; t
   exit 1
 fi
 
+sudo grep -Fqx '0123456789abcdef0123456789abcdef' "$tmp/etc/remnawave.hwid"
+
 echo "=== switching standard URL to Remnawave creates stable staging metadata ==="
 sudo sh -c "printf '%s\n' \\
   'MIHOMO_PROVIDER_URL=https://plain.example/subscription.yaml' \\
@@ -399,7 +401,8 @@ out="$(run_cli provider stage-url-file "$tmp/etc/stage-url.env")"
 grep -Fqx 'MIHOMO_PROVIDER_SOURCE=URL_STAGED' <<<"$out"
 sudo grep -Fqx 'MIHOMO_PROVIDER_PROFILE=remnawave' "$tmp/state/providers/candidate.env"
 sudo grep -Fqx 'MIHOMO_UPDATE_SUFFIX=mihomo' "$tmp/state/providers/candidate.env"
-sudo grep -Eq "^MIHOMO_PROVIDER_HWID=[A-Za-z0-9._:-]{8,128}$" "$tmp/state/providers/candidate.env"
+sudo grep -Fqx 'MIHOMO_PROVIDER_HWID=0123456789abcdef0123456789abcdef' "$tmp/state/providers/candidate.env"
+sudo grep -Fqx '0123456789abcdef0123456789abcdef' "$tmp/etc/remnawave.hwid"
 
 # Restore the original live source for the existing keep-source regression below.
 sudo sh -c "printf '%s\n' \\
