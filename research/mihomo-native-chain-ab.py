@@ -38,14 +38,10 @@ WORKERS = 5
 def health(port: int, name: str, url: str = TARGET):
     encoded = urllib.parse.quote(name, safe="")
     query = urllib.parse.urlencode({"url": url, "timeout": TIMEOUT})
-    try:
-        payload = base.controller_request(port, f"/proxies/{encoded}/delay?{query}", timeout=13)
-        delay = payload.get("delay")
+    status, delay = base.controller(port, f"/proxies/{encoded}/delay?{query}", seconds=13)
+    if status == "ok":
         return "ok" if isinstance(delay, int) and delay > 0 else "no_delay"
-    except urllib.error.HTTPError as exc:
-        return f"api_{exc.code}"
-    except Exception:
-        return "api_exception"
+    return status
 
 
 def run_one(port: int, entry: dict):
