@@ -87,6 +87,12 @@ def create():
     MARKER.mkdir(mode=0o700)
     (MARKER / "owner").write_text(f"{NS}\n{IF}\n{PARENT}\n")
     (MARKER / "owner").chmod(0o600)
+    session = os.environ.get("AWG_DPI_RUN_ID", "")
+    if session:
+        if len(session) != 24 or not all(x in "0123456789abcdef" for x in session):
+            raise RuntimeError("invalid_watchdog_session_token")
+        (MARKER / "run-id").write_text(session + "\n")
+        (MARKER / "run-id").chmod(0o600)
     call(["ip", "netns", "add", NS])
     # A separate L2 MAC means no host NAT/nft or veth host routing needed.
     call(["ip", "link", "add", "link", PARENT, "name", IF,
