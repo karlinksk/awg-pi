@@ -33,6 +33,9 @@ GATEWAY = ipaddress.IPv4Address("192.168.112.1")
 MARKER = Path("/run/awg-dpi-test-owner")
 LEASE = MARKER / "lease"
 SCRIPT = MARKER / "dhcp-hook.sh"
+# /run is intentionally noexec on Debian 13 Pi; only executable copies go to
+# root-owned test-scoped directory under the separate, executable tmpfs /dev/shm.
+EXEC_TMPFS = Path("/dev/shm")
 CONTROL_URL = "https://api.ipify.org"
 
 
@@ -58,6 +61,12 @@ def host_interface_exists():
     return call(["ip", "link", "show", "dev", IF], required=False).returncode == 0
 
 
+def sandbox_exec_dir(token: str):
+    if len(token) != 24 or any(c not in "0123456789abcdef" for c in token):
+        raise RuntimeError("invalid_sandbox_execution_token")
+    return EXEC_TMPFS / ("awg-dpi-nfqws-" + token)
+
+
 def cleanup():
     if not owned():
         if ns_exists() or host_interface_exists():
@@ -76,6 +85,19 @@ def cleanup():
         if "macvlan" not in details.stdout:
             raise RuntimeError("unrecognized_host_interface")
         call(["ip", "link", "del", "dev", IF])
+    # Delete only a root-owned directory corresponding to this run's token;
+    # an old watchdog cannot remove a newer experiment's executable.
+    run_file = MARKER / "run-id"
+    token = run_file.read_text().strip() if run_file.exists() else ""
+    if token:
+        directory = sandbox_exec_dir(token)
+        if directory.is_symlink():
+            raise RuntimeError("unsafe_exec_directory_symlink")
+        if directory.exists():
+            stat = directory.stat()
+            if not directory.is_dir() or stat.st_uid != 0:
+                raise RuntimeError("unsafe_exec_directory_owner")
+            shutil.rmtree(directory)
     shutil.rmtree(MARKER)
 
 
