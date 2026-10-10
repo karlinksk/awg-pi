@@ -51,7 +51,7 @@ def isolate_nft_rule():
     config.write_text("""table inet awg_dpi_probe {
   chain test_output {
     type filter hook output priority mangle; policy accept;
-    ip daddr 159.89.87.21 tcp dport 28190 meta mark & 0x40000000 == 0 counter queue num 237 flags bypass
+    ip daddr 159.89.87.21 tcp dport 28190 meta mark & 0x40000000 == 0 counter queue num 237 bypass
   }
 }
 """)
@@ -113,11 +113,33 @@ def result_snapshot(label, proxy):
     print(label, "target1=", statuses[0], "target2=", statuses[1], flush=True)
     return statuses
 
+def offline_preflight():
+    """Read-only preparation check; never creates a namespace or nft rule."""
+    import hashlib
+    if sandbox.MARKER.exists() or sandbox.ns_exists() or sandbox.host_interface_exists():
+        raise RuntimeError("sandbox_residue_abort")
+    if not BIN.is_file() or hashlib.sha256(BIN.read_bytes()).hexdigest() != EXPECTED_SHA256:
+        raise RuntimeError("official_arm64_binary_missing_or_sha_mismatch")
+    if not LIB.is_file() or not ANTIDPI.is_file():
+        raise RuntimeError("official_lua_files_missing")
+    if not (ROOT / "awg-dpi-guardian.py").is_file():
+        raise RuntimeError("guardian_script_missing")
+    if subprocess.run(["systemctl", "is-active", "--quiet", "awg-mihomo.service"]).returncode:
+        raise RuntimeError("production_mihomo_not_active")
+    print("PRECHECK=PASS", "official_binary_sha256=PASS",
+          "test_namespace_absent=YES", "live_mihomo_active=YES", flush=True)
+
 def main():
     if os.geteuid():
         raise RuntimeError("root_required")
-    if sandbox.MARKER.exists() or sandbox.ns_exists():
-        raise RuntimeError("existing_namespace_abort")
+    if len(sys.argv) == 2 and sys.argv[1] == "--preflight":
+        offline_preflight()
+        return
+    if len(sys.argv) != 1:
+        raise RuntimeError("use_no_args_to_test_or_preflight_flag")
+    offline_preflight()
+    if sandbox.MARKER.exists() or sandbox.ns_exists() or sandbox.host_interface_exists():
+        raise RuntimeError("existing_namespace_or_interface_abort")
     profile = base.picked_profile()
     run_id = secrets.token_hex(12)
     unit = base.arm_timer(run_id, 130)
