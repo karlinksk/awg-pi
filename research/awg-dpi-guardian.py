@@ -54,7 +54,13 @@ def is_test_mihomo(pid, token):
     # Matching the token-scoped path prevents killing another test generation.
     expected_exe = str(Path("/dev/shm") / ("awg-dpi-nfqws-" + token) / "nfqws2")
     if exe == expected_exe:
-        return "--qnum=237" in argv and "--ipset-ip=159.89.87.21" in argv
+        # Only two specifically reviewed per-run queue/endpoint combinations.
+        # Both are in this single ephemeral namespace; never host nfqws.
+        profiles = (
+            ("--qnum=237", "--ipset-ip=159.89.87.21"),
+            ("--qnum=239", "--ipset-ip=142.251.157.4"),
+        )
+        return any(q in argv and ip in argv for q, ip in profiles)
     if exe != SAFE_EXE:
         return False
     # The child must be this experiment's Mihomo, not the production daemon.
