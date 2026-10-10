@@ -84,6 +84,7 @@ backup_gateway(){
     usr/local/sbin/awg-traffic \
     usr/local/sbin/awg-pbr-setup \
     usr/local/sbin/awg-pbr-health \
+    usr/local/sbin/awg-health-probe \
     usr/local/sbin/awg-pbr-failopen \
     usr/local/sbin/awg-transit-nft \
     usr/local/sbin/awg-transit-preflight \
@@ -131,6 +132,7 @@ restore_gateway(){
     /usr/local/sbin/awg-traffic \
     /usr/local/sbin/awg-pbr-setup \
     /usr/local/sbin/awg-pbr-health \
+    /usr/local/sbin/awg-health-probe \
     /usr/local/sbin/awg-pbr-failopen \
     /usr/local/sbin/awg-transit-nft \
     /usr/local/sbin/awg-transit-preflight \
