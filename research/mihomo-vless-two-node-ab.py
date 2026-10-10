@@ -51,7 +51,7 @@ def run_one(port: int, entry: dict):
     # Only follow up recovery/controls, not unsuccessful profiles.
     confirm_direct = health(port, entry["direct"], CONTROL) if direct == "ok" else "not_tested"
     confirm_relay = health(port, entry["relay"], CONTROL) if relay == "ok" else "not_tested"
-    return {"kind": entry["kind"], "baseline": entry["baseline"],
+    return {"label": entry["label"], "kind": entry["kind"], "baseline": entry["baseline"],
             "direct": direct, "relay": relay,
             "direct_confirm": confirm_direct, "relay_confirm": confirm_relay}
 
@@ -108,7 +108,8 @@ def main():
             base.fail("existing_dialer_proxy_in_sample")
         relay["dialer-proxy"] = "AWG-AUDIT-UPSTREAM"
         proxies += [direct, relay]
-        test_entries.append({"direct": a, "relay": b,
+        label = "healthy-control" if item["baseline"] == "healthy" else base.endpoint_preflight(item)[1]
+        test_entries.append({"direct": a, "relay": b, "label": label,
                              "kind": item["kind"], "baseline": item["baseline"]})
     ctrl_port = base.free_port()
     with tempfile.TemporaryDirectory(prefix="awg-dpi-ab-", dir="/run") as temporary:
@@ -167,6 +168,11 @@ def main():
     print("paired_native_https=", dict(sorted(outcome.items())))
     print("by_baseline=", {k: dict(sorted(v.items())) for k, v in sorted(outcome_by_baseline.items())})
     print("by_protocol=", {k: dict(sorted(v.items())) for k, v in sorted(outcome_by_protocol.items())})
+    for r in sorted(results, key=lambda x: x["label"]):
+        print("VLESS_NODE_RESULT", r["label"],
+              "direct=", r["direct"], "relay=", r["relay"],
+              "control_direct=", r["direct_confirm"],
+              "control_relay=", r["relay_confirm"])
     print("local_controller_direct_codes=", dict(sorted(Counter(r["direct"] for r in results).items())))
     print("local_controller_relay_codes=", dict(sorted(Counter(r["relay"] for r in results).items())))
     print("secondary_https_confirmed_direct=", sum(r["direct_confirm"] == "ok" for r in results))
