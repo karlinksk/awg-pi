@@ -154,7 +154,7 @@ def nft_remove():
     if sandbox.ns_exists():
         ns_nft(["delete","table","inet","awg_dpi_youtube"],check=False)
 
-def nfq_start(token):
+def nfq_start(token,strategy):
     exec_root=sandbox.sandbox_exec_dir(token)
     exec_root.mkdir(mode=0o755)
     exec_root.chmod(0o755)
@@ -174,7 +174,7 @@ def nfq_start(token):
           "--lua-init=@"+str(exec_root/"zapret-antidpi.lua"),
           "--filter-tcp="+PORT,"--ipset-ip="+TARGET,"--in-range=x",
           "--payload=tls_client_hello",
-          "--lua-desync=multidisorder:pos=2"]
+          "--lua-desync="+("fake:blob=fake_default_tls:badsum" if strategy=="fake_tls" else "multidisorder:pos=2")]
     logfile=sandbox.MARKER/"nfqws.log"
     with logfile.open("w") as f:
         proc=subprocess.Popen(argv,stdin=subprocess.DEVNULL,
@@ -195,6 +195,7 @@ def nfq_counters(logfile,offset):
         "multidisorder_invocations":data.count("multidisorder: split pos:"),
         "multidisorder_parts_attempted":data.count("multidisorder: sending part"),
         "tls_hello_mentions":data.count("tls_client_hello"),
+        "fake_tls_debug_actions":data.count("fake: "),
     }
 
 def nft_hits():
@@ -220,8 +221,10 @@ def main():
     signal.signal(signal.SIGTERM, on_sigterm)
     if os.geteuid()!=0:
         raise RuntimeError("root_required")
-    if len(sys.argv)!=1:
+    if len(sys.argv)>2 or (len(sys.argv)==2 and sys.argv[1]!="--strategy=fake_tls"):
         raise RuntimeError("unsupported_arguments")
+    strategy="fake_tls" if len(sys.argv)==2 else "multidisorder"
+    print("YOUTUBE_TEST_STRATEGY=",strategy,flush=True)
     if sandbox.MARKER.exists() or sandbox.ns_exists() or sandbox.host_interface_exists():
         raise RuntimeError("old_test_residue_refuse")
     if not BIN.is_file() or hashlib.sha256(BIN.read_bytes()).hexdigest()!=EXPECTED_SHA:
@@ -252,11 +255,11 @@ def main():
         rule_attempted=True
         router_insert_rule(ip,comment,schedule)
         probe("A1_TRUE_ISP_DIRECT")
-        nfq,log=nfq_start(runid)
+        nfq,log=nfq_start(runid,strategy)
         nft_create()
         print("ISOLATED_NFQUEUE=ACTIVE",flush=True)
         offset=log.stat().st_size
-        probe("B1_YOUTUBE_MULTIDISORDER")
+        probe("B1_YOUTUBE_"+strategy.upper())
         print("ISOLATED_NFQUEUE_HITS=",nft_hits(),flush=True)
         print("NFQWS_SAFE_COUNTS=",nfq_counters(log,offset),flush=True)
         nft_remove()
