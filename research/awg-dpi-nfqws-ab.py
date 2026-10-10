@@ -18,6 +18,7 @@ import subprocess
 import sys
 import time
 import secrets
+import signal
 
 ROOT = Path("/home/karlinks")
 RELEASE = Path("/run/user/1000/awg-zapret2-official-v1.0.5.2/zapret2-v1.0.5.2")
@@ -130,6 +131,9 @@ def offline_preflight():
           "test_namespace_absent=YES", "live_mihomo_active=YES", flush=True)
 
 def main():
+    def interrupted(_signal, _frame):
+        raise KeyboardInterrupt("operator_interrupted_test")
+    signal.signal(signal.SIGTERM, interrupted)
     if os.geteuid():
         raise RuntimeError("root_required")
     if len(sys.argv) == 2 and sys.argv[1] == "--preflight":
@@ -179,6 +183,6 @@ def main():
 if __name__ == "__main__":
     try:
         main()
-    except Exception as e:
+    except (Exception, KeyboardInterrupt) as e:
         print("NFQWS_AB_ABORT=", type(e).__name__, str(e).split(":")[0], file=sys.stderr)
         raise SystemExit(2)
