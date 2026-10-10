@@ -111,8 +111,8 @@ def launch_nfqws():
             if not lines:
                 print("NFQWS_STARTUP_LOG=EMPTY", flush=True)
             for line in lines[-18:]:
-                line = re.sub(r"(?i)\\b(uuid|token|password|secret|private.?key|public.?key|sni|servername)\\s*[:=]\\s*\\S+", r"\\1=<redacted>", line)
-                line = re.sub(r"(?i)\\b(?:[a-f0-9]{48,}|[a-z0-9+/]{64,}={0,2})\\b", "<redacted>", line)
+                line = re.sub(r"(?i)\b(uuid|token|password|secret|private.?key|public.?key|sni|servername)\s*[:=]\s*\S+", r"\1=<redacted>", line)
+                line = re.sub(r"(?i)\b(?:[a-f0-9]{48,}|[a-z0-9+/]{64,}={0,2})\b", "<redacted>", line)
                 print("NFQWS_STARTUP_LOG=", line[:240], flush=True)
         except OSError:
             print("NFQWS_STARTUP_LOG=UNREADABLE", flush=True)
