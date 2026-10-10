@@ -75,7 +75,7 @@ def observed_queue_packets():
     hits = re.search(r"\bpackets (\d+)\b", p.stdout)
     return int(hits.group(1)) if hits else None
 
-def launch_nfqws(strategy):
+def launch_nfqws(strategy, trace=False):
     import hashlib
     got = hashlib.sha256(BIN.read_bytes()).hexdigest()
     if got != EXPECTED_SHA256:
@@ -101,6 +101,7 @@ def launch_nfqws(strategy):
         "ip", "netns", "exec", sandbox.NS, str(copy),
         "--qnum=" + QUEUE,
         "--fwmark=" + FWMARK, "--uid=1000",
+        *(["--debug=1"] if trace else []),
         "--lua-init=@" + str(local_lib),
         "--lua-init=@" + str(local_antidpi),
         "--filter-tcp=" + PORT,
@@ -137,6 +138,28 @@ def launch_nfqws(strategy):
         raise RuntimeError("nfqws_early_exit")
     # A successful startup does not expose the log or packet contents.
     return proc
+
+def diagnostic_counters(start_offset):
+    """Return counters only, never the hex payload or raw debug lines."""
+    path = sandbox.MARKER / "nfqws.log"
+    with path.open("rb") as f:
+        f.seek(start_offset)
+        chunk = f.read(1_000_001)
+    truncated = len(chunk) > 1_000_000
+    lines = chunk[:1_000_000].decode("utf-8", errors="replace").splitlines()
+    signatures = {
+        "multidisorder_invocations": "multidisorder: split pos:",
+        "multidisorder_parts_attempted": "multidisorder: sending part",
+        "multidisorder_unusable_splits": "multidisorder: no valid split positions",
+        "multidisorder_reassembly_skips": "multidisorder: not acting on further replay pieces",
+    }
+    totals = {name: sum(token in line for line in lines)
+              for name, token in signatures.items()}
+    totals["tls_client_hello_mentions"] = sum("tls_client_hello" in line for line in lines)
+    totals["runtime_debug_lines"] = len(lines)
+    totals["truncated"] = truncated
+    return totals
+
 
 def result_snapshot(label, proxy):
     statuses = []
@@ -178,13 +201,14 @@ def main():
         offline_preflight()
         return
     # Explicit allow-list; no arbitrary strategy strings or shell evaluation.
-    strategy = "fake_tls"
-    if len(sys.argv) == 2 and sys.argv[1] == "--strategy=multidisorder":
-        strategy = "multidisorder"
-    elif len(sys.argv) != 1:
+    opts = sys.argv[1:]
+    allowed = {"--strategy=multidisorder", "--trace"}
+    if len(opts) != len(set(opts)) or any(opt not in allowed for opt in opts):
         raise RuntimeError("unsupported_strategy_option")
+    strategy = "multidisorder" if "--strategy=multidisorder" in opts else "fake_tls"
+    trace = "--trace" in opts
     offline_preflight()
-    print("A_B_STRATEGY=", strategy, flush=True)
+    print("A_B_STRATEGY=", strategy, "TRACE_MODE=", ("counts_only" if trace else "disabled"), flush=True)
     if sandbox.MARKER.exists() or sandbox.ns_exists() or sandbox.host_interface_exists():
         raise RuntimeError("existing_namespace_or_interface_abort")
     profile = base.picked_profile()
@@ -205,11 +229,16 @@ def main():
         proc = base.spawn_mihomo(profile)
         print("NAMESPACE_VLESS_READY", flush=True)
         result_snapshot("A1_NO_ZAPRET2", proc)
-        nfq = launch_nfqws(strategy)
+        nfq = launch_nfqws(strategy, trace=trace)
         isolate_nft_rule()
+        debug_start_offset = (sandbox.MARKER / "nfqws.log").stat().st_size if trace else 0
         print("NAMESPACE_NFQUEUE_ACTIVE", flush=True)
         result_snapshot("B1_WITH_" + strategy.upper(), proc)
         print("NAMESPACE_NFQUEUE_PACKET_HITS=", observed_queue_packets(), flush=True)
+        if trace:
+            metrics = diagnostic_counters(debug_start_offset)
+            print("NFQWS_RUNTIME_COUNTS=", metrics, flush=True)
+            print("NFQWS_RUNTIME_RAW_LOG_NOT_SHARED=YES", flush=True)
         remove_nft_rules()
         base.terminate(nfq)
         nfq = None
