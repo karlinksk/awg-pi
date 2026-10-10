@@ -45,6 +45,16 @@ class SnapshotAuditTests(unittest.TestCase):
         for sensitive in ("DO-NOT-PRINT", "secret-server", "password"):
             self.assertNotIn(sensitive, report)
 
+    def test_controller_http_status_aggregation_is_not_dpi(self):
+        data = {"nodes": [
+            {"type": "vless", "healthy": False, "error": "http-400"},
+            {"type": "vless", "healthy": False, "error": "http-504"},
+            {"type": "vless", "healthy": False, "error": "http-400"},
+        ]}
+        report = module.summarize(data)
+        self.assertEqual(report["mihomo_controller_http_statuses"], {"400": 2, "504": 1})
+        self.assertEqual(report["dpi_confirmed"], 0)
+
     def test_invalid_input_fails(self):
         with self.assertRaises(ValueError):
             module.summarize({"nodes": "not-a-list"})
