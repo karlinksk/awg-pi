@@ -44,6 +44,10 @@ def nft(args, check=True):
     p = subprocess.run(["ip", "netns", "exec", sandbox.NS, "nft", *args],
                        capture_output=True, text=True, timeout=6)
     if check and p.returncode:
+        # The nft command contains only static rule names, queue, IP and port.
+        # Keep limited stderr so one failed attempt is actionable.
+        print("ISOLATED_NFT_ERROR=", p.stderr.strip().replace("\\n", " ")[:320],
+              "exit=", p.returncode, flush=True)
         raise RuntimeError("isolated_nft_command_failed")
     return p
 
