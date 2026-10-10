@@ -101,42 +101,36 @@ def create():
 
 
 def dhcp():
-    # Custom hook NEVER calls dhcpcd/systemd/NetworkManager nor touches
-    # /etc/resolv.conf. udhcpc only writes lease data under /run.
-    hook = f"""#!/bin/sh
-case "$1" in
- bound|renew)
-   umask 077
-   printf '%s\\n%s\\n%s\\n' "$ip" "$subnet" "$router" > "{LEASE}"
- ;;
-esac
-exit 0
-"""
-    SCRIPT.write_text(hook)
-    SCRIPT.chmod(0o700)
+    # BusyBox udhcpc works on this Pi and receives a distinct DHCP lease.
+    # Its custom event hook is not invoked in this environment; use a
+    # no-op hook, parse the standard lease confirmation, and configure
+    # the address only inside the temporary namespace.
     result = call(
         ["ip", "netns", "exec", NS, "busybox", "udhcpc",
          "-i", IF, "-f", "-n", "-q", "-t", "4", "-T", "2",
-         "-s", str(SCRIPT)],
+         "-s", "/bin/true"],
         required=False, timeout=20
     )
-    if result.returncode != 0 or not LEASE.is_file():
-        raise RuntimeError("dhcp_no_valid_lease")
-    rows = LEASE.read_text().splitlines()
-    if len(rows) != 3:
-        raise RuntimeError("unexpected_dhcp_response")
-    ip = ipaddress.IPv4Address(rows[0])
-    netmask = ipaddress.IPv4Address(rows[1])
-    router = ipaddress.IPv4Address(rows[2].split()[0])
-    prefix = ipaddress.IPv4Network(f"0.0.0.0/{netmask}").prefixlen
+    if result.returncode != 0:
+        raise RuntimeError("dhcp_no_lease")
+    import re
+    match = re.search(
+        r"lease of (\d{1,3}(?:\.\d{1,3}){3}) obtained from "
+        r"(\d{1,3}(?:\.\d{1,3}){3})",
+        result.stdout + "\n" + result.stderr
+    )
+    if match is None:
+        raise RuntimeError("dhcp_lease_confirmation_missing")
+    ip = ipaddress.IPv4Address(match.group(1))
+    dhcp_server = ipaddress.IPv4Address(match.group(2))
     if ip not in LAN or ip == ipaddress.IPv4Address("192.168.112.34"):
         raise RuntimeError("wrong_lease_subnet_or_production_ip")
-    if prefix != 24 or router != GATEWAY:
-        raise RuntimeError("unexpected_dhcp_gateway")
-    call(["ip", "-n", NS, "addr", "add", f"{ip}/{prefix}", "dev", IF])
-    call(["ip", "-n", NS, "route", "add", "default", "via", str(router), "dev", IF])
+    if dhcp_server != GATEWAY:
+        raise RuntimeError("unexpected_dhcp_server")
+    # The LAN is independently verified /24 on Pi and MikroTik.
+    call(["ip", "-n", NS, "addr", "add", f"{ip}/24", "dev", IF])
+    call(["ip", "-n", NS, "route", "add", "default", "via", str(GATEWAY), "dev", IF])
     return str(ip)
-
 
 def https_check():
     # DNS lookups occur in the parent host, *not* via a new DNS config.
