@@ -46,6 +46,7 @@ def summarize(payload: dict, *, now: int | None = None) -> dict:
     nodes = payload["nodes"]
     by_type = defaultdict(lambda: {"healthy": 0, "failed": 0, "endpoints": set()})
     reasons = Counter()
+    controller_statuses = Counter()
     endpoint_states: dict[tuple[str, int], list[bool]] = defaultdict(list)
     healthy = 0
     valid_endpoints = 0
@@ -59,6 +60,9 @@ def summarize(payload: dict, *, now: int | None = None) -> dict:
         item["healthy" if ok else "failed"] += 1
         healthy += int(ok)
         reasons[failure_reason(node)] += 1
+        err = str(node.get("error") or "")
+        if not ok and err.startswith("http-") and err[5:].isdigit():
+            controller_statuses[err[5:]] += 1
 
         address = node.get("server")
         port = node.get("port")
@@ -94,6 +98,7 @@ def summarize(payload: dict, *, now: int | None = None) -> dict:
         "healthy_profiles": healthy,
         "failed_profiles": len(nodes) - healthy,
         "failure_categories": {k: v for k, v in sorted(reasons.items()) if k != "healthy"},
+        "mihomo_controller_http_statuses": dict(sorted(controller_statuses.items())), 
         "unique_host_ports": len(endpoint_states),
         "valid_endpoint_profiles": valid_endpoints,
         "endpoints_all_failed": sum(1 for flags in endpoints if not any(flags)),
@@ -119,6 +124,9 @@ def show(report: dict) -> None:
     print("Failure categories (profile counts):")
     for reason, count in report["failure_categories"].items():
         print(" ", reason, "=", count)
+    print("Local Mihomo API HTTP status codes (NOT remote HTTP statuses):")
+    for code, count in report["mihomo_controller_http_statuses"].items():
+        print(" ", code, "=", count)
     print("By protocol (healthy / failed / unique_host_ports):")
     for proto, data in report["by_protocol"].items():
         print(" ", proto, "=", data["healthy_profiles"], "/", data["failed_profiles"],
@@ -146,6 +154,7 @@ def self_test() -> None:
     assert result["endpoints_mixed"] == 2
     assert result["endpoints_all_failed"] == 1
     assert result["failure_categories"]["undifferentiated_probe_exception"] == 1
+    assert result["mihomo_controller_http_statuses"] == {}
     assert result["snapshot_age_seconds"] == 50
     assert result["dpi_assessment"] == "not_possible_from_saved_health_scan"
     print("SELFTEST=PASS")
