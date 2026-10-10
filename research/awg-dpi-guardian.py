@@ -51,9 +51,8 @@ def is_test_mihomo(pid):
     if not argv:
         return False
     if exe == str(MARKER / "nfqws2"):
-        # This exact binary is copied inside the uniquely owned marker dir.
-        # Require the watchdog-owned PID file argument to disambiguate it.
-        return any(v == "--pidfile=" + str(MARKER / "nfqws2.pid") for v in argv)
+        # Only the root-owned per-run binary and exact constrained queue/target.
+        return "--qnum=237" in argv and "--ipset-ip=159.89.87.21" in argv
     if exe != SAFE_EXE:
         return False
     # The child must be this experiment's Mihomo, not the production daemon.
