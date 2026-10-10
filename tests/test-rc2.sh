@@ -31,8 +31,11 @@ transport_body="$(sed -n '/^transport_ok(){/,/^}/p' src/awg-pbr-health)"
 first_transport_ping="$(grep -m1 '\$PING_BIN.*-4 -n -m' <<<"$transport_body")"
 [[ "$first_transport_ping" == *'9.9.9.9'* ]]
 PING_BIN=ping
+HTTPS_PROBE_BIN=/bin/false
+VPN_IF=awg0
 eval "$transport_body"
 transport_ok
+grep -Fq '$HTTPS_PROBE_BIN" "$HEALTH_MARK" "$VPN_IF"' <<<"$transport_body"
 # Every diagnostics ping uses the same decimal conversion.
 while IFS= read -r line; do
   [[ "$line" == *'-m "$((HEALTH_MARK))"'* ]]

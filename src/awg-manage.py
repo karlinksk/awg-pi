@@ -29,6 +29,7 @@ BACKUPS = '/var/backups/awg-gateway'
 FAILOPEN = '/usr/local/sbin/awg-pbr-failopen'
 SETUP = '/usr/local/sbin/awg-pbr-setup'
 ROUTE = '/usr/local/sbin/awg-route'
+HTTPS_PROBE = '/usr/local/sbin/awg-health-probe'
 CONF_DIR = '/etc/amnezia/amneziawg'
 CANCEL_EXIT = 20
 
@@ -463,9 +464,11 @@ def tunnel_ok(env, since):
     run('ip', '-4', 'rule', 'add', *rule)
     try:
         for _ in range(10):
-            transport = any(run('ping', '-4', '-n', '-I', env['VPN_IF'], '-m', mark,
-                                '-c1', '-W2', target, check=False).returncode == 0
-                            for target in ('9.9.9.9', '1.1.1.1'))
+            icmp_ok = any(run('ping', '-4', '-n', '-I', env['VPN_IF'], '-m', mark,
+                              '-c1', '-W2', target, check=False).returncode == 0
+                          for target in ('9.9.9.9', '1.1.1.1'))
+            https_ok = icmp_ok or run(HTTPS_PROBE, mark, env['VPN_IF'], check=False).returncode == 0
+            transport = icmp_ok or https_ok
             output = run('awg', 'show', env['VPN_IF'], 'latest-handshakes').stdout
             stamps = [int(line.split()[1]) for line in output.splitlines() if len(line.split()) == 2]
             now = int(time.time())
@@ -524,8 +527,8 @@ def replace_config(args, env):
             else:
                 previous.unlink(missing_ok=True)
             tx.resume()
-        except BaseException:
-            print('Ошибка профиля; автоматический rollback.', file=sys.stderr)
+        except BaseException as exc:
+            print(f'Ошибка профиля: {exc}; автоматический rollback.', file=sys.stderr)
             run('systemctl', 'stop', HEALTH, check=False)
             run(FAILOPEN, check=False)
             run('systemctl', 'stop', service, check=False)

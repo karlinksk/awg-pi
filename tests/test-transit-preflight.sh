@@ -98,6 +98,12 @@ case "$*" in
 esac
 EOF
 
+cat >"$tmp/health-probe" <<'EOF'
+#!/usr/bin/env bash
+[[ "$1" == "0x101" && "$2" == "awg0" ]] || exit 2
+[[ "${MOCK_HTTPS_HEALTH:-up}" == up ]]
+EOF
+
 cat >"$tmp/transport-cli" <<'EOF'
 #!/usr/bin/env bash
 set -Eeuo pipefail
@@ -105,12 +111,13 @@ set -Eeuo pipefail
 [[ "${MOCK_MIHOMO_HEALTH:-up}" == up ]]
 EOF
 
-chmod +x "$tmp/bin/"* "$tmp/transport-cli"
+chmod +x "$tmp/bin/"* "$tmp/transport-cli" "$tmp/health-probe"
 
 run_preflight(){
   PATH="$tmp/bin:$PATH" AWG_ENV_FILE="$tmp/env" AWG_COMMON_FILE="$repo_root/src/awg-common" \
     AWG_TRANSPORT_FILE="$tmp/transport" AWG_TRANSPORT_CLI="$tmp/transport-cli" \
     MIHOMO_ENDPOINT_IP_FILE="$tmp/mihomo.endpoint-ip" MOCK_IP_LOG="$tmp/ip.log" \
+    AWG_HTTPS_PROBE_BIN="$tmp/health-probe" MOCK_HTTPS_HEALTH="${MOCK_HTTPS_HEALTH:-up}" \
     MOCK_MIHOMO_HEALTH="${MOCK_MIHOMO_HEALTH:-up}" \
     bash "$repo_root/src/awg-transit-preflight"
 }
@@ -139,8 +146,12 @@ grep -Fq 'AWG endpoint 203.0.113.7 is not DIRECT' "$tmp/err"
 
 echo "transit preflight: OK"
 
+echo "=== transit preflight accepts HTTPS when ICMP is blocked ==="
+out="$(MOCK_TUNNEL_HEALTH=down MOCK_HTTPS_HEALTH=up run_preflight)"
+grep -Fqx 'OK: AWG tunnel transport is usable' <<<"$out"
+
 echo "=== transit preflight rejects unhealthy tunnel ==="
-if MOCK_TUNNEL_HEALTH=down run_preflight >"$tmp/out" 2>"$tmp/err"; then
+if MOCK_TUNNEL_HEALTH=down MOCK_HTTPS_HEALTH=down run_preflight >"$tmp/out" 2>"$tmp/err"; then
   echo 'FAIL: unhealthy AWG tunnel was accepted' >&2
   exit 1
 fi

@@ -1,0 +1,59 @@
+#!/usr/bin/env python3
+"""Marked HTTPS reachability probe for AWG transport validation."""
+
+import os
+import socket
+import ssl
+import sys
+
+PROBES = (
+    ("1.1.1.1", "cloudflare-dns.com", "/dns-query"),
+    ("8.8.8.8", "dns.google", "/dns-query"),
+)
+
+
+def probe(ip, server_name, path, mark, interface, timeout):
+    context = ssl.create_default_context()
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as raw:
+        raw.settimeout(timeout)
+        raw.setsockopt(socket.SOL_SOCKET, socket.SO_MARK, mark)
+        if interface:
+            raw.setsockopt(
+                socket.SOL_SOCKET,
+                socket.SO_BINDTODEVICE,
+                interface.encode("ascii") + b"\0",
+            )
+        raw.connect((ip, 443))
+        with context.wrap_socket(raw, server_hostname=server_name) as tls:
+            tls.settimeout(timeout)
+            request = (
+                f"HEAD {path} HTTP/1.1\r\n"
+                f"Host: {server_name}\r\n"
+                "Connection: close\r\n\r\n"
+            ).encode("ascii")
+            tls.sendall(request)
+            return tls.recv(16).startswith(b"HTTP/")
+
+
+def main():
+    if len(sys.argv) != 3:
+        print("Usage: awg-health-probe MARK INTERFACE", file=sys.stderr)
+        return 2
+    try:
+        mark = int(sys.argv[1], 0)
+    except ValueError:
+        print("Invalid fwmark", file=sys.stderr)
+        return 2
+    interface = sys.argv[2]
+    timeout = float(os.environ.get("AWG_HTTPS_PROBE_TIMEOUT", "3"))
+    for ip, server_name, path in PROBES:
+        try:
+            if probe(ip, server_name, path, mark, interface, timeout):
+                return 0
+        except (OSError, ssl.SSLError, ValueError):
+            pass
+    return 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

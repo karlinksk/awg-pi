@@ -19,6 +19,7 @@ IP_BIN="${IP_BIN:-ip}"
 AWG_BIN="${AWG_BIN:-awg}"
 PING_BIN="${PING_BIN:-ping}"
 LOGGER_BIN="${LOGGER_BIN:-logger}"
+HTTPS_PROBE_BIN="${AWG_HTTPS_PROBE_BIN:-/usr/local/sbin/awg-health-probe}"
 
 mkdir -p "$STATE_DIR"
 
@@ -81,7 +82,9 @@ handshake_fresh(){
 }
 
 transport_ok(){
-  "$PING_BIN" -4 -n -m "$((HEALTH_MARK))" -c1 -W2 9.9.9.9 >/dev/null 2>&1 ||   "$PING_BIN" -4 -n -m "$((HEALTH_MARK))" -c1 -W2 1.1.1.1 >/dev/null 2>&1
+  "$PING_BIN" -4 -n -m "$((HEALTH_MARK))" -c1 -W2 9.9.9.9 >/dev/null 2>&1 ||
+    "$PING_BIN" -4 -n -m "$((HEALTH_MARK))" -c1 -W2 1.1.1.1 >/dev/null 2>&1 ||
+    "$HTTPS_PROBE_BIN" "$HEALTH_MARK" "$VPN_IF" >/dev/null 2>&1
 }
 
 transport_health_ok(){

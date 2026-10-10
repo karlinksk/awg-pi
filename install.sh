@@ -647,6 +647,8 @@ install_project_unit(){
 mkdir -p /usr/local/lib/awg-pi
 install_project_helper src/awg-common /usr/local/lib/awg-pi/common.sh
 chmod 644 /usr/local/lib/awg-pi/common.sh
+install_project_helper src/awg-health-probe /usr/local/sbin/awg-health-probe
+python3 -m py_compile /usr/local/sbin/awg-health-probe || die "Ошибка синтаксиса awg-health-probe"
 _manage_tmp="$(mktemp)"
 curl -4fLsS --retry 3 --connect-timeout 8 --max-time 45 "$PROJECT_RAW_BASE/src/awg-manage.py" -o "$_manage_tmp" || die "Не удалось загрузить awg-manage.py"
 python3 -c 'import ast,sys; ast.parse(open(sys.argv[1]).read())' "$_manage_tmp" || die "Ошибка синтаксиса awg-manage.py"
