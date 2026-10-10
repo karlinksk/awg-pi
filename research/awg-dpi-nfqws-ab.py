@@ -75,7 +75,7 @@ def observed_queue_packets():
     hits = re.search(r"\bpackets (\d+)\b", p.stdout)
     return int(hits.group(1)) if hits else None
 
-def launch_nfqws():
+def launch_nfqws(strategy):
     import hashlib
     got = hashlib.sha256(BIN.read_bytes()).hexdigest()
     if got != EXPECTED_SHA256:
@@ -107,7 +107,7 @@ def launch_nfqws():
         "--ipset-ip=" + TARGET,
         "--in-range=x",
         "--payload=tls_client_hello",
-        "--lua-desync=fake:blob=fake_default_tls:badsum",
+        "--lua-desync=" + ("fake:blob=fake_default_tls:badsum" if strategy == "fake_tls" else "multidisorder:pos=2"),
     ]
     log = sandbox.MARKER / "nfqws.log"
     fd = log.open("w")
@@ -177,9 +177,14 @@ def main():
     if len(sys.argv) == 2 and sys.argv[1] == "--preflight":
         offline_preflight()
         return
-    if len(sys.argv) != 1:
-        raise RuntimeError("use_no_args_to_test_or_preflight_flag")
+    # Explicit allow-list; no arbitrary strategy strings or shell evaluation.
+    strategy = "fake_tls"
+    if len(sys.argv) == 2 and sys.argv[1] == "--strategy=multidisorder":
+        strategy = "multidisorder"
+    elif len(sys.argv) != 1:
+        raise RuntimeError("unsupported_strategy_option")
     offline_preflight()
+    print("A_B_STRATEGY=", strategy, flush=True)
     if sandbox.MARKER.exists() or sandbox.ns_exists() or sandbox.host_interface_exists():
         raise RuntimeError("existing_namespace_or_interface_abort")
     profile = base.picked_profile()
@@ -200,10 +205,10 @@ def main():
         proc = base.spawn_mihomo(profile)
         print("NAMESPACE_VLESS_READY", flush=True)
         result_snapshot("A1_NO_ZAPRET2", proc)
-        nfq = launch_nfqws()
+        nfq = launch_nfqws(strategy)
         isolate_nft_rule()
         print("NAMESPACE_NFQUEUE_ACTIVE", flush=True)
-        result_snapshot("B1_WITH_FAKE_TLS", proc)
+        result_snapshot("B1_WITH_" + strategy.upper(), proc)
         print("NAMESPACE_NFQUEUE_PACKET_HITS=", observed_queue_packets(), flush=True)
         remove_nft_rules()
         base.terminate(nfq)
