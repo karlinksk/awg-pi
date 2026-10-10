@@ -47,6 +47,7 @@ def summarize(payload: dict, *, now: int | None = None) -> dict:
     by_type = defaultdict(lambda: {"healthy": 0, "failed": 0, "endpoints": set()})
     reasons = Counter()
     controller_statuses = Counter()
+    statuses_by_protocol = defaultdict(Counter)
     endpoint_states: dict[tuple[str, int], list[bool]] = defaultdict(list)
     healthy = 0
     valid_endpoints = 0
@@ -63,6 +64,7 @@ def summarize(payload: dict, *, now: int | None = None) -> dict:
         err = str(node.get("error") or "")
         if not ok and err.startswith("http-") and err[5:].isdigit():
             controller_statuses[err[5:]] += 1
+            statuses_by_protocol[ptype][err[5:]] += 1
 
         address = node.get("server")
         port = node.get("port")
@@ -98,7 +100,10 @@ def summarize(payload: dict, *, now: int | None = None) -> dict:
         "healthy_profiles": healthy,
         "failed_profiles": len(nodes) - healthy,
         "failure_categories": {k: v for k, v in sorted(reasons.items()) if k != "healthy"},
-        "mihomo_controller_http_statuses": dict(sorted(controller_statuses.items())), 
+        "mihomo_controller_http_statuses": dict(sorted(controller_statuses.items())),
+        "mihomo_controller_http_by_protocol": {
+            ptype: dict(sorted(codes.items())) for ptype, codes in sorted(statuses_by_protocol.items())
+        }, 
         "unique_host_ports": len(endpoint_states),
         "valid_endpoint_profiles": valid_endpoints,
         "endpoints_all_failed": sum(1 for flags in endpoints if not any(flags)),
@@ -127,6 +132,9 @@ def show(report: dict) -> None:
     print("Local Mihomo API HTTP status codes (NOT remote HTTP statuses):")
     for code, count in report["mihomo_controller_http_statuses"].items():
         print(" ", code, "=", count)
+    print("Local API status codes by proxy type (NOT remote HTTP statuses):")
+    for proto, codes in report["mihomo_controller_http_by_protocol"].items():
+        print(" ", proto, " ".join(f"{code}={count}" for code, count in codes.items()))
     print("By protocol (healthy / failed / unique_host_ports):")
     for proto, data in report["by_protocol"].items():
         print(" ", proto, "=", data["healthy_profiles"], "/", data["failed_profiles"],
