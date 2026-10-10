@@ -5,6 +5,7 @@ AWG_ENV_FILE="${AWG_ENV_FILE:-/etc/awg-pbr/env}"
 AWG_COMMON_FILE="${AWG_COMMON_FILE:-/usr/local/lib/awg-pi/common.sh}"
 TRANSPORT_CLI="${AWG_TRANSPORT_CLI:-/usr/local/sbin/awg-transport}"
 MIHOMO_ENDPOINT_IP_FILE="${MIHOMO_ENDPOINT_IP_FILE:-/etc/awg-pbr/transports/mihomo/endpoint-ip}"
+HTTPS_PROBE_BIN="${AWG_HTTPS_PROBE_BIN:-/usr/local/sbin/awg-health-probe}"
 # shellcheck disable=SC1090
 source "$AWG_ENV_FILE"
 # shellcheck disable=SC1090
@@ -88,8 +89,9 @@ fi
 case "$TRANSPORT_ID" in
   awg)
     if ! ping -4 -n -I "$TRANSPORT_IF" -m "$health_mark_decimal" -c1 -W3 9.9.9.9 >/dev/null 2>&1 &&
-       ! ping -4 -n -I "$TRANSPORT_IF" -m "$health_mark_decimal" -c1 -W3 1.1.1.1 >/dev/null 2>&1; then
-      fail "AWG tunnel transport test failed via $TRANSPORT_IF"
+       ! ping -4 -n -I "$TRANSPORT_IF" -m "$health_mark_decimal" -c1 -W3 1.1.1.1 >/dev/null 2>&1 &&
+       ! "$HTTPS_PROBE_BIN" "$HEALTH_MARK" "$TRANSPORT_IF" >/dev/null 2>&1; then
+      fail "AWG tunnel transport test failed via $TRANSPORT_IF (ICMP and HTTPS)"
     fi
     ok "AWG tunnel transport is usable"
 
