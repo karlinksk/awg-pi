@@ -88,7 +88,7 @@ A future experiment would run a single isolated VLESS+REALITY+Vision
 profile for 159.89.87.21:28190 in this namespace using the independent
 direct IPv4 path. First reproduce baseline failure WITHOUT zapret2. Then
 apply a very limited set of test nft/NFQUEUE rules and a zapret2 process
-**inside this namespace only**. Do not change host awg_pbr, MSTP/SSTP,
+**inside this namespace only**. Do not change host awg_pbr, SSTP,
 MikroTik or production transport services.
 
 The source stays in a research branch and must not be included in a
