@@ -100,9 +100,24 @@ def launch_nfqws():
     finally:
         fd.close()
     time.sleep(1.1)
-    if proc.poll() is not None:
+    exit_code = proc.poll()
+    if exit_code is not None:
+        print("NFQWS_EXIT_CODE=", exit_code, flush=True)
+        try:
+            # The log is stored only in the ephemeral, root-owned sandbox.
+            # Print bounded *startup diagnostics* BEFORE sandbox cleanup
+            # deletes it; redact potentially sensitive parameter values.
+            lines = log.read_text(encoding="utf-8", errors="replace").splitlines()
+            if not lines:
+                print("NFQWS_STARTUP_LOG=EMPTY", flush=True)
+            for line in lines[-18:]:
+                line = re.sub(r"(?i)\\b(uuid|token|password|secret|private.?key|public.?key|sni|servername)\\s*[:=]\\s*\\S+", r"\\1=<redacted>", line)
+                line = re.sub(r"(?i)\\b(?:[a-f0-9]{48,}|[a-z0-9+/]{64,}={0,2})\\b", "<redacted>", line)
+                print("NFQWS_STARTUP_LOG=", line[:240], flush=True)
+        except OSError:
+            print("NFQWS_STARTUP_LOG=UNREADABLE", flush=True)
         raise RuntimeError("nfqws_early_exit")
-    # Do not print this log; it may include endpoint or TLS details.
+    # A successful startup does not expose the log or packet contents.
     return proc
 
 def result_snapshot(label, proxy):
