@@ -48,12 +48,16 @@ def is_test_mihomo(pid):
     except OSError:
         return False
     argv = [v.decode("utf-8", errors="replace") for v in raw.split(b"\x00") if v]
-    if exe != SAFE_EXE or not argv:
+    if not argv:
+        return False
+    if exe == str(MARKER / "nfqws2"):
+        # This exact binary is copied inside the uniquely owned marker dir.
+        # Require the watchdog-owned PID file argument to disambiguate it.
+        return any(v == "--pidfile=" + str(MARKER / "nfqws2.pid") for v in argv)
+    if exe != SAFE_EXE:
         return False
     # The child must be this experiment's Mihomo, not the production daemon.
-    if not any(v.startswith("/run/awg-dpi-test-owner/") for v in argv):
-        return False
-    return True
+    return any(v.startswith("/run/awg-dpi-test-owner/") for v in argv)
 
 
 def main():
