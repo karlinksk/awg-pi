@@ -384,20 +384,30 @@ class Discovery(unittest.TestCase):
             with self.assertRaises(ValueError):
                 m.discover({'VPN_IF': 'awg0'})
 
-    def test_transport_requires_ping_and_fresh_handshake(self):
+    def test_transport_accepts_https_fallback_and_requires_fresh_handshake(self):
         env = dict(HEALTH_MARK='0x101', HEALTH_TABLE='101', VPN_IF='awg0')
         calls = []
-        stamp, ping_code = 100, 0
+        stamp, ping_code, https_code = 100, 0, 1
         def run(*args, **kwargs):
             calls.append(args)
-            return subprocess.CompletedProcess(args, ping_code if args[0] == 'ping' else 0,
-                                               f'publickey {stamp}\n' if args[0] == 'awg' else '')
+            if args[0] == 'ping':
+                code, out = ping_code, ''
+            elif args[0] == m.HTTPS_PROBE:
+                code, out = https_code, ''
+            elif args[0] == 'awg':
+                code, out = 0, f'publickey {stamp}\n'
+            else:
+                code, out = 0, ''
+            return subprocess.CompletedProcess(args, code, out)
         with patch.object(m, 'run', side_effect=run), patch.object(m.time, 'sleep'), patch.object(m.time, 'time', return_value=101):
             self.assertTrue(m.tunnel_ok(env, 100))
             self.assertIn(('ping', '-4', '-n', '-I', 'awg0', '-m', '257', '-c1', '-W2', '9.9.9.9'), calls)
             stamp = 99
             self.assertFalse(m.tunnel_ok(env, 100))
-            stamp, ping_code = 100, 1
+            stamp, ping_code, https_code = 100, 1, 0
+            self.assertTrue(m.tunnel_ok(env, 100))
+            self.assertIn((m.HTTPS_PROBE, '257', 'awg0'), calls)
+            https_code = 1
             self.assertFalse(m.tunnel_ok(env, 100))
             self.assertEqual(calls[-1][:4], ('ip', '-4', 'rule', 'del'))
 
