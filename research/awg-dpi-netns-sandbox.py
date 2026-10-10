@@ -98,6 +98,14 @@ def create():
           "address", ":".join(f"{b:02x}" for b in mac)])
     call(["ip", "-n", NS, "link", "set", "dev", "lo", "up"])
     call(["ip", "-n", NS, "link", "set", "dev", IF, "up"])
+    # Netfilter tables are independent per netns; never touch host nft.
+    scoped_tables = call(["ip", "netns", "exec", NS, "nft", "list", "tables"])
+    if scoped_tables.stdout.strip():
+        raise RuntimeError("sandbox_nft_tables_not_empty")
+    scoped_routes = call(["ip", "-n", NS, "-4", "route", "show"])
+    if scoped_routes.stdout.strip():
+        raise RuntimeError("sandbox_has_unexpected_ipv4_route")
+    print("SANDBOX_ISOLATION=PASS empty_netns_nft_and_routes=true", flush=True)
 
 
 def dhcp():
@@ -161,7 +169,7 @@ def https_check():
 
 def main():
     p = argparse.ArgumentParser()
-    p.add_argument("mode", choices=["status", "lifecycle", "rollback", "dhcp-smoke", "cleanup"])
+    p.add_argument("mode", choices=["status", "lifecycle", "hold", "rollback", "dhcp-smoke", "cleanup"])
     args = p.parse_args()
     if args.mode == "status":
         print("AWG_DPI_SANDBOX_STATUS", "owned=", owned(),
@@ -182,6 +190,9 @@ def main():
         print("SANDBOX_CREATED namespace=", NS, "interface=", IF, flush=True)
         if args.mode == "rollback":
             raise RuntimeError("intentional_failure_to_test_rollback")
+        if args.mode == "hold":
+            print("SANDBOX_HOLD_FOR_SIGNAL_TEST", flush=True)
+            time.sleep(10)
         if args.mode == "dhcp-smoke":
             addr = dhcp()
             print("SANDBOX_DHCP_LEASE_RECEIVED", "lease_is_distinct_from_production=true",
