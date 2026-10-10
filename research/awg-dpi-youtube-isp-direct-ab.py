@@ -215,6 +215,9 @@ def probe(label):
         print(label,site,"exit=",output.returncode,output.stdout.strip()[:130],flush=True)
 
 def main():
+    def on_sigterm(_sig, _frame):
+        raise KeyboardInterrupt("operator_sigterm")
+    signal.signal(signal.SIGTERM, on_sigterm)
     if os.geteuid()!=0:
         raise RuntimeError("root_required")
     if len(sys.argv)!=1:
