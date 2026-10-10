@@ -76,15 +76,29 @@ def launch_nfqws():
     got = hashlib.sha256(BIN.read_bytes()).hexdigest()
     if got != EXPECTED_SHA256:
         raise RuntimeError("nfqws_official_sha_mismatch")
-    copy = sandbox.MARKER / "nfqws2"
+    # /run is mounted noexec by Debian; /dev/shm is a separate tmpfs
+    # which permits executing this already verified official ARM64 binary.
+    run_id = (sandbox.MARKER / "run-id").read_text().strip()
+    execution_root = sandbox.sandbox_exec_dir(run_id)
+    execution_root.mkdir(mode=0o755)
+    execution_root.chmod(0o755)
+    copy = execution_root / "nfqws2"
     shutil.copyfile(BIN, copy)
-    copy.chmod(0o700)
+    copy.chmod(0o755)
+    if hashlib.sha256(copy.read_bytes()).hexdigest() != EXPECTED_SHA256:
+        raise RuntimeError("copied_official_binary_sha_mismatch")
+    # Root-owned snapshot of the two scripts; readable by the dropped UID.
+    local_lib = execution_root / "zapret-lib.lua"
+    local_antidpi = execution_root / "zapret-antidpi.lua"
+    for original, destination in ((LIB, local_lib), (ANTIDPI, local_antidpi)):
+        shutil.copyfile(original, destination)
+        destination.chmod(0o644)
     cmd = [
         "ip", "netns", "exec", sandbox.NS, str(copy),
         "--qnum=" + QUEUE,
         "--fwmark=" + FWMARK, "--uid=1000",
-        "--lua-init=@" + str(LIB),
-        "--lua-init=@" + str(ANTIDPI),
+        "--lua-init=@" + str(local_lib),
+        "--lua-init=@" + str(local_antidpi),
         "--filter-tcp=" + PORT,
         "--ipset-ip=" + TARGET,
         "--in-range=x",
@@ -138,6 +152,11 @@ def offline_preflight():
         raise RuntimeError("official_arm64_binary_missing_or_sha_mismatch")
     if not LIB.is_file() or not ANTIDPI.is_file():
         raise RuntimeError("official_lua_files_missing")
+    # Fail rather than attempting execution on a noexec filesystem.
+    flags = subprocess.run(["findmnt", "-T", "/dev/shm", "-n", "-o", "OPTIONS"],
+                           capture_output=True, text=True, timeout=4)
+    if flags.returncode or "noexec" in flags.stdout.split(","):
+        raise RuntimeError("execution_tmpfs_unavailable_or_noexec")
     if not (ROOT / "awg-dpi-guardian.py").is_file():
         raise RuntimeError("guardian_script_missing")
     if subprocess.run(["systemctl", "is-active", "--quiet", "awg-mihomo.service"]).returncode:
