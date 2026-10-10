@@ -41,7 +41,7 @@ def pids():
     return [int(word) for word in out.stdout.split() if word.isdigit()]
 
 
-def is_test_mihomo(pid):
+def is_test_mihomo(pid, token):
     try:
         exe = os.readlink(f"/proc/{pid}/exe")
         raw = Path(f"/proc/{pid}/cmdline").read_bytes()
@@ -50,8 +50,10 @@ def is_test_mihomo(pid):
     argv = [v.decode("utf-8", errors="replace") for v in raw.split(b"\x00") if v]
     if not argv:
         return False
-    if exe == str(MARKER / "nfqws2"):
-        # Only the root-owned per-run binary and exact constrained queue/target.
+    # nfqws2 must execute on /dev/shm because Pi mounts /run as noexec.
+    # Matching the token-scoped path prevents killing another test generation.
+    expected_exe = str(Path("/dev/shm") / ("awg-dpi-nfqws-" + token) / "nfqws2")
+    if exe == expected_exe:
         return "--qnum=237" in argv and "--ipset-ip=159.89.87.21" in argv
     if exe != SAFE_EXE:
         return False
@@ -72,7 +74,7 @@ def main():
         print("WATCHDOG=" + status)
         return 0
     occupants = pids()
-    unsafe = [pid for pid in occupants if not is_test_mihomo(pid)]
+    unsafe = [pid for pid in occupants if not is_test_mihomo(pid, token)]
     if unsafe:
         print("WATCHDOG=UNRECOGNIZED_PROCESS_ABORT")
         return 3
@@ -83,7 +85,7 @@ def main():
     while time.monotonic() < end and pids():
         time.sleep(0.2)
     for pid in pids():
-        if not is_test_mihomo(pid):
+        if not is_test_mihomo(pid, token):
             print("WATCHDOG=UNRECOGNIZED_PROCESS_ABORT")
             return 3
         try: os.kill(pid, signal.SIGKILL)
