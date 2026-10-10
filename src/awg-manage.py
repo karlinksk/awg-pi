@@ -459,10 +459,17 @@ awg setconf "$1" "$2" >/dev/null 2>&1
 def tunnel_ok(env, since):
     mark = str(int(env['HEALTH_MARK'], 0))
     run('ip', '-4', 'route', 'replace', 'default', 'dev', env['VPN_IF'], 'table', env['HEALTH_TABLE'])
-    # A unique probe rule avoids changing existing health rules during validation.
+    # Priority 89 is reserved for transactional AWG validation. A previous
+    # interrupted maintenance run may have left an identical rule behind, so
+    # clear every exact stale copy before adding the temporary rule.
     rule = ('priority', '89', 'fwmark', mark, 'lookup', env['HEALTH_TABLE'])
-    run('ip', '-4', 'rule', 'add', *rule)
+    for _ in range(16):
+        if run('ip', '-4', 'rule', 'del', *rule, check=False).returncode != 0:
+            break
+    else:
+        raise RuntimeError('Не удалось очистить временное правило проверки AWG')
     try:
+        run('ip', '-4', 'rule', 'add', *rule)
         for _ in range(10):
             icmp_ok = any(run('ping', '-4', '-n', '-I', env['VPN_IF'], '-m', mark,
                               '-c1', '-W2', target, check=False).returncode == 0
@@ -533,6 +540,12 @@ def replace_config(args, env):
             run(FAILOPEN, check=False)
             run('systemctl', 'stop', service, check=False)
             tx.restore()
+            # Re-assert the in-memory pre-transaction profile so a partial
+            # restore can never leave the rejected candidate as awg0.conf.
+            if had_active and old is not None:
+                atomic(active, old)
+            else:
+                active.unlink(missing_ok=True)
             recovered = False
             try:
                 if had_active:

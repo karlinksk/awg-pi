@@ -345,6 +345,13 @@ class Maintenance(unittest.TestCase):
         self.assertEqual(self.active.read_text(), PROFILE)
         self.assertFalse(self.previous.exists())
 
+    def test_config_failure_reasserts_original_active_profile(self):
+        self.health.side_effect = [False, True]
+        with patch.object(m.Transaction, 'restore', autospec=True):
+            with self.assertRaises(RuntimeError):
+                m.replace_config(self.args(), self.env)
+        self.assertEqual(self.active.read_text(), PROFILE)
+
     def test_failed_recovery_keeps_direct(self):
         self.health.return_value = False
         with self.assertRaises(RuntimeError):
@@ -388,9 +395,23 @@ class Discovery(unittest.TestCase):
         env = dict(HEALTH_MARK='0x101', HEALTH_TABLE='101', VPN_IF='awg0')
         calls = []
         stamp, ping_code, https_code = 100, 0, 1
+        probe_rules = 1
+        probe_rule = ('priority', '89', 'fwmark', '257', 'lookup', '101')
+
         def run(*args, **kwargs):
+            nonlocal probe_rules
             calls.append(args)
-            if args[0] == 'ping':
+            if args[:4] == ('ip', '-4', 'rule', 'del') and args[4:] == probe_rule:
+                if probe_rules:
+                    probe_rules -= 1
+                    code, out = 0, ''
+                else:
+                    code, out = 2, ''
+            elif args[:4] == ('ip', '-4', 'rule', 'add') and args[4:] == probe_rule:
+                code, out = (2, '') if probe_rules else (0, '')
+                if code == 0:
+                    probe_rules = 1
+            elif args[0] == 'ping':
                 code, out = ping_code, ''
             elif args[0] == m.HTTPS_PROBE:
                 code, out = https_code, ''
@@ -399,8 +420,12 @@ class Discovery(unittest.TestCase):
             else:
                 code, out = 0, ''
             return subprocess.CompletedProcess(args, code, out)
+
         with patch.object(m, 'run', side_effect=run), patch.object(m.time, 'sleep'), patch.object(m.time, 'time', return_value=101):
             self.assertTrue(m.tunnel_ok(env, 100))
+            self.assertEqual(probe_rules, 0)
+            first_add = calls.index(('ip', '-4', 'rule', 'add', *probe_rule))
+            self.assertIn(('ip', '-4', 'rule', 'del', *probe_rule), calls[:first_add])
             self.assertIn(('ping', '-4', '-n', '-I', 'awg0', '-m', '257', '-c1', '-W2', '9.9.9.9'), calls)
             stamp = 99
             self.assertFalse(m.tunnel_ok(env, 100))
@@ -409,6 +434,7 @@ class Discovery(unittest.TestCase):
             self.assertIn((m.HTTPS_PROBE, '257', 'awg0'), calls)
             https_code = 1
             self.assertFalse(m.tunnel_ok(env, 100))
+            self.assertEqual(probe_rules, 0)
             self.assertEqual(calls[-1][:4], ('ip', '-4', 'rule', 'del'))
 
 
