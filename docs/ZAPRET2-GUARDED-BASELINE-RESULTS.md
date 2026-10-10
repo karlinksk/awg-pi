@@ -49,3 +49,46 @@ The failure reproduces **outside the production Pi VPN policy engine** using the
 - This experiment does not check whether the isolated Pi DHCP IP is treated differently by MikroTik policy routing at the tested **destination**. External WAN public IP match is a useful but not exhaustive confirmation.
 
 **Final state**: netns/interface/ownership marker absent, main Mihomo healthy. No changes to production paths.
+
+## Phase H — verified nfqws2 exec failure fix (2026-10-11)
+
+Local SSH operator's first and second A/B attempts both reached A1 (two local
+Mihomo controller API 504 errors), but stopped before B1. The second attempt
+captured the precise error before cleanup:
+
+```text
+NFQWS_EXIT_CODE= 1
+NFQWS_STARTUP_LOG= exec of "/run/awg-dpi-test-owner/nfqws2" failed: Permission denied
+SANDBOX_CLEAN= True
+```
+
+A direct mount inspection on Pi established that **/run is tmpfs mounted
+rw,nosuid,nodev,noexec**, whereas **/dev/shm is a separate executable tmpfs**
+(rw,nosuid,nodev). The original A/B harness copied a root-owned executable to
+/run, which the kernel refused to execute. This failure was unrelated to
+VLESS, ISP DPI or nftables. No real NFQUEUE interception was reached.
+
+Fixes applied **in the research branch only**:
+
+- Copy checksum-pinned official ARM64 nfqws2 and its two public Lua files into
+  a root-owned, per-run directory under
+  `/dev/shm/awg-dpi-nfqws-<24-char run-id>/`. This directory is 0755,
+  binary 0755 and Lua files 0644 so nfqws2 can drop privileges to UID 1000.
+- Keep sensitive Mihomo profile and test nft configuration **under root-only
+  /run**, never on the executable tmpfs. No mount option or partition changed.
+- The independent watchdog matches the new exact token-scoped executable
+  pathname (also pinned to queue 237 and the destination IP).
+- Normal and watchdog cleanup remove both temporary namespace resources and
+  the root-owned /dev/shm executable directory, only for the matching session.
+- Display bounded startup and nft-parser diagnostics if an isolated test
+  fails, rather than losing all logs during cleanup.
+
+Validated on Pi: copied official nfqws2 to a disposable /dev/shm directory,
+verified SHA-256 `8788877cd4b3140357dd10524832ca508d47055efae072bc426b887bfea253a7`,
+ran **--intercept=0** with both Lua files and the exact test filter; saw
+`no intercept quit`. Disposable directory was removed. Updated scripts were
+staged on Pi, Python compiled, and read-only preflight again returned
+`PRECHECK=PASS`. Production Mihomo healthy and no leftover test namespace.
+
+**Next:** operator reruns the same time-limited SSH A/B command. No successful
+NFQUEUE test or DPI result is claimed until that output is reviewed.
