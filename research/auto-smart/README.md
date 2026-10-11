@@ -62,7 +62,7 @@ Cloudflare returns HTTP 403 for exactly 16,000,000 bytes on the observed Hysteri
 
 ## Low-traffic 48–72h observation variant
 
-The optional observer timer runs after a 1h boot grace and every **8h** after each service activation. With 10 short screens (1.5 MB each), only **three** sustained finalists (8 MB download + 2 MB upload each) and two 20 MB confirmations, nominal application test traffic is capped at **85 MB per cycle / 255 MB per day** at three runs a day, before transport overhead. The currently active node remains in the deep-test shortlist. Candidate protocol leaders rotate between 8h periods to mitigate selection bias.
+The optional observer timer runs 8h after the timer is activated and every **8h** after each service activation. With 10 short screens (1.5 MB each), only **three** sustained finalists (8 MB download + 2 MB upload each) and two 20 MB confirmations, nominal application test traffic is capped at **85 MB per cycle / 255 MB per day** at three runs a day, before transport overhead. The currently active node remains in the deep-test shortlist. Candidate protocol leaders rotate between 8h periods to mitigate selection bias.
 
 The observer keeps up to **12** compact, root-only run records in `/run/awg-pbr/mihomo-smart/runs.json`, on tmpfs, with no subscription credentials and no persistent microSD logging. Inspect with `sudo /usr/local/sbin/awg-mihomo-smart history --count 12`. A reboot intentionally drops its transient measurement history. The versioned health success history is reset when upgrading the measurement method so invalid 16MB 403 outcomes cannot bias new scores.
 
