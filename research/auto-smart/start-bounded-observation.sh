@@ -14,7 +14,12 @@ from pathlib import Path
 p=Path('/run/awg-pbr/mihomo-smart/last.json')
 try:
     r=json.loads(p.read_text())
-    good=(r.get('version')==2 and r.get('confirmed_count',0)>=1
+    archive=json.loads(Path('/run/awg-pbr/mihomo-smart/runs.json').read_text())
+    runs=archive.get('runs',[])
+    good=(archive.get('version')==1 and len(runs)>=1
+          and runs[-1].get('timestamp')==r.get('timestamp')
+          and archive.get('source_sha256')==r.get('source_sha256')
+          and r.get('version')==2 and r.get('confirmed_count',0)>=1
           and 0 <= time.time()-r.get('timestamp',0) <= 3600
           and r.get('current_at_start')==r.get('current_at_end')
           and r.get('switches_made')==0 and r.get('production_modified') is False)
