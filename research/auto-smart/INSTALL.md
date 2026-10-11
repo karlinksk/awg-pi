@@ -42,7 +42,7 @@ The default nominal budget is **85 MB per full cycle** (10×1.5 MB screening + 5
 
 Two successful 20 MB confirmations on 2026-10-11 favored retaining `hysteria2-1711051470` over `shadowsocks-27307`; that is **not** sufficient proof of long-term superiority or YouTube-specific performance. Shadow ranking is advisory. Keep Selective FAIL-OPEN, Transit FAIL-CLOSED and existing transport failover unchanged.
 
-The upgraded `history --count 12` command displays a bounded RAM-only daypart trend. The 23 offline unit/integration tests now include data redaction, retention, protocol rotation and the history report.
+The upgraded `history --count 12` command displays a bounded RAM-only daypart trend. The 24 offline unit/integration tests now include data redaction, retention, protocol rotation and the history report.
 
 ## Time-bounded observation (operator-approved)
 
@@ -58,3 +58,5 @@ sudo bash research/auto-smart/start-bounded-observation.sh 48
 The scheduler verifies both root-installed systemd units and the installed observer against the pinned repository hashes. It writes a dedicated, persistent **one-time stop timer** for the local 48/72-hour deadline and enables the benchmark timer only after the stop timer is armed. A startup failure disables both. The stop service disables the observation timer automatically, even if the device was off at the deadline and later boots. Neither script changes the live node, transport, firewall, routes, AWG or MikroTik SSTP.
 
 The observation timer uses `OnActiveSec=8h` and `OnUnitActiveSec=8h` so enabling it on a long-running Pi **does not immediately rerun** a benchmark. Data lives only in RAM; `history --count 12` displays the window, and normal reboot intentionally resets it. When the window closes, confirm the timer is disabled and inspect the history before considering any smart switching.
+
+The existing allow-listed `sudo -n /usr/local/sbin/awg-gpt smart-report` prints the time-of-day history automatically after the current top nodes. No additional privileged helper permissions are necessary.
