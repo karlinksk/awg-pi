@@ -129,6 +129,8 @@ jobs:
         run: |
           bash -n research/auto-smart/install-shadow.sh
           bash -n research/auto-smart/rollback-shadow.sh
+          bash -n research/auto-smart/start-bounded-observation.sh
+          bash -n research/auto-smart/deploy-observe72.sh
           python3 -m unittest discover -s research/auto-smart -p 'test_auto_smart*.py' -v
 
   awg-v31:
