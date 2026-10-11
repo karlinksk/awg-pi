@@ -1,0 +1,13 @@
+[Unit]
+Description=Optional low-traffic Mihomo AUTO SMART shadow measurements
+
+[Timer]
+OnBootSec=30min
+OnUnitActiveSec=3h
+RandomizedDelaySec=20min
+AccuracySec=5min
+Persistent=false
+Unit=awg-mihomo-smart.service
+
+[Install]
+WantedBy=timers.target
