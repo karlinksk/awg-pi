@@ -125,6 +125,11 @@ jobs:
           python3 tests/test-confirm.py
           python3 tests/test-menu.py
 
+      - name: AUTO SMART shadow observer (offline tests)
+        run: |
+          bash -n research/auto-smart/install-shadow.sh
+          python3 -m unittest discover -s research/auto-smart -p 'test_auto_smart*.py' -v
+
   awg-v31:
     runs-on: ubuntu-latest
     steps:
