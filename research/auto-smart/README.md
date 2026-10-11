@@ -21,12 +21,12 @@ The original shadow ranking used only 1.5 MB downloads and 300 KB uploads for ea
 1. Reuse the existing verified health pool (max age 1h and unchanged provider checksum) and existing user region / protocol / cooldown constraints. Select up to 10 unique endpoints and protocol-diverse candidates, retaining the current node when eligible.
 2. Run a loopback-only second Mihomo process. The runtime config with subscription secrets exists only in root-only `/dev/shm`, the production proxy is untouched, and there is no TUN.
 3. Perform a short **reachability screening**, default 1.5 MB HTTPS download per candidate. This is **not** used as the final speed figure.
-4. For up to five survivors, chosen with active-node priority and protocol diversity, perform an 8 MB download and 2 MB random upload. This is the first sustained throughput measurement.
+4. For up to three survivors, chosen with active-node priority and protocol diversity, perform an 8 MB download and 2 MB random upload. This is the first sustained throughput measurement.
 5. Recheck the current node and best non-current competitor (if reachable) with an additional **20 MB** download each. The final download rate is the weighted result (one part 8 MB plus two parts 20 MB). Only rechecked nodes are eligible for a manual recommendation.
 6. Remember up to five independent confirmation successes/failures **in root-only tmpfs**, keyed by provider hash and measurement version. A suggested change requires at least two separately confirmed cycles and at least 30% **and** 10 Mbps better download performance than the confirmed current node. Current-node changes mid-scan invalidate the recommendation.
 7. No automatic switch is implemented: `SMART_SWITCHES_MADE=0` is invariant. Failures do not affect production. SMART's optional systemd timer stays **disabled**.
 
-At ten selected candidates, the configured application-level test traffic cap is 105 MB (10×1.5 MB screening, 5×(8 MB download + 2 MB upload), 2×20 MB confirmation); HTTP/TLS and retransmission overhead may increase wire traffic. A full health scan of all 1869 nodes is **not** triggered. With ten failures, actual transferred bytes can be lower; nominal cap remains bounded by code. Do not enable the optional 3-hour timer until operator reviews real resource and data usage.
+At ten selected candidates, the configured application-level test traffic cap is 85 MB (10×1.5 MB screening, 3×(8 MB download + 2 MB upload), 2×20 MB confirmation); HTTP/TLS and retransmission overhead may increase wire traffic. A full health scan of all 1869 nodes is **not** triggered. With ten failures, actual transferred bytes can be lower; nominal cap remains bounded by code. Do not enable the optional 3-hour timer until operator reviews real resource and data usage.
 
 ## Service and helper (after installation)
 
@@ -59,3 +59,11 @@ Speed.cloudflare.com is one measurement direction, not a comprehensive assessmen
 ## Calibrated confirmation fix
 
 Cloudflare returns HTTP 403 for exactly 16,000,000 bytes on the observed Hysteria2 route, whereas an HTTP 200 response for 20,000,000 bytes measured approximately 137.6 Mbps. The confirmation size is now 20 MB. A failed confirmation followed by only one good cycle does not satisfy the required two **consecutive** successes.
+
+## Low-traffic 48–72h observation variant
+
+The optional observer timer runs after a 1h boot grace and every **8h** after each service activation. With 10 short screens (1.5 MB each), only **three** sustained finalists (8 MB download + 2 MB upload each) and two 20 MB confirmations, nominal application test traffic is capped at **85 MB per cycle / 255 MB per day** at three runs a day, before transport overhead. The currently active node remains in the deep-test shortlist. Candidate protocol leaders rotate between 8h periods to mitigate selection bias.
+
+The observer keeps up to **12** compact, root-only run records in `/run/awg-pbr/mihomo-smart/runs.json`, on tmpfs, with no subscription credentials and no persistent microSD logging. Inspect with `sudo /usr/local/sbin/awg-mihomo-smart history --count 12`. A reboot intentionally drops its transient measurement history. The versioned health success history is reset when upgrading the measurement method so invalid 16MB 403 outcomes cannot bias new scores.
+
+The systemd timer is shipped **disabled by default**. Enable it only after explicitly approving the monitoring window; do not leave it running after the planned 48–72h trial. Historical records support daypart comparison, not automated switching. The present scoring still cannot establish which Google/YouTube destination or exit-IP geography will work best.
