@@ -8,6 +8,22 @@ D="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
 HOURS="${1:-72}"
 case "$HOURS" in 48|72) ;; *) echo "Only 48 or 72 hours supported" >&2; exit 2 ;; esac
 [[ -f "$D/SHA256SUMS" ]] || { echo "Missing trusted manifest" >&2; exit 3; }
+python3 - <<'PY'
+import json,time
+from pathlib import Path
+p=Path('/run/awg-pbr/mihomo-smart/last.json')
+try:
+    r=json.loads(p.read_text())
+    good=(r.get('version')==2 and r.get('confirmed_count',0)>=1
+          and 0 <= time.time()-r.get('timestamp',0) <= 3600
+          and r.get('current_at_start')==r.get('current_at_end')
+          and r.get('switches_made')==0 and r.get('production_modified') is False)
+except (OSError,ValueError,TypeError):
+    good=False
+if not good:
+    raise SystemExit('Recent successful unchanged-node SMART test required before scheduling')
+print('AUTO_SMART_PREFLIGHT=RECENT_CONFIRMED_SHADOW_ONLY')
+PY
 (cd "$D" && sha256sum -c SHA256SUMS)
 EXPECTED="$(awk '$2 == "awg-mihomo-smart" {print $1}' "$D/SHA256SUMS")"
 [[ -n "$EXPECTED" && "$(sha256sum /usr/local/sbin/awg-mihomo-smart | cut -d' ' -f1)" == "$EXPECTED" ]] || {
