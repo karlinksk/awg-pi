@@ -79,6 +79,23 @@ class ShadowHistoryTests(unittest.TestCase):
         self.assertEqual(kinds,{'ss','trojan','vless','vmess','hysteria2'})
         self.assertTrue(all(len(r)==3 for r in results))
 
+    def test_scoped_smart_report_includes_daypart_summary(self):
+        with tempfile.TemporaryDirectory(dir='/dev/shm') as scratch, \
+             patch.object(smart,'STATE_DIR',Path(scratch)):
+            doc=report(1)
+            smart.append_archive(doc)
+            saved={'timestamp':doc['timestamp'], 'current_at_end':'HY',
+                   'recommendation':{'name':'HY','advice':'CURRENT_BEST'},
+                   'results':[dict(sample('HY'),reliability=1.0,score=60.0)]}
+            smart.private_json(Path(scratch)/'last.json',saved)
+            buf=io.StringIO()
+            with contextlib.redirect_stdout(buf):
+                smart.show(types.SimpleNamespace(count=10))
+            value=buf.getvalue()
+            self.assertIn('SMART_HISTORY_RUNS=1',value)
+            self.assertIn('MEDIAN_DOWN_MBPS=81',value)
+            self.assertIn('SMART_RECOMMENDATION=HY',value)
+
     def test_cli_history_command_is_read_only(self):
         with tempfile.TemporaryDirectory(dir='/dev/shm') as scratch, \
              patch.object(smart,'STATE_DIR',Path(scratch)):
