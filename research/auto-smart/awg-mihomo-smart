@@ -20,6 +20,7 @@ import math
 import os
 from pathlib import Path
 import signal
+import statistics
 import subprocess
 import sys
 import tempfile
@@ -165,7 +166,7 @@ def private_json(path, payload):
 def read_history(provider_hash):
     try:
         data = json.loads((STATE_DIR/'history.json').read_text())
-        if data.get('version') == 2 and data.get('source_sha256') == provider_hash:
+        if data.get('version') == 3 and data.get('source_sha256') == provider_hash:
             return data.get('nodes', {})
     except (OSError, ValueError, TypeError):
         pass
@@ -258,7 +259,7 @@ def plan(args):
 
 
 
-def calibration_finalists(rows, current: str, limit: int) -> list[dict]:
+def calibration_finalists(rows, current: str, limit: int, rotation: int = 0) -> list[dict]:
     """Short test is reachability only. Preserve current and protocol diversity."""
     eligible_rows = [r for r in rows if r.get('warmup_ok')]
     chosen: list[dict] = []
@@ -270,7 +271,11 @@ def calibration_finalists(rows, current: str, limit: int) -> list[dict]:
         families[row['type']].append(row)
     leaders = [max(group, key=lambda x: (x['warmup_mbps'], -x['delay_ms']))
                for group in families.values()]
-    for row in sorted(leaders, key=lambda x: (-x['warmup_mbps'], x['delay_ms'])):
+    leaders = sorted(leaders, key=lambda x: (-x['warmup_mbps'], x['delay_ms']))
+    if leaders:
+        offset = rotation % len(leaders)
+        leaders = leaders[offset:] + leaders[:offset]
+    for row in leaders:
         if row not in chosen and len(chosen) < limit:
             chosen.append(row)
     for row in sorted(eligible_rows, key=lambda x: (-x['warmup_mbps'], x['delay_ms'])):
@@ -347,7 +352,7 @@ def shadow_scan(args):
                 # Limit total nominal transfer per run. The screening download is
                 # not a meaningful indicator of steady-state throughput.
                 cap = (len(chosen)*args.download_bytes +
-                       min(5,len(chosen))*(args.sustained_bytes+args.sustained_upload_bytes) +
+                       min(getattr(args,'finalists',3),len(chosen))*(args.sustained_bytes+args.sustained_upload_bytes) +
                        min(2,len(chosen))*args.confirm_bytes)
                 if cap > 115_000_000:
                     raise RuntimeError('calibration traffic cap exceeded')
@@ -374,7 +379,7 @@ def shadow_scan(args):
                     results.append(row)
                     print('SMART_SCREEN_PROGRESS='+str(len(results))+'/'+str(len(chosen)), flush=True)
 
-                finalists=calibration_finalists(results,current,min(5,len(chosen)))
+                finalists=calibration_finalists(results,current,min(getattr(args,'finalists',3),len(chosen)), rotation=int(time.time() // 28800))
                 for ix,row in enumerate(finalists,1):
                     try:
                         helper.select_probe(controller_port, lookup[row['name']]['probe_name'])
@@ -445,8 +450,9 @@ def shadow_scan(args):
         if current != report['current_at_end']:
             report['recommendation']={'name':'','advice':'OBSERVE_ONLY_CURRENT_CHANGED'}
         private_json(STATE_DIR/'last.json',report)
+        append_archive(report)
         private_json(STATE_DIR/'history.json',
-                     {'version':2,'source_sha256':pool_data['provider_sha256'],'nodes':history})
+                     {'version':3,'source_sha256':pool_data['provider_sha256'],'nodes':history})
         print('SMART_MEASURED='+str(len(results)),
               'SMART_SCREEN_OK='+str(sum(x['warmup_ok'] for x in results)),
               'SMART_SUSTAINED_OK='+str(sum(x['sustained_verified'] for x in results)),
@@ -455,6 +461,68 @@ def shadow_scan(args):
         print('SMART_ADVICE='+report['recommendation']['advice'])
         print('SMART_ACTIVE_UNCHANGED='+str(current==current_name()).lower())
         print('SMART_SWITCHES_MADE=0')
+
+
+
+def append_archive(report):
+    """Keep at most 12 small summary records in tmpfs. Never store credentials."""
+    dest=STATE_DIR/'runs.json'
+    runs=[]
+    try:
+        prior=json.loads(dest.read_text())
+        if prior.get('version') == 1 and prior.get('source_sha256') == report['source_sha256']:
+            runs=prior.get('runs', [])
+            if not isinstance(runs,list):
+                runs=[]
+    except (OSError,ValueError,TypeError):
+        pass
+    observations=[]
+    for n in report.get('results', [])[:15]:
+        observations.append({
+            'name':n['name'], 'type':n['type'],
+            'confirmed':bool(n.get('confirmed')),
+            'sustained':bool(n.get('sustained_verified')),
+            'down_mbps':round(float(n.get('down_mbps') or 0),3),
+            'up_mbps':round(float(n.get('up_mbps') or 0),3),
+            'delay_ms':int(n['delay_ms']),
+            'ok':bool(n.get('ok')),
+        })
+    runs.append({
+        'timestamp':int(report['timestamp']),
+        'current':report['current_at_end'],
+        'advice':report['recommendation']['advice'],
+        'candidates':observations,
+    })
+    private_json(dest,{'version':1,'source_sha256':report['source_sha256'],
+                       'runs':runs[-12:]})
+
+
+def history_report(args):
+    """Read-only view of time-of-day runs; never reads raw subscriptions."""
+    file=STATE_DIR/'runs.json'
+    data=json.loads(file.read_text())
+    if data.get('version')!=1 or not isinstance(data.get('runs'),list):
+        raise ValueError('invalid history')
+    runs=data['runs'][-args.count:]
+    print('SMART_MODE=SHADOW_ONLY')
+    print('SMART_HISTORY_RUNS='+str(len(runs)))
+    for run in runs:
+        when=time.strftime('%Y-%m-%d %H:%M %Z',time.localtime(run['timestamp']))
+        confirmed=[x for x in run['candidates'] if x.get('confirmed')]
+        confirmed.sort(key=lambda x: -x['down_mbps'])
+        tops=' '.join(x['name']+'='+str(x['down_mbps'])+'Mbps' for x in confirmed[:3])
+        print(when,'current='+run['current'],'confirmed='+str(len(confirmed)),
+              'advice='+run['advice'],tops)
+    by_name=collections.defaultdict(list)
+    for run in runs:
+        for n in run['candidates']:
+            if n.get('confirmed'):
+                by_name[n['name']].append(n['down_mbps'])
+    for name,rates in sorted(by_name.items(),key=lambda kv:-statistics.median(kv[1])):
+        print('SMART_NODE='+name,'CONFIRMED='+str(len(rates)),
+              'MEDIAN_DOWN_MBPS='+str(round(statistics.median(rates),2)),
+              'MIN_DOWN_MBPS='+str(round(min(rates),2)),
+              'MAX_DOWN_MBPS='+str(round(max(rates),2)))
 
 
 def show(args):
@@ -488,6 +556,9 @@ def main():
     p.add_argument('--sustained-upload-bytes',type=int,default=2_000_000)
     p.add_argument('--sustained-timeout',type=int,default=20)
     p.add_argument('--confirm-timeout',type=int,default=20)
+    p.add_argument('--finalists',type=int,default=3)
+    p=subs.add_parser('history',help='View bounded RAM-only calibration history')
+    p.add_argument('--count',type=int,default=12)
     p=subs.add_parser('show',help='Show last root-owned RAM report')
     p.add_argument('--count',type=int,default=10)
     args=parser.parse_args()
@@ -500,7 +571,8 @@ def main():
           or not 8_000_000 <= args.confirm_bytes <= 20_000_000
           or not 0 <= args.sustained_upload_bytes <= 3_000_000
           or not 7 <= args.sustained_timeout <= 25
-          or not 7 <= args.confirm_timeout <= 25):
+          or not 7 <= args.confirm_timeout <= 25
+          or not 1 <= args.finalists <= 5):
         parser.error('speed probe limits exceeded')
     if args.command == 'plan':
         _,current,nodes=plan(args)
@@ -511,6 +583,8 @@ def main():
             print(n['name'], n['type'], str(n['delay_ms'])+'ms')
     elif args.command == 'scan':
         shadow_scan(args)
+    elif args.command == 'history':
+        history_report(args)
     else:
         show(args)
 
