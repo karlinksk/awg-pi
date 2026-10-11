@@ -537,6 +537,14 @@ def show(args):
         print(f"{i}. {n['name']} {n['type']} delay={n['delay_ms']}ms screen={n.get('warmup_mbps',0)}Mbps sustained={n.get('sustained_verified',False)} confirmed={n.get('confirmed',False)} down={n['down_mbps']}Mbps up={n['up_mbps']}Mbps reliability={n['reliability']} score={n['score']} reason={n.get('reason','')}")
 
 
+    # Existing root-owned awg-gpt smart-report already calls `show`; include
+    # the rolling daypart history without expanding the sudo allow-list.
+    try:
+        history_report(argparse.Namespace(count=12))
+    except (OSError,ValueError,KeyError):
+        print('SMART_HISTORY_RUNS=0')
+
+
 def main():
     parser=argparse.ArgumentParser(description=__doc__)
     subs=parser.add_subparsers(dest='command',required=True)
