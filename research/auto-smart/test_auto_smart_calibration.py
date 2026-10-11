@@ -93,6 +93,7 @@ class CalibrationTests(unittest.TestCase):
         self.assertEqual(call['download_bytes'],1500000)
         self.assertEqual(call['sustained_bytes'],8000000)
         self.assertEqual(call['confirm_bytes'],20000000)
+        self.assertEqual(call['finalists'],3)
         self.assertEqual(call['sustained_upload_bytes'],2000000)
         self.assertNotIn('fixture',call)
 
@@ -167,7 +168,7 @@ class CalibrationTests(unittest.TestCase):
                 self.assertEqual(b['recommendation']['name'],'HY')
                 self.assertEqual(b['recommendation']['advice'],'REVIEW_CANDIDATE_MANUALLY')
                 h=json.loads((d/'history.json').read_text())
-                self.assertEqual(h['version'],2)
+                self.assertEqual(h['version'],3)
                 self.assertEqual(h['nodes']['HY'],[1,1])
                 self.assertEqual(h['nodes']['SS'],[1,1])
                 self.assertNotIn('TR',h['nodes'])
