@@ -67,3 +67,5 @@ The optional observer timer runs 8h after the timer is activated and every **8h*
 The observer keeps up to **12** compact, root-only run records in `/run/awg-pbr/mihomo-smart/runs.json`, on tmpfs, with no subscription credentials and no persistent microSD logging. Inspect with `sudo /usr/local/sbin/awg-mihomo-smart history --count 12`. A reboot intentionally drops its transient measurement history. The versioned health success history is reset when upgrading the measurement method so invalid 16MB 403 outcomes cannot bias new scores.
 
 The systemd timer is shipped **disabled by default**. Enable it only after explicitly approving the monitoring window; do not leave it running after the planned 48–72h trial. Historical records support daypart comparison, not automated switching. The present scoring still cannot establish which Google/YouTube destination or exit-IP geography will work best.
+
+The already allow-listed `sudo -n /usr/local/sbin/awg-gpt smart-report` now includes this bounded daypart trend automatically; expanding sudo permissions for a new history command is unnecessary.
