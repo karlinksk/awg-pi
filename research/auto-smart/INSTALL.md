@@ -22,7 +22,7 @@ sudo systemctl start awg-mihomo-smart.service
 sudo /usr/local/sbin/awg-mihomo-smart show --count 10
 ```
 
-Alternatively, `sudo bash ./install-shadow.sh --run-once` installs and runs a single cycle. The installer verifies the pinned payload, checks 18 offline tests, refuses to replace a running observer, stores root-only backups in `/var/backups/awg-pbr/auto-smart/observer-XXXXXXXX`, copies only the observer binary and its own systemd units, and automatically restores backups if the installation fails. The periodic `awg-mihomo-smart.timer` is **never enabled automatically**.
+Alternatively, `sudo bash ./install-shadow.sh --run-once` installs and runs a single cycle. The installer verifies the pinned payload, checks 23 offline tests, refuses to replace a running observer, stores root-only backups in `/var/backups/awg-pbr/auto-smart/observer-XXXXXXXX`, copies only the observer binary and its own systemd units, and automatically restores backups if the installation fails. The periodic `awg-mihomo-smart.timer` is **never enabled automatically**.
 
 If `awg-gpt` has been separately configured with scoped allow-listed SMART operations, an authorized administrator can use `sudo -n /usr/local/sbin/awg-gpt smart-status`, `smart-run`, `smart-report`, `smart-logs` and `smart-disable`. The root-owned helper and its local sudoers entry are **not** installed or modified by this package. Generic passwordless sudo must not be granted.
 
@@ -38,6 +38,8 @@ The rollback script restores only the SMART binary and its two systemd unit file
 
 ## Current research limits
 
-The default nominal budget is **105 MB per full cycle** (10×1.5 MB screening + 5×10 MB sustained download/upload + 2×20 MB confirmation), excluding protocol and retry overhead. A 3-hour timer would consume up to ~840 MB/day application data: **do not enable** that schedule as-is. Before routine 48–72h observation, tune sample counts and cadence, verify 20 MB sample compatibility, and check actual traffic, thermal and microSD impact. Histories are kept on tmpfs under `/run/awg-pbr/mihomo-smart` and reset on reboot.
+The default nominal budget is **85 MB per full cycle** (10×1.5 MB screening + 5×10 MB sustained download/upload + 2×20 MB confirmation), excluding protocol and retry overhead. A 3-hour timer would consume up to ~840 MB/day application data: **do not enable** that schedule as-is. Before routine 48–72h observation, tune sample counts and cadence, verify 20 MB sample compatibility, and check actual traffic, thermal and microSD impact. Histories are kept on tmpfs under `/run/awg-pbr/mihomo-smart` and reset on reboot.
 
 Two successful 20 MB confirmations on 2026-10-11 favored retaining `hysteria2-1711051470` over `shadowsocks-27307`; that is **not** sufficient proof of long-term superiority or YouTube-specific performance. Shadow ranking is advisory. Keep Selective FAIL-OPEN, Transit FAIL-CLOSED and existing transport failover unchanged.
+
+The upgraded `history --count 12` command displays a bounded RAM-only daypart trend. The 23 offline unit/integration tests now include data redaction, retention, protocol rotation and the history report.
