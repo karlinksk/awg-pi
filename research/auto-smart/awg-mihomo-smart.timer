@@ -2,7 +2,7 @@
 Description=Optional low-traffic Mihomo AUTO SMART shadow measurements
 
 [Timer]
-OnBootSec=1h
+OnActiveSec=8h
 OnUnitActiveSec=8h
 RandomizedDelaySec=20min
 AccuracySec=5min
