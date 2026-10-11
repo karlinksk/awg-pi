@@ -1,0 +1,29 @@
+[Unit]
+Description=AWG Pi Gateway Mihomo AUTO SMART shadow benchmark (no switches)
+After=network-online.target awg-mihomo-pool-refresh.service
+Wants=network-online.target
+ConditionPathExists=/run/awg-pbr/mihomo-pool/live.json
+ConditionPathExists=/var/lib/awg-pbr/mihomo/providers/subscription.yaml
+
+[Service]
+Type=oneshot
+User=root
+Group=root
+UMask=0077
+ExecStart=/usr/local/sbin/awg-mihomo-smart scan --count 10 --download-bytes 1500000 --upload-bytes 300000 --per-request-timeout 11
+TimeoutStartSec=8min
+MemoryMax=512M
+CPUQuota=80%
+Nice=10
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadWritePaths=/run/awg-pbr /dev/shm
+ProtectHome=true
+PrivateTmp=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+
+[Install]
+WantedBy=multi-user.target
