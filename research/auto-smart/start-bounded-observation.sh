@@ -13,7 +13,16 @@ EXPECTED="$(awk '$2 == "awg-mihomo-smart" {print $1}' "$D/SHA256SUMS")"
 [[ -n "$EXPECTED" && "$(sha256sum /usr/local/sbin/awg-mihomo-smart | cut -d' ' -f1)" == "$EXPECTED" ]] || {
   echo "Installed AUTO SMART differs from reviewed source" >&2; exit 4;
 }
-[[ -f /etc/systemd/system/awg-mihomo-smart.timer ]] || exit 4
+for unit in awg-mihomo-smart.service awg-mihomo-smart.timer; do
+  expected_unit="$(awk -v n="$unit" '$2 == n {print $1}' "$D/SHA256SUMS")"
+  live_unit="/etc/systemd/system/$unit"
+  [[ -n "$expected_unit" && -f "$live_unit" ]] || {
+    echo "Missing reviewed systemd unit: $unit" >&2; exit 4;
+  }
+  [[ "$(sha256sum "$live_unit" | cut -d' ' -f1)" == "$expected_unit" ]] || {
+    echo "Unit differs from reviewed shadow schedule: $unit" >&2; exit 4;
+  }
+done
 [[ "$(systemctl is-active awg-mihomo.service)" == 'active' ]] || {
   echo "Production Mihomo unavailable; refusing schedule" >&2; exit 5;
 }
