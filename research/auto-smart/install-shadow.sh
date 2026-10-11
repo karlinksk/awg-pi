@@ -12,7 +12,7 @@ case "${1:-}" in
 esac
 [[ "$EUID" -eq 0 ]] || { echo "Run as root via sudo" >&2; exit 2; }
 [[ -f "$D/SHA256SUMS" ]] || { echo "Missing integrity manifest" >&2; exit 3; }
-for f in awg-mihomo-smart test_auto_smart.py test_auto_smart_calibration.py README.md awg-mihomo-smart.service awg-mihomo-smart.timer; do
+for f in awg-mihomo-smart test_auto_smart.py test_auto_smart_calibration.py test_auto_smart_history.py README.md awg-mihomo-smart.service awg-mihomo-smart.timer; do
   [[ -f "$D/$f" && ! -L "$D/$f" ]] || { echo "Missing or linked: $f" >&2; exit 3; }
 done
 (cd "$D" && sha256sum --check SHA256SUMS)
