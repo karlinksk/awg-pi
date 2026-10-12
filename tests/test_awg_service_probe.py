@@ -42,6 +42,22 @@ class AwgServiceProbeTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             probe.dns_answers(bytes(buf), "chatgpt.com")
 
+    def test_dns_answer_cannot_be_reused_for_another_hostname(self):
+        wire = response_for()
+        with self.assertRaisesRegex(ValueError, "DNS question mismatch"):
+            probe.dns_answers(wire, "api.openai.com")
+
+    def test_dns_rejects_question_type_and_truncation(self):
+        valid = bytearray(response_for())
+        question_pos = probe.validate_dns_question(valid, "chatgpt.com")
+        valid[question_pos - 4:question_pos - 2] = struct.pack("!H", 28)
+        with self.assertRaisesRegex(ValueError, "unexpected DNS question type"):
+            probe.dns_answers(bytes(valid), "chatgpt.com")
+        truncated = bytearray(response_for())
+        struct.pack_into("!H", truncated, 2, 0x8380)
+        with self.assertRaises(ValueError):
+            probe.dns_answers(bytes(truncated), "chatgpt.com")
+
     def test_domain_and_interface_validation(self):
         self.assertEqual(probe.validate_interface("awg0"), "awg0")
         for iface in ("", "lo", "a/b", "eth0", "eth0\n", "tooooooooo-long-interface"):
