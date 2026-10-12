@@ -72,7 +72,14 @@ def update(current: dict, previous: dict | None, identity: str, *,
     same_node = prev.get("identity") == identity
     same_boot = prev.get("boot_id") == boot_id()
     distinct = prev.get("sample_id") != current.get("sample_id")
-    old_counter = int(prev.get("consecutive_blocks", 0)) if same_node and same_boot else 0
+    prior_at = prev.get("checked_at")
+    current_at = current.get("checked_at")
+    interval_ok = (isinstance(prior_at, int)
+                   and isinstance(current_at, int)
+                   and not isinstance(prior_at, bool)
+                   and 0 <= current_at - prior_at <= 45)
+    old_counter = (int(prev.get("consecutive_blocks", 0))
+                   if same_node and same_boot and interval_ok else 0)
     if current["region"] == "REGION_BLOCKED" and distinct:
         streak = min(blocked_confirmations, old_counter + 1)
     else:
@@ -185,8 +192,16 @@ def main() -> int:
     if args.command == "show":
         try:
             payload = json.loads(STATE.read_text("utf-8"))
-        except (OSError, ValueError):
-            payload = {"mode": "ADVISORY_ONLY", "region": "UNKNOWN"}
+            checked = payload.get("checked_at")
+            if (not isinstance(checked, int)
+                    or not 0 <= int(time.time()) - checked <= 45
+                    or payload.get("boot_id") != boot_id()):
+                payload = {"mode": "ADVISORY_ONLY", "region": "UNKNOWN",
+                           "reason": "stale_fast_signal",
+                           "urgent_service_confirmation": False}
+        except (OSError, ValueError, TypeError):
+            payload = {"mode": "ADVISORY_ONLY", "region": "UNKNOWN",
+                       "urgent_service_confirmation": False}
         print(json.dumps(view(payload), sort_keys=True))
         return 0
     if args.command == "watch":
