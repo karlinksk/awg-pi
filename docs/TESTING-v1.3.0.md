@@ -574,3 +574,16 @@ Production blockers remain: actual Mihomo dialed-endpoint attribution, policy dr
 - [ ] Validate logged-in ChatGPT interaction separately from public HTTP page / OpenAI 401 / Cloudflare challenge.
 - [ ] Profile CPU/RAM, ingress/egress bandwidth and microSD write minimization; ensure slow optional media probe never stalls short health-check or failover commit.
 - [ ] Route- and node-specific proofs, commit-time attestation, rollback and Transit no-leak fault injection still required.
+
+### Stage 12 — protected multi-node service trial scaffold and active-node Node22 experiment
+
+- [x] User's existing authorized helper reports healthy subscription candidates and prior AUTO SMART SHADOW_ONLY speed measurements without leaking provider credentials; treat these as technical screening only.
+- [x] Verify official Node.js v22.16.0 and yt-dlp 2026.08.19 in RAM via upstream SHA-256 manifests, without installing packages; active-node proxy trial returns UNKNOWN due to YouTube webpage/player API timeouts.
+- [x] Establish read-only active-node frame-verifier trial budget: 14.7s elapsed, approximately 73MiB maximum child RSS; no decoded media frame, no tunnel/route change.
+- [x] ChatGPT live HTTP/2 403 and Cloudflare server identify an inconclusive scripted web result; do not claim full browser access or a definite regional denial from this alone.
+- [x] Stage bounded, root-only `awg-mihomo-service-trial.py` code for at most three uniquely matched protected provider nodes, one-shot isolated Mihomo, no service/transport switching, sanitised per-service results, **never auto-ready from one sample**; sixteen new offline tests.
+- [x] **281 offline Python tests and 3 safe selector mocks passed**; GitHub Actions ran successfully on the staged code commit.
+- [ ] Independently security-review and install a *narrow* authorized root-owned service-runner; do NOT loosen root-protected subscription ACLs or use broad sudo.
+- [ ] Exercise the approved one-shot trial on two or three ACTUAL provider nodes through a dedicated isolated Mihomo with two separate samples and no unauthorized direct traffic.
+- [ ] Run a compatible JS+yt-dlp/ffmpeg frame probe **as a nonroot confined child**, validate success and resource use before wiring it into limited Hot Standby scoring.
+- [ ] Distinguish authenticated ChatGPT browser usability from HTML challenges / 403 with actual browser evidence; verify endpoint route and no-leak.
