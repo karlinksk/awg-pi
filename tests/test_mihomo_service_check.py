@@ -17,13 +17,14 @@ sys.modules[spec.name] = gate
 spec.loader.exec_module(gate)
 
 MEDIA = "https://rr5---sn-test.googlevideo.com/videoplayback?id=abc"
+VIDEO_BOX = b"\x00\x00\x00\x18ftypisom" + b"\x00"*12
 WATCH = ('<script>var ytInitialPlayerResponse = ' +
-         json.dumps({"playabilityStatus": {"status": "OK"}, "streamingData": {"formats": [{"url": MEDIA}]}}) + ';</script>').encode()
+         json.dumps({"playabilityStatus": {"status": "OK"},  "streamingData": {"formats": [{"url": MEDIA, "mimeType": "video/mp4"}]}}) + ';</script>').encode()
 
 
 def cases(api=(401, b'{"error":{"message":"Missing bearer authentication"}}'),
           web=(200, b"<!doctype html><html>ChatGPT</html>"),
-          watch=(200, WATCH), media=(206, b"x")):
+          watch=(200, WATCH), media=(206, VIDEO_BOX)):
     def request(url, **kwargs):
         if url == gate.OPENAI_API:
             return *api, url
@@ -43,7 +44,38 @@ class ServiceGateTests(unittest.TestCase):
     def test_both_services_and_actual_video_range_pass(self):
         result = gate.assess(cases())
         self.assertEqual(result["status"], "PASS")
-        self.assertEqual(result["checks"]["youtube_video"]["reason"], "youtube_video_media_range")
+        self.assertEqual(result["checks"]["youtube_video"]["reason"], "youtube_video_container_header_verified")
+
+    def test_arbitrary_http_206_bytes_are_not_real_video(self):
+        result = gate.assess(cases(media=(206, b"x")))
+        self.assertEqual(result["status"], "UNKNOWN")
+        self.assertEqual(result["checks"]["youtube_video"]["reason"],
+                         "youtube_video_container_unverified")
+
+    def test_http_206_html_is_not_real_video(self):
+        result = gate.assess(cases(media=(206, b"<html>unavailable</html>")))
+        self.assertEqual(result["status"], "UNKNOWN")
+
+    def test_audio_only_media_cannot_prove_video(self):
+        page = ("ytInitialPlayerResponse = " + json.dumps({
+            "playabilityStatus": {"status": "OK"},
+            "streamingData": {"adaptiveFormats": [
+                {"url": MEDIA, "mimeType": "audio/mp4; codecs=mp4a.40.2"}]}})).encode()
+        self.assertEqual(gate.assess(cases(watch=(200,page)))["status"],"UNKNOWN")
+
+    def test_webm_video_header_recognized(self):
+        self.assertTrue(gate.plausible_video_header(
+            b"\x1a\x45\xdf\xa3" + b"0"*16))
+
+    def test_mpegts_single_sync_byte_is_not_enough(self):
+        self.assertFalse(gate.plausible_video_header(b"G" + b"0"*500))
+        ts = bytearray(b"0"*500)
+        ts[0] = ts[188] = ts[376] = 0x47
+        self.assertTrue(gate.plausible_video_header(bytes(ts)))
+
+    def test_bad_bmff_box_length_rejected(self):
+        self.assertFalse(gate.plausible_video_header(
+            b"\x00\x00\x00\x00ftypisom0000"))
 
     def test_region_block_is_not_healthy(self):
         api = (403, b'{"error":{"code":"unsupported_country_region_territory"}}')
@@ -131,7 +163,7 @@ class ServiceGateTests(unittest.TestCase):
     def test_unplayable_single_video_not_global_youtube_failure(self):
         page = ("ytInitialPlayerResponse = " + json.dumps({
             "playabilityStatus": {"status": "LOGIN_REQUIRED"},
-            "streamingData": {"formats": [{"url": MEDIA}]}})).encode()
+             "streamingData": {"formats": [{"url": MEDIA, "mimeType": "video/mp4"}]}})).encode()
         result = gate.youtube_probe(lambda url, **kw: (200, page, url))
         self.assertEqual(result.state, "UNKNOWN")
         self.assertEqual(result.reason, "youtube_player_not_confirmed_playable")
