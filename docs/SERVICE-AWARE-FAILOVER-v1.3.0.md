@@ -270,3 +270,25 @@ An event raises the RAM-only network generation epoch; changes to boot, LAN, mai
 Real read-only Pi test: idle caused **zero SSH**; an explicit audit request for a known public IPv4 TCP/443 test endpoint used **one** pinned SSH RouterOS query and returned advisory `READY_TO_PREFLIGHT`, while main table 100 remained default `mihomo0` and Transit guard SAFE. No live source files, new unit or RouterOS rule changed. **228 Python offline tests and 3 shell shadow tests PASS** on clean checkout; staged systemd units verify.
 
 **Next integration blockers:** prove actual dialed Mihomo endpoint binding (including hostname/transport), decide secure proof freshness and adapter privileges, wire events to Hot Standby with conservative unverified handling, implement independent pre-commit re-attestation in the single existing selector with lock-safe rollback, and qualify real ChatGPT plus SABR video. Routine static-router polls are not part of the plan.
+
+
+## Stage 10 — real-service-first preliminary node qualification (2026-10-12)
+
+The user confirmed that **each candidate must demonstrate actual access to target services through that exact Mihomo exit before becoming a failover choice**. Technical connection, DNS, a simple ping, OpenAI API 401, YouTube watch-page metadata or fast throughput alone are NOT adequate.
+
+Added `src/awg-node-qualification.py`, a pure (no networking, SSH, or route-writing capabilities) conservative two-sample reducer. The staged Hot Standby worker and dry-run observer use it to distinguish:
+
+1. `SERVICE_PENDING_CONFIRMATION`: first **independent** node-specific sample with all three application gates PASS.
+2. `SERVICE_READY`: **two distinct** correctly attributed service samples, both with independently PASS-qualified OpenAI API, ChatGPT web and YouTube actual media; same node, endpoint+provider fingerprint, Pi boot, router-policy generation and freshness. A duplicate sample, wrong node, one UNKNOWN, explicit FAIL, changed provider, route generation, reboot or expired evidence cancels readiness.
+3. `ROUTE_PENDING`: a separate state — SERVICE_READY **does not** prove MikroTik DIRECT, is never mistaken for a route-qualified `warm` node, and cannot trigger a switch. The existing 30-second on-demand router proof must be based on the actual dialled endpoint and reacquired at the future commit boundary.
+4. A genuine `warm` entry is gated by **both** confirmed SERVICE_READY and an independently verified matching DIRECT underlay, with mandatory single-owner re-attestation before actual switching. This staged branch cannot produce actual route-qualified warm nodes from Pi-local observations alone.
+
+The worker now prioritizes candidates with **one successful service sample** on the next rolling scan, enabling the second independent service check sooner without measuring all ten candidates again. It maintains separate sanitized `service_ready`, `service_ready_count` and `warm` fields in the RAM state; no private provider URLs, video signed links or credentials are published. Prior single-PASS caches are no longer promotable. Observers and mock switch executors reject old/unauthorized records and reject router event-generation or boot mismatches.
+
+The network event watcher of Stage 9 is not installed on the real Pi. Therefore a missing event generation prevents **automatic service-ready promotion** in the staged scanner; test fixtures explicitly supply an isolated known generation. Network generation changes midway through a scan invalidate new observations; provider changes detected midway through a scan reject the run. The monitor has no privilege to switch live traffic.
+
+**Real read-only 2026-10-12 check through active Mihomo local proxy:** `OpenAI API FAIL/openai_unsupported_region`; `ChatGPT Web UNKNOWN/http_403`; `YouTube video UNKNOWN/URLError`. Despite generic transport `healthy`, this exit does **not** qualify for ChatGPT service. Existing Pi routing remained `table 100 → mihomo0`. This also highlights remaining WAF/automated-browser and SABR/UMP real-media qualification work: these must remain UNKNOWN, never inferred PASS from metadata.
+
+**Offline results:** **246 Python unit tests PASS** (previous 228 + 12 new reducer tests + 6 integration/invalidation cases), three existing shadow selector integration tests PASS. No production services, automatic node/transport change, Mikrotik rule change, or SSTP changes.
+
+**Release blockers:** robust actual ChatGPT authenticated/browser functionality proof and actual YouTube SABR media data; real provider-node isolated Mihomo field trials and factual *dialled* server endpoint binding; event-driven router proof in safe execution owner; fault-injection against real postflight/rollback and leak prevention; resource and P50/P95 measurements. Keep PR #84 DRAFT.
