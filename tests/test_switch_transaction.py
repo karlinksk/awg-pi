@@ -33,6 +33,7 @@ def source(transport="mihomo", node="A", awg="PASS", mihomo="FAIL"):
                 "service_qualification": "SERVICE_READY",
                 "service_confirmations": 2,
                 "policy_generation": 1,
+                "boot_id": "fixture-boot",
                 "service_status": "PASS",
                 "service_checked_at": now,
                 "service_checks": proof("mihomo", name)["checks"],
@@ -46,6 +47,7 @@ def source(transport="mihomo", node="A", awg="PASS", mihomo="FAIL"):
                           "auto_failback": True},
             "node_policy": {"mode": "auto", "allowed": []},
             "provider_sha256": "provider-test",
+            "router_generation": 1, "router_boot_id": "fixture-boot",
             "standby": warm,
             "service": {"mihomo": proof("mihomo", node, mihomo),
                         "awg": proof("awg", "awg0", awg)}}
