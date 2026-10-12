@@ -37,6 +37,7 @@ def standby_state(now=NOW, status="PASS"):
                     "service_qualification": "SERVICE_READY",
                     "service_confirmations": 2,
                     "policy_generation": 1,
+                    "boot_id": "fixture-boot",
                     "service_status": status,
                     "service_checked_at": now,
                     "service_checks": row["checks"]})
@@ -55,6 +56,7 @@ def doc(active="mihomo", mh="PASS", aw="PASS", nmode="auto"):
                           "auto_failback": True},
             "node_policy": {"mode": nmode},
             "provider_sha256": "provider-hash",
+            "router_generation": 1, "router_boot_id": "fixture-boot",
             "standby": standby_state(),
             "service": {"mihomo": evidence("mihomo", mh, "m1", identity="A"),
                         "awg": evidence("awg", aw, "a1", identity="awg0")}}
@@ -109,6 +111,18 @@ class ObserverTests(unittest.TestCase):
         result, _ = m.evaluate_document(fixture, now=NOW, mono=MONO)
         self.assertEqual(result["warm_count"], 0)
 
+    def test_router_generation_drift_invalidates_standby(self):
+        fixture = doc()
+        fixture["router_generation"] = 2
+        result, _ = m.evaluate_document(fixture, now=NOW, mono=MONO)
+        self.assertEqual(result["warm_count"], 0)
+
+    def test_router_boot_change_invalidates_standby(self):
+        fixture = doc()
+        fixture["router_boot_id"] = "rebooted"
+        result, _ = m.evaluate_document(fixture, now=NOW, mono=MONO)
+        self.assertEqual(result["warm_count"], 0)
+
     def test_missing_service_confirmation_refused(self):
         fixture = doc()
         for row in fixture["standby"]["entries"].values():
@@ -139,7 +153,9 @@ class ObserverTests(unittest.TestCase):
         fixture = doc(mh="FAIL")
         fixture["standby"]["generated_at"] = NOW - 500
         self.assertEqual(m.standby_ready(fixture["standby"], now=NOW,
-                                         provider_sha="provider-hash"), ())
+                                         provider_sha="provider-hash",
+                                         router_generation=1,
+                                         router_boot_id="fixture-boot"), ())
         _, state = m.evaluate_document(fixture, now=NOW, mono=MONO)
         fixture["service"]["mihomo"]["sample_id"] = "m2"
         result, _ = m.evaluate_document(fixture, state, now=NOW+10, mono=MONO+10)
