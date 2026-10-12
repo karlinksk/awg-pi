@@ -83,6 +83,11 @@ def chatgpt_web_probe(request: Callable) -> Result:
         if host not in ("chatgpt.com", "auth.openai.com", "login.openai.com", "openai.com"):
             return Result("UNKNOWN", "chatgpt_unexpected_redirect")
         if code == 200 and body:
+            preview = body[:200_000].lower()
+            if any(marker in preview for marker in (
+                    b"cf-challenge", b"just a moment...", b"cf-turnstile",
+                    b"verify you are human")):
+                return Result("UNKNOWN", "chatgpt_web_challenge")
             return Result("PASS", "chatgpt_web_http_200")
         # 403 can be Cloudflare challenge rather than an IP-level restriction.
         if code == 403:
