@@ -1,0 +1,31 @@
+[Unit]
+Description=AWG Pi Gateway read-only service evidence producer
+Documentation=https://github.com/karlinksk/awg-pi/issues/83
+Wants=network-online.target
+After=network-online.target awg-pbr-setup.service
+# Not bound to either VPN service: collect both independently.
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 /usr/local/sbin/awg-service-evidence collect
+TimeoutStartSec=70s
+UMask=0077
+NoNewPrivileges=true
+CapabilityBoundingSet=
+AmbientCapabilities=
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+LockPersonality=true
+RestrictRealtime=true
+RestrictAddressFamilies=AF_INET AF_UNIX
+ReadWritePaths=/run/awg-pbr
+PrivateTmp=true
+MemoryMax=120M
+CPUQuota=20%
+# Must remain disabled until source and route/leak tests pass.
+
+[Install]
+WantedBy=multi-user.target
