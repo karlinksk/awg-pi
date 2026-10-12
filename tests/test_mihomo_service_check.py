@@ -45,9 +45,12 @@ class ServiceGateTests(unittest.TestCase):
         result = gate.assess(cases(), frame_verifier=lambda: {
             "state": "PASS", "reason": "youtube_first_video_frame_decoded",
             "method": "video_frame_decode", "shadow_only": True})
-        self.assertEqual(result["status"], "PASS")
+        # Decoded video alone cannot prove a logged-in ChatGPT session.
+        self.assertEqual(result["status"], "UNKNOWN")
         self.assertEqual(result["checks"]["youtube_video"]["reason"],
                          "youtube_first_video_frame_decoded")
+        self.assertEqual(result["checks"]["chatgpt_web"]["reason"],
+                         "chatgpt_public_shell_only")
 
     def test_http_206_container_header_alone_is_not_playback(self):
         result = gate.assess(cases())
@@ -69,7 +72,8 @@ class ServiceGateTests(unittest.TestCase):
         passed = gate.assess(cases(watch=(200,page)), frame_verifier=lambda: {
             "state": "PASS", "reason": "youtube_first_video_frame_decoded",
             "method": "video_frame_decode", "shadow_only": True})
-        self.assertEqual(passed["status"], "PASS")
+        self.assertEqual(passed["status"], "UNKNOWN")
+        self.assertEqual(passed["checks"]["youtube_video"]["state"], "PASS")
         unverified = gate.assess(cases(watch=(200,page)))
         self.assertEqual(unverified["status"], "UNKNOWN")
 
@@ -114,7 +118,7 @@ class ServiceGateTests(unittest.TestCase):
     def test_chatgpt_web_challenge_must_not_promote_to_pass(self):
         result = gate.assess(cases(web=(403, b"Just a moment...")))
         self.assertEqual(result["status"], "UNKNOWN")
-        self.assertEqual(result["checks"]["chatgpt_web"]["reason"], "chatgpt_web_http_403")
+        self.assertEqual(result["checks"]["chatgpt_web"]["reason"], "chatgpt_web_403_challenge")
 
     def test_watch_page_without_video_is_unknown(self):
         result = gate.assess(cases(watch=(200, b"<html>youtube</html>")))
@@ -202,6 +206,37 @@ class ServiceGateTests(unittest.TestCase):
             "streamingData": {"formats": "bad", "adaptiveFormats": {}}})).encode()
         self.assertEqual(gate.youtube_probe(lambda url, **kw: (200, page, url)).state,
                          "UNKNOWN")
+
+    def test_sanitized_socket_timeout_reason(self):
+        from urllib.error import URLError
+        def request(url, **kwargs):
+            if url == gate.YOUTUBE_WATCH:
+                raise URLError(TimeoutError("PRIVATE_HOST_OR_TOKEN"))
+            return cases()(url, **kwargs)
+        result = gate.assess(request)
+        self.assertEqual(result["checks"]["youtube_video"]["reason"],
+                         "youtube_timeout")
+        self.assertNotIn("PRIVATE_HOST_OR_TOKEN",str(result))
+
+    def test_dns_and_tls_failures_are_finite_reason_codes(self):
+        from urllib.error import URLError
+        import ssl
+        self.assertEqual(gate.safe_network_reason(
+            URLError(socket.gaierror(-2, "PRIVATE_HOST")), "youtube"),
+            "youtube_dns_unavailable")
+        self.assertEqual(gate.safe_network_reason(
+            URLError(ssl.SSLError("PRIVATE_TLS")), "chatgpt_web"),
+            "chatgpt_web_tls_unverified")
+
+    def test_chatgpt_public_200_is_not_authenticated_proof(self):
+        response = gate.chatgpt_web_probe(cases())
+        self.assertEqual(response.state, "UNKNOWN")
+        self.assertEqual(response.reason, "chatgpt_public_shell_only")
+
+    def test_waf_403_without_challenge_marker_stays_unclassified(self):
+        response = gate.chatgpt_web_probe(cases(web=(403, b"unavailable")))
+        self.assertEqual(response.state,"UNKNOWN")
+        self.assertEqual(response.reason,"chatgpt_web_http_403")
 
     def test_no_proxy_wildcard_does_not_bypass_loopback_proxy(self):
         received = []
