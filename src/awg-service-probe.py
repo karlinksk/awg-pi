@@ -123,15 +123,46 @@ def read_dns_name(packet: bytes, offset: int) -> int:
     raise ValueError("DNS name too long")
 
 
+def validate_dns_question(wire: bytes, expected_name: str) -> int:
+    """Do not trust a valid-looking answer to a different DNS question."""
+    pos = 12
+    labels = []
+    for _ in range(128):
+        if pos >= len(wire):
+            raise ValueError("short DNS question name")
+        length = wire[pos]
+        pos += 1
+        if length == 0:
+            break
+        # Conservative: the echoed question normally has literal labels.
+        # Reject pointers here rather than parsing an ambiguous name.
+        if length > 63 or pos + length > len(wire):
+            raise ValueError("invalid DNS question labels")
+        try:
+            labels.append(wire[pos:pos+length].decode("ascii").lower())
+        except UnicodeDecodeError as exc:
+            raise ValueError("invalid DNS question encoding") from exc
+        pos += length
+    else:
+        raise ValueError("DNS question too long")
+    if ".".join(labels) != expected_name.rstrip(".").lower():
+        raise ValueError("DNS question mismatch")
+    if pos + 4 > len(wire):
+        raise ValueError("truncated DNS question")
+    qtype, qclass = struct.unpack("!HH", wire[pos:pos+4])
+    if qtype != 1 or qclass != 1:
+        raise ValueError("unexpected DNS question type")
+    return pos + 4
+
+
 def dns_answers(wire: bytes, question: str) -> list[str]:
     if len(wire) < 12:
         raise ValueError("short DNS response")
     ident, flags, qd, an, _, _ = struct.unpack("!HHHHHH", wire[:12])
-    if ident != 0 or flags & 0x8000 == 0 or flags & 0xF != 0 or qd != 1 or an > 64:
+    if (ident != 0 or flags & 0x8000 == 0 or flags & 0x0200
+            or flags & 0xF != 0 or qd != 1 or an > 64):
         raise ValueError("invalid DNS response")
-    pos = read_dns_name(wire, 12) + 4
-    if pos > len(wire):
-        raise ValueError("short DNS question")
+    pos = validate_dns_question(wire, question)
     answers = []
     for _ in range(an):
         pos = read_dns_name(wire, pos)
