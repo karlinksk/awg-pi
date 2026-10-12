@@ -129,3 +129,41 @@ Local offline testing increased to **109 Python tests** plus three advisory shel
 3. Add deployment/rollback only after validating observer evidence producer and existing selector lock semantics on isolated fault-injection rigs.
 4. Build and test the transaction-safe single-owner switch executor with correct endpoint DIRECT exceptions, data-plane postflight, precise rollback and no-leak semantics for both Transit/Selective.
 5. Fix the separate provider updater service failure, then confirm full pipeline and P50/P95 recovery without touching MikroTik's primary SSTP.
+
+
+## Stage 5: fast active-region sensor and fail-closed transaction model
+
+**No production switch functionality was enabled or deployed.** The files below are staging-only and not in the current Pi installer.
+
+### Lightweight event detection (no heavyweight speed test)
+
+`src/awg-fast-service.py` checks only the OpenAI region/API response through the **already selected** Mihomo loopback HTTP proxy, retaining each probe's node identity and unique sample id. `REGION_BLOCKED` is emitted for the explicit API country-block error; `API_REGION_OK` for the unauthenticated 401; all other responses are UNKNOWN. **API_REGION_OK is NOT ChatGPT+YouTube service eligibility.**
+
+Two separate consecutive regional blocks are required before an `urgent_service_confirmation=true` advisory is published. A change of selected node, boot ID, explicit API pass or UNKNOWN invalidates the consecutive-block streak. If production Mihomo is not active, the detector skips the request. The file is atomic and restricted to `/run/awg-pbr/service-fast/active.json`, no disk log or route modification.
+
+The proposed watch cadence is about 10 s after a clear region-block and 20 s in an ordinary region-OK state, with bounded backoff on UNKNOWN. These are **advisory polling intervals**, not proof of 30–45 s failover. `units/awg-fast-service.service` stages an independent systemd watcher with read-only system filesystem and restricted RAM output; **the service is not installed or enabled**.
+
+A read-only field test through the currently active local Mihomo `127.0.0.1:7890` confirmed `REGION_BLOCKED/openai_unsupported_region`; the active route remained `table 100 → mihomo0`. The sensor does not try to adjudicate browser WAF or YouTube media delivery on its own.
+
+### Transaction design without production powers
+
+`src/awg-switch-transaction.py` is a **pure test executor with an injected mock backend**, not an implementation that can invoke `awg-transport select`, change a selected node, or modify nftables/routing.
+
+Its independent authorization checks:
+- AUTO selection policy only, current backend/node still matching the observed state, fresh evidence snapshot, and safe current routing guard.
+- Only full three-service PASS qualifies AWG as a fallback and a particular Hot Standby node as a node or Mihomo failback target. UNKNOWN is not valid for automatic promotion.
+- Exact FIXED node order with no backward wrap; no manual-mode override.
+- A confirmed active Mihomo service FAIL, Hot Standby preference before AWG, allowed reason and confirmation flags, and explicit user-enabled auto-failback before a planned return.
+
+Mock transaction semantics: reject concurrent action requests; acquire a **separate action gate**; revalidate current state; prepare without changing user route; run preflight; apply; validate transport, forwarding guard and postflight; on failure attempt rollback. **If rollback cannot be verified, require FAIL-CLOSED rather than an unguarded DIRECT path.**
+
+Critical integration caveat: the *existing* `awg-transport select` acquires `/run/awg-maintenance.lock` internally. A future single-owner production orchestrator must **not hold this same lock across its invocation**, which would deadlock. The real adapter must use a separate serialized action gate, allow the existing transport transaction to take its maintenance lock, and recheck its state immediately before and after switching. The new test executor does **not yet implement physical fail-closed enforcement, its backend is injected solely in tests**.
+
+### Stage 5 verification and outstanding blockers
+
+- **142 offline Python tests** PASS (109 earlier + 15 fast sensor + 18 transaction fault-injection).
+- Existing 3 selector advisory mock checks PASS.
+- Python syntax and staged units/CI validation checked separately.
+- Real active Mihomo regional rejection observed in read-only mode; **no live transport/node switched**.
+
+Remaining before real activation: connect the fast urgent flag to a bounded immediate full-service recheck; robust video and ChatGPT WAF qualification for actual service availability (AWG remains UNKNOWN); build and separately verify a real single-writer route action adapter with live forwarding-plane postcheck, emergency fail-closed guard and rollback; prove Selective/Transit no-leak, MikroTik SSTP independence and P50/P95 recovery; repair failing Mihomo provider auto-refresh. Draft PR #84 must not be merged or deployed as automatic switching until these pass.
