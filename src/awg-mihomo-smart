@@ -29,6 +29,7 @@ import urllib.request
 
 SERVICE_PY = Path(__file__).with_name('awg-mihomo-service-check.py')
 LIMITS_PY = Path(__file__).with_name('awg-mihomo-limits.py')
+PROVENANCE_PY = Path(__file__).with_name('awg-endpoint-provenance.py')
 POOL_PY = Path('/usr/local/sbin/awg-mihomo-pool')
 POOL_JSON = Path('/run/awg-pbr/mihomo-pool/live.json')
 PROVIDER = Path('/var/lib/awg-pbr/mihomo/providers/subscription.yaml')
@@ -50,6 +51,18 @@ def load_limits():
 
 
 LIMITS = load_limits()
+
+
+def load_provenance_code():
+    loader = importlib.machinery.SourceFileLoader('awg_smart_route_provenance',
+                                                 str(PROVENANCE_PY))
+    spec = importlib.util.spec_from_loader(loader.name, loader)
+    mod = importlib.util.module_from_spec(spec)
+    loader.exec_module(mod)
+    return mod
+
+
+PROVENANCE = load_provenance_code()
 
 
 def load_pool_code():
@@ -239,12 +252,12 @@ def bounded_history(hist, name, ok):
 
 
 def rank_results(results):
-    return sorted(results, key=lambda entry: (not entry.get('service_ok', False), not entry.get('confirmed', True), not entry['ok'], -entry['score'],
+    return sorted(results, key=lambda entry: (not entry.get('route_ok', False), not entry.get('service_ok', False), not entry.get('confirmed', True), not entry['ok'], -entry['score'],
                                               entry['delay_ms'], entry['name']))
 
 
 def recommend(results, current, history):
-    ranked = rank_results([r for r in results if r.get('service_ok') and r.get('confirmed', True)])
+    ranked = rank_results([r for r in results if r.get('route_ok') and r.get('service_ok') and r.get('confirmed', True)])
     if not ranked or not ranked[0]['ok']:
         return {'name': '', 'advice': 'NO_HEALTHY_CANDIDATE'}
     best = ranked[0]
@@ -285,7 +298,7 @@ def plan(args):
 
 def calibration_finalists(rows, current: str, limit: int, rotation: int = 0) -> list[dict]:
     """Short test is reachability only. Preserve current and protocol diversity."""
-    eligible_rows = [r for r in rows if r.get('warmup_ok') and r.get('service_ok')]
+    eligible_rows = [r for r in rows if r.get('route_ok') and r.get('warmup_ok') and r.get('service_ok')]
     chosen: list[dict] = []
     present = next((r for r in eligible_rows if r['name'] == current), None)
     if present:
@@ -310,7 +323,7 @@ def calibration_finalists(rows, current: str, limit: int, rotation: int = 0) -> 
 
 def calibration_confirmed(rows, current: str, limit: int = LIMITS.CONFIRMED) -> list[dict]:
     """Compare active node and best competitor with a larger second transfer."""
-    candidates = [r for r in rows if r.get('sustained_verified') and r.get('service_ok')]
+    candidates = [r for r in rows if r.get('route_ok') and r.get('sustained_verified') and r.get('service_ok')]
     current_row = next((r for r in candidates if r['name'] == current), None)
     ordered = sorted(candidates, key=lambda r: (-r['score'], -r['down_mbps']))
     picks = [current_row] if current_row else []
@@ -390,8 +403,21 @@ def shadow_scan(args):
                          'warmup_ok':False, 'down_mbps':0.0, 'up_mbps':0.0,
                          'ok':False, 'sustained_verified':False,
                          'confirmed':False, 'reason':'', 'score':0.0,
-                         'reliability':0.0, 'service_ok':False, 'service_state':'UNKNOWN', 'service_checks':{}}
+                         'reliability':0.0, 'service_ok':False,
+                         'route_ok':False, 'underlay':{},
+                         'service_state':'UNKNOWN', 'service_checks':{}}
                     try:
+                        # The Pi cannot prove MikroTik does not send the
+                        # endpoint via SSTP. Never burn expensive speed-test
+                        # traffic or recommend a node on local route alone.
+                        route = PROVENANCE.classify(by_name[node['name']][0])
+                        row['underlay'] = route
+                        row['route_ok'] = PROVENANCE.proved_direct(route)
+                        if not row['route_ok']:
+                            row['reason'] = 'endpoint_path_unverified'
+                            results.append(row)
+                            print('SMART_SCREEN_PROGRESS='+str(len(results))+'/'+str(len(chosen)),flush=True)
+                            continue
                         helper.select_probe(controller_port, lookup[node['name']]['probe_name'])
                         ok, value, reason = probe_http(
                             mixed_port, DOWN_ENDPOINT.format(args.download_bytes)+'&calib='+str(time.time_ns()),
