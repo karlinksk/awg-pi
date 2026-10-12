@@ -4,7 +4,7 @@
 # edit routing/MikroTik/sudoers, or install a permanent service.
 set -Eeuo pipefail
 umask 077
-export LC_ALL=C PYTHONDONTWRITEBYTECODE=1
+export LC_ALL=C PYTHONDONTWRITEBYTECODE=1 GIT_OPTIONAL_LOCKS=0
 [[ "$(id -u)" == 0 ]] || { echo LOCAL_SUDO_REQUIRED; exit 21; }
 
 ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)"
