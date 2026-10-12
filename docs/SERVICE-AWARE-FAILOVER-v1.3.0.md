@@ -161,9 +161,11 @@ Critical integration caveat: the *existing* `awg-transport select` acquires `/ru
 
 ### Stage 5 verification and outstanding blockers
 
-- **142 offline Python tests** PASS (109 earlier + 15 fast sensor + 18 transaction fault-injection).
+- **144 offline Python tests** PASS (109 earlier + 17 fast sensor + 18 transaction fault-injection).
 - Existing 3 selector advisory mock checks PASS.
 - Python syntax and staged units/CI validation checked separately.
 - Real active Mihomo regional rejection observed in read-only mode; **no live transport/node switched**.
 
 Remaining before real activation: connect the fast urgent flag to a bounded immediate full-service recheck; robust video and ChatGPT WAF qualification for actual service availability (AWG remains UNKNOWN); build and separately verify a real single-writer route action adapter with live forwarding-plane postcheck, emergency fail-closed guard and rollback; prove Selective/Transit no-leak, MikroTik SSTP independence and P50/P95 recovery; repair failing Mihomo provider auto-refresh. Draft PR #84 must not be merged or deployed as automatic switching until these pass.
+
+Additional fast-alarm hardening: two consecutive distinct REGION_BLOCKED samples must arrive within 45 seconds; an older prior block, reboot, node change or UNKNOWN cannot resurrect a stale alarm. The read-only `show` path also suppresses any urgent indication after the age/boot limit. All timestamps and intervals remain configurable proposals until field validation.
