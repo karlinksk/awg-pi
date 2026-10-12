@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Offline security tests for the root-owned service-only Mihomo candidate trial."""
+"""Offline security tests for the nonroot credential-backed Mihomo candidate trial."""
 from pathlib import Path
 from unittest.mock import patch
 import importlib.util,sys,unittest
@@ -111,13 +111,24 @@ class ServiceTrialTests(unittest.TestCase):
                         [a],provider_sha="a"*64,elapsed=1)
         self.assertEqual(got["results"][0]["service_single_sample"],"UNKNOWN")
 
-    def test_root_access_is_required(self):
-        with patch.object(t.os,"geteuid",return_value=1000):
+    def test_root_execution_is_always_refused(self):
+        with patch.object(t.os,"geteuid",return_value=0):
+            with self.assertRaises(PermissionError):
+                t.credential_paths(env={"CREDENTIALS_DIRECTORY":"/run/credentials/trial"},uid=0)
             with self.assertRaises(PermissionError):
                 t.run()
-        # A CLI denial cannot leak provider credentials via an exception.
+
+    def test_unprivileged_without_service_credentials_is_refused(self):
         with patch.object(t.os,"geteuid",return_value=1000):
-            self.assertEqual(t.main.__name__,"main")
+            with patch.dict(t.os.environ,{},clear=True):
+                with self.assertRaises(PermissionError):
+                    t.run()
+
+    def test_private_credentials_path_required(self):
+        with self.assertRaises(PermissionError):
+            t.credential_paths(env={"CREDENTIALS_DIRECTORY":"/tmp/fake"},uid=1000)
+        with self.assertRaises(PermissionError):
+            t.credential_paths(env={"CREDENTIALS_DIRECTORY":""},uid=1000)
 
     def test_invalid_limits_refused(self):
         for invalid in (0,4,-1):
