@@ -100,10 +100,15 @@ def checked_status(entry: object, *, now: int, transport: str,
 
 
 def standby_ready(node_state: object, *, now: int, ttl: int = DEFAULT_TTL,
-                  provider_sha: str = "") -> tuple[str, ...]:
+                  provider_sha: str = "", router_generation: int | None = None,
+                  router_boot_id: str = "") -> tuple[str, ...]:
     if not isinstance(node_state, dict) or node_state.get("mode") != "SHADOW_ONLY":
         return ()
     if not provider_sha or node_state.get("provider_sha256") != provider_sha:
+        return ()
+    if (not isinstance(router_generation, int)
+            or isinstance(router_generation, bool) or router_generation < 0
+            or not isinstance(router_boot_id, str) or not router_boot_id):
         return ()
     generated = node_state.get("generated_at")
     if not isinstance(generated, int) or generated > now or now - generated > ttl:
@@ -133,6 +138,9 @@ def standby_ready(node_state: object, *, now: int, ttl: int = DEFAULT_TTL,
             continue
         if not QUALIFIER.ready_entry(row, now=now, ttl=ttl):
             continue
+        if (row.get("policy_generation") != router_generation
+                or row.get("boot_id") != router_boot_id):
+            continue
         # A service PASS via an AWG-assisted or unknown underlay is not a
         # deployable DIRECT hot spare. Pi-local eth0 is not enough either.
         if not PROVENANCE.proved_direct(row.get("underlay")):
@@ -156,8 +164,11 @@ def build_observation(input_doc: dict, *, now: int, monotonic: int, ttl: int):
                                      now=now, transport="awg", ttl=ttl,
                                      identity="awg0")
     standby_state = input_doc.get("standby")
-    standby = standby_ready(standby_state, now=now, ttl=ttl,
-                            provider_sha=input_doc.get("provider_sha256", ""))
+    standby = standby_ready(
+        standby_state, now=now, ttl=ttl,
+        provider_sha=input_doc.get("provider_sha256", ""),
+        router_generation=input_doc.get("router_generation"),
+        router_boot_id=input_doc.get("router_boot_id", ""))
     if active == "awg":
         # The production Mihomo service is stopped while AWG serves users.
         # Independent Hot Standby evidence (NOT an old active-node sample)
