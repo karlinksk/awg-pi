@@ -142,7 +142,8 @@ def verify(port: int, *, executable: str = "/usr/local/bin/yt-dlp",
                 "-f", "null", "-progress", "pipe:1", "-"],
                 cwd=tmp, env=restricted_env(),
                 stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
-                stderr=subprocess.DEVNULL, timeout=8, check=False)
+                stderr=subprocess.DEVNULL, timeout=8, check=False,
+                start_new_session=True, preexec_fn=limited_child)
             if (decode.returncode == 0 and
                     isinstance(decode.stdout, (str, bytes)) and
                     re.search(r"(?m)^frame=\s*[1-9]\d*\s*$",
