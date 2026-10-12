@@ -22,6 +22,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import uuid
 
 SMART_PY = Path(__file__).with_name("awg-mihomo-smart")
 SERVICE_PY = Path(__file__).with_name("awg-mihomo-service-check.py")
@@ -227,7 +228,11 @@ def probe_candidates(chosen: list[dict], raw_provider: list[dict],
                     # Never publish raw video URLs, provider credentials or HTTP body.
                     outcomes[name] = {
                         "status": result["status"],
-                        "reasons": {key: item["reason"] for key, item in result["checks"].items()}
+                        "transport": "mihomo",
+                        "identity": name,
+                        "sample_id": uuid.uuid4().hex,
+                        "checks": {key: {"state": item["state"], "reason": item["reason"]}
+                                   for key, item in result["checks"].items()}
                     }
                 except Exception as exc:
                     outcomes[name] = {"status": "UNKNOWN",
@@ -290,6 +295,10 @@ def scan(*, pool_file: Path = POOL_JSON, provider_file: Path = PROVIDER,
                 "fingerprint": fingerprint(node),
                 "checked_at": int(time.time()),
                 "delay_ms": node["delay_ms"],
+                "transport": outcome.get("transport"),
+                "identity": outcome.get("identity"),
+                "sample_id": outcome.get("sample_id"),
+                "checks": outcome.get("checks", {}),
             }
         now = int(time.time())
         warm = qualified_spares(entries, eligible, now, ttl, confirm_limit)
