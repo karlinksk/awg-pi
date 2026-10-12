@@ -141,6 +141,22 @@ class ServiceGateTests(unittest.TestCase):
         self.assertEqual(gate.assess(cases(web=(200, b"<html>OK</html>")))["status"],
                          "UNKNOWN")
 
+    def test_gate_exposes_fresh_sample_identity_in_cli(self):
+        import io
+        import contextlib
+        import sys
+        from unittest.mock import patch
+        output = io.StringIO()
+        with patch.object(gate, "assess", return_value={"status": "PASS", "checks": {},
+                                                        "checked_at": 2000}), \
+             patch.object(sys, "argv", ["check", "--proxy-port", "7890",
+                                       "--identity", "node-A"]), \
+             contextlib.redirect_stdout(output):
+            self.assertEqual(gate.main(), 0)
+        result = json.loads(output.getvalue())
+        self.assertEqual((result["identity"], result["transport"]), ("node-A", "mihomo"))
+        self.assertEqual(len(result["sample_id"]), 32)
+
     def test_loopback_proxy_must_be_valid(self):
         for invalid in (0, 65536, -1):
             with self.assertRaises(ValueError):
