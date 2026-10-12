@@ -2,11 +2,11 @@
 """Bounded, service-first isolated candidate trial (STAGING ONLY).
 
 This is NOT installed in production or in the awg-gpt sudo allowlist.
-The future installer may expose a narrowly authorized, root-owned one-shot
-invocation after audit. Never grant the assistant direct read access to the
-protected Mihomo provider or add broad NOPASSWD sudo permissions.
+Run ONLY as a systemd DynamicUser one-shot with a private, read-only copy
+of necessary inputs supplied by LoadCredential=. Never grant broad sudo.
+No root execution, no production routing changes.
 
-Reads a root-protected provider transiently; does NOT print subscriptions,
+Reads systemd-provided private credential copies; does NOT print subscriptions,
 passwords, UUIDs, TLS names, proxy raw config, request bodies, or signed URLs.
 Uses a second ephemeral Mihomo proxy entirely on 127.0.0.1 in RAM.
 Never selects a node in the live Mihomo, reconfigures a tunnel, touches
@@ -25,6 +25,7 @@ import ipaddress
 import json
 import os
 import re
+import stat
 from pathlib import Path
 import sys
 import time
@@ -34,6 +35,34 @@ POOL = Path("/run/awg-pbr/mihomo-pool/live.json")
 PROVIDER = Path("/var/lib/awg-pbr/mihomo/providers/subscription.yaml")
 MAX_CANDIDATES = 3
 TIME_LIMIT = 90
+CREDENTIAL_NAMES = ("provider", "pool", "pool-policy")
+
+
+def credential_paths(*, env=None, uid=None) -> dict:
+    """Only an unprivileged service supplied with systemd credentials may run.
+
+    No root-running parser, broad sudo grant or chmod of the protected files.
+    A CLI-only spoofed CREDENTIALS_DIRECTORY contains no source secrets.
+    """
+    e = os.environ if env is None else env
+    effective = os.geteuid() if uid is None else uid
+    if effective == 0:
+        raise PermissionError("trial must run as nonroot DynamicUser")
+    raw = e.get("CREDENTIALS_DIRECTORY", "")
+    if not raw or not raw.startswith("/run/credentials/"):
+        raise PermissionError("systemd credentials required")
+    base = Path(raw)
+    if not base.is_dir() or base.is_symlink():
+        raise PermissionError("credential directory unavailable")
+    result = {}
+    for name in CREDENTIAL_NAMES:
+        item = base / name
+        if not item.is_file() or item.is_symlink() or item.stat().st_size > (
+                10 * 1024 * 1024 if name == "provider" else 6 * 1024 * 1024):
+            raise PermissionError("missing or invalid service credential")
+        result[name] = item
+    return result
+
 
 
 def load(name, filename):
@@ -140,22 +169,24 @@ def sanitized(raw_result: dict, chosen: list[dict], *,
 
 
 def run(*, limit:int=3, timeout:float=3.0) -> dict:
-    if os.geteuid()!=0:
-        raise PermissionError("protected provider must be read by authorized root service")
     if not 1<=limit<=MAX_CANDIDATES or not 1<=timeout<=5:
         raise ValueError("unsupported trial budget")
+    files = credential_paths()
+    provider_file, pool_file = files["provider"], files["pool"]
+    # The pool helper reads its policy path from this environment variable
+    # when it is imported, not from the production root-owned filesystem.
+    os.environ["MIHOMO_POOL_POLICY_FILE"] = str(files["pool-policy"])
     standby=load("trial_standby","awg-mihomo-standby.py")
     smart=load("trial_smart","awg-mihomo-smart")
-    if not smart.fresh_pool(json.loads(POOL.read_text("utf-8")), PROVIDER,
-                            standby.MAX_POOL_AGE):
-        raise RuntimeError("missing or stale protected pool")
+    pool=json.loads(pool_file.read_text("utf-8"))
+    if not smart.fresh_pool(pool, provider_file, standby.MAX_POOL_AGE):
+        raise RuntimeError("missing or stale credential-backed Mihomo pool")
     helper=smart.load_pool_code()
     service=smart.load_service_code()
     region, protocol=helper.read_policy_values()
-    pool=json.loads(POOL.read_text("utf-8"))
     if region=="europe" and pool.get("geo_enriched") is not True:
         raise RuntimeError("Europe policy cannot use unverified geography")
-    raw=helper.read_provider(PROVIDER)
+    raw=helper.read_provider(provider_file)
     chosen=select(pool, raw, region=region, protocol=protocol, limit=limit)
     if not chosen:
         raise RuntimeError("no eligible isolated candidates")
@@ -170,7 +201,7 @@ def run(*, limit:int=3, timeout:float=3.0) -> dict:
     # over the probe, all observations must be downgraded.
     if (boot_before!=standby.boot_identity()
             or gen_before!=standby.current_generation()
-            or not smart.fresh_pool(pool,PROVIDER,standby.MAX_POOL_AGE)):
+            or not smart.fresh_pool(pool,provider_file,standby.MAX_POOL_AGE)):
         output={}
     return sanitized(output,chosen,provider_sha=pool["provider_sha256"],
                      elapsed=time.monotonic()-start)
@@ -183,7 +214,7 @@ def main() -> int:
     args=parser.parse_args()
     try:
         data=run(limit=args.limit,timeout=args.timeout)
-    except (RuntimeError,PermissionError,OSError,ValueError,KeyError):
+    except (RuntimeError,PermissionError,OSError,ValueError,KeyError,TypeError):
         data={"mode":"SHADOW_ONLY","candidates_tested":0,
               "status":"UNAVAILABLE","production_modified":False}
     print(json.dumps(data,sort_keys=True,separators=(",",":")))
