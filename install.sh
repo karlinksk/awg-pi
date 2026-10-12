@@ -677,6 +677,7 @@ install_project_helper src/awg-mihomo-install "$MIHOMO_INSTALL_SCRIPT"
 install_project_helper src/awg-mihomo-prepare "$MIHOMO_PREPARE_SCRIPT"
 install_project_helper src/awg-mihomo-configure "$MIHOMO_CONFIGURE_SCRIPT"
 install_project_helper src/awg-mihomo-active-node.py /usr/local/sbin/awg-mihomo-active-node.py
+install_project_helper src/awg-mihomo-fallback-refresh-guard.py /usr/local/sbin/awg-mihomo-fallback-refresh-guard.py
 install_project_helper src/awg-first-run "$FIRST_RUN_CLI"
 install_project_helper src/awg-selection "$SELECTION_CLI"
 install_project_helper src/awg-selection-monitor "$SELECTION_MONITOR"
