@@ -534,3 +534,19 @@ Run only the new unprivileged combined command from the fresh audited checkout: 
 Operator script reported `TABLE100_UNCHANGED` and complete removal of its temporary unit, root-held credential, media helpers and RAM runtime. Subsequent direct Pi audit verified temporary units/processes absent, `/dev/shm/awg-stage15` absent, `/run/awg-pbr/stage16-media` absent; production Mihomo healthy and `table100=default dev mihomo0`.
 
 **User-approved scope decision:** STOP extra YouTube video-duration checks, do NOT test YouTube Premium; do not treat Premium as a service-qualification gate. Leave Stage19 proof code only in experimental/draft GitHub branch for historical reproducibility, **not** as an enabled or required install/runtime probe. Preserve Stage17/18 two observed frame-decode successes as preliminary service evidence for `shadowsocks-27307`; no automatic service-ready promotion, no auto transport switching and no merge of draft PR #84 until independent interactive authenticated ChatGPT and router-underlay/safe failover qualification are completed. Keep SSTP, MikroTik, AWG, IPTV and production Mihomo unchanged. Clean only the archived `/tmp/awg-stage*` operator staging/test files and verified ephemeral services/caches on Pi after preserving this result in GitHub.
+
+
+### Post-cleanup read-only RouterOS proof for ACTUAL SS transport endpoints (2026-10-12 22:44 +07)
+
+After the user stopped extended YouTube/Premium testing and authorized temporary-file cleanup, a read-only stock system audit re-established:
+- production Mihomo healthy, active node `shadowsocks-696792830` endpoint `194.38.11.86:65443/tcp`;
+- Stage17/18 proven reserve candidate `shadowsocks-27307` endpoint `169.150.210.233:8080/tcp`, pool HEALTHY;
+- Pi `ip -4 route get 169.150.210.233` uses LAN `eth0`, source `192.168.112.34`, next hop `192.168.112.1`.
+
+The router's existing **authorized pinned SSH alias `mikrotik-gpt`**, configured with user `gpt-ops`, router `192.168.112.1` and **port 8384**, is reachable. The generic MikroTik SSH port 22 is closed, which is normal; no port or router config change is necessary. Strict host-key checking and BatchMode were confirmed.
+
+An isolated in-RAM copy of the pre-existing **Stage8 `src/awg-mikrotik-route-attestor.py`** executed fixed RouterOS **read-only `print terse without-paging` snapshots** with exact Pi local source and route before/after. It returned:
+- exact reserve **`169.150.210.233:8080/tcp`**: `{"mode":"DIRECT","scope":"END_TO_END","router_verified":true,"reason":"router_underlay_verified","valid_for_seconds":30}`; bound digest prefix `b34dfc57ad31`;
+- exact currently active **`194.38.11.86:65443/tcp`**: the same **DIRECT/END_TO_END/router_verified** result, 30s TTL; bound digest prefix `5170dd1431b6`.
+
+These are **real, ephemeral historical router observations** for those literal endpoint IP+port+protocol tuples at that moment, not a claim that the proof remains live forever, not a credential or signature, not guaranteed against changes in provider endpoints/routes, and not a substitute for an independent **re-audit immediately before a future production switch**. This establishes the independence of the previously tested reserve candidate from SSTP at the checked time, without any RouterOS writes, production service/node selection changes or user-traffic switch. Continue `SERVICE_READY=false` pending authenticated ChatGPT/browser proof; stage smart timer disabled; no automatic new Hot Standby admission from a stale record. Preserve the user's explicit direction: NO further video duration or YouTube Premium tests.
