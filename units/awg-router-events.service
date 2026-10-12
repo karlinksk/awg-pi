@@ -1,0 +1,36 @@
+[Unit]
+Description=AWG Pi Gateway local netlink route change watcher (SHADOW_ONLY)
+Documentation=https://github.com/karlinksk/awg-pi/issues/83
+After=local-fs.target
+# No dependency on MikroTik SSH or any VPN backend.
+
+[Service]
+Type=simple
+ExecStartPre=/usr/bin/python3 /usr/local/sbin/awg-router-event-policy observe
+ExecStart=/usr/bin/python3 /usr/local/sbin/awg-router-event-policy watch
+Restart=on-failure
+RestartSec=15s
+TimeoutStopSec=5s
+UMask=0077
+NoNewPrivileges=true
+CapabilityBoundingSet=
+AmbientCapabilities=
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+LockPersonality=true
+RestrictRealtime=true
+RestrictAddressFamilies=AF_UNIX AF_NETLINK
+RuntimeDirectory=awg-pbr/router-events
+RuntimeDirectoryMode=0700
+RuntimeDirectoryPreserve=yes
+ReadWritePaths=/run/awg-pbr/router-events
+MemoryMax=48M
+CPUQuota=10%
+TasksMax=12
+# Read-only route notifications. NEVER executes or schedules SSH.
+
+[Install]
+WantedBy=multi-user.target
