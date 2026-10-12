@@ -549,3 +549,16 @@ The accepted [event-driven router-attestation ADR](ADR-EVENT-DRIVEN-ROUTER-ATTES
 Stage 9: 228 offline Python tests, three advisory shell tests, and three systemd units verified on a clean checkout. Idle router-SSH count was zero; one explicit read-only MikroTik verification returned a shadow-only preflight suggestion. Nothing was installed on the live gateway.
 
 Production blockers remain: actual Mihomo dialed-endpoint attribution, policy drift handling, single-owner switch executor, active traffic postflight/rollback, verified ChatGPT and YouTube media, and measured resource/recovery tests. Do not treat this checkpoint as release approval.
+
+### Stage 10 — real service qualification must precede Hot Standby
+
+- [x] Service-first reducer requires *two distinct* per-node PASS samples across OpenAI API, ChatGPT web, **actual YouTube media**; a generic tunnel handshake/ping, 401, HTML metadata or speed result is not sufficient. UNKNOWN never converts to PASS.
+- [x] Per-node confirmation invalidates on node/provider endpoint fingerprint change, boot, local route policy generation change, repeated sample, staleness or changed qualification result.
+- [x] First PASS gets pending status and is prioritized for the second isolated read-only probe at the next scan; `SERVICE_READY` remains separate from `ROUTE_VERIFIED` and must not authorize any actual switch on its own.
+- [x] The shadow observer and mock transaction reject legacy single-PASS standby cache; runtime generation and boot identity are checked again on every advisory.
+- [x] Clean GitHub clone: **246 offline Python tests PASS**, 3 safe advisory shell tests PASS, Python compile PASS; currently active Mihomo real-service field probe reproduced OpenAI regional rejection even while the generic tunnel health remained healthy.
+- [ ] Real active authenticated ChatGPT web test and actual YouTube SABR/UMP media bytes verifier validated through isolated candidate, with no direct/proxy leaks.
+- [ ] Real provider-node Hot Standby qualification, actual connected IP/port/protocol proof and safe on-demand router re-attestation.
+- [ ] Live single-writer transport transaction, rollback, no-DIRECT leak and measured CPU/RAM/traffic/latencies.
+
+**This stage does not install new services or enable automatic failover.** No new stage-10 unit is deployed to production.
