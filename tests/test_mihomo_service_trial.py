@@ -69,6 +69,8 @@ class ServiceTrialTests(unittest.TestCase):
         self.assertEqual(got["results"][0]["service_single_sample"],"PASS")
         self.assertFalse(got["results"][0]["service_ready"])
         self.assertFalse(got["results"][0]["routing_qualified"])
+        self.assertEqual(got["candidates_selected"], 1)
+        self.assertEqual(got["candidates_tested"], 1)
         self.assertEqual(len(got["results"][0]["candidate_id"]),12)
         self.assertNotIn("194.38.11.86",repr(got))
         self.assertNotIn("name-secret",repr(got))
@@ -109,6 +111,13 @@ class ServiceTrialTests(unittest.TestCase):
         got=t.sanitized({"a":{"status":"PASS","identity":"a","transport":"mihomo",
                              "sample_id":"","checks":checks}},
                         [a],provider_sha="a"*64,elapsed=1)
+        self.assertEqual(got["results"][0]["service_single_sample"],"UNKNOWN")
+
+    def test_unattempted_candidate_is_not_counted_as_tested(self):
+        a=row("a","194.38.11.86")
+        got=t.sanitized({},[a],provider_sha="f"*64,elapsed=2)
+        self.assertEqual(got["candidates_selected"],1)
+        self.assertEqual(got["candidates_tested"],0)
         self.assertEqual(got["results"][0]["service_single_sample"],"UNKNOWN")
 
     def test_root_execution_is_always_refused(self):
