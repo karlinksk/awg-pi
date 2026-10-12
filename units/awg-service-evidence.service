@@ -21,9 +21,12 @@ ProtectControlGroups=true
 LockPersonality=true
 RestrictRealtime=true
 RestrictAddressFamilies=AF_INET AF_UNIX
-ReadWritePaths=/run/awg-pbr
+RuntimeDirectory=awg-pbr/service-evidence
+RuntimeDirectoryMode=0700
+ReadWritePaths=/run/awg-pbr/service-evidence
 PrivateTmp=true
 MemoryMax=120M
+TasksMax=32
 CPUQuota=20%
 # Must remain disabled until source and route/leak tests pass.
 
