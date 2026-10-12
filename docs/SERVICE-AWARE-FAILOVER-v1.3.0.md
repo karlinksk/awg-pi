@@ -217,3 +217,42 @@ Read-only smoke: `194.38.11.86` and `45.86.66.170` classified `DIRECT_LOCAL_UNVE
 **Verification:** **176 offline Python tests** pass in the Pi's isolated staging clone (including 14 new provenance cases, cached/assisted no-promotion, AUTO SMART no recommendation, mock transaction rejects unverified paths). CI and clean GitHub checkout will be checked separately. No live route/transport/MikroTik/SSTP changes. Draft PR #84 remains release-blocked by end-to-end DIRECT attestation, ChatGPT+SABR playback verification, real actuator and failover fault injection.
 
 LAN reconfiguration safeguard: the read-only provenance inspector reads the installed `/etc/awg-pbr/env` keys `LAN_IF` and `ROUTER_IP` as data (never shell-sources it), instead of assuming the test-stand's `eth0` / `192.168.112.1`. If that protected configuration is unreadable, invalid or missing, results are UNKNOWN, not DIRECT. Added three regression tests for LAN changes, malicious env values and missing configuration.
+
+
+## Stage 8 — MikroTik RouterOS end-to-end route audit over pinned SSH (2026-10-12)
+
+### Real read-only findings (MikroTik hAP ax², RouterOS 7.24.2)
+
+An existing SSH alias `mikrotik-gpt` on Pi already connects via the authorized restricted account to the LAN router (`192.168.112.1`, custom SSH port). **No new credentials or MikroTik configuration were created**.
+
+The actual RouterOS configuration was inspected without modifying it:
+
+- First active `/ip firewall mangle prerouting` rule `AWG-PI-TRANSPORT-DIRECT`: `action=accept src-address=192.168.112.34 in-interface=bridge`. It precedes all rules marking client traffic for `r_to_vpn`; RouterOS chain semantics stop evaluating subsequent mangle matches.
+- `/routing/rule`: no configured rules. Main FIB route `0.0.0.0/0` is active via physical WAN `ether1`; `r_to_vpn` separately prefers SSTP. WAN and LAN interface-list memberships are unambiguous.
+- RAW, bridge filter/NAT and hotspot: no active rules/instances. NAT intercepts TCP/UDP DNS port 53; source NAT masquerade is configured. Main VRF is the default.
+- The router has dynamic **L2TP/IPsec UDP/1701** peer-specific policies; the verifier must not misinterpret these as arbitrary default IPsec tunnels. A candidate matching a scoped peer endpoint+port is refused, and unrecognized IPsec policies are refused.
+- A single pinned-SSH RouterOS snapshot plus local Pi `ip -4 route get` before and after yielded **DIRECT (30s proof)** for test destinations `194.38.11.86:443/tcp`, `45.86.66.170:443/tcp`, and `45.86.66.170:51820/udp`. The same test against `45.86.66.170:53/udp` correctly returned `UNKNOWN/dns_port_intercepted` because of configured dst-NAT. These are **address/port route checks**, not proof the actual subscription node uses those test ports or that ChatGPT/YouTube playback works.
+
+### Staged source and execution contract
+
+`src/awg-mikrotik-route-attestor.py` uses only a fixed set of RouterOS **`print terse without-paging`** commands and `:put` section delimiters over existing pinned SSH. The SSH command uses strict host-key checking, BatchMode/no passwords, disabled agent forwarding, short timeouts, an allowlisted host alias and verifies that the alias resolves to the expected LAN router IP. No `/set`, `/add`, `/remove`, `export`, `backup`, traceroute or configuration-changing operation is used.
+
+Checks before a positive DIRECT conclusion:
+1. Specific public IPv4 endpoint, numeric port and TCP/UDP protocol are valid; **Pi local route before and after the audit** uses the expected source IP, LAN device and next-hop router.
+2. All expected RouterOS data sections exist, with mangle and route tables unchanged across two reads **within the same SSH session**.
+3. The first effective prerouting mangle match is an *unconditional-to-this-Pi* `action=accept`, exactly bound to its LAN ingress and IP.
+4. Main FIB active **longest-prefix match** for the endpoint uniquely egresses via the sole configured physical WAN member; any more-specific SSTP route/VRF, active routing rule, ambiguous ECMP, unexpected NAT/RAW/bridge/hotspot/IPsec rule leads to UNKNOWN.
+5. DNS TCP/UDP 53 is denied positive attestation on this router due to configured redirects.
+6. Result is bound to exact endpoint IP, port, protocol, Pi source and router by a SHA-256 **identifier**, with 30-second freshness. **This digest is not a cryptographic signature or protection against forged cached JSON**; a future production selector must perform an independent live audit immediately before any route commit.
+
+`attest_batch()` checks up to **20 endpoints using one SSH RouterOS snapshot**, with separate local route checks before/after each candidate; reduces Pi/MikroTik query load and minimizes disk writes (no persistent output). Results include only status, reason, timestamp and bound identifier, not raw routing/firewall rules or credentials. Literal public IPv4 only: FQDN destinations remain UNKNOWN until the actual IP dialed by Mihomo can be independently verified.
+
+**Critical integration status:** Stage 8 implements a working **read-only attestor** and pure batch API. It is **not installed on production** and is **not yet connected to automatic Hot Standby admission or the live transport selector**. Stage 7's Pi-local-only safety gate is still in effect in the staged Hot Standby code until a secure evidence broker and mandatory commit-time re-attestation are implemented. **Do not promote a cached/direct-looking JSON assertion on its own.**
+
+### Verification
+
+**210 offline Python tests passed** (176 previous + 34 RouterOS route-attestor including injected negative policies, scoped IPsec, DNS redirects, VRF, active SSTP default, higher-priority VPN host route, source/SSH mismatch, stale or changing route, tampered/partial snapshots, and single-session batch scan). Three selector advisory tests passed.
+
+Actual read-only SSH attestation was tested live on the current MikroTik, without altering a single existing rule or SSH account. Pi remains in Transit ACTIVE, guard SAFE and `table 100 -> mihomo0`. SSTP remains the priority remote management channel.
+
+**Next:** bind *actual Mihomo dialed endpoint* (including hostname resolution and protocol/port) to this positive router snapshot, use a privilege-separated RAM-only attestation producer, enforce TTL and independent mandatory re-attestation in the single-owner action executor. Continue strict ChatGPT/WAF + SABR-media service qualification and rollback/no-DIRECT leak tests before activating any automatic failover.
