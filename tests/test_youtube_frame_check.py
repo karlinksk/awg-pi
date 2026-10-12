@@ -19,6 +19,12 @@ class FrameCheckTests(unittest.TestCase):
         root=tempfile.TemporaryDirectory(dir="/dev/shm")
         exe=Path(root.name)/"yt-dlp"
         exe.write_text("fixture")
+        # GitHub Actions' minimal shell runner may not contain ffmpeg.
+        # The mock runner never executes this binary; supply a fixture
+        # path explicitly rather than depending on the host installation.
+        fake_ffmpeg=Path(root.name)/"ffmpeg"
+        fake_ffmpeg.write_text("fixture")
+        self.ffmpeg_path=str(fake_ffmpeg)
         captured=[]
         def version_runner(cmd, **kwargs):
             return types.SimpleNamespace(returncode=0,stdout=node_version)
@@ -42,7 +48,7 @@ class FrameCheckTests(unittest.TestCase):
         root,exe,runner,version,captured=self.fixture("v20.19.2")
         try:
             v=m.verify(7890,executable=str(exe),runner=runner,
-                       version_runner=version)
+                       version_runner=version,ffmpeg=self.ffmpeg_path)
             self.assertEqual(v["state"],"UNKNOWN")
             self.assertEqual(captured,[])
         finally:root.cleanup()
@@ -51,7 +57,7 @@ class FrameCheckTests(unittest.TestCase):
         root,exe,runner,version,captured=self.fixture()
         try:
             v=m.verify(7890,executable=str(exe),runner=runner,
-                       version_runner=version)
+                       version_runner=version,ffmpeg=self.ffmpeg_path)
             self.assertEqual(v["state"],"PASS")
             self.assertEqual(v["reason"],"youtube_first_video_frame_decoded")
             self.assertEqual(len(captured),2)
@@ -73,7 +79,7 @@ class FrameCheckTests(unittest.TestCase):
         root,exe,runner,version,captured=self.fixture(downloader_rc=1)
         try:
             v=m.verify(7890,executable=str(exe),runner=runner,
-                       version_runner=version)
+                       version_runner=version,ffmpeg=self.ffmpeg_path)
             self.assertEqual((v["state"],v["reason"]),
                              ("UNKNOWN","youtube_extractor_or_media_unavailable"))
         finally:root.cleanup()
@@ -82,7 +88,7 @@ class FrameCheckTests(unittest.TestCase):
         root,exe,runner,version,captured=self.fixture(media=False)
         try:
             v=m.verify(7890,executable=str(exe),runner=runner,
-                       version_runner=version)
+                       version_runner=version,ffmpeg=self.ffmpeg_path)
             self.assertEqual(v["reason"],"youtube_video_file_unverified")
         finally:root.cleanup()
 
@@ -90,7 +96,7 @@ class FrameCheckTests(unittest.TestCase):
         root,exe,runner,version,captured=self.fixture(decode=False)
         try:
             v=m.verify(7890,executable=str(exe),runner=runner,
-                       version_runner=version)
+                       version_runner=version,ffmpeg=self.ffmpeg_path)
             self.assertEqual(v["state"],"UNKNOWN")
             self.assertEqual(v["reason"],"youtube_video_decode_unverified")
         finally:root.cleanup()
@@ -106,7 +112,7 @@ class FrameCheckTests(unittest.TestCase):
             def failed(*args,**kwargs):
                 raise subprocess.TimeoutExpired(args[0],2)
             v=m.verify(7890,executable=str(exe),runner=failed,
-                       version_runner=version)
+                       version_runner=version,ffmpeg=self.ffmpeg_path)
             self.assertEqual(v["reason"],"youtube_media_probe_unavailable")
         finally:root.cleanup()
 
@@ -123,7 +129,7 @@ class FrameCheckTests(unittest.TestCase):
         root,exe,runner,version,captured=self.fixture()
         try:
             result=m.verify(7890,executable=str(exe),runner=runner,
-                            version_runner=version)
+                            version_runner=version,ffmpeg=self.ffmpeg_path)
             self.assertEqual(result["state"],"PASS")
             self.assertFalse(Path(captured[0][1]["cwd"]).exists())
         finally:root.cleanup()
