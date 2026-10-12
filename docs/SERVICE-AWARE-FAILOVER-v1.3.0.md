@@ -259,3 +259,14 @@ Checks before a positive DIRECT conclusion:
 Actual read-only SSH attestation was tested live on the current MikroTik, without altering a single existing rule or SSH account. Pi remains in Transit ACTIVE, guard SAFE and `table 100 -> mihomo0`. SSTP remains the priority remote management channel.
 
 **Next:** bind *actual Mihomo dialed endpoint* (including hostname resolution and protocol/port) to this positive router snapshot, use a privilege-separated RAM-only attestation producer, enforce TTL and independent mandatory re-attestation in the single-owner action executor. Continue strict ChatGPT/WAF + SABR-media service qualification and rollback/no-DIRECT leak tests before activating any automatic failover.
+
+
+## Stage 9 — event-driven optional router adapter (staged; not deployed)
+
+The accepted [event-driven routing ADR](ADR-EVENT-DRIVEN-ROUTER-ATTESTATION-v1.3.0.md) has its first implementation in `src/awg-router-event-policy.py`. The only background *design* uses local Linux netlink notifications and a LAN-config file path trigger; **no periodic SSH or per-node RouterOS connection** is scheduled. The staged systemd files (`awg-router-events.service`, `awg-router-events-observe.service`, `awg-router-events.path`) are **not installed or enabled by the installer or on live Pi**.
+
+An event raises the RAM-only network generation epoch; changes to boot, LAN, main routes, policy rules, source address or optional provider SHA invalidate prior evidence. The policy planner distinguishes `IDLE`, `AUDIT_ON_DEMAND`, `READY_TO_PREFLIGHT`, `BLOCKED` and `UNVERIFIED`, with no production transport switch capabilities. `READY_TO_PREFLIGHT` means only a **shadow advisory** on a precise, 30-second, fresh *in-process* attestation, never an actionable permission from unsigned saved JSON.
+
+Real read-only Pi test: idle caused **zero SSH**; an explicit audit request for a known public IPv4 TCP/443 test endpoint used **one** pinned SSH RouterOS query and returned advisory `READY_TO_PREFLIGHT`, while main table 100 remained default `mihomo0` and Transit guard SAFE. No live source files, new unit or RouterOS rule changed. **228 Python offline tests and 3 shell shadow tests PASS** on clean checkout; staged systemd units verify.
+
+**Next integration blockers:** prove actual dialed Mihomo endpoint binding (including hostname/transport), decide secure proof freshness and adapter privileges, wire events to Hot Standby with conservative unverified handling, implement independent pre-commit re-attestation in the single existing selector with lock-safe rollback, and qualify real ChatGPT plus SABR video. Routine static-router polls are not part of the plan.
