@@ -62,3 +62,26 @@ Existing repository CI also now runs these tests on PRs; the external runner res
 7. Fix the separate failed `awg-mihomo-update.service` subscription refresh and assess provider cache freshness before acceptance.
 
 **Never enable automatic transport/node selection using these prototypes without completing the integration and fail-closed test plan.**
+
+
+
+## Stage 3: AWG-only service proof and passive decision adapter
+
+New source files:
+
+- `src/awg-service-probe.py`: read-only service checks via an explicitly named `awgN` tunnel. Outbound IPv4 TCP sockets are bound using `SO_BINDTODEVICE` **before** connecting; DNS is obtained by authenticated HTTPS requests to pinned resolver addresses over the same interface. The standard local resolver, environment HTTP proxies, production TUN selection, route updates and DIRECT fallback are never used. Only approved hosts, validated public IPv4 responses and bounded HTTPS redirects are allowed. Any unresolvable DNS, missing interface, HTTP challenge or unqualified media yields **UNKNOWN**, not a fabricated PASS. The interface allow-list rejects physical interfaces such as `eth0`.
+- `src/awg-service-observer.py`: **strictly DRY_RUN_ONLY** evaluation of independent Mihomo, AWG and Hot Standby JSON evidence using the existing pure `awg-failover-policy.py`. Invalidated by TTL, sample ID replay, provider hash mismatch, wrong active node identity, missing three service checks or wrong transport; does not run `awg-transport select`, `awg-mihomo-configure`, `ip`, `systemctl` or `nft`. Current live AWG can be selected for recovery only when evidence says both required services really pass.
+- Hot Standby evidence now carries independently collected `sample_id`, `identity`, `checked_at` and sanitized per-service `checks`. During active AWG service, prospective Mihomo health comes **only** from a validated *standby* node's current evidence, never from the stopped or previously active Mihomo service.
+- `src/awg-mihomo-service-check.py` can output `transport=mihomo`, an explicit node `--identity` and a new per-run sample identifier, for future active-node integration.
+
+AWG observation is deliberately conservative: DoH to the pinned resolvers may not work on every AWG provider, and the current YouTube media extraction can return UNKNOWN for signature-cipher formats. The AWG checker cannot be called a proven live health-check until tested against actual traffic under the current tunnel and service rules. **Do not deploy as a production selector**, and do not introduce a DIRECT fallback to 'make the probe pass.'
+
+The observer currently evaluates **explicit evidence snapshots** (fixture JSON via `--snapshot`) rather than wiring itself to the existing `awg-selection-monitor`. This preserves the legacy monitor as the sole production switch owner while transaction-safe action execution, actual data-plane verification, rollback and no-leak regression are built.
+
+### Stage 3 verification
+
+On the Pi's temporary checkout, **91 offline Python tests** passed; the additional tests cover AWG-bound socket ordering, DNS-over-HTTPS forced through AWG, rejection of unsafe DNS/redirects, fresh service evidence identity, cache replays, AWG-active Mihomo recovery, double failure and strict Manual/FIXED policy preservation.
+
+No real AWG node was switched and no new systemd unit was enabled. Running tests does **not** validate recovery-time P50/P95 on a real link.
+
+Remaining blockers: controlled live read-only probe against AWG; opt-in AWG health evidence publishing in RAM; robust YouTube video confirmation; cloud-protected ChatGPT classification; action adapter attached to the existing locked selector with data-plane post-check and rollback; rigorous Transit FAIL-CLOSED/Selective FAIL-OPEN and SSTP independence tests; existing failed provider update service.
