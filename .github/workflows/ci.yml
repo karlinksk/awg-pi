@@ -57,6 +57,7 @@ jobs:
           python3 -m py_compile src/awg-endpoint-provenance.py
           python3 -m py_compile src/awg-mikrotik-route-attestor.py
           python3 -m py_compile src/awg-router-event-policy.py
+          python3 -m py_compile src/awg-node-qualification.py
           bash -n tests/test-common.sh
           bash -n tests/test-transport.sh
           bash -n tests/test-bootstrap-fetch.sh
