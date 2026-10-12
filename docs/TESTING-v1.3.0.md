@@ -526,3 +526,20 @@ release gates that require a separate environment or planned interruption:
 
 Until those three gates pass, `main` / the latest stable GitHub release should
 remain v1.2.0 and the stable updater target must not move to v1.3.0.
+
+
+## Service-aware event-driven router verification — added release gate (2026-10-12)
+
+The accepted [event-driven router-attestation ADR](ADR-EVENT-DRIVEN-ROUTER-ATTESTATION-v1.3.0.md) supersedes any assumption that RouterOS must be continuously SSH-polled. **This release gate is PLANNED, not completed**; it does not authorize merging draft PR #84.
+
+- [ ] Default EVENT_DRIVEN: zero idle SSH polls to MikroTik, even during frequent active Mihomo health checks; verify baseline at setup, Pi reboot / LAN-gateway reconfigure and meaningful network or known router-policy events.
+- [ ] Candidate tests retain independent service and exact dialed endpoint evidence (IPv4, port, TCP/UDP, provider hash). Pi-local `eth0 -> router` alone never means independently verified end-to-end DIRECT.
+- [ ] Before proposed automatic failover, use a fresh matching proof if legitimately still valid; else invoke **one bounded, read-only on-demand router audit**, not a per-node polling loop. A Stage 8 30-second TTL is for proof reuse, not scheduling.
+- [ ] A router policy change, selected endpoint/port/protocol change, Pi route/source change, LAN config change and known router restart invalidate relevant proof. Document that silent, off-box router edits are not guaranteed detectable without push notifications or a new audit.
+- [ ] Verify no reentrant `/run/awg-maintenance.lock` ownership and that the existing selector remains the sole writer of node/transport switches; no live authorization based solely on unsigned cached JSON.
+- [ ] Confirm unsupported router / unavailable SSH -> UNKNOWN, never invented DIRECT. Generic router mode requires clear operator-controlled trust policy, visibly weaker guarantees, and no unwanted mandatory MikroTik plugin.
+- [ ] Test manual/FIXED behavior, distinct Selective FAIL-OPEN and Transit FAIL-CLOSED, SSTP management continuity, DNS/direct-leak prevention, safe rollback and double-failure recovery.
+- [ ] Measure CPU, RAM, RouterOS SSH connection count (idle target **zero**), bytes transferred, microSD writes and true failover P50/P95. Verify no background timer is installed on non-RouterOS deployments.
+- [ ] Fully service-qualify ChatGPT web and actual YouTube SABR media prior to any service-aware automatic promotion.
+
+**Do not enable staged router probes or failover units on live Pi until the above validations pass.**
