@@ -93,11 +93,17 @@ def select(pool: dict, raw: list[dict], *, region: str = "all",
     seen = set()
     pool_names = collections.Counter(n.get("name") for n in pool["nodes"]
                                     if isinstance(n, dict))
-    for n in sorted(pool["nodes"],
-                    key=lambda v: (v.get("delay_ms", 2**30), str(v.get("name","")))
-                    if isinstance(v,dict) else (2**31,"")):
-        if not isinstance(n,dict) or n.get("healthy") is not True:
-            continue
+    # The production pool intentionally contains unhealthy/invalid rows with
+    # delay_ms=null. Filtering must precede sorting: sorting int and None
+    # raises TypeError and previously aborted all candidate preparation.
+    healthy = [
+        n for n in pool["nodes"]
+        if isinstance(n, dict)
+        and n.get("healthy") is True
+        and type(n.get("delay_ms")) is int
+        and n["delay_ms"] > 0
+    ]
+    for n in sorted(healthy, key=lambda v: (v["delay_ms"], str(v.get("name", "")))):
         name=n.get("name")
         if not isinstance(name,str) or raw_names[name] != 1 or pool_names[name] != 1:
             continue
@@ -109,9 +115,22 @@ def select(pool: dict, raw: list[dict], *, region: str = "all",
         if len(matches)!=1:
             continue
         p=matches[0]
+        # The original Mihomo pool normalizes numeric YAML port strings in
+        # clean_node(); compare against that canonical form, not raw YAML.
+        raw_port = p.get("port")
+        if isinstance(raw_port, str) and raw_port.isdecimal():
+            raw_port = int(raw_port)
         if (p.get("server") != n.get("server")
-                or p.get("port") != n.get("port")
+                or type(raw_port) is not int
+                or raw_port != n.get("port")
                 or p.get("type") != n.get("type")):
+            continue
+        # If the scan provides its original one-based index, also require
+        # that this name uniquely came from the exact provider record.
+        index = n.get("index")
+        if index is not None and (
+                type(index) is not int or index < 1
+                or index > len(raw) or raw[index-1] is not p):
             continue
         # Different nodes on the exact same endpoint are not independent spares.
         endpoint=(n["server"],n["port"])
