@@ -29,6 +29,13 @@ def source(transport="mihomo", node="A", awg="PASS", mihomo="FAIL"):
             "generated_at": now, "warm": ["B", "C"],
             "entries": {name: {
                 **proof("mihomo", name), "fingerprint": "f"*64,
+                "service_qualified": True,
+                "service_qualification": "SERVICE_READY",
+                "service_confirmations": 2,
+                "policy_generation": 1,
+                "service_status": "PASS",
+                "service_checked_at": now,
+                "service_checks": proof("mihomo", name)["checks"],
                 "underlay": {"mode": "DIRECT", "scope": "END_TO_END",
                              "reason": "router_underlay_verified",
                              "router_verified": True}}
@@ -172,6 +179,17 @@ class TransactionTests(unittest.TestCase):
         result = tx.execute_mock_transaction(
             recommendation("SELECT_NODE", "B"), fixture, FakeBackend())
         self.assertEqual(result.status, "BLOCKED")
+
+    def test_legacy_single_service_pass_cannot_switch(self):
+        source_doc = source()
+        for n in ("B","C"):
+            source_doc["standby"]["entries"][n]["service_confirmations"] = 1
+            source_doc["standby"]["entries"][n]["service_qualified"] = False
+        b=FakeBackend()
+        decision=tx.execute_mock_transaction(
+            recommendation("SELECT_NODE","B"),source_doc,b)
+        self.assertEqual(decision.status,"BLOCKED")
+        self.assertNotIn("apply",b.actions)
 
     def test_provider_stale_cache_blocks_node(self):
         evidence = source()
