@@ -67,11 +67,11 @@ class ShadowHistoryTests(unittest.TestCase):
 
     def test_rotated_shortlist_preserves_active_and_broadens_protocols(self):
         entries=[
-            {'name':'HY','type':'hysteria2','warmup_ok':True,'service_ok':True,'warmup_mbps':8,'delay_ms':90},
-            {'name':'SS','type':'ss','warmup_ok':True,'service_ok':True,'warmup_mbps':20,'delay_ms':30},
-            {'name':'TR','type':'trojan','warmup_ok':True,'service_ok':True,'warmup_mbps':18,'delay_ms':40},
-            {'name':'VL','type':'vless','warmup_ok':True,'service_ok':True,'warmup_mbps':16,'delay_ms':50},
-            {'name':'VM','type':'vmess','warmup_ok':True,'service_ok':True,'warmup_mbps':14,'delay_ms':60},
+            {'name':'HY','type':'hysteria2','warmup_ok':True,'service_ok':True,'route_ok':True,'warmup_mbps':8,'delay_ms':90},
+            {'name':'SS','type':'ss','warmup_ok':True,'service_ok':True,'route_ok':True,'warmup_mbps':20,'delay_ms':30},
+            {'name':'TR','type':'trojan','warmup_ok':True,'service_ok':True,'route_ok':True,'warmup_mbps':18,'delay_ms':40},
+            {'name':'VL','type':'vless','warmup_ok':True,'service_ok':True,'route_ok':True,'warmup_mbps':16,'delay_ms':50},
+            {'name':'VM','type':'vmess','warmup_ok':True,'service_ok':True,'route_ok':True,'warmup_mbps':14,'delay_ms':60},
         ]
         results=[smart.calibration_finalists(entries,'HY',3,rotation=i) for i in range(5)]
         self.assertTrue(all(r[0]['name']=='HY' for r in results))
