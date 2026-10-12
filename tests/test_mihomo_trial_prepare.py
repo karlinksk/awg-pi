@@ -87,8 +87,41 @@ class PrepareTests(unittest.TestCase):
 
     def test_preparer_does_not_accept_nonroot(self):
         with patch.object(prep.os, "geteuid", return_value=1000):
-            with self.assertRaises(PermissionError):
+            with self.assertRaises(prep.PrepareFailure):
                 prep.run()
+
+    def test_sensitive_error_is_replaced_by_safe_stage_code(self):
+        def forbidden():
+            raise OSError("private-key-NEVER-PRINT")
+        with self.assertRaises(prep.PrepareFailure) as info:
+            prep.stage("PROVIDER_PARSE_FAILED", forbidden)
+        self.assertEqual(str(info.exception), "PROVIDER_PARSE_FAILED")
+        self.assertNotIn("private-key", str(info.exception))
+
+    def test_stale_pool_is_rejected_before_proxy_selection(self):
+        import tempfile, json
+        from unittest.mock import patch
+        with tempfile.TemporaryDirectory(dir="/dev/shm") as tmp:
+            payload=Path(tmp)/"live.json"
+            payload.write_text(json.dumps({"scanned_at":100, "nodes":[]}))
+            with patch.object(prep, "POOL", payload), \
+                 patch.object(prep.os, "geteuid", return_value=0), \
+                 patch.object(prep.time, "time", return_value=10000), \
+                 patch.object(prep, "load", return_value=type(
+                     "Stub", (), {"fresh_pool": staticmethod(lambda *x: True)})()):
+                with self.assertRaises(prep.PrepareFailure) as e:
+                    prep.run()
+            self.assertEqual(str(e.exception), "POOL_EXPIRED")
+
+    def test_unexpected_error_has_no_raw_exception_text(self):
+        import io,contextlib
+        with patch.object(prep, "run", side_effect=OSError("sensitive-secret-text")):
+            output=io.StringIO()
+            with contextlib.redirect_stdout(output):
+                code=prep.main()
+            self.assertEqual(code,1)
+            self.assertNotIn("sensitive-secret-text", output.getvalue())
+            self.assertIn("UNEXPECTED_PREPARATION_ERROR", output.getvalue())
 
     def test_preparation_never_authorizes_node_or_route(self):
         payload=self.context()
