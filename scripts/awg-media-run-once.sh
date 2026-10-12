@@ -21,6 +21,13 @@ done
   echo "RAM_RUNTIME_MISSING"; exit 27;
 }
 [[ "$("$RAM/bin/node" --version)" == v22.16.0 ]] || exit 28
+[[ ! -L "$RAM" && ! -L "$RAM/bin" && ! -L "$RAM/bin/node" && ! -L "$RAM/bin/yt-dlp" ]] || exit 28
+# Pin the exact *extracted* artifacts verified against official manifests.
+# Do not trust version text alone or files that can change after download.
+NODE_SHA=fd959ead1bf6d636f3c441b0943c4c0929db48cbf7608aa3516e66d12a727ec5
+YTDLP_SHA=1fa6733c37ea6fb51c99ad8fe785e7b7e5f3246c9b980230329d4fb72ed8d4d6
+[[ "$(sha256sum "$RAM/bin/node" | cut -d' ' -f1)" == "$NODE_SHA" ]] || exit 28
+[[ "$(sha256sum "$RAM/bin/yt-dlp" | cut -d' ' -f1)" == "$YTDLP_SHA" ]] || exit 28
 systemd-analyze verify "$ROOT/units/awg-media-sidecar@.service" >/dev/null
 # Require the audited, loopback-only unit with its own nonroot UID.
 grep -Fxq 'DynamicUser=yes' "$ROOT/units/awg-media-sidecar@.service" || exit 29
