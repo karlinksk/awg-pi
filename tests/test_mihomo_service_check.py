@@ -2,6 +2,10 @@
 """Offline tests for the conservative per-node service eligibility gate."""
 import importlib.util
 import json
+import os
+import socket
+import threading
+from unittest.mock import patch
 from pathlib import Path
 import sys
 import unittest
@@ -81,6 +85,38 @@ class ServiceGateTests(unittest.TestCase):
                 raise TimeoutError()
             return cases()(url, **kwargs)
         self.assertEqual(gate.assess(request)["status"], "UNKNOWN")
+
+    def test_http_200_challenge_is_unknown(self):
+        result = gate.assess(cases(web=(200, b"<html>Just a moment...</html>")))
+        self.assertEqual(result["status"], "UNKNOWN")
+        self.assertEqual(result["checks"]["chatgpt_web"]["reason"], "chatgpt_web_challenge")
+
+    def test_no_proxy_wildcard_does_not_bypass_loopback_proxy(self):
+        received = []
+        with socket.socket() as server:
+            server.bind(("127.0.0.1", 0))
+            server.listen(1)
+            server.settimeout(2.0)
+            port = server.getsockname()[1]
+            def serve():
+                try:
+                    conn, _ = server.accept()
+                    with conn:
+                        conn.settimeout(2.0)
+                        received.append(conn.recv(4096))
+                        conn.sendall(b"HTTP/1.1 502 Bad Gateway\r\nContent-Length: 0\r\n\r\n")
+                except (OSError, TimeoutError):
+                    pass
+            thread = threading.Thread(target=serve)
+            thread.start()
+            with patch.dict(os.environ, {"NO_PROXY": "*", "no_proxy": "*"}):
+                try:
+                    gate.fetch(port, "https://example.invalid/", timeout=1.5)
+                except Exception:
+                    pass
+            thread.join(timeout=2.5)
+        self.assertTrue(received, "the proxy was bypassed")
+        self.assertIn(b"CONNECT example.invalid:443", received[0])
 
     def test_loopback_proxy_must_be_valid(self):
         for invalid in (0, 65536, -1):
