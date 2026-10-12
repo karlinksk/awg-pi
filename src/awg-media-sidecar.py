@@ -18,25 +18,28 @@ import sys
 
 THIS_DIR = Path(__file__).resolve().parent
 FRAME = THIS_DIR / "awg-youtube-frame-check.py"
+RANGE_FRAME = THIS_DIR / "awg-video-range-check.py"
 TRUSTED_RUNTIME = Path("/dev/shm/awg-stage15/bin/yt-dlp")
 
 
-def preflight(*, euid=None, environ=None) -> str:
+def preflight(*, euid=None, environ=None, use_range=False) -> str:
     user = os.geteuid() if euid is None else euid
     env = os.environ if environ is None else environ
     if user == 0:
         return "root_worker_forbidden"
     if env.get("CREDENTIALS_DIRECTORY"):
         return "service_credentials_forbidden"
-    if not FRAME.is_file() or FRAME.is_symlink():
+    checker=RANGE_FRAME if use_range else FRAME
+    if not checker.is_file() or checker.is_symlink():
         return "media_checker_unavailable"
     if not TRUSTED_RUNTIME.is_file() or TRUSTED_RUNTIME.is_symlink():
         return "verified_media_runtime_unavailable"
     return ""
 
 
-def load_frame():
-    loader = importlib.machinery.SourceFileLoader("awg_stage15_media_frame", str(FRAME))
+def load_frame(*, use_range=False):
+    chosen=RANGE_FRAME if use_range else FRAME
+    loader = importlib.machinery.SourceFileLoader("awg_stage_media_frame", str(chosen))
     spec = importlib.util.spec_from_loader(loader.name, loader)
     module = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = module
@@ -44,9 +47,9 @@ def load_frame():
     return module
 
 
-def summarize(port: int, *, euid=None, environ=None, frame=None) -> dict:
+def summarize(port: int, *, euid=None, environ=None, frame=None, use_range=False) -> dict:
     # Never bypass privilege / credential preflight, including in tests.
-    reason = preflight(euid=euid, environ=environ)
+    reason = preflight(euid=euid, environ=environ, use_range=use_range)
     if reason:
         return {"state":"UNKNOWN","reason":reason,
                 "method":"video_frame_decode","shadow_only":True,
@@ -55,7 +58,7 @@ def summarize(port: int, *, euid=None, environ=None, frame=None) -> dict:
         reason="invalid_proxy_port"
     else:
         try:
-            verifier=load_frame() if frame is None else frame
+            verifier=load_frame(use_range=use_range) if frame is None else frame
             observation=verifier.verify(port, executable=str(TRUSTED_RUNTIME))
             if (isinstance(observation,dict)
                     and observation.get("state")=="PASS"
@@ -69,7 +72,18 @@ def summarize(port: int, *, euid=None, environ=None, frame=None) -> dict:
             allowed={"invalid_proxy_port", "ytdlp_or_compatible_js_unavailable",
                      "ffmpeg_unavailable","youtube_extractor_or_media_unavailable",
                      "youtube_video_file_unverified","youtube_video_decode_unverified",
-                     "youtube_media_probe_unavailable"}
+                     "youtube_media_probe_unavailable",
+                     "media_runtime_unavailable","node22_unavailable",
+                     "youtube_metadata_or_extractor_unavailable",
+                     "youtube_media_url_unavailable","youtube_media_http403",
+                     "youtube_media_http_unverified",
+                     "youtube_media_connection_unavailable",
+                     "youtube_media_range_unverified",
+                     "youtube_initial_fragment_incomplete",
+                     "youtube_video_codec_unsupported",
+                     "youtube_video_invalid_container",
+                     "youtube_no_decoded_frame",
+                     "youtube_bounded_media_probe_unavailable"}
             raw_reason=observation.get("reason") if isinstance(observation,dict) else None
             reason=raw_reason if raw_reason in allowed else "media_unverified"
         except Exception:
@@ -82,8 +96,9 @@ def summarize(port: int, *, euid=None, environ=None, frame=None) -> dict:
 def main() -> int:
     parser=argparse.ArgumentParser()
     parser.add_argument("--proxy-port",type=int,required=True)
+    parser.add_argument("--range",action="store_true")
     args=parser.parse_args()
-    report=summarize(args.proxy_port)
+    report=summarize(args.proxy_port,use_range=args.range)
     print(json.dumps(report,separators=(",",":"),sort_keys=True))
     return 0 if report["state"]=="PASS" else 1
 
