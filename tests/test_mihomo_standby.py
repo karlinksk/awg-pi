@@ -20,6 +20,12 @@ sys.modules[spec.name] = standby
 spec.loader.exec_module(standby)
 
 
+TEST_ROUTER_PROOF = {
+    "mode": "DIRECT", "scope": "END_TO_END",
+    "reason": "router_underlay_verified", "router_verified": True
+}
+
+
 def node(n, *, delay=10, server=None):
     return {"name": f"node-{n}", "type": "ss", "server": server or f"192.0.2.{n}",
             "port": 443, "delay_ms": delay + n, "healthy": True, "index": n}
@@ -51,7 +57,8 @@ class StandbyTests(unittest.TestCase):
         self.assertEqual([n["name"] for n in chosen], ["node-3", "node-4"])
         t = int(time.time())
         entries = {n["name"]: {"status": "PASS", "checked_at": t,
-                                "fingerprint": standby.fingerprint(n)} for n in nodes}
+                                "fingerprint": standby.fingerprint(n),
+                                "underlay": dict(TEST_ROUTER_PROOF)} for n in nodes}
         self.assertEqual(standby.qualified_spares(entries, nodes, t), ["node-3"])
 
     def test_cache_invalidation_time_endpoint_and_identity(self):
@@ -84,6 +91,15 @@ class StandbyTests(unittest.TestCase):
         self.assertEqual(standby.adaptive_interval(0, 3), 120)
         self.assertEqual(standby.adaptive_interval(0, 8), 600)
 
+    def test_pass_without_verified_underlay_does_not_become_warm(self):
+        n = node(1)
+        now = int(time.time())
+        row = {"status": "PASS", "checked_at": now,
+               "fingerprint": standby.fingerprint(n),
+               "underlay": {"mode": "DIRECT_LOCAL_UNVERIFIED",
+                            "scope": "PI_ONLY", "router_verified": False}}
+        self.assertEqual(standby.qualified_spares({n["name"]: row}, [n], now), [])
+
     def test_no_false_positive_on_unknown(self):
         now = int(time.time())
         n1, n2 = node(1), node(2)
@@ -114,6 +130,7 @@ class StandbyTests(unittest.TestCase):
             inspected.append([n["name"] for n in chosen])
             return {n["name"]: {
                 "status": "PASS" if n["name"] in ("node-2", "node-4") else "UNKNOWN",
+                "underlay": dict(TEST_ROUTER_PROOF),
                 "transport": "mihomo",
                 "identity": n["name"],
                 "sample_id": "test-" + n["name"] + "-" + str(len(inspected)),
