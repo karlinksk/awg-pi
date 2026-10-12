@@ -51,6 +51,58 @@ LIMITS = load_module(Path(__file__).with_name("awg-mihomo-limits.py"),
 
 PROVENANCE = load_module(Path(__file__).with_name("awg-endpoint-provenance.py"),
                          "awg_standby_route_provenance")
+QUALIFIER = load_module(Path(__file__).with_name("awg-node-qualification.py"),
+                        "awg_standby_service_qualification")
+NETWORK_GENERATION_FILE = Path("/run/awg-pbr/router-events/state.json")
+
+
+def boot_identity() -> str:
+    try:
+        return Path("/proc/sys/kernel/random/boot_id").read_text().strip()
+    except OSError:
+        return "boot_unavailable"
+
+
+def current_generation(path: Path = NETWORK_GENERATION_FILE) -> int | None:
+    """A missing event collector cannot silently become a verified baseline."""
+    try:
+        if path.stat().st_size > 4096:
+            return None
+        state = json.loads(path.read_text(encoding="utf-8"))
+        parts = state.get("parts", {})
+        gen = state.get("generation")
+        if (state.get("version") == 1 and isinstance(parts, dict)
+                and len(parts) == 6
+                and all(isinstance(v, str) and len(v) == 64 for v in parts.values())
+                and isinstance(gen, int) and not isinstance(gen, bool)
+                and 0 <= gen <= 2**63-1):
+            return gen
+    except (OSError, TypeError, ValueError):
+        pass
+    return None
+
+
+def matching_runtime(entry: dict, boot: str, generation: int | None) -> bool:
+    return (isinstance(entry, dict) and isinstance(generation, int)
+            and not isinstance(generation, bool) and generation >= 0
+            and entry.get("policy_generation") == generation
+            and entry.get("boot_id") == boot)
+
+
+def service_ready_nodes(entries: dict, nodes: list[dict], now: int,
+                        ttl: int = CACHE_TTL, limit: int = 2, *,
+                        boot: str | None = None,
+                        generation: int | None = None) -> list[str]:
+    """Service passes are invalid once the local router epoch changes."""
+    if boot is None:
+        boot = boot_identity()
+    if generation is None:
+        generation = current_generation()
+    clean = {name: row for name, row in entries.items()
+             if matching_runtime(row, boot, generation)}
+    with_fingerprint = [dict(node, fingerprint=fingerprint(node)) for node in nodes]
+    return QUALIFIER.summary(clean, with_fingerprint, now=now, ttl=ttl, limit=limit)
+
 
 
 def fingerprint(node: dict) -> str:
@@ -111,13 +163,21 @@ def choose_window(nodes: list[dict], cursor: int, limit: int,
 
 
 def qualified_spares(entries: dict, nodes: list[dict], now: int,
-                     ttl: int = CACHE_TTL, limit: int = 2) -> list[str]:
+                     ttl: int = CACHE_TTL, limit: int = 2, *,
+                     boot: str | None = None,
+                     generation: int | None = None) -> list[str]:
     """Only recent independently PASS-qualified unique endpoints are warm."""
+    if boot is None:
+        boot = boot_identity()
+    if generation is None:
+        generation = current_generation()
     by_name = collections.Counter(n["name"] for n in nodes)
     eligible = [n for n in nodes if by_name[n["name"]] == 1
                 and n["name"] in entries
                 and fresh_entry(entries[n["name"]], n, now, ttl)
                 and entries[n["name"]]["status"] == "PASS"
+                and matching_runtime(entries[n["name"]], boot, generation)
+                and QUALIFIER.ready_entry(entries[n["name"]], now=now, ttl=ttl)
                 and PROVENANCE.proved_direct(entries[n["name"]].get("underlay"))]
     eligible.sort(key=lambda n: (n["delay_ms"], n["name"]))
     selected, endpoints = [], set()
@@ -187,8 +247,19 @@ def build_plan(smart, pool: dict, raw_provider: list[dict], *,
                                  if isinstance(n, dict) and isinstance(n.get("name"), str))
     nodes = [n for n in nodes if counts[n["name"]] == 1]
     entries = previous.get("entries", {}) if isinstance(previous.get("entries"), dict) else {}
-    warm = qualified_spares(entries, nodes, now)
-    chosen, cursor = choose_window(nodes, int(previous.get("cursor", 0)), count, warm)
+    boot, generation = boot_identity(), current_generation()
+    warm = qualified_spares(entries, nodes, now, boot=boot, generation=generation)
+    # A first service PASS is deliberately not yet a hot spare. Prioritize
+    # its SECOND independent probe in the next scan without any route switch.
+    pending = [n["name"] for n in sorted(nodes,
+               key=lambda n: (n["delay_ms"], n["name"]))
+               if n["name"] in entries
+               and fresh_entry(entries[n["name"]], n, now)
+               and entries[n["name"]].get("service_status") == "PASS"
+               and entries[n["name"]].get("service_confirmations") == 1
+               and matching_runtime(entries[n["name"]], boot, generation)]
+    pinned = (warm + [name for name in pending if name not in warm])[:2]
+    chosen, cursor = choose_window(nodes, int(previous.get("cursor", 0)), count, pinned)
     return chosen, nodes, cursor, warm
 
 
@@ -296,30 +367,55 @@ def scan(*, pool_file: Path = POOL_JSON, provider_file: Path = PROVIDER,
         # Bound the cache size, age and provider endpoint identity in RAM.
         entries = {name: row for name, row in previous.get("entries", {}).items()
                    if name in by_name and fresh_entry(row, by_name[name], now, ttl)}
+        boot_before, generation_before = boot_identity(), current_generation()
         deadline = time.monotonic() + max_seconds
         outcomes = (perform_probe(chosen, raw, helper, service, timeout=timeout,
                                   deadline=deadline) if chosen else {})
+        boot = boot_identity()
+        generation = current_generation()
+        if boot != boot_before or generation != generation_before:
+            # The evidence could have been collected along the previous
+            # underlay. Never attribute it to the new route generation.
+            outcomes = {}
+        if not smart.fresh_pool(pool, provider_file, MAX_POOL_AGE):
+            raise RuntimeError("provider_changed_during_service_probe")
         for node in chosen:
             name = node["name"]
             if name not in outcomes:
                 continue
             outcome = outcomes[name]
+            checked_at = int(time.time())
+            former = entries.get(name)
+            qualification = QUALIFIER.advance(
+                former, outcome, identity=name, fingerprint=fingerprint(node),
+                boot_id=boot, policy_generation=generation, checked_at=checked_at,
+                ttl=ttl)
+            # The inherited single-probe PASS flag is not enough to admit
+            # a hot spare. Qualification is an entirely separate gate.
             entries[name] = {
-                "status": outcome["status"],
-                "reason_codes": outcome.get("reasons", {"probe": outcome.get("reason", "unknown")}),
+                "status": qualification["service_status"],
+                "reason_codes": {"service": qualification["service_reason"]},
                 "fingerprint": fingerprint(node),
-                "checked_at": int(time.time()),
+                "checked_at": checked_at,
                 "delay_ms": node["delay_ms"],
-                "transport": outcome.get("transport"),
-                "identity": outcome.get("identity"),
-                "sample_id": outcome.get("sample_id"),
-                "checks": outcome.get("checks", {}),
+                "transport": "mihomo",
+                "identity": name,
+                "sample_id": qualification["service_sample_id"],
+                "checks": qualification["service_checks"],
                 "underlay": outcome.get("underlay", {
                     "mode": "UNKNOWN", "scope": "PI_ONLY",
                     "reason": "unverified_endpoint", "router_verified": False}),
+                **qualification,
             }
         now = int(time.time())
-        warm = qualified_spares(entries, eligible, now, ttl, confirm_limit)
+        service_ready = service_ready_nodes(
+            entries, eligible, now, ttl, confirm_limit,
+            boot=boot, generation=generation)
+        warm = qualified_spares(
+            entries, eligible, now, ttl, confirm_limit,
+            boot=boot, generation=generation)
+        # Service-ready is NOT route-qualified: this list never authorizes
+        # switching or falsely states that the router is verified.
         # No provider URLs, endpoints or credentials go in the summary.
         previous_streak = int(previous.get("error_streak", 0))
         streak = 0 if warm else min(8, previous_streak + 1)
@@ -329,7 +425,10 @@ def scan(*, pool_file: Path = POOL_JSON, provider_file: Path = PROVIDER,
                   "pool_scanned_at": pool["scanned_at"],
                   "cursor": cursor, "candidate_cap": count,
                   "tested": len(outcomes), "considered": len(chosen),
-                  "warm": warm, "entries": entries,
+                  "warm": warm, "service_ready": service_ready,
+                  "service_ready_count": len(service_ready),
+                  "route_verification": "SEPARATE_ON_DEMAND",
+                  "entries": entries,
                   "error_streak": streak,
                   "suggested_interval_seconds": next_interval(entries, warm, now, ttl, streak)}
         atomic_state(state_file, result)
@@ -357,6 +456,12 @@ def report(state: dict) -> dict:
     else:
         summary["status"] = "READY" if len(warm) >= 2 else ("DEGRADED" if warm else "EMPTY")
     summary["warm"] = warm
+    summary["service_ready_count"] = (
+        len(state.get("service_ready", []))
+        if isinstance(state.get("service_ready"), list)
+        and isinstance(state.get("generated_at"), int)
+        and 0 <= now - state["generated_at"] <= ttl else 0)
+    summary["service_ready_not_route_authorized"] = True
     return summary
 
 
