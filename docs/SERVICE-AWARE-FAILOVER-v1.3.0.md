@@ -346,3 +346,23 @@ An additional read-only active Mihomo service probe still returns `OpenAI API FA
 The operator-run script `scripts/awg-mihomo-trial-once.sh` checks its source Git checkout, stages a minimal audited library and single systemd unit, executes the root preparer, runs the nonroot one-shot, prints only input **byte counts**, service status and sanitized JSON verdict, checks table 100 before/after, and on EXIT removes selected credential, temporary library and unit. No service is enabled, no new sudo allowlist, no direct node switch. A missing provider, stale pool, oversized selected credential, missing event context, or service failure is a FAIL/UNKNOWN field-trial outcome, **not** a reason to weaken permissions.
 
 **Verification to date:** 294 Python offline tests PASS (including ten new selector-preparer tests), unit passes `systemd-analyze verify`, operator shell syntax passes. The **corrected root-preparer + real systemd LoadCredential trial has NOT YET been run**, so no successful real-node service evaluation may be claimed. Requires another explicit one-time operator sudo invocation, then live journal and transport safety audit. Keep PR DRAFT; SSTP remains untouched.
+
+
+## Stage 13c — root preparer stopped before service; sanitized reasons (2026-10-12)
+
+Operator-provided v2 output:
+```
+STAGE13_V2=STARTED
+PROTECTED_INPUT_SIZES_ONLY:
+SOURCE_PRESENT_BYTES=461380
+SOURCE_PRESENT_BYTES=472206
+{"mode": "SHADOW_ONLY", "status": "PREPARE_FAILED", "production_modified": false}
+```
+
+Both root-protected inputs existed; the root selection preparer failed **before the DynamicUser systemd unit started**, so zero nodes were tested. No live routing or SSTP change.
+
+At 16:49:18 +07 the existing `awg-mihomo-pool-refresh.service` **successfully refreshed** the complete live pool: **1,869 provider nodes; 249 healthy**. The previous operator attempt was around 16:43, before that successful refresh. The original preparer rejected pools over 3,600 seconds old or whose SHA did not match the provider, so an expired live pool is a **plausible** cause, not confirmed because v2 concealed all errors. The separate `mihomo-pool-candidate` helper reports candidate pool staleness, which is NOT proof that the *live* pool is stale.
+
+**Safe diagnostic patch on draft branch**: `awg-mihomo-trial-prepare.py` now emits only fixed failure codes such as `POOL_EXPIRED`, `POOL_PROVIDER_SHA_MISMATCH`, `PROVIDER_PARSE_FAILED`, `CANDIDATE_SELECTION_FAILED`, or `SELECTION_WRITE_FAILED`, with no raw exception strings, credentials, URL or endpoint names. The operator script, root-only selection boundary, <=480 kB credential, no-auto-switch, one-shot cleanup and DynamicUser isolation remain unchanged. Validated in a fresh GitHub branch checkout: **297 Python tests PASS**, script syntax PASS, systemd unit verification PASS, Python syntax PASS; latest GitHub Actions CI PASS.
+
+**Next controlled operator action**: a single explicit `sudo bash /tmp/awg-stage13-v3-reviewed/scripts/awg-mihomo-trial-once.sh` while the refreshed live pool is still fresh. This command has **not** yet been executed. Any failure reason must be reported without exposing source contents. Do not count candidates as tested unless the sanitized service output confirms them. Keep PR #84 DRAFT.
