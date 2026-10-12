@@ -33,6 +33,11 @@ def standby_state(now=NOW, status="PASS"):
         row = evidence("mihomo", status, sample="standby-" + k + "-" + str(now),
                        time=now, identity=k)
         row["fingerprint"] = "f"*64
+        # Test-only hypothetical router-attested path. A real Pi-only scan
+        # MUST NOT mint this evidence on its own.
+        row["underlay"] = {
+            "mode": "DIRECT", "scope": "END_TO_END",
+            "reason": "router_underlay_verified", "router_verified": True}
         result["entries"][k] = row
     return result
 
@@ -88,6 +93,24 @@ class ObserverTests(unittest.TestCase):
         result, state = m.evaluate_document(nxt, state, now=NOW+10, mono=MONO+10)
         self.assertEqual((result["action"], result["target"]), ("SELECT_NODE", "B"))
         self.assertEqual(result["detection_seconds"], 10)
+
+    def test_service_pass_over_awg_assisted_node_never_becomes_warm(self):
+        fixture = doc()
+        fixture["standby"]["entries"]["B"]["underlay"] = {
+            "mode": "ASSISTED_AWG", "scope": "PI_ONLY",
+            "reason": "routed_via_awg", "router_verified": False}
+        fixture["standby"]["entries"]["C"]["underlay"] = {
+            "mode": "DIRECT_LOCAL_UNVERIFIED", "scope": "PI_ONLY",
+            "reason": "lan_next_hop_router_not_verified", "router_verified": False}
+        result, _ = m.evaluate_document(fixture, now=NOW, mono=MONO)
+        self.assertEqual(result["warm_count"], 0)
+
+    def test_legacy_standby_without_underlay_is_not_promoted(self):
+        fixture = doc()
+        for k in ("B", "C"):
+            fixture["standby"]["entries"][k].pop("underlay")
+        result, _ = m.evaluate_document(fixture, now=NOW, mono=MONO)
+        self.assertEqual(result["warm_count"], 0)
 
     def test_stale_standby_is_rejected(self):
         fixture = doc(mh="FAIL")
