@@ -73,7 +73,7 @@ run_policy(){
 }
 
 run_monitor(){
-  sudo env     AWG_COMMON_FILE="$ROOT/src/awg-common"     AWG_TRANSPORT_FILE="$TMP/transport"     AWG_SELECTION_FILE="$TMP/selection.env"     AWG_TRANSPORT_CLI="$TMP/bin/transport"     MIHOMO_NODE_POLICY_CLI="$TMP/bin/node-policy"     AWG_SELECTION_STATE_DIR="$TMP/run"     AWG_SELECTION_FAILURES="$TMP/run/failures"     AWG_LOCK_FILE="$TMP/run/maintenance.lock"     AWG_SELECTION_FAILURE_THRESHOLD=3     AWG_SELECTION_ONCE=1     LOGGER_BIN="$TMP/bin/logger"     MOCK_TRANSPORT_STATE="$TMP/transport"     MOCK_TRANSPORT_LOG="$TMP/log"     MOCK_NODE_POLICY_LOG="$TMP/node-policy.log"     MOCK_NODE_POLICY_ENABLED="${MOCK_NODE_POLICY_ENABLED:-0}"     MOCK_NODE_FAILOVER_OK="${MOCK_NODE_FAILOVER_OK:-0}"     MOCK_AWG_HEALTH="${MOCK_AWG_HEALTH:-up}"     MOCK_MIHOMO_HEALTH="${MOCK_MIHOMO_HEALTH:-up}"     bash "$ROOT/src/awg-selection-monitor"
+  sudo env     AWG_COMMON_FILE="$ROOT/src/awg-common"     AWG_TRANSPORT_FILE="$TMP/transport"     AWG_SELECTION_FILE="$TMP/selection.env"     AWG_TRANSPORT_CLI="$TMP/bin/transport"     MIHOMO_NODE_POLICY_CLI="$TMP/bin/node-policy"     AWG_SELECTION_STATE_DIR="$TMP/run"     AWG_SELECTION_FAILURES="$TMP/run/failures"     AWG_LOCK_FILE="$TMP/run/maintenance.lock"     AWG_SELECTION_FAILURE_THRESHOLD=3     AWG_SELECTION_ONCE=1     AWG_MIHOMO_NATIVE_FALLBACK="${AWG_MIHOMO_NATIVE_FALLBACK:-0}"     LOGGER_BIN="$TMP/bin/logger"     MOCK_TRANSPORT_STATE="$TMP/transport"     MOCK_TRANSPORT_LOG="$TMP/log"     MOCK_NODE_POLICY_LOG="$TMP/node-policy.log"     MOCK_NODE_POLICY_ENABLED="${MOCK_NODE_POLICY_ENABLED:-0}"     MOCK_NODE_FAILOVER_OK="${MOCK_NODE_FAILOVER_OK:-0}"     MOCK_AWG_HEALTH="${MOCK_AWG_HEALTH:-up}"     MOCK_MIHOMO_HEALTH="${MOCK_MIHOMO_HEALTH:-up}"     bash "$ROOT/src/awg-selection-monitor"
 }
 
 echo "=== manual is the safe default ==="
@@ -214,3 +214,52 @@ grep -Fqx 'MIHOMO_NODE_FAILOVER=Finland->Finland backup' <<<"$out"
 grep -Fqx mihomo "$TMP/transport"
 
 echo "transport selection policy: OK"
+
+
+echo "=== native fallback owns node decisions ==="
+run_policy mode auto mihomo awg >/dev/null
+printf '%s\n' mihomo >"$TMP/transport"
+: >"$TMP/log"
+sudo truncate -s 0 "$TMP/node-policy.log"
+rm -f "$TMP/run/failures"
+for i in 1 2 3; do
+  AWG_MIHOMO_NATIVE_FALLBACK=1 MOCK_NODE_POLICY_ENABLED=1 MOCK_NODE_FAILOVER_OK=1 MOCK_MIHOMO_HEALTH=down MOCK_AWG_HEALTH=up run_monitor >/dev/null
+done
+[[ ! -s "$TMP/node-policy.log" ]] || { echo 'native fallback unexpectedly invoked legacy node policy'; exit 1; }
+grep -Fqx 'select:awg' "$TMP/log"
+grep -Fqx awg "$TMP/transport"
+echo "STAGE25_NATIVE_FALLBACK_PASS"
+
+
+echo "=== AWG healthy remains sticky (no unapproved failback) ==="
+run_policy mode auto mihomo awg >/dev/null
+printf '%s\n' awg >"$TMP/transport"
+: >"$TMP/log"
+rm -f "$TMP/run/failures"
+AWG_MIHOMO_NATIVE_FALLBACK=1 MOCK_AWG_HEALTH=up MOCK_MIHOMO_HEALTH=up run_monitor >/dev/null
+[[ ! -s "$TMP/log" ]]
+grep -Fqx awg "$TMP/transport"
+echo STAGE25_AWG_STICKY_PASS
+
+echo "=== AWG down recovers to Mihomo ==="
+printf '%s\n' awg >"$TMP/transport"
+: >"$TMP/log"
+rm -f "$TMP/run/failures"
+for i in 1 2; do
+  AWG_MIHOMO_NATIVE_FALLBACK=1 MOCK_AWG_HEALTH=down MOCK_MIHOMO_HEALTH=up run_monitor >/dev/null
+done
+[[ ! -s "$TMP/log" ]]
+out="$(AWG_MIHOMO_NATIVE_FALLBACK=1 MOCK_AWG_HEALTH=down MOCK_MIHOMO_HEALTH=up run_monitor)"
+grep -Fqx 'FAILOVER=awg->mihomo' <<<"$out"
+grep -Fqx mihomo "$TMP/transport"
+echo STAGE25_AWG_RECOVERY_PASS
+
+echo "=== both down never selects unhealthy transport ==="
+printf '%s\n' mihomo >"$TMP/transport"
+: >"$TMP/log"
+rm -f "$TMP/run/failures"
+for i in 1 2 3 4; do
+  AWG_MIHOMO_NATIVE_FALLBACK=1 MOCK_MIHOMO_HEALTH=down MOCK_AWG_HEALTH=down run_monitor >/dev/null
+done
+grep -Fqx mihomo "$TMP/transport"
+echo STAGE25_BOTH_DOWN_NO_LEAKY_SWITCH_PASS
