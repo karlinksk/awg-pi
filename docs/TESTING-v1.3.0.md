@@ -562,3 +562,15 @@ Production blockers remain: actual Mihomo dialed-endpoint attribution, policy dr
 - [ ] Live single-writer transport transaction, rollback, no-DIRECT leak and measured CPU/RAM/traffic/latencies.
 
 **This stage does not install new services or enable automatic failover.** No new stage-10 unit is deployed to production.
+
+### Stage 11 — decoded YouTube video proof (staged; release blocked)
+
+- [x] HTTP 206 with random bytes, HTML, audio-only format or media-container header alone cannot return playable YouTube `PASS`.
+- [x] The optional `yt-dlp + ffmpeg` checker requires actual local decode of at least one video frame; errors, unsupported current JS runtime and timeouts are UNKNOWN.
+- [x] No media checker is invoked as part of frequent Hot Standby by default; short download uses a fixed video, forced Mihomo loopback proxy, RAM scratch, size/time/resource limits and process-group cleanup.
+- [x] Latest clean offline unit suite: **265 Python tests**, three selector shell tests; these do not prove a live video PASS.
+- [x] Official `yt-dlp 2026.08.19` binary verified by checksum in temporary RAM storage only, tested via current active Mihomo; YouTube page/API requests timed out. Node.js on Pi is v20.19.2, below the currently supported Node 22 recommendation for full JS challenge support. No system package installation or node change.
+- [ ] Confirm actual decoded first frame via at least one independently service-eligible real provider node with supported JS runtime, without changing production routing.
+- [ ] Validate logged-in ChatGPT interaction separately from public HTTP page / OpenAI 401 / Cloudflare challenge.
+- [ ] Profile CPU/RAM, ingress/egress bandwidth and microSD write minimization; ensure slow optional media probe never stalls short health-check or failover commit.
+- [ ] Route- and node-specific proofs, commit-time attestation, rollback and Transit no-leak fault injection still required.
