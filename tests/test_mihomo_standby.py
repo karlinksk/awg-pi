@@ -58,8 +58,20 @@ class StandbyTests(unittest.TestCase):
         t = int(time.time())
         entries = {n["name"]: {"status": "PASS", "checked_at": t,
                                 "fingerprint": standby.fingerprint(n),
-                                "underlay": dict(TEST_ROUTER_PROOF)} for n in nodes}
-        self.assertEqual(standby.qualified_spares(entries, nodes, t), ["node-3"])
+                                "underlay": dict(TEST_ROUTER_PROOF),
+                                "service_qualified": True,
+                                "service_qualification": "SERVICE_READY",
+                                "service_confirmations": 2,
+                                "policy_generation": 1,
+                                "boot_id": standby.boot_identity(),
+                                "service_status": "PASS",
+                                "service_checked_at": t,
+                                "service_checks": {k: {"state":"PASS","reason":"fixture"}
+                                    for k in ("openai_api","chatgpt_web","youtube_video")}}
+                   for n in nodes}
+        self.assertEqual(
+            standby.qualified_spares(entries, nodes, t, generation=1),
+            ["node-3"])
 
     def test_cache_invalidation_time_endpoint_and_identity(self):
         n = node(4)
@@ -99,6 +111,24 @@ class StandbyTests(unittest.TestCase):
                "underlay": {"mode": "DIRECT_LOCAL_UNVERIFIED",
                             "scope": "PI_ONLY", "router_verified": False}}
         self.assertEqual(standby.qualified_spares({n["name"]: row}, [n], now), [])
+
+    def test_network_change_revokes_previously_service_ready(self):
+        t=int(time.time())
+        n=node(1)
+        row={"status":"PASS","fingerprint":standby.fingerprint(n),
+             "checked_at":t,"identity":n["name"],"boot_id":standby.boot_identity(),
+             "policy_generation":3,"service_qualified":True,
+             "service_qualification":"SERVICE_READY",
+             "service_status":"PASS","service_confirmations":2,
+             "service_checked_at":t,"underlay":dict(TEST_ROUTER_PROOF),
+             "service_checks":{k:{"state":"PASS","reason":"fixture"} for k in
+                               ("openai_api","chatgpt_web","youtube_video")}}
+        self.assertEqual(standby.qualified_spares({n["name"]:row},[n],t,
+                                                     generation=3),[n["name"]])
+        self.assertEqual(standby.qualified_spares({n["name"]:row},[n],t,
+                                                     generation=4),[])
+        self.assertEqual(standby.service_ready_nodes({n["name"]:row},[n],t,
+                                                     generation=4),[])
 
     def test_no_false_positive_on_unknown(self):
         now = int(time.time())
@@ -140,7 +170,8 @@ class StandbyTests(unittest.TestCase):
             } for n in chosen}
         with tempfile.TemporaryDirectory(dir="/dev/shm") as tmp, \
              patch.object(standby.os, "geteuid", return_value=0), \
-             patch.object(standby, "load_module", return_value=fake_smart):
+             patch.object(standby, "load_module", return_value=fake_smart), \
+             patch.object(standby, "current_generation", return_value=1):
             root = Path(tmp)
             provider = root / "provider.yaml"
             provider.write_text("fixture only")
@@ -151,7 +182,9 @@ class StandbyTests(unittest.TestCase):
                                  state_file=state_path, perform_probe=mock_probe)
             self.assertEqual(first["candidate_cap"], 10)
             self.assertEqual(first["tested"], 10)
-            self.assertEqual(first["warm"], ["node-2", "node-4"])
+            self.assertEqual(first["warm"], [])
+            self.assertEqual(first["service_ready"], [])
+            self.assertEqual(first["entries"]["node-2"]["service_confirmations"], 1)
             self.assertEqual(first["mode"], "SHADOW_ONLY")
             self.assertEqual(first["entries"]["node-2"]["identity"], "node-2")
             self.assertEqual(first["entries"]["node-2"]["transport"], "mihomo")
@@ -164,6 +197,9 @@ class StandbyTests(unittest.TestCase):
             self.assertIn("node-11", inspected[1])
             self.assertEqual(second["candidate_cap"], 10)
             self.assertEqual(len(inspected[1]), 10)
+            self.assertEqual(second["service_ready"], ["node-2", "node-4"])
+            self.assertEqual(second["warm"], ["node-2", "node-4"])
+            self.assertEqual(second["entries"]["node-2"]["service_confirmations"], 2)
 
     def test_expired_status_not_advertised_as_ready(self):
         t = int(time.time())
@@ -216,7 +252,8 @@ class StandbyTests(unittest.TestCase):
             load_pool_code=lambda: fake_helper, load_service_code=lambda: object())
         with tempfile.TemporaryDirectory(dir="/dev/shm") as tmp, \
              patch.object(standby.os, "geteuid", return_value=0), \
-             patch.object(standby, "load_module", return_value=fake_smart):
+             patch.object(standby, "load_module", return_value=fake_smart), \
+             patch.object(standby, "current_generation", return_value=1):
             root = Path(tmp)
             (root/"provider").write_text("fixture")
             (root/"pool").write_text(json.dumps(
