@@ -1,0 +1,57 @@
+[Unit]
+Description=AWG stage19 credential-free 12MiB 60s video decode proof on isolated loopback proxy port %i
+Documentation=https://github.com/karlinksk/awg-pi/issues/83
+After=network-online.target
+Wants=network-online.target
+ConditionPathExists=/dev/shm/awg-stage15/bin/node
+ConditionPathExists=/dev/shm/awg-stage15/bin/yt-dlp
+ConditionPathExists=/usr/local/lib/awg-pbr-stage15/awg-video-sustained-check.py
+
+[Service]
+Type=oneshot
+# DIFFERENT UID from every protected Mihomo credentials-bearing service.
+DynamicUser=yes
+User=awg-media-proof
+Group=awg-media-proof
+LoadCredential=
+ExecStart=/usr/bin/python3 /usr/local/lib/awg-pbr-stage15/awg-media-sidecar.py --proxy-port %i --sustained
+TimeoutStartSec=160s
+Restart=no
+KillMode=control-group
+TimeoutStopSec=3s
+UMask=0077
+MemoryMax=384M
+CPUQuota=65%
+TasksMax=48
+Nice=12
+IOSchedulingClass=idle
+IPAccounting=yes
+IPAddressDeny=any
+IPAddressAllow=localhost
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+ProtectSystem=strict
+ProtectHome=yes
+ProtectProc=invisible
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+PrivateDevices=yes
+PrivateTmp=yes
+LockPersonality=yes
+RestrictSUIDSGID=yes
+RestrictRealtime=yes
+RestrictAddressFamilies=AF_UNIX AF_INET
+Environment=PYTHONDONTWRITEBYTECODE=1
+Environment=HOME=/dev/shm
+Environment=TMPDIR=/dev/shm
+Environment=XDG_CACHE_HOME=/dev/shm
+Environment=PATH=/dev/shm/awg-stage15/bin:/usr/bin:/bin
+ReadWritePaths=/dev/shm
+InaccessiblePaths=/var/lib/awg-pbr /etc/awg-pbr /run/awg-pbr
+StandardInput=null
+StandardOutput=journal
+StandardError=null
+# NO [Install]. No timers, no scheduling and NO secret subscription credentials.

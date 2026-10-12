@@ -1,0 +1,579 @@
+# Service-Aware AUTO SMART / Hot Standby — staged implementation (v1.3.0)
+
+**Tracking:** #83, draft PR #84. **Experimental: NO production install, auto-switches or background timer are activated.**
+
+**Accepted routing-policy decision (2026-10-12):** [Event-driven router path verification ADR](ADR-EVENT-DRIVEN-ROUTER-ATTESTATION-v1.3.0.md). **EVENT_DRIVEN is the default**: verify the router on initial setup/material network changes and when a proposed switch lacks a fresh, exact-endpoint proof. No constant MikroTik SSH polling; RouterOS is an optional adapter. A 30-second endpoint proof TTL is **not** a 30-second scan period. The ADR supersedes any earlier wording interpreted as mandatory unconditional SSH per candidate or every fixed interval. Not deployed.
+
+
+## Shared eligibility and limits
+
+`src/awg-mihomo-limits.py` is the single source for **10 shortlisted candidates → up to 3 sustained-speed finalists → up to 2 confirmations**. Both AUTO SMART and Hot Standby import these caps.
+
+The previously Pi-local AUTO SMART is versioned as `src/awg-mihomo-smart`. It creates a short-lived, isolated, loopback-only Mihomo (no TUN and no route changes). Service eligibility is verified **before** expensive speed tests and recommendations.
+
+`src/awg-mihomo-service-check.py` checks through the specifically selected loopback proxy:
+- OpenAI API: unauthed HTTP 401 suggests the API responds from that IP; `unsupported_country_region_territory` is a definite failure.
+- ChatGPT web: constrained HTTPS origin, HTML and challenge detection. HTTP 403 / unrecognizable content is **UNKNOWN**, not success.
+- YouTube: actual watch page **and byte-range video data from a validated `*.googlevideo.com` HTTPS destination**. Homepage alone is insufficient. An unsupported player cipher yields UNKNOWN.
+- Only all-PASS qualifies. Network errors, anti-bot challenges and ambiguous results stay UNKNOWN. Proxy bypass with `NO_PROXY=*` is blocked. Redirects to non-whitelisted hosts are rejected *before* connection, not only after they happen.
+
+These are conservative probes, **not a guarantee that a logged-in browser session will function**. Testing actual client browsing is still necessary.
+
+## Stage 2: read-only rolling Hot Standby
+
+`src/awg-mihomo-standby.py` builds rolling windows of up to ten unique healthy candidates from the existing pool and reads provider nodes only inside its isolated probe process. It *never* calls live node selection, transport selection, routing or systemctl.
+
+- Candidate windows advance beyond the first ten; up to two previous PASS-qualified warm candidates remain prioritized.
+- No traffic benchmark is performed in these cycles; sustained throughput tests remain a separate, infrequent AUTO SMART activity.
+- State is written atomically, mode 0600, to `/run/awg-pbr/mihomo-standby/state.json` (RAM on Debian). Cache entries carry endpoint+protocol+egress fingerprint, provider checksum, effective region/protocol policy, checked_at and reason codes. Invalid/stale/UNKNOWN entries are never offered as warm.
+- Single-writer file lock prevents simultaneous scans; short-lived probe config with credentials lives in `/dev/shm` with 0600 permissions.
+- Adaptive scheduling is implemented in the independent **watch** loop (degraded 30 s, stable 120 s, bounded exponential backoff to 600 s), and is shortened when a warm result approaches TTL expiry. It has **not** been deployed or activated on Pi.
+- `show` filters expired cached successes and does **not** authorize routing changes; the production selector must verify live source hash/TTL and do a post-switch data-plane check.
+
+An optional **staged** `units/awg-mihomo-standby.service` runs the independent read-only `watch` loop without depending on the main `awg-mihomo.service`. **Neither the unit nor the watcher has been installed or enabled on Pi.** Running a real scan needs explicit root permission and production-like network testing in a controlled environment.
+
+## Stage 2: pure failover decision model
+
+`src/awg-failover-policy.py` has a side-effect-free state machine, with tests covering Mihomo main → hot spare → AWG backup, AWG → Mihomo auto-failback, double outage `NO_WORKING_TRANSPORT`, strict Manual/FIXED preservation, confirmed failure vs UNKNOWN, and no fictitious repeated confirmations from one cached probe result.
+
+- Two **distinct** confirmed failures trigger emergency recovery. A single UNKNOWN or stale result cannot trigger global failover.
+- AWG is usable as a fallback only when independently service-qualified for ChatGPT and YouTube.
+- Auto-failback to priority Mihomo requires two **new** PASS observations plus 120 s dwell (tunable once integrated). Emergency recovery ignores plan-switch dwell.
+- `NO_WORKING_TRANSPORT` remains **supervisor state**, never a new value in the existing `AWG_TRANSPORT_FILE`.
+- The model tracks monotonic detection and recovery durations; **time-to-recover has not been measured in real-world failover**.
+- **IMPORTANT:** `evaluate()` returns *suggested actions only*. No switch is executed. A future adapter must recheck TTL, route, client DNS and safety preflight, serialize operations with the existing maintenance lock, and commit with rollback.
+
+## Offline verification
+
+In a fresh GitHub branch checkout on Pi RAM, 2026-10-12:
+
+```sh
+python3 -m unittest discover -s tests -p 'test_*.py' -q
+# 63 tests, OK
+```
+
+Existing repository CI also now runs these tests on PRs; the external runner result must be confirmed separately. The new optional standby service file is NOT installed by `install.sh`.
+
+## Unfinished release-blocking work
+
+1. Secure a robust, low-cost method for authenticating actual ChatGPT and YouTube media access on varied provider nodes, without false PASS during WAF/challenge and without relying on a fixed video stream format.
+2. Validate and integrate the staged **independent read-only standby systemd service** and resource limits that continue even if `awg-mihomo.service` is stopped under AWG. Its real scheduling and safety behavior remain untested on actual subscription nodes.
+3. Implement a read-only service probe **through AWG** with no DIRECT fallback, and independent rapid active-node reachability checks.
+4. Connect results to the **single existing selector** (and its `/run/awg-maintenance.lock`), support safe conditional failback and publish CLI/TUI diagnostics; do not allow AUTO SMART to switch anything.
+5. Preflight + post-switch checks using the **actual data plane**, rollback, double-failure recovery, Selective FAIL-OPEN/Transit FAIL-CLOSED and actual MikroTik transit leakage tests without disrupting SSTP.
+6. Implement bounded diagnostics and real metric retention (P50/P95 time-to-detect/recover, false switches, probe CPU/RAM/network/microSD) with sanitization, then fault-injection and controlled field trials.
+7. Fix the separate failed `awg-mihomo-update.service` subscription refresh and assess provider cache freshness before acceptance.
+
+**Never enable automatic transport/node selection using these prototypes without completing the integration and fail-closed test plan.**
+
+
+
+## Stage 3: AWG-only service proof and passive decision adapter
+
+New source files:
+
+- `src/awg-service-probe.py`: read-only service checks via an explicitly named `awgN` tunnel. Outbound IPv4 TCP sockets are bound using `SO_BINDTODEVICE` **before** connecting; DNS is obtained by authenticated HTTPS requests to pinned resolver addresses over the same interface. The standard local resolver, environment HTTP proxies, production TUN selection, route updates and DIRECT fallback are never used. Only approved hosts, validated public IPv4 responses and bounded HTTPS redirects are allowed. Any unresolvable DNS, missing interface, HTTP challenge or unqualified media yields **UNKNOWN**, not a fabricated PASS. The interface allow-list rejects physical interfaces such as `eth0`.
+- `src/awg-service-observer.py`: **strictly DRY_RUN_ONLY** evaluation of independent Mihomo, AWG and Hot Standby JSON evidence using the existing pure `awg-failover-policy.py`. Invalidated by TTL, sample ID replay, provider hash mismatch, wrong active node identity, missing three service checks or wrong transport; does not run `awg-transport select`, `awg-mihomo-configure`, `ip`, `systemctl` or `nft`. Current live AWG can be selected for recovery only when evidence says both required services really pass.
+- Hot Standby evidence now carries independently collected `sample_id`, `identity`, `checked_at` and sanitized per-service `checks`. During active AWG service, prospective Mihomo health comes **only** from a validated *standby* node's current evidence, never from the stopped or previously active Mihomo service.
+- `src/awg-mihomo-service-check.py` can output `transport=mihomo`, an explicit node `--identity` and a new per-run sample identifier, for future active-node integration.
+
+AWG observation is deliberately conservative: DoH to the pinned resolvers may not work on every AWG provider, and the current YouTube media extraction can return UNKNOWN for signature-cipher formats. The AWG checker cannot be called a proven live health-check until tested against actual traffic under the current tunnel and service rules. **Do not deploy as a production selector**, and do not introduce a DIRECT fallback to 'make the probe pass.'
+
+The observer currently evaluates **explicit evidence snapshots** (fixture JSON via `--snapshot`) rather than wiring itself to the existing `awg-selection-monitor`. This preserves the legacy monitor as the sole production switch owner while transaction-safe action execution, actual data-plane verification, rollback and no-leak regression are built.
+
+### Stage 3 verification
+
+On the Pi's temporary checkout, **91 offline Python tests** passed; the additional tests cover AWG-bound socket ordering, DNS-over-HTTPS forced through AWG, rejection of unsafe DNS/redirects, fresh service evidence identity, cache replays, AWG-active Mihomo recovery, double failure and strict Manual/FIXED policy preservation.
+
+No real AWG node was switched and no new systemd unit was enabled. Running tests does **not** validate recovery-time P50/P95 on a real link.
+
+Remaining blockers: controlled live read-only probe against AWG; opt-in AWG health evidence publishing in RAM; robust YouTube video confirmation; cloud-protected ChatGPT classification; action adapter attached to the existing locked selector with data-plane post-check and rollback; rigorous Transit FAIL-CLOSED/Selective FAIL-OPEN and SSTP independence tests; existing failed provider update service.
+
+
+## Stage 3b: opt-in, read-only advisory hook in the legacy selector
+
+The existing `src/awg-selection-monitor` now supports an optional observer subcycle, **disabled by default** with `AWG_ADVISORY_ENABLED=0`. It reads a separately generated evidence snapshot (default `/run/awg-pbr/service-observation.json`) only when explicitly enabled; it calls the dry-run Python observer with a short timeout, publishes the advisory result and counters **only under `/run/awg-pbr/service-advisory/`**, and never passes the advice to `awg-transport select` or the node selector.
+
+The observer's replay/failure counters are tied to the system boot ID, provider hash, active node and transport, and selection policy. A reboot or policy/node change invalidates that state. Malformed/stale/misattributed cache evidence remains UNKNOWN. The callback is skipped while the existing maintenance lock is held. Advisor failures are isolated: the existing transport selection logic continues unchanged.
+
+**This is not a production rollout instruction.** Neither the probe result producer nor the optional observer setting is configured on the live Pi. Do not enable this on production until service evidence workers and the end-to-end security tests are ready. The real production selector still uses the preexisting generic health-based switching.
+
+Regression: `bash tests/test-selection-advisory.sh` proves default-disabled, advisory enabled but no switch, and failing observer with no impact on healthy current transport. The full Python suite has **94 offline tests**. GitHub CI runs both suites.
+
+### Production integration and release criteria still pending
+
+- A protected real evidence producer for both active Mihomo and AWG (currently proof modules are manually invokable prototypes).
+- Isolated, resource-bounded live AWG/Hot Standby field tests.
+- A single serialized switching executor in the legacy selector with preflight, transaction rollback and real forwarded data-plane postvalidation (not advisory-only).
+- Double-outage handling in the forwarding plane, Selective FAIL-OPEN and Transit FAIL-CLOSED regression, safe MikroTik/SSTP boundaries.
+- Duration P50/P95, microSD/noisy probes monitoring, paid/free subscription update failure recovery, and UI controls.
+
+
+## Stage 4: read-only evidence producer (staged, disabled)
+
+`src/awg-service-evidence.py` now creates a **sanitized evidence snapshot** for the existing optional advisory hook; it does not change transport, node, route, nftables, DNS or systemd. It reads the protected runtime selection + node policy, verifies the provider digest against the pool snapshot and performs bounded, individually attributed service checks:
+
+- When main = Mihomo, probe the current node via the localhost Mihomo proxy using its exact node identity.
+- Always probe `awg0` via the interface-bound AWG HTTPS checker **if awg0 exists**, independently of the current production transport.
+- When main = AWG, **do not connect to the stopped production Mihomo**; use the independent Hot Standby cache, subject to provider identity/freshness checks by the observer.
+- If evidence cannot be read or the check times out, emit `UNKNOWN`, never a fabricated PASS. Invalid response bodies, claimed PASS contradicted by per-service checks, misattributed node names, old sample IDs and raw secret fields are stripped or rejected.
+- Only an atomic mode-0600 JSON file `/run/awg-pbr/service-evidence/snapshot.json` is written. Console summary exposes service statuses only, not provider URLs, tokens or private keys.
+
+`units/awg-service-evidence.service` and `units/awg-service-evidence.timer` are **staged files only**: bounded execution time, CPU/RAM limits and a restricted writable `/run/awg-pbr/service-evidence/` directory. The timer is never persistent and is **not deployed/enabled**. The old monitor's optional advisory snapshot path has been updated to match the dedicated RAM directory; `AWG_ADVISORY_ENABLED` continues defaulting to `0`. No automatic failover executor is installed.
+
+**Live, read-only probes, 2026-10-12:** while production `mihomo0` remained active, `awg0` handshake was fresh and direct interface binding routed DNS and TLS through AWG. OpenAI API on AWG returned expected unauthenticated HTTP 401 (API reachable), ChatGPT website responded HTTP 403 (WAF/region cannot be distinguished by this probe), and YouTube watch endpoint responded but the probe could not verify video media bytes. Final AWG service eligibility = `UNKNOWN`. Separately the current production Mihomo exit returned OpenAI `unsupported_country_region_territory` (service `FAIL`), despite generic Mihomo transport health = healthy. **Do not activate failover based on these incomplete proofs.**
+
+Local offline testing increased to **109 Python tests** plus three advisory shell regression checks; a simulated two-probe Mihomo FAIL with AWG PASS produced an advisory recommendation to switch, but an AWG FAIL caused `NO_WORKING_TRANSPORT`. These are recommendations only, with no switching capability.
+
+### Outstanding safety and release gates
+
+1. Ensure stable, low-overhead playback-capable YouTube check and ChatGPT browser-vs-WAF interpretation; treat ambiguous checks as UNKNOWN without turning them into a global outage.
+2. Validate actual standby worker on real subscription nodes under resource/sandbox limits before enabling the staged systemd units.
+3. Add deployment/rollback only after validating observer evidence producer and existing selector lock semantics on isolated fault-injection rigs.
+4. Build and test the transaction-safe single-owner switch executor with correct endpoint DIRECT exceptions, data-plane postflight, precise rollback and no-leak semantics for both Transit/Selective.
+5. Fix the separate provider updater service failure, then confirm full pipeline and P50/P95 recovery without touching MikroTik's primary SSTP.
+
+
+## Stage 5: fast active-region sensor and fail-closed transaction model
+
+**No production switch functionality was enabled or deployed.** The files below are staging-only and not in the current Pi installer.
+
+### Lightweight event detection (no heavyweight speed test)
+
+`src/awg-fast-service.py` checks only the OpenAI region/API response through the **already selected** Mihomo loopback HTTP proxy, retaining each probe's node identity and unique sample id. `REGION_BLOCKED` is emitted for the explicit API country-block error; `API_REGION_OK` for the unauthenticated 401; all other responses are UNKNOWN. **API_REGION_OK is NOT ChatGPT+YouTube service eligibility.**
+
+Two separate consecutive regional blocks are required before an `urgent_service_confirmation=true` advisory is published. A change of selected node, boot ID, explicit API pass or UNKNOWN invalidates the consecutive-block streak. If production Mihomo is not active, the detector skips the request. The file is atomic and restricted to `/run/awg-pbr/service-fast/active.json`, no disk log or route modification.
+
+The proposed watch cadence is about 10 s after a clear region-block and 20 s in an ordinary region-OK state, with bounded backoff on UNKNOWN. These are **advisory polling intervals**, not proof of 30–45 s failover. `units/awg-fast-service.service` stages an independent systemd watcher with read-only system filesystem and restricted RAM output; **the service is not installed or enabled**.
+
+A read-only field test through the currently active local Mihomo `127.0.0.1:7890` confirmed `REGION_BLOCKED/openai_unsupported_region`; the active route remained `table 100 → mihomo0`. The sensor does not try to adjudicate browser WAF or YouTube media delivery on its own.
+
+### Transaction design without production powers
+
+`src/awg-switch-transaction.py` is a **pure test executor with an injected mock backend**, not an implementation that can invoke `awg-transport select`, change a selected node, or modify nftables/routing.
+
+Its independent authorization checks:
+- AUTO selection policy only, current backend/node still matching the observed state, fresh evidence snapshot, and safe current routing guard.
+- Only full three-service PASS qualifies AWG as a fallback and a particular Hot Standby node as a node or Mihomo failback target. UNKNOWN is not valid for automatic promotion.
+- Exact FIXED node order with no backward wrap; no manual-mode override.
+- A confirmed active Mihomo service FAIL, Hot Standby preference before AWG, allowed reason and confirmation flags, and explicit user-enabled auto-failback before a planned return.
+
+Mock transaction semantics: reject concurrent action requests; acquire a **separate action gate**; revalidate current state; prepare without changing user route; run preflight; apply; validate transport, forwarding guard and postflight; on failure attempt rollback. **If rollback cannot be verified, require FAIL-CLOSED rather than an unguarded DIRECT path.**
+
+Critical integration caveat: the *existing* `awg-transport select` acquires `/run/awg-maintenance.lock` internally. A future single-owner production orchestrator must **not hold this same lock across its invocation**, which would deadlock. The real adapter must use a separate serialized action gate, allow the existing transport transaction to take its maintenance lock, and recheck its state immediately before and after switching. The new test executor does **not yet implement physical fail-closed enforcement, its backend is injected solely in tests**.
+
+### Stage 5 verification and outstanding blockers
+
+- **144 offline Python tests** PASS (109 earlier + 17 fast sensor + 18 transaction fault-injection).
+- Existing 3 selector advisory mock checks PASS.
+- Python syntax and staged units/CI validation checked separately.
+- Real active Mihomo regional rejection observed in read-only mode; **no live transport/node switched**.
+
+Remaining before real activation: connect the fast urgent flag to a bounded immediate full-service recheck; robust video and ChatGPT WAF qualification for actual service availability (AWG remains UNKNOWN); build and separately verify a real single-writer route action adapter with live forwarding-plane postcheck, emergency fail-closed guard and rollback; prove Selective/Transit no-leak, MikroTik SSTP independence and P50/P95 recovery; repair failing Mihomo provider auto-refresh. Draft PR #84 must not be merged or deployed as automatic switching until these pass.
+
+Additional fast-alarm hardening: two consecutive distinct REGION_BLOCKED samples must arrive within 45 seconds; an older prior block, reboot, node change or UNKNOWN cannot resurrect a stale alarm. The read-only `show` path also suppresses any urgent indication after the age/boot limit. All timestamps and intervals remain configurable proposals until field validation.
+
+
+## Stage 6 — real YouTube SABR diagnosis and stricter pre-switch proof
+
+Read-only checks on Raspberry Pi on 2026-10-12 revealed that YouTube's current watch page via `awg0` returns HTTP 200 and `playabilityStatus=OK` with 14 adaptive format descriptors, but **none with a directly downloadable media URL**. Instead the player provides `serverAbrStreamingUrl` (SABR/UMP) and `probeUrl` (a signed `/videogoodput` CDN diagnostic). This is a player/protocol feature, **not evidence of country blocking**. No video was decoded or downloaded as actual media in this experiment.
+
+The shared `awg-mihomo-service-check.py` now:
+
+- Parses the player object safely, validates `playabilityStatus`, and explicitly detects SABR rather than conflating it with a missing video or broken YouTube.
+- Optionally reads at most 1 KiB through the same VPN of the `/videogoodput` URL to distinguish CDN network reachability from missing media; **a goodput response is never an actual-video PASS**.
+- Keeps SABR as `UNKNOWN/youtube_sabr_media_unverified` or `UNKNOWN/youtube_sabr_cdn_reachable_media_unverified` until actual media can be verified reliably.
+- A single signed media URL HTTP 403/451 (expiration, playback token or one video's restrictions) is now `UNKNOWN`, not an automatic YouTube-wide FAIL. Actual HTTP 206 media bytes from a validated direct video URL can still PASS. A single `LOGIN_REQUIRED` video remains UNKNOWN (not a global outage).
+- Refuses unsupported/malformed format descriptors rather than throwing or promoting any guessed URL.
+
+The AWG-bound DNS-over-HTTPS client now validates the **echoed DNS question's hostname, A/IN class and truncation flags**, preventing a valid-looking response to an unrelated question from being accepted as current service evidence. Real AWG probe after the change still returns OpenAI API PASS, ChatGPT web 403 UNKNOWN and YouTube SABR media UNKNOWN; `table 100` remained `default dev mihomo0`.
+
+Mock-only `awg-switch-transaction.py` was also strengthened: an independently implemented future execution backend must explicitly confirm *two distinct fresh failure observations* and requalify the target under the separate action gate; a standalone advisory JSON can never authorize itself. A failed preflight attempts to abort/restore preparatory state and, when restoration cannot be verified, returns `FAIL_CLOSED_REQUIRED`. No real fail-closed command is run by this model.
+
+**Verification:** 152 Python tests PASS on the Pi's temporary RAM checkout after these changes, including fresh SABR/media and DNS mismatch regression tests. Production services, routes, SSTP and MikroTik have not been changed. The PR remains DRAFT and **no automatic service-aware switching is safe yet**.
+
+**Remaining gating item:** a maintained, low-cost SABR/UMP *actual media* verification implementation or separately validated playback test. Treating SABR metadata or `/videogoodput` as media proof is prohibited. ChatGPT web HTTP 403 still requires a more reliable WAF/geo vs user-session distinction. Do not weaken the all-PASS gate merely to accelerate rollout.
+
+
+## Stage 7 — underlay path provenance, DIRECT vs ASSISTED (2026-10-12)
+
+**Problem proven on real Pi:** both inspected public Mihomo endpoint IPs have `ip -4 route get` next hop `via 192.168.112.1 dev eth0` with Pi source `192.168.112.34`. This establishes only the **Pi-to-MikroTik** hop. The hAP ax² may still mark and route onward through **SSTP** or another path. An HTTP success through a Mihomo exit does **not** prove the node can connect independently of AWG or SSTP.
+
+New `src/awg-endpoint-provenance.py` inspects the precise candidate endpoint using **read-only `ip -4 route get`** (argument list, no shell, 2s limit). It neither resolves arbitrary provider hostnames nor sends packets nor changes ip rules, routes, nftables or RouterOS. Conservatively classified outcomes:
+
+- `DIRECT_LOCAL_UNVERIFIED` — Pi route uses expected `eth0` and next-hop MikroTik; **not proven end-to-end DIRECT**, no automatic promotion.
+- `ASSISTED_AWG` — candidate endpoint routes via an `awg*` interface, or provider explicitly requires an AWG interface; not usable as an independent DIRECT replacement.
+- `ASSISTED_MIHOMO` — endpoint itself is routed through Mihomo or uses a proxy-chain/`dialer-proxy`; not independent.
+- `UNKNOWN` — domain endpoint without independently verified resolution, private/unexpected IP, changed/missing route, unsupported interface or other untrusted evidence; not auto-promotable.
+- `DIRECT` with `scope=END_TO_END` and `router_verified=True` is **only a future signed/independently verified RouterOS route-policy attestation contract**, used in *offline fixtures*. **The Pi-only inspector NEVER creates this state.** No such attestor has been installed.
+
+Integrated into the read-only Hot Standby worker, AUTO SMART and the dry-run observer:
+
+1. Each Hot Standby candidate checks underlay before and after its isolated service probe and records a sanitized `underlay` field (no endpoint address/keys). If the route changes, mark UNKNOWN. A successful ChatGPT/YouTube result alone cannot enter the two-node warm list.
+2. The standby cache, observer and the mock transaction authorization reject old records missing underlay, assisted paths and Pi-local unverified paths. The future production executor must independently recheck the real endpoint and router policy **again at commit time**; a user-supplied or stale JSON claim is not authoritative.
+3. AUTO SMART records the route reason but, with no end-to-end attestation, **skips expensive speed benchmarks and any promotion recommendation** for that node. This prevents spending up to ~85 MB/full run on unverified paths. The service-aware data plane and two-stage speed scoring continue to be modeled and unit-tested with explicitly *hypothetical* certified DIRECT fixtures.
+
+**Acceptance limitation:** Because no read-only MikroTik policy attestation is currently wired, the newly hardened draft cannot produce real auto-eligible hot spares, even if Mihomo's service probe returns PASS. **This is deliberate fail-closed staging, not a completed production feature.** Never weaken `DIRECT_LOCAL_UNVERIFIED` to `DIRECT` to make tests pass. Future attestation should verify RouterOS connection/routing-mark tables, endpoint-specific bypass rules, router-side path and actual prospective production policy under the user's approved configuration, without touching existing SSTP. Explicitly decide how domain/IP-changing endpoints invalidate the proof.
+
+Read-only smoke: `194.38.11.86` and `45.86.66.170` classified `DIRECT_LOCAL_UNVERIFIED`; `example.org` and private addresses UNKNOWN. Production table 100 stayed on `mihomo0`; Transit ACTIVE, guard SAFE.
+
+**Verification:** **176 offline Python tests** pass in the Pi's isolated staging clone (including 14 new provenance cases, cached/assisted no-promotion, AUTO SMART no recommendation, mock transaction rejects unverified paths). CI and clean GitHub checkout will be checked separately. No live route/transport/MikroTik/SSTP changes. Draft PR #84 remains release-blocked by end-to-end DIRECT attestation, ChatGPT+SABR playback verification, real actuator and failover fault injection.
+
+LAN reconfiguration safeguard: the read-only provenance inspector reads the installed `/etc/awg-pbr/env` keys `LAN_IF` and `ROUTER_IP` as data (never shell-sources it), instead of assuming the test-stand's `eth0` / `192.168.112.1`. If that protected configuration is unreadable, invalid or missing, results are UNKNOWN, not DIRECT. Added three regression tests for LAN changes, malicious env values and missing configuration.
+
+
+## Stage 8 — MikroTik RouterOS end-to-end route audit over pinned SSH (2026-10-12)
+
+### Real read-only findings (MikroTik hAP ax², RouterOS 7.24.2)
+
+An existing SSH alias `mikrotik-gpt` on Pi already connects via the authorized restricted account to the LAN router (`192.168.112.1`, custom SSH port). **No new credentials or MikroTik configuration were created**.
+
+The actual RouterOS configuration was inspected without modifying it:
+
+- First active `/ip firewall mangle prerouting` rule `AWG-PI-TRANSPORT-DIRECT`: `action=accept src-address=192.168.112.34 in-interface=bridge`. It precedes all rules marking client traffic for `r_to_vpn`; RouterOS chain semantics stop evaluating subsequent mangle matches.
+- `/routing/rule`: no configured rules. Main FIB route `0.0.0.0/0` is active via physical WAN `ether1`; `r_to_vpn` separately prefers SSTP. WAN and LAN interface-list memberships are unambiguous.
+- RAW, bridge filter/NAT and hotspot: no active rules/instances. NAT intercepts TCP/UDP DNS port 53; source NAT masquerade is configured. Main VRF is the default.
+- The router has dynamic **L2TP/IPsec UDP/1701** peer-specific policies; the verifier must not misinterpret these as arbitrary default IPsec tunnels. A candidate matching a scoped peer endpoint+port is refused, and unrecognized IPsec policies are refused.
+- A single pinned-SSH RouterOS snapshot plus local Pi `ip -4 route get` before and after yielded **DIRECT (30s proof)** for test destinations `194.38.11.86:443/tcp`, `45.86.66.170:443/tcp`, and `45.86.66.170:51820/udp`. The same test against `45.86.66.170:53/udp` correctly returned `UNKNOWN/dns_port_intercepted` because of configured dst-NAT. These are **address/port route checks**, not proof the actual subscription node uses those test ports or that ChatGPT/YouTube playback works.
+
+### Staged source and execution contract
+
+`src/awg-mikrotik-route-attestor.py` uses only a fixed set of RouterOS **`print terse without-paging`** commands and `:put` section delimiters over existing pinned SSH. The SSH command uses strict host-key checking, BatchMode/no passwords, disabled agent forwarding, short timeouts, an allowlisted host alias and verifies that the alias resolves to the expected LAN router IP. No `/set`, `/add`, `/remove`, `export`, `backup`, traceroute or configuration-changing operation is used.
+
+Checks before a positive DIRECT conclusion:
+1. Specific public IPv4 endpoint, numeric port and TCP/UDP protocol are valid; **Pi local route before and after the audit** uses the expected source IP, LAN device and next-hop router.
+2. All expected RouterOS data sections exist, with mangle and route tables unchanged across two reads **within the same SSH session**.
+3. The first effective prerouting mangle match is an *unconditional-to-this-Pi* `action=accept`, exactly bound to its LAN ingress and IP.
+4. Main FIB active **longest-prefix match** for the endpoint uniquely egresses via the sole configured physical WAN member; any more-specific SSTP route/VRF, active routing rule, ambiguous ECMP, unexpected NAT/RAW/bridge/hotspot/IPsec rule leads to UNKNOWN.
+5. DNS TCP/UDP 53 is denied positive attestation on this router due to configured redirects.
+6. Result is bound to exact endpoint IP, port, protocol, Pi source and router by a SHA-256 **identifier**, with 30-second freshness. **This digest is not a cryptographic signature or protection against forged cached JSON**; a future production selector must perform an independent live audit immediately before any route commit.
+
+`attest_batch()` checks up to **20 endpoints using one SSH RouterOS snapshot**, with separate local route checks before/after each candidate; reduces Pi/MikroTik query load and minimizes disk writes (no persistent output). Results include only status, reason, timestamp and bound identifier, not raw routing/firewall rules or credentials. Literal public IPv4 only: FQDN destinations remain UNKNOWN until the actual IP dialed by Mihomo can be independently verified.
+
+**Critical integration status:** Stage 8 implements a working **read-only attestor** and pure batch API. It is **not installed on production** and is **not yet connected to automatic Hot Standby admission or the live transport selector**. Stage 7's Pi-local-only safety gate is still in effect in the staged Hot Standby code until a secure evidence broker and mandatory commit-time re-attestation are implemented. **Do not promote a cached/direct-looking JSON assertion on its own.**
+
+### Verification
+
+**210 offline Python tests passed** (176 previous + 34 RouterOS route-attestor including injected negative policies, scoped IPsec, DNS redirects, VRF, active SSTP default, higher-priority VPN host route, source/SSH mismatch, stale or changing route, tampered/partial snapshots, and single-session batch scan). Three selector advisory tests passed.
+
+Actual read-only SSH attestation was tested live on the current MikroTik, without altering a single existing rule or SSH account. Pi remains in Transit ACTIVE, guard SAFE and `table 100 -> mihomo0`. SSTP remains the priority remote management channel.
+
+**Next:** bind *actual Mihomo dialed endpoint* (including hostname resolution and protocol/port) to this positive router snapshot, use a privilege-separated RAM-only attestation producer, enforce TTL and independent mandatory re-attestation in the single-owner action executor. Continue strict ChatGPT/WAF + SABR-media service qualification and rollback/no-DIRECT leak tests before activating any automatic failover.
+
+
+## Stage 9 — event-driven optional router adapter (staged; not deployed)
+
+The accepted [event-driven routing ADR](ADR-EVENT-DRIVEN-ROUTER-ATTESTATION-v1.3.0.md) has its first implementation in `src/awg-router-event-policy.py`. The only background *design* uses local Linux netlink notifications and a LAN-config file path trigger; **no periodic SSH or per-node RouterOS connection** is scheduled. The staged systemd files (`awg-router-events.service`, `awg-router-events-observe.service`, `awg-router-events.path`) are **not installed or enabled by the installer or on live Pi**.
+
+An event raises the RAM-only network generation epoch; changes to boot, LAN, main routes, policy rules, source address or optional provider SHA invalidate prior evidence. The policy planner distinguishes `IDLE`, `AUDIT_ON_DEMAND`, `READY_TO_PREFLIGHT`, `BLOCKED` and `UNVERIFIED`, with no production transport switch capabilities. `READY_TO_PREFLIGHT` means only a **shadow advisory** on a precise, 30-second, fresh *in-process* attestation, never an actionable permission from unsigned saved JSON.
+
+Real read-only Pi test: idle caused **zero SSH**; an explicit audit request for a known public IPv4 TCP/443 test endpoint used **one** pinned SSH RouterOS query and returned advisory `READY_TO_PREFLIGHT`, while main table 100 remained default `mihomo0` and Transit guard SAFE. No live source files, new unit or RouterOS rule changed. **228 Python offline tests and 3 shell shadow tests PASS** on clean checkout; staged systemd units verify.
+
+**Next integration blockers:** prove actual dialed Mihomo endpoint binding (including hostname/transport), decide secure proof freshness and adapter privileges, wire events to Hot Standby with conservative unverified handling, implement independent pre-commit re-attestation in the single existing selector with lock-safe rollback, and qualify real ChatGPT plus SABR video. Routine static-router polls are not part of the plan.
+
+
+## Stage 10 — real-service-first preliminary node qualification (2026-10-12)
+
+The user confirmed that **each candidate must demonstrate actual access to target services through that exact Mihomo exit before becoming a failover choice**. Technical connection, DNS, a simple ping, OpenAI API 401, YouTube watch-page metadata or fast throughput alone are NOT adequate.
+
+Added `src/awg-node-qualification.py`, a pure (no networking, SSH, or route-writing capabilities) conservative two-sample reducer. The staged Hot Standby worker and dry-run observer use it to distinguish:
+
+1. `SERVICE_PENDING_CONFIRMATION`: first **independent** node-specific sample with all three application gates PASS.
+2. `SERVICE_READY`: **two distinct** correctly attributed service samples, both with independently PASS-qualified OpenAI API, ChatGPT web and YouTube actual media; same node, endpoint+provider fingerprint, Pi boot, router-policy generation and freshness. A duplicate sample, wrong node, one UNKNOWN, explicit FAIL, changed provider, route generation, reboot or expired evidence cancels readiness.
+3. `ROUTE_PENDING`: a separate state — SERVICE_READY **does not** prove MikroTik DIRECT, is never mistaken for a route-qualified `warm` node, and cannot trigger a switch. The existing 30-second on-demand router proof must be based on the actual dialled endpoint and reacquired at the future commit boundary.
+4. A genuine `warm` entry is gated by **both** confirmed SERVICE_READY and an independently verified matching DIRECT underlay, with mandatory single-owner re-attestation before actual switching. This staged branch cannot produce actual route-qualified warm nodes from Pi-local observations alone.
+
+The worker now prioritizes candidates with **one successful service sample** on the next rolling scan, enabling the second independent service check sooner without measuring all ten candidates again. It maintains separate sanitized `service_ready`, `service_ready_count` and `warm` fields in the RAM state; no private provider URLs, video signed links or credentials are published. Prior single-PASS caches are no longer promotable. Observers and mock switch executors reject old/unauthorized records and reject router event-generation or boot mismatches.
+
+The network event watcher of Stage 9 is not installed on the real Pi. Therefore a missing event generation prevents **automatic service-ready promotion** in the staged scanner; test fixtures explicitly supply an isolated known generation. Network generation changes midway through a scan invalidate new observations; provider changes detected midway through a scan reject the run. The monitor has no privilege to switch live traffic.
+
+**Real read-only 2026-10-12 check through active Mihomo local proxy:** `OpenAI API FAIL/openai_unsupported_region`; `ChatGPT Web UNKNOWN/http_403`; `YouTube video UNKNOWN/URLError`. Despite generic transport `healthy`, this exit does **not** qualify for ChatGPT service. Existing Pi routing remained `table 100 → mihomo0`. This also highlights remaining WAF/automated-browser and SABR/UMP real-media qualification work: these must remain UNKNOWN, never inferred PASS from metadata.
+
+**Offline results:** **246 Python unit tests PASS** (previous 228 + 12 new reducer tests + 6 integration/invalidation cases), three existing shadow selector integration tests PASS. No production services, automatic node/transport change, Mikrotik rule change, or SSTP changes.
+
+**Release blockers:** robust actual ChatGPT authenticated/browser functionality proof and actual YouTube SABR media data; real provider-node isolated Mihomo field trials and factual *dialled* server endpoint binding; event-driven router proof in safe execution owner; fault-injection against real postflight/rollback and leak prevention; resource and P50/P95 measurements. Keep PR #84 DRAFT.
+
+
+## Stage 11 — real YouTube VIDEO bytes vs real decoded playback (2026-10-12)
+
+**IMPORTANT correction to earlier readiness semantics:** A successful YouTube watch page, `playabilityStatus=OK`, SABR/UMP `/videogoodput`, *or* an HTTP 206 response with arbitrary bytes **cannot qualify an actual playable video**. Even an MP4/WebM file header is only evidence of a **container**, not a decoded frame. The user-approved service-first Hot Standby gate is stricter than a network request/handshake and must not promote such evidence.
+
+The shared `src/awg-mihomo-service-check.py` has been hardened:
+- For a direct media link it requires an explicitly declared `video/*` player format (not `audio/*`), HTTPS to an allowed Googlevideo host and a plausible MP4, WebM or MPEG-TS header. A 206 response with junk, HTML, audio, malformed bytes or a container header **alone** always returns UNKNOWN.
+- YouTube `PASS` is reserved for a separate opt-in, exact fixed-video **decoded video frame** check returning `youtube_first_video_frame_decoded`; no silent promotion from status codes or webpage text.
+- Modern SABR`serverAbrStreamingUrl` remains UNKNOWN if decoding is unavailable; `probeUrl` `/videogoodput` is **CDN reachability only**.
+- The experimental CLI flag `--video-frame-check` is **OFF by default**. There is no periodic, automatic invocation in the installed production service or standby worker.
+
+Added **staged / opt-in** `src/awg-youtube-frame-check.py` (not installed): official `yt-dlp` extractor + compatible JavaScript runtime, forced `--proxy http://127.0.0.1:PORT`, a fixed public YouTube test video, download `--test` capped by 2 MiB memory-file kernel limit and 40-second wall timeout, then a *local RAM-file* `ffmpeg` decode proof of at least one video frame. Probe output is sanitized PASS/UNKNOWN reason only; no URLs, provider subscription credentials, cookies or video bodies are written to GitHub/disk. On timeout, yt-dlp's process group (including JS children) is killed; no live node, VPN service, TUN, routing or firewall change. This is a conservative research prototype, **not yet verified to produce a genuine PASS on any live node** and not authorized for production continuous probing.
+
+External dependency finding: the [yt-dlp EJS setup guide](https://github.com/yt-dlp/yt-dlp/wiki/EJS) currently recommends Node.js **22+** for YouTube challenge support. The Pi currently has Node.js **v20.19.2**. An official `yt-dlp 2026.08.19` executable was downloaded **temporarily to /dev/shm via the active Mihomo proxy**, checked against the release `SHA2-256SUMS`, and executed without permanent installation. That experimental probe timed out retrieving the watch page/Innertube API on the *currently active Mihomo node*; this does not prove other candidate nodes or AWG fail globally. The temporary binary was removed after testing. The staged new checker correctly reports `UNKNOWN/ytdlp_or_compatible_js_unavailable` on this Pi and never silently changes Node.js or installs packages.
+
+An additional read-only active Mihomo service probe still returns `OpenAI API FAIL/openai_unsupported_region`, `ChatGPT Web UNKNOWN/http_403`, `YouTube video UNKNOWN/URLError`, while the generic transport remains up. This is a **service suitability failure or uncertainty for this one active exit**, not proof all Mihomo provider nodes fail. No user traffic was rerouted during the probe.
+
+**Offline verification:** **265 Python tests PASS** (246 baseline + 9 strict HTTP/video tests and 10 sandboxed frame-probe tests), 3 safe selector shell checks PASS, code syntax PASS. These unit tests use mocked decode proof where appropriate and **are NOT successful end-to-end video playback measurements**. Expected result until the live-frame verifier is proven: `youtube_video=UNKNOWN` for SABR and even MP4 container headers, therefore no premature `SERVICE_READY`.
+
+**Follow-up blockers:** validate the frame decoder in an isolated Mihomo instance against a service-eligible real provider node with an approved current JS runtime; measure 1-frame completion, true video playback and per-probe CPU/RAM/network overhead. Improve independent real ChatGPT browser/WAF discrimination (a simple HTML 200 or OpenAI API 401 does not prove logged-in interactive ChatGPT use). Keep the expensive decoded-video probe opt-in/infrequent rather than a frequent health-check. Preserve event-driven router checks, fail-closed transport behavior and draft PR.
+
+
+## Stage 12 — isolated field-testing setup, protected provider boundary (2026-10-12)
+
+**User-approved goal:** test *actual* Mihomo subscription candidates for independent ChatGPT/YouTube/OpenAI suitability before considering Hot Standby. Do not mistake the preexisting AUTO SMART latency/speed history for application success.
+
+**Live facts (read-only; user traffic unchanged):**
+
+- The installed `awg-gpt mihomo-pool-live` helper showed a large current pool and multiple nodes marked **HEALTHY** (technical delay/connection), but it does NOT prove logged-in ChatGPT or playable YouTube.
+- A previous authorized root-owned `AUTO SMART SHADOW_ONLY` calibration report contained **10 measured candidates and up to 3 speed finalists** (one Shadowsocks node ~73.7 Mbps, a Hysteria2 node ~43.6 Mbps measured), but the tests are download/upload/latency metrics, NOT actual decoded YouTube and authenticated ChatGPT readiness. Avoid repeating its ~75 MB heavy scan without reason.
+- The current production provider YAML and pool JSON are protected by root-only file permissions. The existing narrowly scoped `sudo awg-gpt` helper exposes **sanitized pool and calibration reporting**, NOT raw credentials or permission to run arbitrary scripts. No broad sudo bypass or secret export was attempted.
+- For the existing active node only, Node.js **v22.16.0** was downloaded into **/dev/shm** via forced local Mihomo proxy and verified against the official Node.js distribution SHA-256 manifest. Official `yt-dlp 2026.08.19` was also verified in RAM. An *actual* bounded yt-dlp/ffmpeg first-frame trial through local proxy `127.0.0.1:7890` ran **14.7 seconds**, had ~**73 MiB** reported maximum child process RSS, and returned **UNKNOWN/youtube_extractor_or_media_unavailable**. A separate redacted yt-dlp diagnostic showed HTTPS read timeouts from `www.youtube.com` for both watch page and initial player API. No playable frame was obtained.
+- A header-only ChatGPT request through the active Mihomo returned **HTTP/2 403**, `server: cloudflare`. This is a WAF/availability uncertainty; it does **not** establish why the website blocks the request, and no live logged-in ChatGPT browser transaction was performed. OpenAI API still reported region-restricted via the existing gate.
+- Production table 100 remained `default dev mihomo0`, transport healthy and Transit guard SAFE. No Node.js upgrade or `yt-dlp` installation, no router/SSTP change. All temporary upstream runtime binaries are for tests only and should be removed after validation.
+
+**New staged code:** `src/awg-mihomo-service-trial.py`, a **one-shot, root-only candidate service checker**, not installed or added to the existing `awg-gpt` allowlist. It chooses at most **three** healthy, distinct real provider endpoints from a fresh trusted pool and matches their names/type/IP/port against the root-protected provider; it reuses the second, RAM-only, loopback-bound Mihomo instance in `awg-mihomo-standby.py`. The output strips all raw secrets, hostnames/ports, subscription URLs, request bodies and signed media links, using a short candidate-name hash and per-service PASS/FAIL/UNKNOWN. It checks boot/provider/route generation again after requests. It **never** switches live nodes/routes and never claims `SERVICE_READY` or `ROUTE_VERIFIED` from its single trial. The `youtube_video` gate remains UNKNOWN until an actual opt-in decoded-frame check is integrated safely; this script does not launch privileged yt-dlp/JS.
+
+**Authorization and integration boundary:** The production Pi's provider is root-protected by design. The new script cannot be run via the currently authorized `awg-gpt` helper. Adding a narrowly scoped root-owned, independently reviewed, time/CPU/RAM-limited one-shot service requires a **separate staged install/security audit and explicit approval**. Do NOT weaken provider file permissions or add `NOPASSWD:ALL`; no credentials may enter GitHub or test reports. Any eventual yt-dlp/JS execution must be privilege-separated from root-owned subscription processing, retain forced proxy restrictions, and pass safety/resource checks before being enabled.
+
+**Offline verification:** **281 Python tests PASS** (265 previous + 16 new candidate-trial security/selection tests), three shadow selector shell integration checks PASS, syntax PASS on Pi. These results validate code invariants, NOT service-eligibility of other actual provider nodes. **No provider node except the active Mihomo was subjected to Stage 12 ChatGPT/YouTube requests.** Keep PR #84 DRAFT.
+
+**Next release steps:** introduce a minimal authorized trial-service entrypoint (one-shot, read-only, RAM-only) and controlled per-candidate tests via genuinely isolated Mihomo, collect two fresh samples, ensure DNS, video and authenticated ChatGPT proof truly traverse the candidate and no DIRECT leaks, then enforce event-driven endpoint attestation before allowing real failover. Maintain priority SSTP.
+
+
+## Stage 13b — actual one-shot trial failure, bounded credential redesign (2026-10-12)
+
+**Actual first installation attempt on user's Pi:** existing operator command `sudo bash /tmp/awg-stage13-install-once.sh` started the staged systemd one-shot but failed **before Python executed**, at `status=243/CREDENTIALS`, journal: `Failed to set up credentials: Protocol error`. The install script's EXIT cleanup worked: `/usr/local/lib/awg-pbr-stage13` and the systemd unit were absent after the run. Production `table 100 -> mihomo0`, Mihomo healthy, gateway UP, Transit ACTIVE and guard SAFE; no node was actually tested, provider ACLs and SSTP unchanged. Root cause is **not conclusively determined**, but the first unit attempted to pass three whole files (up to ~1,859 provider nodes) via `LoadCredential=`; systemd has a [per-unit cumulative credential size limit](https://www.freedesktop.org/software/systemd/man/latest/systemd.exec.html) of 1MiB in current documentation, and a missing/unreadable path can similarly trigger the same 243/CREDENTIALS failure.
+
+**Corrected design (PR #84, STAGED ONLY):** split privilege boundaries. A short-lived operator-authorized root **preparer** `src/awg-mihomo-trial-prepare.py`, with NO networking and no user-data-plane changes, verifies the fresh protected provider SHA and policy, selects up to three unique healthy pool endpoints, and writes *only their* private proxy configurations to `/run/awg-pbr/stage13-selection/selection.json` with 0700 directory / 0600 file, **hard maximum 480,000 bytes**. No full-provider credential is delivered to systemd. The nonroot `DynamicUser` one-shot trial worker consumes ONLY `LoadCredential=selection:...` and validates version, <=300s age, boot identity, local router-event generation, exact node/port/type matching and SHADOW_ONLY authorization. The worker uses the trusted local pool helper and existing isolated loopback Mihomo; it cannot emit raw node names, provider credentials, subscription URLs or user traffic and never authorizes a live switch.
+
+The operator-run script `scripts/awg-mihomo-trial-once.sh` checks its source Git checkout, stages a minimal audited library and single systemd unit, executes the root preparer, runs the nonroot one-shot, prints only input **byte counts**, service status and sanitized JSON verdict, checks table 100 before/after, and on EXIT removes selected credential, temporary library and unit. No service is enabled, no new sudo allowlist, no direct node switch. A missing provider, stale pool, oversized selected credential, missing event context, or service failure is a FAIL/UNKNOWN field-trial outcome, **not** a reason to weaken permissions.
+
+**Verification to date:** 294 Python offline tests PASS (including ten new selector-preparer tests), unit passes `systemd-analyze verify`, operator shell syntax passes. The **corrected root-preparer + real systemd LoadCredential trial has NOT YET been run**, so no successful real-node service evaluation may be claimed. Requires another explicit one-time operator sudo invocation, then live journal and transport safety audit. Keep PR DRAFT; SSTP remains untouched.
+
+
+## Stage 13c — root preparer stopped before service; sanitized reasons (2026-10-12)
+
+Operator-provided v2 output:
+```
+STAGE13_V2=STARTED
+PROTECTED_INPUT_SIZES_ONLY:
+SOURCE_PRESENT_BYTES=461380
+SOURCE_PRESENT_BYTES=472206
+{"mode": "SHADOW_ONLY", "status": "PREPARE_FAILED", "production_modified": false}
+```
+
+Both root-protected inputs existed; the root selection preparer failed **before the DynamicUser systemd unit started**, so zero nodes were tested. No live routing or SSTP change.
+
+At 16:49:18 +07 the existing `awg-mihomo-pool-refresh.service` **successfully refreshed** the complete live pool: **1,869 provider nodes; 249 healthy**. The previous operator attempt was around 16:43, before that successful refresh. The original preparer rejected pools over 3,600 seconds old or whose SHA did not match the provider, so an expired live pool is a **plausible** cause, not confirmed because v2 concealed all errors. The separate `mihomo-pool-candidate` helper reports candidate pool staleness, which is NOT proof that the *live* pool is stale.
+
+**Safe diagnostic patch on draft branch**: `awg-mihomo-trial-prepare.py` now emits only fixed failure codes such as `POOL_EXPIRED`, `POOL_PROVIDER_SHA_MISMATCH`, `PROVIDER_PARSE_FAILED`, `CANDIDATE_SELECTION_FAILED`, or `SELECTION_WRITE_FAILED`, with no raw exception strings, credentials, URL or endpoint names. The operator script, root-only selection boundary, <=480 kB credential, no-auto-switch, one-shot cleanup and DynamicUser isolation remain unchanged. Validated in a fresh GitHub branch checkout: **297 Python tests PASS**, script syntax PASS, systemd unit verification PASS, Python syntax PASS; latest GitHub Actions CI PASS.
+
+**Next controlled operator action**: a single explicit `sudo bash /tmp/awg-stage13-v3-reviewed/scripts/awg-mihomo-trial-once.sh` while the refreshed live pool is still fresh. This command has **not** yet been executed. Any failure reason must be reported without exposing source contents. Do not count candidates as tested unless the sanitized service output confirms them. Keep PR #84 DRAFT.
+
+
+## Stage 13d — resolved actual `CANDIDATE_SELECTION_FAILED` bug (2026-10-12)
+
+User's third operator-sudo trial printed: both protected provider files present (461,380 / 472,280 bytes); `PREPARE_FAILED` with `reason: CANDIDATE_SELECTION_FAILED`. The real pool was freshly scanned at 16:49:18 +07 and contained **1,869 candidates, 249 healthy**. The direct policy was region=all, protocol=all. The trial never started the DynamicUser service; previous credential/proxy/temp unit cleanup remained effective, production Mihomo remained healthy on `mihomo0` and Transit FAIL-CLOSED guard SAFE.
+
+**Root cause identified from code + pool schema:** `awg-mihomo-service-trial.py::select()` sorted the entire live `pool['nodes']` using `delay_ms` before filtering. The healthy candidates have integer `delay_ms`, while hundreds of unhealthy entries have **`delay_ms: null`**, leading Python's sort to attempt `None < int`, raising `TypeError`. The old root selector caught this as `CANDIDATE_SELECTION_FAILED`, with no node trial. This is a deterministic defect in the old selector.
+
+**Fix:** filter to explicitly healthy candidates with a positive integer delay **before sorting**; reject boolean/missing delays. Match the original scanned provider row by its one-based source index where supplied, require unique names, compare exact server+protocol+port, and normalize a provider YAML decimal-string port in the same way as the existing `awg-mihomo-pool.py::clean_node()`. Invalid/duplicate/unhealthy entries cannot become a candidate. No direct routing fallback and no privilege expansion.
+
+**Verification:** regression tests covering mixed unhealthy null values, boolean/missing delay, quoted YAML ports, wrong provider row index and existing scoping were added. Fresh GitHub checkout at `0594483` has **301 Python tests PASS**, staging systemd unit and one-shot operator script syntax PASS, three shadow-selector shell tests PASS; GitHub Actions [run 38235136982](https://github.com/karlinksk/awg-pi/actions/runs/38235136982) PASS. **Still not a live provider-node test.**
+
+**Next explicit operator run:** the reviewed fixed version exists on the Pi at `/tmp/awg-stage13-preflight-final/scripts/awg-mihomo-trial-once.sh`, but it is NOT yet executed. It should at most select three real candidates and perform isolated one-shot service requests without allowing `SERVICE_READY` or any transport switch. Inspect sanitized operator output for `PREPARED`, `TRIAL_SERVICE_STATUS` and `SANITIZED_SAMPLE`, or a specific safe failure `reason`. Existing root-only original provider ACLs and primary SSTP remain unchanged.
+
+
+## Stage 14 — two independent isolated service samples and sanitized UNKNOWN reasons (2026-10-12)
+
+**Baseline is a genuine Stage 13e field trial on actual provider nodes, not an offline simulation:** three live Mihomo candidates were probed through a second, isolated, RAM-only loopback Mihomo, `MIHOMO_POOL_READY=3/3`, 8.3s, systemd success. Hashed candidates `584c2a4879d5` (Shadowsocks, OpenAI API FAIL), `623ac0222680` (Shadowsocks, API PASS), and `f3fb708ef1ad` (VLESS, API PASS); every candidate's ChatGPT Web and YouTube playback remain UNKNOWN. No candidate is SERVICE_READY. Temporary unit and protected credential were cleaned. Production Mihomo healthy and table100 unchanged.
+
+**Stage 14 changes in PR #84:**
+- `src/awg-mihomo-service-check.py` distinguishes several fixed, non-secret network failure categories without ever printing exception text: `timeout`, `dns_unavailable`, `tls_unverified`, `connection_refused`, `connection_closed`, `invalid_response`, `network_unknown`. ChatGPT scripted 403 with recognizable challenge HTML reports `chatgpt_web_403_challenge` versus unclassified HTTP 403. This DOES NOT prove country-blocking.
+- **Correction of overclaim:** a public ChatGPT HTTP 200 HTML shell is now `UNKNOWN/chatgpt_public_shell_only`, never `PASS` and never evidence of interactive authenticated session access.
+- Nonroot `src/awg-mihomo-service-trial.py` publishes exact **allowlisted** per-service `reason_codes` for each hashed candidate, no raw exceptions, media URLs, endpoint addresses or tokens. Unknown/unreviewed reasons downgrade to `unclassified`. Even if a mocked checker says playable video PASS, this Stage 14 worker has **no decoded-frame sidecar** and explicitly refuses video admission. Media `PASS` requires a future safe, separately sandboxed decoder.
+- Trial now runs up to **two sequential rounds**, each starting a NEW isolated Mihomo process, separated by two seconds. `rounds_executed`, `total_service_samples` and a per-round `samples` array expose sample stability. Only observer output; `service_ready=false` and `routing_qualified=false` unconditionally. `TimeoutStartSec=110s`, trial shared budget `TIME_LIMIT=90s`, max 3 candidates. No timers and no installed auto-switch.
+- A true decoded YouTube frame using yt-dlp/JS is deliberately **NOT** run under the credential-owning nonroot worker. A hostile media extractor would otherwise be able to read its provider credential copy. Require an independently privileged-separated media sidecar with isolated identity, loopback-proxy-only network access and no access to `CREDENTIALS_DIRECTORY`, then verify a genuine video frame before reporting video PASS. This is still a release blocker.
+- The current one-shot root preparer carries forward the <=480KB private /run shortlist and systemd LoadCredential=selection boundary; no persistent changes, router edits, SSTP changes or sudoers expansion.
+
+**Verification:** 310 Python offline tests PASS, 3 safe shell selector mocks PASS, shell syntax and `systemd-analyze verify` PASS. **Two-round live measurements have NOT yet run** at the time of this code commit, and no interactive ChatGPT session / actual YouTube frame success is claimed. PR remains draft.
+
+
+### Stage 14 — confirmed two-round field trial on the real Pi (2026-10-12)
+
+The operator executed the limited, nonroot, one-shot trial in real deployment (no permanent installation). systemd: `Result=success`, `ExecMainStatus=0`, `MIHOMO_POOL_READY=3/3` **on both independently spawned Mihomo instances**. Total 18.8s, 6 service samples (3 nodes × 2 rounds), about 2.318s systemd CPU usage. Both rounds produced the **same** service classifications and reason codes:
+
+| Anonymized candidate | Protocol | OpenAI API (both rounds) | ChatGPT Web (both rounds) | YouTube (both rounds) |
+|---|---|---|---|---|
+| 584c2a4879d5 | SS | FAIL: unsupported region | UNKNOWN: HTTP 403 | UNKNOWN: timeout |
+| 623ac0222680 | SS | PASS: HTTP 401 authentication required | UNKNOWN: challenge HTTP 403 | UNKNOWN: SABR media not verified |
+| dac635c43fcf | SS | PASS: HTTP 401 authentication required | UNKNOWN: challenge HTTP 403 | UNKNOWN: player not confirmed playable |
+
+The third node changed relative to the previous stage due to live pool refresh/priority; do **not** equate `dac635c43fcf` with the Stage 13 VLESS candidate. ChatGPT WAF/403 is NOT evidence of how an interactive logged-in browser would behave; API HTTP 401 is NOT authenticated ChatGPT proof; YouTube SABR or playability metadata does NOT prove decoded media. The media frame decoder was not enabled. **Zero nodes** are `SERVICE_READY` or `ROUTE_VERIFIED`.
+
+Postflight inspection: transient systemd unit, `/usr/local/lib/awg-pbr-stage13`, and selected private credential all absent. Production active Mihomo healthy, gateway UP, Transit ACTIVE, guard SAFE, table100 `default dev mihomo0`, AWG/Mihomo units active, SSTP and MikroTik untouched. Detailed findings recorded in Issue #83. PR #84 remains DRAFT; no auto-switch or deployment of Stage 14 scanner.
+
+
+## Stage 15 — credential-free decoded-frame sidecar, active transport preflight (2026-10-12)
+
+**Problem discovered:** the earlier `src/awg-youtube-frame-check.py::verify()` invoked its `subprocess_group` wrapper for local ffmpeg decoding **without `start_new_session=True`**, although the wrapper refuses processes without their own killable process group. This meant even a valid real downloaded video could be returned UNKNOWN before decoding. Both the downloader and ffmpeg decoder now use new process groups and the same CPU/core/file-size limits.
+
+**Security architecture staged (NOT installed):**
+- `src/awg-media-sidecar.py` is a standalone, nonroot, credential-free trial. It allows only an actual decoded video frame to report PASS and permits only fixed, redacted UNKNOWN codes (no URLs, tokens, node names or raw exception text). Root execution and any inherited `CREDENTIALS_DIRECTORY` are rejected.
+- `units/awg-media-sidecar@.service` uses **its own systemd DynamicUser** (different from the root preparer and the credentials-bearing Mihomo trial), with **no LoadCredential source**, `InaccessiblePaths=/var/lib/awg-pbr /etc/awg-pbr /run/awg-pbr`, `NoNewPrivileges=yes`, `IPAddressDeny=any`, `IPAddressAllow=localhost`, restrictive address families, limited 384 MB memory, 75% CPU, 60-second one-shot. This only permits the media worker to contact the already-running Mihomo **local loopback proxy**; the worker itself cannot open a direct remote TCP connection, assuming effective kernel/systemd IP filters. It is not a permanent service or timer.
+- `scripts/awg-media-runtime-ram.sh` downloaded official ARM64 **Node v22.16.0** and `yt-dlp` 2026.08.19 via the already-active loopback Mihomo. Both files were SHA-256 verified against their respective upstream release manifests; extracted binaries live **exclusively in /dev/shm/awg-stage15/bin** (~122 MB) to avoid microSD writes. The default installed Node v20 is left unchanged; system packages and VPN paths untouched.
+- `scripts/awg-media-run-once.sh` is a conscious operator-`sudo` one-shot that temporarily installs only the restricted media unit and two credential-free scripts, invokes **active proxy port 7890**, prints only sanitized JSON, and always cleans the unit, code and RAM runtime. It never opens the protected provider, enables a systemd timer, selects a node or changes the main route/SSTP.
+- The **first field run would test the ACTIVE Mihomo proxy only**, not the reserve candidate path. It can validate real decoded YouTube frame and Pi sandbox runtime in isolation. After it passes sandbox/IP filters, engineering can attach to the two promising **temporary reserve proxy candidates** via a separately guarded test transport, and later measure actual browser-authenticated ChatGPT session access. HTTP 200/401/403 signals alone are not browser proof.
+- Neither successful video decode nor ChatGPT auth may independently promote any node; two independent samples, exact endpoint provenance and route evidence, and fail-closed safety checks remain release gates. Keep draft PR #84 and automatic failover disabled.
+
+**Verification:** offline Python frame and sidecar tests, process limits, unit sandbox lint and staging scripts are checked prior to field use. The media systemd service has **NOT YET BEEN RUN** in this stage; a real decoded video frame is NOT claimed.
+
+
+### Stage 15 — actual active-proxy decoded-frame attempt and root-cause classification (2026-10-12)
+
+The operator executed `scripts/awg-media-run-once.sh` with local sudo. systemd started the separate, **credential-free** `awg-media-sidecar@7890.service` (ConditionResult=yes), but returned `UNKNOWN / youtube_extractor_or_media_unavailable`, nonzero ExecMainStatus=1, 4.965s systemd CPU, about 614B incoming / 3.7KB outgoing IP traffic. **No real decoded video frame was obtained**. The script removed the temporary unit, stage15 library and `/dev/shm/awg-stage15` verified absent. Active Mihomo healthy, gateway UP, Transit policy ACTIVE, guard SAFE, table100 stayed `default dev mihomo0`, AWG and Mihomo services active, SSTP untouched.
+
+A separate unprivileged and credentials-free follow-up test temporarily re-downloaded the checksum-verified official Node 22 + yt-dlp tools **into RAM only**. Via the same active local proxy `127.0.0.1:7890`, yt-dlp failed BOTH YouTube metadata and video-chunk requests with `NETWORK_TIMEOUT` (returncode 1 each, ~14.5s). No missing-EJS or missing-JS warnings were observed. Independent `curl` via the active proxy to public `youtube.com` and the fixed public YouTube watch page got **HTTP 000 after 10s**, despite HTTP CONNECT status 200. In the same window, Cloudflare HTTP 200 (~0.32s), Google HTTP 204 (~0.21s) and OpenAI API HTTP 403 (~0.26s) responded through the same proxy. So **the active exit's YouTube HTTPS/TLS path is problematic**, not a general proxy/listening-port failure; this observation does not uniquely identify which network hop blocks the handshake. Do not blame ffmpeg, yt-dlp EJS support, YouTube itself, or an account without separate proof.
+
+Follow-up RAM runtime was also removed; there is no persistent media unit/timer. The next meaningful test is the same isolated frame worker attached to a **different spare candidate's** loopback proxy without accessing that spare's protected subscription credentials; API 401/403, ChatGPT public HTML and YouTube HTTP alone do not certify service eligibility. Keep automatic failover disabled and draft PR #84.
+
+
+## Stage 16 — isolated decoded-video checks on two named reserve Shadowsocks nodes (2026-10-12)
+
+**Reason for test:** Stage 15 had a successful credential-free media-worker launch but no decoded YouTube frame: the active proxy returned HTTPS timeouts to youtube.com while other public sites remained reachable. Stage 14 had shown two reserve SS nodes `shadowsocks-27307` (hashed `623ac0222680`) and `shadowsocks-415241978` (hashed `dac635c43fcf`) with OpenAI API HTTP401 in both samples. The actual media path on these **different exits** remains untested.
+
+**Stage 16 design now in DRAFT PR, not automatically deployed:** `src/awg-stage16-prepare.py` runs once with operator sudo and uses the same root-only subscription and fresh SHA-verified live health pool. It matches exactly the two previously observed SS nodes against provider name uniqueness, endpoint, source index, protocol and regional policy, demands positive healthy latency, rejects proxy chains/nonstandard plugins, and requires **Pi-local** route classification `DIRECT_LOCAL_UNVERIFIED` through the configured LAN router. This last fact is NOT a MikroTik-side DIRECT proof: `router_verified=false` throughout. It writes TWO minimal one-node Shadowsocks configs to private `/run/awg-pbr/stage16-media/proxy-17891.yaml` and `proxy-17892.yaml`, 0600, bounded <=64kB each, no printout of secrets.
+
+`units/awg-stage16-node@.service` uses a separate bounded DynamicUser for a single proxy with systemd `LoadCredential=proxy:...`, no TUN, CAP_NET_ADMIN, external-controller or routing operations; proxies bind ONLY 127.0.0.1 and listen on distinct temporary ports 17891/17892. They are started **sequentially**, never selected in production, with zero persistent service/timer. Each candidate is independently checked for simple HTTP204 through its own localhost proxy; only when reachable is the separate `awg-media-sidecar@<port>.service` started. The media sidecar uses a DIFFERENT DynamicUser, has no LoadCredential and cannot read `/run/awg-pbr`, `/etc/awg-pbr` or the provider; its network filter permits localhost only. Actual yt-dlp/ffmpeg decoded frame would be PASS, never mere HTTP206. The operator driver `scripts/awg-stage16-run-once.sh` checks official SHA-pinned Node22/yt-dlp in RAM, installs only temporary systemd units and helper code, emits sanitized statuses, compares route table100 before/after, and **removes all temporary units, credentials, scripts and RAM tools on EXIT**. Production SSTP, MikroTik configuration, AWG/Mihomo selection, route policy and sudoers are never modified.
+
+**Verification so far:** staging Pi at `/tmp/awg-stage16-working`: 333 Python offline unit tests PASS (including 14 new stage16 policy/credential tests), `bash -n` and both unit files `systemd-analyze verify` PASS. A *real candidate* one-shot has NOT yet been invoked and no new video frame is confirmed. Operator local sudo approval is required; no automatic or unattended deployment. Keep draft PR #84, `SERVICE_READY=false`, `ROUTE_VERIFIED=false`, AUTO failover disabled until a proper service/browser/route attestation.
+
+
+### Stage 16 — actual two-reserve-node isolated media result (2026-10-12)
+
+The operator completed the reviewed one-shot test. Both restricted, temporary single-node Mihomo services on `127.0.0.1:17891` and `127.0.0.1:17892` started and stopped successfully; both credential-free frame-probe systemd instances executed. A basic HTTP204 gate was passed before the sidecar invocation for each candidate. **Neither provided a confirmed decoded YouTube frame**:
+
+| Candidate | Outcome | Interpretation |
+|---|---|---|
+| `shadowsocks-27307`, hash `623ac0222680` | `UNKNOWN / youtube_video_decode_unverified` | Extractor returned a candidate RAM video file of expected size, but ffmpeg did not prove decoding a frame; sidecar used 5.584s CPU, 382.9KB inbound IPAccounting |
+| `shadowsocks-415241978`, hash `dac635c43fcf` | `UNKNOWN / youtube_extractor_or_media_unavailable` | yt-dlp did not complete media acquisition; sidecar used 4.882s CPU, 325.8KB inbound |
+
+The first candidate made material progress beyond the active exit's TLS/HTTPS timeout. However, yt-dlp `--test` explicitly downloads **only part** of a media file; that partial media may contain insufficient data for a decoded frame. This is a **hypothesis requiring a bounded follow-up**, not proof of a working stream. Future diagnosis should distinguish incomplete sample/container, stream formatting, ffmpeg decode failure, and network/extractor errors using finite sanitized categories while enforcing the same no-credential media sandbox.
+
+After the trial the transient proxy units and media units were unloaded, selected credential YAML configs and temporary code removed, and the /dev/shm media runtime erased. Production Mihomo healthy, Gateway UP, Transit ACTIVE, guard SAFE, `table 100 -> default dev mihomo0`, AWG/Mihomo production services active. No SSTP/MikroTik/sudoers changes, **zero SERVICE_READY/ROUTE_VERIFIED promotions**. PR #84 remains DRAFT and automatic failover disabled. Stage16 real results are recorded also in Issue #83.
+
+
+## Stage 17 — bounded first-fragment media proof on the first reserve node (2026-10-12)
+
+**Stage 16 field finding:** both temporary Shadowsocks proxies started, while `shadowsocks-27307` returned `UNKNOWN/youtube_video_decode_unverified` after the `yt-dlp --test` extractor appeared to complete and the temporary candidate media file passed the coarse size check. This did **not** prove an actual decoded video frame. The second candidate had not completed downloading. `--test` intentionally truncates a downloaded stream and can leave a container without usable frame data.
+
+**Stage 17 repair, still SHADOW_ONLY and not deployed as production:**
+- `src/awg-video-range-check.py`: `yt-dlp --get-url -f bestvideo[height<=240]/bestvideo` resolves exactly one low-resolution **video-only** URL via the chosen local proxy. The ephemeral signed video URL remains in private in-memory subprocess output, is not persisted, and is never echoed/logged. A strict HTTPS `googlevideo.com` hostname, exact `/videoplayback` path, 443-only and redirect allowlist rejects SSRF/direct fallback. Then `urllib` forcibly sends `Range: bytes=0-1048575` through the **same 127.0.0.1 candidate proxy**, regardless of `NO_PROXY=*`. Reject response unless HTTP206 includes `Content-Range: bytes 0-.../` with the end under 1 MiB. Read at most 1 MiB + 1 byte, then reject oversize; verify an MP4/WebM container header, write only to a short-lived `/dev/shm` file. ffmpeg receives local RAM-file input only, with all network protocols disallowed and with CPU/file/process-group limits. **Only ffmpeg successfully decoding a real first frame** can return PASS. An HTTP206, extractor URL, fake video header, or successful fetch alone never PASS.
+- Safe finite failure codes now distinguish no metadata/URL, media HTTP403/connection unavailable/range unverified, incomplete first-fragment/container, absent codec and frame decode failure; **no original exception text, signed URL, credentials, hostname or IP** is printed.
+- `src/awg-media-sidecar.py` gains an explicit `--range` flag for this verifier, without weakening its default Stage15 behavior; the separate `units/awg-stage17-media@.service` remains a distinct DynamicUser with **no LoadCredential**, `InaccessiblePaths` for provider/credentials, `IPAddressDeny=any` and `IPAddressAllow=localhost`. Stage16's root-only preparer gains `--target` with only the two approved named nodes as valid choices.
+- `scripts/awg-stage17-run-once.sh` restricts the real trial to **only shadowsocks-27307 on ephemeral proxy port 17891**, verifying fresh provider SHA/health/policy/Pi-local underlay first, passing ONLY one minimal root-prepared Shadowsocks config through systemd credentials to a separate temporary proxy UID. The independent media UID receives ZERO credentials, only loopback access. Node 22 + pinned yt-dlp are fetched with upstream SHA-256 verification to RAM, and all temporary units, credentials, code and runtime deleted on EXIT. Main transport, SSTP, MikroTik, route100 and sudoers remain unchanged.
+- Tests cover forced loopback proxy even with `NO_PROXY=*`, strict signed-URL allowlist and redirect limits, Range/Content-Range header consistency, 1MiB cap, fake HTML/oversize rejection, subprocess time budgets, actual mocked ffmpeg frame positive, safe error enums, temporary RAM cleanup and no candidate auto-promotion. **343 Python offline tests PASS**, stage17 shell syntax and both systemd unit verify PASS. **No Stage17 privileged field trial has happened at time of commit.** Even a future PASS would establish only video decoding for one fixed public video, not working YouTube Premium, browser ChatGPT, or MikroTik route verification; `SERVICE_READY=false`, `ROUTE_VERIFIED=false`, draft PR #84 and auto switch off remain mandatory.
+
+
+### Stage 17 — real first decoded YouTube video frame SUCCESS through reserve SS (2026-10-12 19:36 +07)
+
+**Verified field evidence on Raspberry Pi:** the operator ran the reviewed Stage17 script after 343 Python offline tests and successful CI. An isolated temporary single-node Mihomo proxy on 127.0.0.1:17891 using `shadowsocks-27307` (hashed node `623ac0222680`) started. The distinct systemd DynamicUser media worker `awg-stage17-media@17891.service` returned sanitized JSON: `{"credentials_loaded":false,"method":"video_frame_decode","production_modified":false,"reason":"youtube_first_video_frame_decoded","shadow_only":true,"state":"PASS"}`. systemd result success, exit 0, CPU time 5.635s, approximately 598.4KB incoming and 21.2KB outgoing IP-accounted traffic. Unlike previous inconclusive `yt-dlp --test` probes, the bounded 1MiB initial byte-range fetched via the candidate proxy was actually decoded into a first video frame by local ffmpeg. The signed media URL was not logged, no media-worker subscription credential was loaded.
+
+**Postflight verified:** both temporary proxy/media systemd unit files absent; stage16 selected node configs in `/run/awg-pbr/stage16-media` absent; ephemeral code and RAM Node22+yt-dlp binaries absent; 17891 no longer listening. Production Mihomo healthy, Gateway UP, Transit ACTIVE, guard SAFE, `table100=default dev mihomo0`; AWG and Mihomo production units active, SSTP and MikroTik untouched.
+
+**Strict qualification boundary:** this is **one genuine decoded frame of a fixed public video**, not proof of continuous playback, YouTube Premium, interactive authenticated ChatGPT, independent second confirmation or MikroTik underlay attribution. It is strong positive video evidence for this one spare candidate, but `SERVICE_READY=false`, `ROUTE_VERIFIED=false`; no auto failover or merge of draft PR #84. Repeat independent video decode and route/browser checks before service eligibility.
+
+
+## Stage 18 — two independent 24-frame bounded video observations (2026-10-12)
+
+**Current verified baseline:** Stage17 one-shot on Raspberry Pi at 19:36+07 decoded the FIRST VIDEO FRAME of the public YouTube test video through the separate `shadowsocks-27307` proxy; output `youtube_first_video_frame_decoded` PASS. The proxy and media unit were credential-separated, all temporary runtime/credentials were cleaned, production Mihomo/Transit/SSTP unmodified. This proves one frame only — not stable playback, authenticated browser ChatGPT, YouTube Premium or MikroTik route attestation.
+
+**Stage18 experiment in DRAFT PR #84 (not executed with root yet):**
+- `src/awg-video-continuity-check.py` retains Stage17 restricted, forced-loopback, Googlevideo HTTPS signed-URL and redirect validation but raises the initial-byte-range ceiling from **1 MiB to 2 MiB** and requires ffmpeg to decode **at least 24 consecutive extracted video frames** from a local RAM file, while `ffmpeg` network input remains blocked. PASS requires actual `ffmpeg` exit 0 and observed frame count >=24. A clean decode of fewer frames yields `UNKNOWN/youtube_insufficient_decoded_frames`; incomplete first fragment and codec problems have finite sanitized reasons. A 206/HTML chunk/metadata URL or even 23 decoded frames cannot qualify.
+- `src/awg-media-sidecar.py` adds explicit `--continuity` loading of this decoder, without weakening the prior one-frame `--range` mode. Strict PASS reason is `youtube_24_video_frames_decoded`, no provider credential access, root refused. `units/awg-stage18-media@.service` uses a separate nonroot DynamicUser, no `LoadCredential`, protected-config InaccessiblePaths, `IPAddressDeny=any` and `IPAddressAllow=localhost`, max 384MB RAM / 75% CPU, up to 65s.
+- `scripts/awg-stage18-run-once.sh` tests ONLY previously verified `shadowsocks-27307` (port 17891). It uses root-side fresh provider+pool, exact policy and Pi-local routing preflight as Stage16/17, then starts an isolated credential-owning Mihomo proxy, runs the credential-free media sidecar, **stops that proxy, and repeats from a freshly started proxy in round 2** after a two-second gap. Each round prints a sanitized media outcome, not signed URLs or node passwords. It fixes the obsolete `for index in 0 1` remnant from Stage17's one-node conversion to `for index in 0`. It always tears down both transient systemd units, root-held selected credentials and RAM tools on exit; verifies production table 100 unchanged. Main VPN, router rules, management SSTP, sudoers and automatic failover remain untouched.
+- **Security and evidence boundary:** 24 decoded frames from an initial 2 MiB bounded segment (in two runs) are more evidence than one decoded frame but still not a continuous multi-minute stream or authorized YouTube Premium playback. No `SERVICE_READY`, `ROUTE_VERIFIED` or automatic failover from these reports, even if PASS twice. MikroTik final underlay remains unknown pending separate read-only router audit; interactive authenticated ChatGPT requires user browser confirmation.
+
+**Offline verification so far:** 351 Python tests PASS, additional Stage18 positive 24-frame/negative 23-frame tests, incomplete decode, credential isolation and two-loop checks; script `bash -n`, service unit `systemd-analyze verify`, and `py_compile` PASS. Real Stage18 root-operated field trial pending.
+
+
+### Stage 18 — actual independent 24-frame decode x2 PASS (2026-10-12 20:28 +07)
+
+Reviewed operator command ran the two-round `shadowsocks-27307` (hash `623ac0222680`) media trial successfully after RAM tool restoration. Pi systemd journal confirms two separately started and stopped `awg-stage16-node@17891.service` proxy processes: first began 20:27:59 and stopped 20:28:10, second began 20:28:13 and stopped 20:28:24. In both cases the distinct, credential-free `awg-stage18-media@17891.service` produced `PASS/youtube_24_video_frames_decoded` with `credentials_loaded=false` and `production_modified=false`, and systemd exited 0. CPU time 5.732s and 5.803s respectively; IPAccounting inbound ~599.7KB / ~599KB and outbound ~22.3KB / ~23.4KB. Verification requires clean `ffmpeg` exit 0 and >=24 frames from each locally decoded, forcibly proxied, bounded <=2MiB initial public Googlevideo range. These are **two real positive short-video observations**, not simulated results.
+
+All ephemeral systemd units, root-owned protected node creds, stage16/media helpers and `/dev/shm/awg-stage15` binaries **removed successfully**. Port 17891 no longer listening. Production unchanged: active Mihomo healthy, gateway UP, Transit ACTIVE, guard SAFE, table100 `default dev mihomo0`, production Mihomo and AWG services active, SSTP/MikroTik untouched.
+
+**Strictly NOT qualified** as automatic service-ready or router-verified: no sustained multi-minute playback test, YouTube Premium user-account proof, browser-authenticated ChatGPT functionality test, or MikroTik-side routing evidence. `service_ready=false`, `routing_qualified=false`, PR #84 DRAFT, no auto switching. Field result mirrored in Issue #83.
+
+
+## Stage 19 — bounded ~60-second public video decode, shadow-only (2026-10-12)
+
+**Background:** Stage17 decoded a genuine first YouTube video frame through isolated `shadowsocks-27307`; Stage18 independently repeated >=24 decoded frames twice, both PASS. This does not establish a minute of video, browser-authenticated ChatGPT, YouTube Premium, MikroTik router policy, or automatic service qualification.
+
+**Method, not yet run in the field:**
+- `src/awg-video-sustained-check.py` selects the known **>10-minute public Big Buck Bunny** YouTube video ID `aqz-KE-bpKQ` (Blender Foundation). The protected video worker gets exactly one <=240p *video-only* signed Googlevideo HTTPS URL from `yt-dlp --get-url` through the designated isolated localhost candidate proxy. The signed URL remains entirely in memory; it is never printed, persisted, or embedded in error reports. Private/redirect/non-Googlevideo/non-443 destinations are rejected.
+- Bounded HTTPS **Range: bytes=0-12582911** via the same forced loopback proxy, regardless of ambient NO_PROXY settings. The transfer reads at most 12MiB + 1 byte in <=65 sec wall time (8s socket timeout), refuses non-206, bad/nonzero Content-Range, oversized/HTML/non-WebM+MP4 media. At most 12 MiB of video is held in /dev/shm; all temporary files cleaned even on errors.
+- Local ffmpeg accepts **file-only, pipe, crypto** protocols, with `-t 60` and a 35s subprocess wall cap; only **both** `frame>=900` AND `out_time_us>=59,000,000` with ffmpeg exit zero returns `PASS/youtube_60s_video_decoded`. Even 24 frames, HTTP 206, 58 seconds, codecs unavailable or partial media remain `UNKNOWN`. Therefore this is a **decoded video duration** test, not proof of real-time delivery with zero buffering.
+- `src/awg-media-sidecar.py` has opt-in `--sustained`, retaining legacy behavior of other modes; `units/awg-stage19-media@.service` runs as a separate credential-free DynamicUser with IPAddressDeny=any/Allow=localhost, inaccessible private provider/config paths, CPUQuota 65%, MemoryMax 384M, TimeoutStartSec 160s, no Install/timer.
+- `scripts/awg-stage19-run-once.sh` uses the Stage16 trusted root-side exact provider+fresh pool selection and Pi-only route evidence for the **single** candidate `shadowsocks-27307` on local port 17891. Temporary Mihomo is separate, receives only its own proxy config via protected systemd LoadCredential, no TUN/controller. A ONE-ROUND run logs only sanitized finite result, compares production table 100, always removes transient systemd units, selected credentials, code and official SHA-verified RAM Node/yt-dlp tools on exit. Management SSTP, production Mihomo, AWG, MikroTik and router rules never change.
+- **No promotion**: sustained decode alone does not verify YouTube Premium, user browser ChatGPT, two independent long-playback samples or MikroTik actual transport underlay. Always `service_ready=false`, `routing_qualified=false`, automatic selection disabled, PR #84 DRAFT.
+
+**Quality checks before root operator run:** 362 Python tests PASS (10 new Stage19 positive/negative/credential/unit checks); `bash -n`, `py_compile`, `systemd-analyze verify` PASS. Root one-shot has NOT been performed as of this document note.
+
+
+### Stage 19 — recurring RAM_RUNTIME_MISSING preflight and permanent test-harness correction (2026-10-12, 22:22 +07)
+
+Operator invoked `sudo bash /tmp/awg-stage19-reviewed/scripts/awg-stage19-run-once.sh` and immediately got `RAM_RUNTIME_MISSING`. Pi inspected at 22:22+07: `/dev/shm/awg-stage15` **absent**, no Stage19 temporary units, code or protected selected credentials installed, current boot began 2026-10-09 21:44 (no reboot), production Mihomo healthy, `table100=default dev mihomo0`. Thus **no 60-second video test has yet occurred**, and the failure was a stage preparation error, not proof the reserve node is broken. RAM binaries are intentionally temporary and the Stage15-19 root drivers delete them on exit; over time any prior ephemeral download must not be assumed to remain present.
+
+**Durable remedy in draft PR #84:** `scripts/awg-stage19-safe-start.sh` is now the SINGLE operator command and must be run as the ordinary unprivileged SSH user using `bash`, **not** using `sudo`. The wrapper refuses root, symlinks or partial RAM trees, checks its Git checkout/branch, runs existing audited `scripts/awg-media-runtime-ram.sh` without root **immediately before** starting the test when RAM binaries are absent, re-verifies exact SHA256 of pinned official Node 22.16.0 and yt-dlp 2026.08.19 executables and their version, and finally `exec sudo bash scripts/awg-stage19-run-once.sh`. The original root driver independently repeats its SHA validation and protected-provider/route policy preflight; all ephemeral code, subscriptions and /dev/shm binaries are still removed on its EXIT. No permanent package installs, route or transport changes, sudoers edits, timers or new firewall rules. If bootstrap fails, wrapper exits without any privileged actions. New offline regression tests ensure the correct bootstrap order, hashes, root refusal, reused RAM and sandbox limits. 367 Python tests PASS, `bash -n` PASS on Pi staging.
+
+Run only the new unprivileged combined command from the fresh audited checkout: `bash /tmp/awg-stage19-safe-reviewed/scripts/awg-stage19-safe-start.sh` (the checkout path is prepared separately). **No Stage19 field result yet**; `SERVICE_READY=false`, `ROUTE_VERIFIED=false`, automatic failover OFF, PR #84 DRAFT.
+
+
+### Stage 19 field result and decision to stop extended YouTube/Premium tests (2026-10-12 22:28 +07)
+
+**Operator-executed Stage19 `bash /tmp/awg-stage19-safe-reviewed/scripts/awg-stage19-safe-start.sh`** successfully bootstrapped official checksum-verified Node v22.16.0 and yt-dlp v2026.08.19 into RAM, then launched one isolated credential-separated `shadowsocks-27307` proxy on 127.0.0.1:17891. Node's Google204 reachability **PASS**, root-side selection `SHADOW_ONLY`, `production_modified=false`, `router_verified=false`, `service_ready=false`, underlay `PI_DIRECT_LOCAL_UNVERIFIED`. The public 60-second Big Buck Bunny HTTPS Googlevideo request returned HTTP403; media worker's sanitized final result `UNKNOWN/youtube_media_http403` with `credentials_loaded=false`, `production_modified=false`. systemd media unit exited 1 as designed for an unverified sample (CPU 5.797s, inbound IPAccounting ~380.7KB, outbound ~18.3KB). This does **not** invalidate earlier successfully decoded public YouTube video frames: Stage17 first frame PASS; Stage18 24+ frames in **two independently restarted** isolated proxies both PASS. No sustained 60s video PASS is claimed.
+
+Operator script reported `TABLE100_UNCHANGED` and complete removal of its temporary unit, root-held credential, media helpers and RAM runtime. Subsequent direct Pi audit verified temporary units/processes absent, `/dev/shm/awg-stage15` absent, `/run/awg-pbr/stage16-media` absent; production Mihomo healthy and `table100=default dev mihomo0`.
+
+**User-approved scope decision:** STOP extra YouTube video-duration checks, do NOT test YouTube Premium; do not treat Premium as a service-qualification gate. Leave Stage19 proof code only in experimental/draft GitHub branch for historical reproducibility, **not** as an enabled or required install/runtime probe. Preserve Stage17/18 two observed frame-decode successes as preliminary service evidence for `shadowsocks-27307`; no automatic service-ready promotion, no auto transport switching and no merge of draft PR #84 until independent interactive authenticated ChatGPT and router-underlay/safe failover qualification are completed. Keep SSTP, MikroTik, AWG, IPTV and production Mihomo unchanged. Clean only the archived `/tmp/awg-stage*` operator staging/test files and verified ephemeral services/caches on Pi after preserving this result in GitHub.
+
+
+### Post-cleanup read-only RouterOS proof for ACTUAL SS transport endpoints (2026-10-12 22:44 +07)
+
+After the user stopped extended YouTube/Premium testing and authorized temporary-file cleanup, a read-only stock system audit re-established:
+- production Mihomo healthy, active node `shadowsocks-696792830` endpoint `194.38.11.86:65443/tcp`;
+- Stage17/18 proven reserve candidate `shadowsocks-27307` endpoint `169.150.210.233:8080/tcp`, pool HEALTHY;
+- Pi `ip -4 route get 169.150.210.233` uses LAN `eth0`, source `192.168.112.34`, next hop `192.168.112.1`.
+
+The router's existing **authorized pinned SSH alias `mikrotik-gpt`**, configured with user `gpt-ops`, router `192.168.112.1` and **port 8384**, is reachable. The generic MikroTik SSH port 22 is closed, which is normal; no port or router config change is necessary. Strict host-key checking and BatchMode were confirmed.
+
+An isolated in-RAM copy of the pre-existing **Stage8 `src/awg-mikrotik-route-attestor.py`** executed fixed RouterOS **read-only `print terse without-paging` snapshots** with exact Pi local source and route before/after. It returned:
+- exact reserve **`169.150.210.233:8080/tcp`**: `{"mode":"DIRECT","scope":"END_TO_END","router_verified":true,"reason":"router_underlay_verified","valid_for_seconds":30}`; bound digest prefix `b34dfc57ad31`;
+- exact currently active **`194.38.11.86:65443/tcp`**: the same **DIRECT/END_TO_END/router_verified** result, 30s TTL; bound digest prefix `5170dd1431b6`.
+
+These are **real, ephemeral historical router observations** for those literal endpoint IP+port+protocol tuples at that moment, not a claim that the proof remains live forever, not a credential or signature, not guaranteed against changes in provider endpoints/routes, and not a substitute for an independent **re-audit immediately before a future production switch**. This establishes the independence of the previously tested reserve candidate from SSTP at the checked time, without any RouterOS writes, production service/node selection changes or user-traffic switch. Continue `SERVICE_READY=false` pending authenticated ChatGPT/browser proof; stage smart timer disabled; no automatic new Hot Standby admission from a stale record. Preserve the user's explicit direction: NO further video duration or YouTube Premium tests.
+
+
+## Stage 20 — manual ChatGPT browser verification via isolated spare SS (2026-10-12)
+
+The owner agreed to stop additional YouTube/video-duration and all YouTube Premium tests. Stage17/18 real decoded public media frames through spare `shadowsocks-27307` remain preliminary service evidence (one first frame, then two independent 24+ frame successes); Stage19's different minute-long video returned UNKNOWN/HTTP403 and did not alter routes.
+
+**Router path result now proven historically for both actual endpoints, read-only using pinned `mikrotik-gpt` SSH alias on port 8384**: `169.150.210.233:8080/tcp` (proven spare) and `194.38.11.86:65443/tcp` (currently active primary) both returned DIRECT/END_TO_END/router_verified=true from Stage8's RouterOS attestor, 30s TTL. Historical proof is not a switch authorization; production commit must independently re-attest after provider/route changes.
+
+**New staged, not installed `scripts/awg-stage20-browser-trial.sh` / `units/awg-stage20-browser@.service`:**
+- Operator starts an explicit **single 12-minute maximum** root-authorized shell script on Pi, from a fresh reviewed checkout, e.g. `sudo bash /dev/shm/awg-stage20-reviewed/scripts/awg-stage20-browser-trial.sh`. Must not run until operator approves the temporary test. No Node.js, yt-dlp, video retrieval or Premium tests.
+- Reuses Stage16 trusted minimal root-only provider selector to launch **only `shadowsocks-27307`** as a credential-isolated temporary Mihomo listening only on Pi **127.0.0.1:17891**. Requires a unique current healthy provider/pool match, no chained proxy/dialer, Pi-local DIRECT-next-hop evidence, **exact IP `169.150.210.233` and port `8080` as separately attested** (fail-closed if provider endpoint changed), and verified localhost Google HTTPS204. The root script does NOT change the actual working Mihomo proxy, AWG, transport selection, nftables, NAT, router or SSTP. It does not obtain browser cookies, passwords or authenticated traffic contents.
+- Browser traffic can reach the proxy only through a separately user-authorized **SSH local forward** from Windows, e.g. `ssh -N -o ExitOnForwardFailure=yes -L 127.0.0.1:18891:127.0.0.1:17891 karlinks@192.168.112.34`. Chrome must be launched into a **separate temporary user-data-dir** with `--proxy-server=http://127.0.0.1:18891` for `https://chatgpt.com`; never change the system proxy, active browser profile or MSTTP. Using a free/untrusted proxy for account login remains a user privacy/security decision; TLS normally protects session contents, but operators can still see connection metadata.
+- Non-root DynamicUser `awg-stage20-browser@17891.service` loads ONLY the selected minimal proxy YAML via systemd protected LoadCredential; no TUN/controller/NET_ADMIN, no daemon/timer install, CPU 65%, MemoryMax 160M, RuntimeMaxSec 720, no standard output or error, locked private provider path. Shell EXIT cleanup stops service, deletes root credential/config and unit and verifies unchanged table 100. Service automatically times out even if operator terminal cannot close it; no machine-generated service PASS or automatic promotion.
+- The only meaningful positive browser result is an **explicit operator-observed, authenticated, interactive working ChatGPT exchange via the temporary browser profile**. ChatGPT public login shell HTTP200, Cloudflare challenges, curl API401 or metadata must remain UNKNOWN. The results must be recorded as **manual evidence only**, never forged machine PASS/auto SERVICE_READY. Follow the project safety gates before any future auto activation: provider/boot/generation binding, service confirmation, exact endpoint route re-attestation at commit, rollback and nonleak fault tests, active user session protected.
+
+**Verification**: fresh Pi /dev/shm checkout at commit `a2bd28b` passed 372 Python offline tests (5 additional Stage20 stage/security tests), `bash -n`, `systemd-analyze verify` and GitHub CI run `38273484823` SUCCESS. No Stage20 browser proxy or unit has been started. Production Mihomo remains healthy, table100 default mihomo0; AUTO SMART research timer disabled. Draft PR #84 remains DRAFT.
+
+
+### Stage 20 — MANUAL AUTHENTICATED ChatGPT BROWSER FUNCTIONAL SUCCESS (2026-10-12 ~23:02 +07)
+
+The owner launched the manually opt-in `scripts/awg-stage20-browser-trial.sh` temporary, single-candidate browser proxy and corresponding SSH local-forward/test Chrome profile. The owner explicitly confirmed **both** `ChatGPT opens` and `chat works` in their real browser. This is genuine **operator-reported interactive functional ChatGPT experience**, which is more meaningful than previous API401, anonymous HTML shell, WAF/Cloudflare 403 or direct-node latency probes. We do **not** collect their ChatGPT cookies, conversation texts, account identity or credentials; browser success is *manual evidence*, not a fabricated machine-run PASS.
+
+At ~23:01 Pi audit: `awg-stage20-browser@17891.service` ActiveState=active since 22:57:59+07, `RuntimeMaxUSec=12min`, localhost `127.0.0.1:17891` listener and several independent ESTABLISHED loopback connections, consistent with actual browser traffic through SSH local port-forward. Production Mihomo healthy, Gateway UP, Transit ACTIVE, guard SAFE, `table100=default dev mihomo0`. The earlier read-only MikroTik RouterOS attestation on literal spare `169.150.210.233:8080/tcp` confirmed DIRECT/END_TO_END with 30-second TTL at inspection time, not continuously. No MikroTik/SSTP/router rule change.
+
+**Evidence status:** `shadowsocks-27307` has two separate Stage18 public YouTube 24+ frame decode PASS samples, now ONE real human-observed interactive authenticated ChatGPT-browser functional SUCCESS, and prior historical short-lived endpoint DIRECT route proof. This supports **manually service-qualified candidate** for the user's target ChatGPT and ordinary YouTube video (NOT YouTube Premium; user explicitly discontinued all Premium and extended video checks). It **does not yet satisfy existing automatic `SERVICE_READY` state-machine conditions**: no two independent, fresh, policy-generation-bound machine-verifiable authenticated browser confirmations; OpenAI API gate not passed; no re-attestation at switch commit; no validated real failover/rollback safety gate. Therefore automatic Hot Standby remains OFF, `SERVICE_READY=false` for the *automatic selector*, PR #84 DRAFT. Next priority: decide conservative manual-evidence admission policy and complete single-owner guarded failover tests without breaking current SSTP; do not resume unnecessary video-duration tests.
+
+The temporary proxy was still active when the user reported success, due to its 12-minute test window. It is designed to stop automatically, and root one-shot trap removes its installed unit and protected selection data. Before any removal of `/dev/shm/awg-stage20-reviewed` checkout, check that the root script has exited and cleanup completed. No access to the user's browser profile/SSH terminal was requested.

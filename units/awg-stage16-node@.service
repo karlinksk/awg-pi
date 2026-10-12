@@ -1,0 +1,46 @@
+[Unit]
+Description=AWG stage16 credential-isolated single Shadowsocks node on port %i
+Documentation=https://github.com/karlinksk/awg-pi/issues/83
+After=network-online.target
+Wants=network-online.target
+ConditionPathExists=/run/awg-pbr/stage16-media/proxy-%i.yaml
+
+[Service]
+Type=simple
+DynamicUser=yes
+User=awg-stage16-node
+Group=awg-stage16-node
+LoadCredential=proxy:/run/awg-pbr/stage16-media/proxy-%i.yaml
+RuntimeDirectory=awg-stage16-%i
+RuntimeDirectoryMode=0700
+ExecStart=/usr/local/bin/mihomo -d %t/awg-stage16-%i -f %d/proxy
+Restart=no
+TimeoutStopSec=5s
+KillMode=control-group
+UMask=0077
+MemoryMax=160M
+CPUQuota=65%
+TasksMax=24
+Nice=12
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+ProtectSystem=strict
+ProtectHome=yes
+ProtectProc=invisible
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectClock=yes
+RestrictSUIDSGID=yes
+RestrictRealtime=yes
+LockPersonality=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+InaccessiblePaths=/var/lib/awg-pbr /etc/awg-pbr /run/awg-pbr
+Environment=PYTHONDONTWRITEBYTECODE=1
+StandardInput=null
+StandardOutput=null
+StandardError=null
+# No [Install] / no TUN / no network admin / no route modification.

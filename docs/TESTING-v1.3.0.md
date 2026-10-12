@@ -526,3 +526,64 @@ release gates that require a separate environment or planned interruption:
 
 Until those three gates pass, `main` / the latest stable GitHub release should
 remain v1.2.0 and the stable updater target must not move to v1.3.0.
+
+
+## Service-aware event-driven router verification — added release gate (2026-10-12)
+
+The accepted [event-driven router-attestation ADR](ADR-EVENT-DRIVEN-ROUTER-ATTESTATION-v1.3.0.md) supersedes any assumption that RouterOS must be continuously SSH-polled. **This release gate is PLANNED, not completed**; it does not authorize merging draft PR #84.
+
+- [ ] Default EVENT_DRIVEN: zero idle SSH polls to MikroTik, even during frequent active Mihomo health checks; verify baseline at setup, Pi reboot / LAN-gateway reconfigure and meaningful network or known router-policy events.
+- [ ] Candidate tests retain independent service and exact dialed endpoint evidence (IPv4, port, TCP/UDP, provider hash). Pi-local `eth0 -> router` alone never means independently verified end-to-end DIRECT.
+- [ ] Before proposed automatic failover, use a fresh matching proof if legitimately still valid; else invoke **one bounded, read-only on-demand router audit**, not a per-node polling loop. A Stage 8 30-second TTL is for proof reuse, not scheduling.
+- [ ] A router policy change, selected endpoint/port/protocol change, Pi route/source change, LAN config change and known router restart invalidate relevant proof. Document that silent, off-box router edits are not guaranteed detectable without push notifications or a new audit.
+- [ ] Verify no reentrant `/run/awg-maintenance.lock` ownership and that the existing selector remains the sole writer of node/transport switches; no live authorization based solely on unsigned cached JSON.
+- [ ] Confirm unsupported router / unavailable SSH -> UNKNOWN, never invented DIRECT. Generic router mode requires clear operator-controlled trust policy, visibly weaker guarantees, and no unwanted mandatory MikroTik plugin.
+- [ ] Test manual/FIXED behavior, distinct Selective FAIL-OPEN and Transit FAIL-CLOSED, SSTP management continuity, DNS/direct-leak prevention, safe rollback and double-failure recovery.
+- [ ] Measure CPU, RAM, RouterOS SSH connection count (idle target **zero**), bytes transferred, microSD writes and true failover P50/P95. Verify no background timer is installed on non-RouterOS deployments.
+- [ ] Fully service-qualify ChatGPT web and actual YouTube SABR media prior to any service-aware automatic promotion.
+
+**Do not enable staged router probes or failover units on live Pi until the above validations pass.**
+
+### Event-driven prototype checkpoint
+
+Stage 9: 228 offline Python tests, three advisory shell tests, and three systemd units verified on a clean checkout. Idle router-SSH count was zero; one explicit read-only MikroTik verification returned a shadow-only preflight suggestion. Nothing was installed on the live gateway.
+
+Production blockers remain: actual Mihomo dialed-endpoint attribution, policy drift handling, single-owner switch executor, active traffic postflight/rollback, verified ChatGPT and YouTube media, and measured resource/recovery tests. Do not treat this checkpoint as release approval.
+
+### Stage 10 — real service qualification must precede Hot Standby
+
+- [x] Service-first reducer requires *two distinct* per-node PASS samples across OpenAI API, ChatGPT web, **actual YouTube media**; a generic tunnel handshake/ping, 401, HTML metadata or speed result is not sufficient. UNKNOWN never converts to PASS.
+- [x] Per-node confirmation invalidates on node/provider endpoint fingerprint change, boot, local route policy generation change, repeated sample, staleness or changed qualification result.
+- [x] First PASS gets pending status and is prioritized for the second isolated read-only probe at the next scan; `SERVICE_READY` remains separate from `ROUTE_VERIFIED` and must not authorize any actual switch on its own.
+- [x] The shadow observer and mock transaction reject legacy single-PASS standby cache; runtime generation and boot identity are checked again on every advisory.
+- [x] Clean GitHub clone: **246 offline Python tests PASS**, 3 safe advisory shell tests PASS, Python compile PASS; currently active Mihomo real-service field probe reproduced OpenAI regional rejection even while the generic tunnel health remained healthy.
+- [ ] Real active authenticated ChatGPT web test and actual YouTube SABR/UMP media bytes verifier validated through isolated candidate, with no direct/proxy leaks.
+- [ ] Real provider-node Hot Standby qualification, actual connected IP/port/protocol proof and safe on-demand router re-attestation.
+- [ ] Live single-writer transport transaction, rollback, no-DIRECT leak and measured CPU/RAM/traffic/latencies.
+
+**This stage does not install new services or enable automatic failover.** No new stage-10 unit is deployed to production.
+
+### Stage 11 — decoded YouTube video proof (staged; release blocked)
+
+- [x] HTTP 206 with random bytes, HTML, audio-only format or media-container header alone cannot return playable YouTube `PASS`.
+- [x] The optional `yt-dlp + ffmpeg` checker requires actual local decode of at least one video frame; errors, unsupported current JS runtime and timeouts are UNKNOWN.
+- [x] No media checker is invoked as part of frequent Hot Standby by default; short download uses a fixed video, forced Mihomo loopback proxy, RAM scratch, size/time/resource limits and process-group cleanup.
+- [x] Latest clean offline unit suite: **265 Python tests**, three selector shell tests; these do not prove a live video PASS.
+- [x] Official `yt-dlp 2026.08.19` binary verified by checksum in temporary RAM storage only, tested via current active Mihomo; YouTube page/API requests timed out. Node.js on Pi is v20.19.2, below the currently supported Node 22 recommendation for full JS challenge support. No system package installation or node change.
+- [ ] Confirm actual decoded first frame via at least one independently service-eligible real provider node with supported JS runtime, without changing production routing.
+- [ ] Validate logged-in ChatGPT interaction separately from public HTTP page / OpenAI 401 / Cloudflare challenge.
+- [ ] Profile CPU/RAM, ingress/egress bandwidth and microSD write minimization; ensure slow optional media probe never stalls short health-check or failover commit.
+- [ ] Route- and node-specific proofs, commit-time attestation, rollback and Transit no-leak fault injection still required.
+
+### Stage 12 — protected multi-node service trial scaffold and active-node Node22 experiment
+
+- [x] User's existing authorized helper reports healthy subscription candidates and prior AUTO SMART SHADOW_ONLY speed measurements without leaking provider credentials; treat these as technical screening only.
+- [x] Verify official Node.js v22.16.0 and yt-dlp 2026.08.19 in RAM via upstream SHA-256 manifests, without installing packages; active-node proxy trial returns UNKNOWN due to YouTube webpage/player API timeouts.
+- [x] Establish read-only active-node frame-verifier trial budget: 14.7s elapsed, approximately 73MiB maximum child RSS; no decoded media frame, no tunnel/route change.
+- [x] ChatGPT live HTTP/2 403 and Cloudflare server identify an inconclusive scripted web result; do not claim full browser access or a definite regional denial from this alone.
+- [x] Stage bounded, root-only `awg-mihomo-service-trial.py` code for at most three uniquely matched protected provider nodes, one-shot isolated Mihomo, no service/transport switching, sanitised per-service results, **never auto-ready from one sample**; sixteen new offline tests.
+- [x] **281 offline Python tests and 3 safe selector mocks passed**; GitHub Actions ran successfully on the staged code commit.
+- [ ] Independently security-review and install a *narrow* authorized root-owned service-runner; do NOT loosen root-protected subscription ACLs or use broad sudo.
+- [ ] Exercise the approved one-shot trial on two or three ACTUAL provider nodes through a dedicated isolated Mihomo with two separate samples and no unauthorized direct traffic.
+- [ ] Run a compatible JS+yt-dlp/ffmpeg frame probe **as a nonroot confined child**, validate success and resource use before wiring it into limited Hot Standby scoring.
+- [ ] Distinguish authenticated ChatGPT browser usability from HTML challenges / 403 with actual browser evidence; verify endpoint route and no-leak.

@@ -1,0 +1,49 @@
+[Unit]
+Description=AWG Pi Gateway bounded Mihomo candidate trial (one-shot shadow)
+Documentation=https://github.com/karlinksk/awg-pi/issues/83
+After=network-online.target
+Wants=network-online.target
+ConditionPathExists=/run/awg-pbr/stage13-selection/selection.json
+
+[Service]
+Type=oneshot
+DynamicUser=yes
+User=awg-trial
+Group=awg-trial
+LoadCredential=selection:/run/awg-pbr/stage13-selection/selection.json
+ExecStart=/usr/bin/python3 /usr/local/lib/awg-pbr-stage13/awg-mihomo-service-trial.py --limit 3 --timeout 3 --rounds 2
+TimeoutStartSec=110s
+Restart=no
+KillMode=control-group
+TimeoutStopSec=5s
+UMask=0077
+MemoryMax=256M
+CPUQuota=65%
+TasksMax=30
+Nice=10
+IOSchedulingClass=idle
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+PrivateDevices=true
+PrivateTmp=true
+ProtectClock=true
+LockPersonality=true
+RestrictSUIDSGID=true
+RestrictRealtime=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
+Environment=PYTHONDONTWRITEBYTECODE=1
+Environment=HOME=/dev/shm
+Environment=TMPDIR=/dev/shm
+Environment=XDG_CACHE_HOME=/dev/shm
+ReadWritePaths=/dev/shm
+InaccessiblePaths=/var/lib/awg-pbr /etc/awg-pbr
+StandardInput=null
+StandardOutput=journal
+StandardError=null
+# Intentionally no [Install]. No timer, no persistent service.

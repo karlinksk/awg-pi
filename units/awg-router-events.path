@@ -1,0 +1,10 @@
+[Unit]
+Description=AWG Pi Gateway detect gateway LAN configuration changes (SHADOW_ONLY)
+Documentation=https://github.com/karlinksk/awg-pi/issues/83
+
+[Path]
+PathChanged=/etc/awg-pbr/env
+Unit=awg-router-events-observe.service
+
+[Install]
+WantedBy=multi-user.target

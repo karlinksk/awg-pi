@@ -1,0 +1,32 @@
+[Unit]
+Description=AWG Pi Gateway read-only Mihomo Hot Standby qualifications
+Documentation=https://github.com/karlinksk/awg-pi/issues/83
+Wants=network-online.target
+After=network-online.target awg-pbr-setup.service
+# Deliberately NOT bound to awg-mihomo.service: scanning must continue under AWG.
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 /usr/local/sbin/awg-mihomo-standby watch
+Restart=on-failure
+RestartSec=15s
+TimeoutStopSec=10s
+UMask=0077
+NoNewPrivileges=true
+CapabilityBoundingSet=
+AmbientCapabilities=
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictRealtime=true
+LockPersonality=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RuntimeDirectory=awg-pbr/mihomo-standby
+RuntimeDirectoryMode=0700
+ReadWritePaths=/run/awg-pbr/mihomo-standby /dev/shm
+# The worker has no TUN device and is NOT allowed to alter real routes.
+
+[Install]
+WantedBy=multi-user.target

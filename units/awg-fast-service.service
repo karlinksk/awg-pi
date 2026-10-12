@@ -1,0 +1,35 @@
+[Unit]
+Description=AWG Pi Gateway active Mihomo fast region sensor (ADVISORY_ONLY)
+Documentation=https://github.com/karlinksk/awg-pi/issues/83
+After=network-online.target awg-pbr-setup.service
+Wants=network-online.target
+# Independent of production Mihomo lifecycle; when not active, skip probes.
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 /usr/local/sbin/awg-fast-service.py watch
+Restart=on-failure
+RestartSec=20s
+UMask=0077
+NoNewPrivileges=true
+CapabilityBoundingSet=
+AmbientCapabilities=
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+LockPersonality=true
+RestrictRealtime=true
+RestrictAddressFamilies=AF_INET AF_UNIX
+RuntimeDirectory=awg-pbr/service-fast
+RuntimeDirectoryMode=0700
+RuntimeDirectoryPreserve=yes
+ReadWritePaths=/run/awg-pbr/service-fast
+MemoryMax=48M
+CPUQuota=10%
+TasksMax=16
+# Deliberately no TUN interface, no VPN switch command, no privilege for routes.
+
+[Install]
+WantedBy=multi-user.target

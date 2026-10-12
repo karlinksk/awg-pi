@@ -53,11 +53,19 @@ jobs:
           bash -n src/awg-mihomo-config
           python3 -m py_compile src/awg-mihomo-provider.py
           python3 -m py_compile src/awg-mihomo-pool.py
+          python3 -m py_compile src/awg-fast-service.py src/awg-switch-transaction.py
+          python3 -m py_compile src/awg-endpoint-provenance.py
+          python3 -m py_compile src/awg-mikrotik-route-attestor.py
+          python3 -m py_compile src/awg-router-event-policy.py
+          python3 -m py_compile src/awg-node-qualification.py
+          python3 -m py_compile src/awg-youtube-frame-check.py
+          python3 -m py_compile src/awg-mihomo-service-trial.py src/awg-mihomo-trial-prepare.py
           bash -n tests/test-common.sh
           bash -n tests/test-transport.sh
           bash -n tests/test-bootstrap-fetch.sh
           bash -n tests/test-first-run.sh
           bash -n tests/test-selection.sh
+          bash -n tests/test-selection-advisory.sh
           bash -n tests/test-mihomo-node-policy.sh
           bash -n tests/test-transport-switch.sh
           bash -n tests/test-mihomo-runtime.sh
@@ -94,6 +102,7 @@ jobs:
           bash tests/test-bootstrap-fetch.sh
           bash tests/test-first-run.sh
           bash tests/test-selection.sh
+          bash tests/test-selection-advisory.sh
           bash tests/test-mihomo-node-policy.sh
           bash tests/test-transport-switch.sh
           bash tests/test-mihomo-runtime.sh
@@ -124,6 +133,7 @@ jobs:
           python3 tests/test-maintenance.py
           python3 tests/test-confirm.py
           python3 tests/test-menu.py
+          python3 -m unittest discover -s tests -p 'test_*.py' -q
 
   awg-v31:
     runs-on: ubuntu-latest
