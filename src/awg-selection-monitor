@@ -16,7 +16,7 @@ MAINTENANCE_LOCK="${AWG_LOCK_FILE:-/run/awg-maintenance.lock}"
 # call node/transport switches; existing selection-cycle remains sole owner.
 AWG_ADVISORY_ENABLED="${AWG_ADVISORY_ENABLED:-0}"
 AWG_ADVISORY_SCRIPT="${AWG_ADVISORY_SCRIPT:-/usr/local/sbin/awg-service-observer.py}"
-AWG_ADVISORY_SNAPSHOT="${AWG_ADVISORY_SNAPSHOT:-/run/awg-pbr/service-observation.json}"
+AWG_ADVISORY_SNAPSHOT="${AWG_ADVISORY_SNAPSHOT:-/run/awg-pbr/service-evidence/snapshot.json}"
 AWG_ADVISORY_ROOT="${AWG_ADVISORY_ROOT:-/run/awg-pbr/service-advisory}"
 AWG_ADVISORY_TIMEOUT="${AWG_ADVISORY_TIMEOUT:-3}"
 
