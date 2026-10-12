@@ -33,7 +33,7 @@ class BrowserTrial(unittest.TestCase):
         self.assertIn('LoadCredential=proxy:/run/awg-pbr/stage16-media/proxy-%i.yaml',self.unit)
         self.assertIn("DynamicUser=yes",self.unit)
         self.assertIn("NoNewPrivileges=yes",self.unit)
-        self.assertIn("CapabilityBoundingSet=\\n",self.unit)
+        self.assertIn("CapabilityBoundingSet=",self.unit.splitlines())
         self.assertIn("InaccessiblePaths=/var/lib/awg-pbr /etc/awg-pbr /run/awg-pbr",self.unit)
         self.assertIn("MemoryMax=160M",self.unit)
         self.assertIn("CPUQuota=65%",self.unit)
