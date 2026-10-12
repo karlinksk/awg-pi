@@ -150,6 +150,13 @@ def execute_mock_transaction(advice: dict, evidence: dict, backend: Any) -> Verd
         allowed, why = allowed_action(advice, evidence, backend)
         if not allowed:
             return Verdict("BLOCKED", "revalidate_" + why, action, target)
+        # An advisory JSON file cannot testify to its own validity. The live
+        # adapter must independently verify two DISTINCT recent observations
+        # of the current failure and a freshly qualified target while under
+        # an action gate, before touching any service or route.
+        if not backend.confirm_recent_evidence(advice, evidence):
+            return Verdict("BLOCKED", "independent_evidence_unconfirmed",
+                           action, target)
         if not backend.prepare(action, target):
             return Verdict("BLOCKED", "prepare_failed", action, target)
         # Preparing another node must never preempt live user routing.
@@ -170,7 +177,20 @@ def execute_mock_transaction(advice: dict, evidence: dict, backend: Any) -> Verd
             return Verdict("FAIL_CLOSED_REQUIRED", "prepare_rollback_unverified",
                            action, target, fail_closed=True)
         if not backend.preflight(action, target):
-            return Verdict("BLOCKED", "preflight_failed", action, target)
+            try:
+                if backend.restore(prior) is False:
+                    raise RuntimeError("prepare abort failed")
+                after_abort = backend.snapshot()
+                if (after_abort.get("route") == prior.get("route")
+                        and after_abort.get("transport") == prior.get("transport")
+                        and after_abort.get("guard_safe")):
+                    return Verdict("BLOCKED", "preflight_failed", action,
+                                   target, rolled_back=True)
+            except Exception:
+                pass
+            backend.force_fail_closed()
+            return Verdict("FAIL_CLOSED_REQUIRED", "preflight_abort_unverified",
+                           action, target, fail_closed=True)
         applied = True
         if not backend.apply(action, target):
             raise RuntimeError("apply_failed")
