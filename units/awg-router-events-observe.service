@@ -1,0 +1,26 @@
+[Unit]
+Description=AWG Pi Gateway observe LAN router configuration changes (SHADOW_ONLY)
+Documentation=https://github.com/karlinksk/awg-pi/issues/83
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 /usr/local/sbin/awg-router-event-policy observe
+TimeoutStartSec=8s
+UMask=0077
+NoNewPrivileges=true
+CapabilityBoundingSet=
+AmbientCapabilities=
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_UNIX AF_NETLINK
+RuntimeDirectory=awg-pbr/router-events
+RuntimeDirectoryMode=0700
+RuntimeDirectoryPreserve=yes
+ReadWritePaths=/run/awg-pbr/router-events
+MemoryMax=48M
+CPUQuota=10%
+TasksMax=12
+# Never modifies the router or transport.
