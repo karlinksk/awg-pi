@@ -59,6 +59,7 @@ class FrameCheckTests(unittest.TestCase):
             self.assertEqual(download[download.index("--proxy")+1],
                              "http://127.0.0.1:7890")
             self.assertIn("--test",download)
+            self.assertTrue(captured[0][1]["start_new_session"])
             self.assertIn("--no-cache-dir",download)
             self.assertIn("--ignore-config",download)
             self.assertIn("--downloader",download)
