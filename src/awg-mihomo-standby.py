@@ -49,6 +49,9 @@ def load_module(path: Path, name: str):
 LIMITS = load_module(Path(__file__).with_name("awg-mihomo-limits.py"),
                      "awg_standby_shared_limits")
 
+PROVENANCE = load_module(Path(__file__).with_name("awg-endpoint-provenance.py"),
+                         "awg_standby_route_provenance")
+
 
 def fingerprint(node: dict) -> str:
     """Cache key changes with node identity, endpoint and protocol."""
@@ -114,7 +117,8 @@ def qualified_spares(entries: dict, nodes: list[dict], now: int,
     eligible = [n for n in nodes if by_name[n["name"]] == 1
                 and n["name"] in entries
                 and fresh_entry(entries[n["name"]], n, now, ttl)
-                and entries[n["name"]]["status"] == "PASS"]
+                and entries[n["name"]]["status"] == "PASS"
+                and PROVENANCE.proved_direct(entries[n["name"]].get("underlay"))]
     eligible.sort(key=lambda n: (n["delay_ms"], n["name"]))
     selected, endpoints = [], set()
     for node in eligible:
@@ -219,18 +223,29 @@ def probe_candidates(chosen: list[dict], raw_provider: list[dict],
                     break
                 name = candidate["name"]
                 try:
+                    # Capture Pi-local endpoint underlay independently of
+                    # service eligibility. This ALONE cannot certify whether
+                    # MikroTik later routes packets into SSTP.
+                    prior_path = PROVENANCE.classify(by_name[name])
                     if lookup[name]["probe_name"] not in inventory:
                         outcomes[name] = {"status": "UNKNOWN", "reason": "probe_not_loaded"}
                         continue
                     pool_helper.select_probe(controller_port, lookup[name]["probe_name"])
                     result = service.assess(lambda url, **kwargs: service.fetch(
                         mixed_port, url, timeout=timeout, **kwargs))
+                    # Any local-route flip invalidates candidate evidence.
+                    later_path = PROVENANCE.classify(by_name[name])
+                    underlay = (prior_path if prior_path == later_path
+                                else {"mode": "UNKNOWN", "scope": "PI_ONLY",
+                                      "reason": "route_changed_during_probe",
+                                      "router_verified": False})
                     # Never publish raw video URLs, provider credentials or HTTP body.
                     outcomes[name] = {
                         "status": result["status"],
                         "transport": "mihomo",
                         "identity": name,
                         "sample_id": uuid.uuid4().hex,
+                        "underlay": underlay,
                         "checks": {key: {"state": item["state"], "reason": item["reason"]}
                                    for key, item in result["checks"].items()}
                     }
@@ -299,6 +314,9 @@ def scan(*, pool_file: Path = POOL_JSON, provider_file: Path = PROVIDER,
                 "identity": outcome.get("identity"),
                 "sample_id": outcome.get("sample_id"),
                 "checks": outcome.get("checks", {}),
+                "underlay": outcome.get("underlay", {
+                    "mode": "UNKNOWN", "scope": "PI_ONLY",
+                    "reason": "unverified_endpoint", "router_verified": False}),
             }
         now = int(time.time())
         warm = qualified_spares(entries, eligible, now, ttl, confirm_limit)
