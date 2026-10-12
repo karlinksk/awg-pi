@@ -31,6 +31,20 @@ MIN_AGE_SECONDS = 0
 MAX_AGE_SECONDS = 300
 
 
+class PrepareFailure(Exception):
+    """Sanitized stage marker: never include original exception or node data."""
+
+
+def stage(code: str, fn):
+    try:
+        return fn()
+    except PrepareFailure:
+        raise
+    except (OSError, ValueError, PermissionError, TypeError, KeyError,
+            RuntimeError, SystemExit):
+        raise PrepareFailure(code) from None
+
+
 def load(name: str, filename: str):
     loader = importlib.machinery.SourceFileLoader(name, str(ROOT / filename))
     spec = importlib.util.spec_from_loader(loader.name, loader)
@@ -103,23 +117,39 @@ def atomic_selection(payload: dict, target: Path = OUT) -> int:
 
 def run(target: Path = OUT) -> dict:
     if os.geteuid() != 0:
-        raise PermissionError("only the operator's privileged preparer may access provider")
-    trial = load("stage13_prepare_selection", "awg-mihomo-service-trial.py")
-    pool_helper = load("stage13_prepare_pool", "awg-mihomo-pool.py")
-    smart = load("stage13_prepare_smart", "awg-mihomo-smart")
-    pool = json.loads(POOL.read_text(encoding="utf-8"))
-    if not smart.fresh_pool(pool, PROVIDER, 3600):
-        raise ValueError("protected pool/provider mismatch or stale scan")
-    raw = pool_helper.read_provider(PROVIDER)
-    region, protocol = pool_helper.read_policy_values()
-    boot = Path("/proc/sys/kernel/random/boot_id").read_text().strip()
-    payload = prepare_payload(
-        pool, raw, region=region, protocol=protocol,
-        now=int(time.time()), boot=boot,
-        generation=trial.load("stage13_prepare_standby",
-                              "awg-mihomo-standby.py").current_generation(),
-        select_candidates=trial.select)
-    size = atomic_selection(payload, target=target)
+        raise PrepareFailure("ROOT_OPERATOR_REQUIRED")
+    trial = stage("MODULE_LOAD_FAILED", lambda: load(
+        "stage13_prepare_selection", "awg-mihomo-service-trial.py"))
+    pool_helper = stage("MODULE_LOAD_FAILED", lambda: load(
+        "stage13_prepare_pool", "awg-mihomo-pool.py"))
+    smart = stage("MODULE_LOAD_FAILED", lambda: load(
+        "stage13_prepare_smart", "awg-mihomo-smart"))
+    pool = stage("POOL_READ_FAILED", lambda: json.loads(
+        POOL.read_text(encoding="utf-8")))
+    if not isinstance(pool, dict):
+        raise PrepareFailure("POOL_BAD_FORMAT")
+    scanned = pool.get("scanned_at")
+    now = int(time.time())
+    if not isinstance(scanned, (int, float)) or isinstance(scanned, bool):
+        raise PrepareFailure("POOL_TIMESTAMP_MISSING")
+    age = now - int(scanned)
+    if age < 0 or age > 3600:
+        raise PrepareFailure("POOL_EXPIRED")
+    if not stage("POOL_SOURCE_VERIFY_FAILED", lambda: smart.fresh_pool(
+            pool, PROVIDER, 3600)):
+        raise PrepareFailure("POOL_PROVIDER_SHA_MISMATCH")
+    raw = stage("PROVIDER_PARSE_FAILED", lambda: pool_helper.read_provider(PROVIDER))
+    region, protocol = stage("POLICY_READ_FAILED", pool_helper.read_policy_values)
+    boot = stage("BOOT_ID_UNAVAILABLE", lambda: Path(
+        "/proc/sys/kernel/random/boot_id").read_text().strip())
+    standby = stage("MODULE_LOAD_FAILED", lambda: trial.load(
+        "stage13_prepare_standby", "awg-mihomo-standby.py"))
+    generation = stage("LOCAL_GENERATION_READ_FAILED", standby.current_generation)
+    payload = stage("CANDIDATE_SELECTION_FAILED", lambda: prepare_payload(
+        pool, raw, region=region, protocol=protocol, now=now,
+        boot=boot, generation=generation, select_candidates=trial.select))
+    size = stage("SELECTION_WRITE_FAILED", lambda: atomic_selection(
+        payload, target=target))
     return {"mode":"SHADOW_ONLY", "status":"PREPARED",
             "candidate_count":len(payload["candidates"]),
             "credential_bytes":size,"production_modified":False}
@@ -130,9 +160,14 @@ def main() -> int:
         output = run()
         print(json.dumps(output, separators=(",", ":")))
         return 0
+    except PrepareFailure as exc:
+        print(json.dumps({"mode":"SHADOW_ONLY", "status":"PREPARE_FAILED",
+                          "reason":str(exc), "production_modified":False}))
+        return 1
     except (OSError, ValueError, PermissionError, TypeError, KeyError,
             RuntimeError, SystemExit):
-        print(json.dumps({"mode":"SHADOW_ONLY","status":"PREPARE_FAILED",
+        print(json.dumps({"mode":"SHADOW_ONLY", "status":"PREPARE_FAILED",
+                          "reason":"UNEXPECTED_PREPARATION_ERROR",
                           "production_modified":False}))
         return 1
 
