@@ -157,6 +157,32 @@ class ObserverTests(unittest.TestCase):
         self.assertEqual((first["action"], second["action"]), ("KEEP", "KEEP"))
         self.assertEqual(state["mihomo_passes"], 1)
 
+    def test_config_and_active_node_change_invalidate_shadow_memory(self):
+        a = doc()
+        old_key = m.state_identity(a)
+        a["main"]["node"] = "another-node"
+        self.assertNotEqual(old_key, m.state_identity(a))
+        a["selection"]["priority"] = ["awg", "mihomo"]
+        self.assertNotEqual(old_key, m.state_identity(a))
+
+    def test_boot_id_change_drops_observer_counters(self):
+        import tempfile
+        with tempfile.TemporaryDirectory(dir="/dev/shm") as directory:
+            path = Path(directory) / "memory.json"
+            path.write_text(json.dumps({"identity": "valid-key", "boot_id": "old-boot",
+                                        "memory": {"mihomo_fails": 99}}))
+            self.assertEqual(m.read_advisory_state(path, "valid-key", "new-boot"), {})
+            self.assertEqual(m.read_advisory_state(path, "new-key", "old-boot"), {})
+            self.assertEqual(m.read_advisory_state(path, "valid-key", "old-boot"),
+                             {"mihomo_fails": 99})
+
+    def test_shadow_memory_must_remain_under_ram_run_path(self):
+        import tempfile
+        with tempfile.TemporaryDirectory(dir="/dev/shm") as directory:
+            with self.assertRaises(ValueError):
+                m.save_advisory_state(Path(directory) / "unsafe.json",
+                                      "test", "boot", {})
+
     def test_awg_service_probe_cannot_be_misattributed(self):
         fixture = evidence("awg", "PASS", identity="awg1")
         self.assertEqual(m.checked_status(fixture, now=NOW, transport="awg",
