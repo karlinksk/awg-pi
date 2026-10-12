@@ -28,6 +28,7 @@ import time
 import urllib.request
 
 SERVICE_PY = Path(__file__).with_name('awg-mihomo-service-check.py')
+LIMITS_PY = Path(__file__).with_name('awg-mihomo-limits.py')
 POOL_PY = Path('/usr/local/sbin/awg-mihomo-pool')
 POOL_JSON = Path('/run/awg-pbr/mihomo-pool/live.json')
 PROVIDER = Path('/var/lib/awg-pbr/mihomo/providers/subscription.yaml')
@@ -38,6 +39,17 @@ CURL = '/usr/bin/curl'
 DOWN_ENDPOINT = 'https://speed.cloudflare.com/__down?bytes={}'
 UP_ENDPOINT = 'https://speed.cloudflare.com/__up'
 MAX_POOL_AGE = 3600
+
+
+def load_limits():
+    loader = importlib.machinery.SourceFileLoader('awg_smart_shared_limits', str(LIMITS_PY))
+    spec = importlib.util.spec_from_loader(loader.name, loader)
+    mod = importlib.util.module_from_spec(spec)
+    loader.exec_module(mod)
+    return mod
+
+
+LIMITS = load_limits()
 
 
 def load_pool_code():
@@ -296,7 +308,7 @@ def calibration_finalists(rows, current: str, limit: int, rotation: int = 0) -> 
     return chosen
 
 
-def calibration_confirmed(rows, current: str, limit: int = 2) -> list[dict]:
+def calibration_confirmed(rows, current: str, limit: int = LIMITS.CONFIRMED) -> list[dict]:
     """Compare active node and best competitor with a larger second transfer."""
     candidates = [r for r in rows if r.get('sustained_verified') and r.get('service_ok')]
     current_row = next((r for r in candidates if r['name'] == current), None)
@@ -365,8 +377,8 @@ def shadow_scan(args):
                 # Limit total nominal transfer per run. The screening download is
                 # not a meaningful indicator of steady-state throughput.
                 cap = (len(chosen)*args.download_bytes +
-                       min(getattr(args,'finalists',3),len(chosen))*(args.sustained_bytes+args.sustained_upload_bytes) +
-                       min(2,len(chosen))*args.confirm_bytes)
+                       min(getattr(args,'finalists',LIMITS.SUSTAINED),len(chosen))*(args.sustained_bytes+args.sustained_upload_bytes) +
+                       min(LIMITS.CONFIRMED,len(chosen))*args.confirm_bytes)
                 if cap > 115_000_000:
                     raise RuntimeError('calibration traffic cap exceeded')
                 print('AUTO_SMART_MODE=SHADOW_ONLY', 'CANDIDATES='+str(len(chosen)),
@@ -403,7 +415,7 @@ def shadow_scan(args):
                     results.append(row)
                     print('SMART_SCREEN_PROGRESS='+str(len(results))+'/'+str(len(chosen)), flush=True)
 
-                finalists=calibration_finalists(results,current,min(getattr(args,'finalists',3),len(chosen)), rotation=int(time.time() // 28800))
+                finalists=calibration_finalists(results,current,min(getattr(args,'finalists',LIMITS.SUSTAINED),len(chosen)), rotation=int(time.time() // 28800))
                 for ix,row in enumerate(finalists,1):
                     try:
                         helper.select_probe(controller_port, lookup[row['name']]['probe_name'])
@@ -429,7 +441,7 @@ def shadow_scan(args):
                     row['score']=score(row) if row['ok'] else 0.0
                     print('SMART_SUSTAINED_PROGRESS='+str(ix)+'/'+str(len(finalists)),flush=True)
 
-                confirmed=calibration_confirmed(results,current,2)
+                confirmed=calibration_confirmed(results,current,LIMITS.CONFIRMED)
                 for ix,row in enumerate(confirmed,1):
                     try:
                         helper.select_probe(controller_port, lookup[row['name']]['probe_name'])
@@ -578,9 +590,9 @@ def main():
     p.add_argument('--region',choices=['all','europe'],default='all')
     p.add_argument('--protocol',default='all')
     p.add_argument('--current',default='')
-    p.add_argument('--count',type=int,default=10)
+    p.add_argument('--count',type=int,default=LIMITS.CANDIDATES)
     p=subs.add_parser('scan',help='Real isolated passive measurement (root only)')
-    p.add_argument('--count',type=int,default=10)
+    p.add_argument('--count',type=int,default=LIMITS.CANDIDATES)
     p.add_argument('--download-bytes',type=int,default=1_500_000)
     p.add_argument('--upload-bytes',type=int,default=300_000)
     p.add_argument('--per-request-timeout',type=int,default=11)
@@ -589,11 +601,11 @@ def main():
     p.add_argument('--sustained-upload-bytes',type=int,default=2_000_000)
     p.add_argument('--sustained-timeout',type=int,default=20)
     p.add_argument('--confirm-timeout',type=int,default=20)
-    p.add_argument('--finalists',type=int,default=3)
+    p.add_argument('--finalists',type=int,default=LIMITS.SUSTAINED)
     p=subs.add_parser('history',help='View bounded RAM-only calibration history')
     p.add_argument('--count',type=int,default=12)
     p=subs.add_parser('show',help='Show last root-owned RAM report')
-    p.add_argument('--count',type=int,default=10)
+    p.add_argument('--count',type=int,default=LIMITS.CANDIDATES)
     args=parser.parse_args()
     if getattr(args,'count',10) not in range(1,16):
         parser.error('count must be 1..15')
