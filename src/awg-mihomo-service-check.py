@@ -131,10 +131,9 @@ def chatgpt_web_probe(request: Callable) -> Result:
         return Result("UNKNOWN", "chatgpt_web_" + type(exc).__name__)
 
 
-def media_url_from_html(html: bytes) -> str | None:
+def player_from_html(html: bytes) -> dict | None:
+    """Extract the embedded player object without evaluating any JS."""
     text = html.decode("utf-8", "replace")
-    # YouTube watch response embeds a player JSON object, which may be absent
-    # under a consent screen, bot challenge or changed player version.
     match = re.search(r"ytInitialPlayerResponse\s*=\s*", text)
     if not match:
         return None
@@ -142,17 +141,30 @@ def media_url_from_html(html: bytes) -> str | None:
         player, _ = json.JSONDecoder().raw_decode(text[match.end():])
     except (ValueError, TypeError):
         return None
-    streams = player.get("streamingData", {}) if isinstance(player, dict) else {}
+    return player if isinstance(player, dict) else None
+
+
+def media_url_from_player(player: dict | None) -> str | None:
+    if not isinstance(player, dict):
+        return None
+    streams = player.get("streamingData", {})
     if not isinstance(streams, dict):
         return None
-    candidates = streams.get("formats", []) + streams.get("adaptiveFormats", [])
-    for stream in candidates:
+    formats = streams.get("formats", [])
+    adaptive = streams.get("adaptiveFormats", [])
+    if not isinstance(formats, list) or not isinstance(adaptive, list):
+        return None
+    for stream in formats + adaptive:
         if not isinstance(stream, dict):
             continue
         url = stream.get("url")
         if isinstance(url, str) and allowed_media_url(url):
             return url
     return None
+
+
+def media_url_from_html(html: bytes) -> str | None:
+    return media_url_from_player(player_from_html(html))
 
 
 def allowed_media_url(url: str) -> bool:
@@ -173,8 +185,38 @@ def youtube_probe(request: Callable) -> Result:
         status, watch, _ = request(YOUTUBE_WATCH, max_bytes=MAX_WEB_BYTES)
         if status != 200:
             return Result("UNKNOWN", f"youtube_watch_http_{status}")
-        video_url = media_url_from_html(watch)
+        player = player_from_html(watch)
+        if player is None:
+            return Result("UNKNOWN", "youtube_player_data_missing")
+        playability = player.get("playabilityStatus")
+        if not isinstance(playability, dict) or playability.get("status") != "OK":
+            # A particular video could be age-restricted, deleted or blocked:
+            # never extrapolate a video's availability to all of YouTube.
+            return Result("UNKNOWN", "youtube_player_not_confirmed_playable")
+        video_url = media_url_from_player(player)
         if video_url is None:
+            stream = player.get("streamingData", {})
+            if not isinstance(stream, dict):
+                return Result("UNKNOWN", "youtube_media_url_unavailable")
+            sabr = stream.get("serverAbrStreamingUrl")
+            if isinstance(sabr, str) and allowed_media_url(sabr):
+                # SABR/UMP does not expose normal video ranges. Do not call
+                # SABR an actual media PASS merely because the player says OK.
+                # The small /videogoodput probe is a *CDN reachability* check,
+                # not decoded, playable video bytes.
+                goodput = stream.get("probeUrl")
+                if isinstance(goodput, str) and allowed_media_url(goodput):
+                    try:
+                        code, data, final = request(
+                            goodput, headers={"Range": "bytes=0-1023"},
+                            max_bytes=MAX_MEDIA_BYTES)
+                        if (code in (200, 206) and data
+                                and allowed_media_url(final)):
+                            return Result("UNKNOWN",
+                                          "youtube_sabr_cdn_reachable_media_unverified")
+                    except Exception:
+                        pass
+                return Result("UNKNOWN", "youtube_sabr_media_unverified")
             return Result("UNKNOWN", "youtube_media_url_unavailable")
         code, data, final_url = request(
             video_url, headers={"Range": "bytes=0-1023"},
@@ -184,7 +226,9 @@ def youtube_probe(request: Callable) -> Result:
         if code == 206 and len(data) > 0:
             return Result("PASS", "youtube_video_media_range")
         if code in (403, 451):
-            return Result("FAIL", f"youtube_media_http_{code}")
+            # A signed URL can expire or require a playback/PO token. A
+            # single video's CDN rejection cannot prove all YouTube is down.
+            return Result("UNKNOWN", f"youtube_media_http_{code}_unconfirmed")
         return Result("UNKNOWN", f"youtube_media_http_{code}")
     except Exception as exc:
         return Result("UNKNOWN", "youtube_" + type(exc).__name__)
