@@ -23,6 +23,7 @@ RestrictRealtime=true
 RestrictAddressFamilies=AF_INET AF_UNIX
 RuntimeDirectory=awg-pbr/service-evidence
 RuntimeDirectoryMode=0700
+RuntimeDirectoryPreserve=yes
 ReadWritePaths=/run/awg-pbr/service-evidence
 PrivateTmp=true
 MemoryMax=120M
