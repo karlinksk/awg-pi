@@ -1,6 +1,6 @@
 # ADR — Event-driven router path verification (AWG Pi Gateway v1.3.0)
 
-**Status:** ACCEPTED design decision, 2026-10-12. **Implementation:** PLANNED, not enabled in production.  
+**Status:** ACCEPTED design decision, 2026-10-12. **Implementation:** PARTIALLY STAGED — local Linux event observation and one-shot router audit tested in SHADOW_ONLY; not installed or enabled in production.  
 **Tracking:** [Issue #83](https://github.com/karlinksk/awg-pi/issues/83), [draft PR #84](https://github.com/karlinksk/awg-pi/pull/84).  
 **Scope:** Selective Gateway / MikroTik Transit / Backup VPN, AUTO SMART, Mihomo Hot Standby, AWG fallback and later router adapters.  
 **Decision:** **EVENT_DRIVEN** is the default router-attestation policy. RouterOS is optional; the gateway must not depend on a continuously connected RouterOS SSH session.
@@ -102,3 +102,19 @@ The new adapter MUST NOT hold `/run/awg-maintenance.lock` while calling `awg-tra
 6. Confirm across MikroTik and a router-agnostic test fixture, repair Mihomo subscription-refresh failures, complete the v1.3.0 release gate, then separately consider merging PR #84.
 
 **Supersedes any earlier wording that implied SSH polling every 30 seconds or mandatory per-node full RouterOS audits.**
+
+
+## 9. Stage 9 engineering checkpoint (2026-10-12)
+
+Draft PR #84 now contains `src/awg-router-event-policy.py`: a router-agnostic **local-only** event and decision engine.
+
+- Read-only `ip -4 monitor route rule address link` receives Linux netlink changes; the watcher reevaluates only on events with a 2-second debounce (no fixed RouterOS polling). A separate optional `units/awg-router-events.path` listens for changes to the installed `/etc/awg-pbr/env` file. These units and their one-shot observer are **staged**, not installed or enabled.
+- The local observer hashes boot ID, configured LAN/gateway, Pi LAN address, main routes, policy rules and optional provider hash. A changed fingerprint increments a RAM-only generation counter, marks existing evidence as invalid and signals that a new router baseline may be due. Same state re-observed causes no additional RAM write. No provider secrets, raw routes or credentials are persisted.
+- The `event_driven` / `strict` / `unmanaged` policy planner does **zero MikroTik SSH calls while idle**; only an actual proposed switch with missing/currently invalid evidence requests `AUDIT_ON_DEMAND`. An explicit adapter callback may issue one read-only SSH attestation. A matching proof valid for at most 30 seconds can be used as an **advisory** within the same trusted process/transaction; saved unsigned JSON cannot become switch authorization.
+- `unmanaged` with explicit administrator trust remains **UNVERIFIED**, never `router_verified=True`. Missing FQDN-to-dialed-IP mapping, port/protocol mismatch, missing adapter or SSH failure cannot authorize automatic promotion.
+
+**Real stage-9 read-only smoke on Pi:** idle planner => `IDLE` (zero RouterOS SSH); on-demand planner => `AUDIT_ON_DEMAND`; one pinned-SSH audit of previously tested public IPv4 TCP/443 tuple => `READY_TO_PREFLIGHT` with `advisory_only=True`. Working `table 100` remained `mihomo0`, Health UP, Transit ACTIVE, guard SAFE. The test tuple does **not** assert the active subscription's current dialed endpoint or ChatGPT/YouTube service eligibility.
+
+**Validation:** fresh GitHub checkout **228 offline Python tests PASS** (18 additional Stage 9 tests), three legacy selector-shadow integration checks PASS, Python compilation PASS, three new staged systemd units pass `systemd-analyze verify`.
+
+**NOT FINISHED:** event-driven supervisor is not installed, nor wired to Hot Standby, installer, CLI/TUI or the single-owner selector. Live RouterOS event notifications for edits made directly on MikroTik are not implemented; an undetected out-of-band policy change may occur between audits. Actual current dialed Mihomo endpoint evidence and a safe real action adapter still require implementation. Full service checks and FAIL-CLOSED/rollback fault injection remain mandatory release gates.
