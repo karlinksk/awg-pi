@@ -3,10 +3,10 @@
 
 This is NOT installed in production or in the awg-gpt sudo allowlist.
 Run ONLY as a systemd DynamicUser one-shot with a private, read-only copy
-of necessary inputs supplied by LoadCredential=. Never grant broad sudo.
+of the <=480kB root-selected three-node credential via LoadCredential=. Never grant broad sudo.
 No root execution, no production routing changes.
 
-Reads systemd-provided private credential copies; does NOT print subscriptions,
+Reads only the tiny systemd-provided selected-node credential; does NOT print subscriptions,
 passwords, UUIDs, TLS names, proxy raw config, request bodies, or signed URLs.
 Uses a second ephemeral Mihomo proxy entirely on 127.0.0.1 in RAM.
 Never selects a node in the live Mihomo, reconfigures a tunnel, touches
@@ -35,7 +35,7 @@ POOL = Path("/run/awg-pbr/mihomo-pool/live.json")
 PROVIDER = Path("/var/lib/awg-pbr/mihomo/providers/subscription.yaml")
 MAX_CANDIDATES = 3
 TIME_LIMIT = 90
-CREDENTIAL_NAMES = ("provider", "pool", "pool-policy")
+CREDENTIAL_NAMES = ("selection",)
 
 
 def credential_paths(*, env=None, uid=None) -> dict:
@@ -57,8 +57,8 @@ def credential_paths(*, env=None, uid=None) -> dict:
     result = {}
     for name in CREDENTIAL_NAMES:
         item = base / name
-        if not item.is_file() or item.is_symlink() or item.stat().st_size > (
-                10 * 1024 * 1024 if name == "provider" else 6 * 1024 * 1024):
+        if (not item.is_file() or item.is_symlink()
+                or not 1 <= item.stat().st_size <= 480_000):
             raise PermissionError("missing or invalid service credential")
         result[name] = item
     return result
@@ -176,41 +176,50 @@ def run(*, limit:int=3, timeout:float=3.0) -> dict:
     if not 1<=limit<=MAX_CANDIDATES or not 1<=timeout<=5:
         raise ValueError("unsupported trial budget")
     files = credential_paths()
-    provider_file, pool_file = files["provider"], files["pool"]
-    # The pool helper reads its policy path from this environment variable
-    # when it is imported, not from the production root-owned filesystem.
-    os.environ["MIHOMO_POOL_POLICY_FILE"] = str(files["pool-policy"])
+    envelope = json.loads(files["selection"].read_text("utf-8"))
+    if not isinstance(envelope, dict) or envelope.get("version") != 1:
+        raise ValueError("unverified selected credential")
+    created = envelope.get("prepared_at")
+    now = int(time.time())
+    if (not isinstance(created,int) or isinstance(created,bool) or
+            not 0 <= now-created <= 300 or
+            envelope.get("mode") != "SHADOW_ONLY" or
+            envelope.get("service_ready") is not False or
+            envelope.get("routing_verified") is not False):
+        raise ValueError("expired or invalid selected credential")
+    chosen, raw = envelope.get("candidates"), envelope.get("proxies")
+    provider_hash = envelope.get("provider_sha256")
+    if (not isinstance(chosen,list) or not isinstance(raw,list)
+            or not 1 <= len(chosen) <= limit or len(raw) != len(chosen)
+            or not isinstance(provider_hash,str)
+            or not re.fullmatch(r"[0-9a-f]{64}",provider_hash)):
+        raise ValueError("invalid selected nodes")
+    # Match every item to its original root-prepared endpoint again, even
+    # though systemd's credential copy is already private and read-only.
+    safe_pool={"nodes":[dict(item,healthy=True) for item in chosen]}
+    if select(safe_pool,raw,limit=len(chosen)) != chosen:
+        raise ValueError("credential/node binding changed")
     standby=load("trial_standby","awg-mihomo-standby.py")
     smart=load("trial_smart","awg-mihomo-smart")
-    pool=json.loads(pool_file.read_text("utf-8"))
-    if not smart.fresh_pool(pool, provider_file, standby.MAX_POOL_AGE):
-        raise RuntimeError("missing or stale credential-backed Mihomo pool")
-    # Avoid accidental imports of a different installed pool helper;
-    # all trial logic must match the exact audited staging bundle.
     smart.POOL_PY = MODULE_DIR / "awg-mihomo-pool.py"
     helper=smart.load_pool_code()
     service=smart.load_service_code()
-    region, protocol=helper.read_policy_values()
-    if region=="europe" and pool.get("geo_enriched") is not True:
-        raise RuntimeError("Europe policy cannot use unverified geography")
-    raw=helper.read_provider(provider_file)
-    chosen=select(pool, raw, region=region, protocol=protocol, limit=limit)
-    if not chosen:
-        raise RuntimeError("no eligible isolated candidates")
-    start=time.monotonic()
     boot_before=standby.boot_identity()
     gen_before=standby.current_generation()
+    if (boot_before != envelope.get("boot_id")
+            or gen_before != envelope.get("route_generation")):
+        raise ValueError("runtime changed after credential preparation")
+    start=time.monotonic()
     output=standby.probe_candidates(chosen,raw,helper,service,
                                     timeout=timeout,
                                     deadline=start+min(TIME_LIMIT,15+limit*25))
-    # One successful pass is only a signal for a second trial, never a
-    # ready/route-authorized node. If any network/provider context changed
-    # over the probe, all observations must be downgraded.
+    # This is a ONE-SAMPLE shadow report, never candidate admission. A boot
+    # or local router generation change cancels every observed service result.
     if (boot_before!=standby.boot_identity()
             or gen_before!=standby.current_generation()
-            or not smart.fresh_pool(pool,provider_file,standby.MAX_POOL_AGE)):
+            or int(time.time()) - created > 300):
         output={}
-    return sanitized(output,chosen,provider_sha=pool["provider_sha256"],
+    return sanitized(output,chosen,provider_sha=provider_hash,
                      elapsed=time.monotonic()-start)
 
 
