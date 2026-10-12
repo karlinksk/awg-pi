@@ -52,6 +52,19 @@ class FastServiceTests(unittest.TestCase):
             new = fast.update(proof(sample="probe2"), previous, "node2")
         self.assertEqual(new["consecutive_blocks"], 1)
 
+    def test_expired_first_block_cannot_confirm_later_alarm(self):
+        with patch.object(fast, "boot_id", return_value="boot1"):
+            one = fast.update(proof(sample="old", t=1000), {}, "node1")
+            later = fast.update(proof(sample="new", t=1100), one, "node1")
+        self.assertEqual(later["consecutive_blocks"], 1)
+        self.assertFalse(later["urgent_service_confirmation"])
+
+    def test_second_block_within_45_seconds_confirms_alarm(self):
+        with patch.object(fast, "boot_id", return_value="boot1"):
+            one = fast.update(proof(sample="old", t=1000), {}, "node1")
+            new = fast.update(proof(sample="new", t=1040), one, "node1")
+        self.assertTrue(new["urgent_service_confirmation"])
+
     def test_reboot_resets_streak(self):
         with patch.object(fast, "boot_id", return_value="boot1"):
             prev = fast.update(proof(), {}, "node1")
