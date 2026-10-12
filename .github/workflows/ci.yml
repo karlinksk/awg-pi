@@ -55,6 +55,7 @@ jobs:
           python3 -m py_compile src/awg-mihomo-pool.py
           python3 -m py_compile src/awg-fast-service.py src/awg-switch-transaction.py
           python3 -m py_compile src/awg-endpoint-provenance.py
+          python3 -m py_compile src/awg-mikrotik-route-attestor.py
           bash -n tests/test-common.sh
           bash -n tests/test-transport.sh
           bash -n tests/test-bootstrap-fetch.sh
