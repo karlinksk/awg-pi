@@ -33,6 +33,13 @@ def standby_state(now=NOW, status="PASS"):
         row = evidence("mihomo", status, sample="standby-" + k + "-" + str(now),
                        time=now, identity=k)
         row["fingerprint"] = "f"*64
+        row.update({"service_qualified": True,
+                    "service_qualification": "SERVICE_READY",
+                    "service_confirmations": 2,
+                    "policy_generation": 1,
+                    "service_status": status,
+                    "service_checked_at": now,
+                    "service_checks": row["checks"]})
         # Test-only hypothetical router-attested path. A real Pi-only scan
         # MUST NOT mint this evidence on its own.
         row["underlay"] = {
@@ -93,6 +100,22 @@ class ObserverTests(unittest.TestCase):
         result, state = m.evaluate_document(nxt, state, now=NOW+10, mono=MONO+10)
         self.assertEqual((result["action"], result["target"]), ("SELECT_NODE", "B"))
         self.assertEqual(result["detection_seconds"], 10)
+
+    def test_single_pass_old_standby_cache_not_promoted(self):
+        fixture = doc()
+        for row in fixture["standby"]["entries"].values():
+            row["service_confirmations"] = 1
+            row["service_qualified"] = False
+        result, _ = m.evaluate_document(fixture, now=NOW, mono=MONO)
+        self.assertEqual(result["warm_count"], 0)
+
+    def test_missing_service_confirmation_refused(self):
+        fixture = doc()
+        for row in fixture["standby"]["entries"].values():
+            row.pop("service_qualification")
+            row.pop("service_qualified")
+        result, _ = m.evaluate_document(fixture, now=NOW, mono=MONO)
+        self.assertEqual(result["warm_count"], 0)
 
     def test_service_pass_over_awg_assisted_node_never_becomes_warm(self):
         fixture = doc()
