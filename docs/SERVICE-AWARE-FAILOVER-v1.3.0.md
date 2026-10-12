@@ -104,3 +104,28 @@ Regression: `bash tests/test-selection-advisory.sh` proves default-disabled, adv
 - A single serialized switching executor in the legacy selector with preflight, transaction rollback and real forwarded data-plane postvalidation (not advisory-only).
 - Double-outage handling in the forwarding plane, Selective FAIL-OPEN and Transit FAIL-CLOSED regression, safe MikroTik/SSTP boundaries.
 - Duration P50/P95, microSD/noisy probes monitoring, paid/free subscription update failure recovery, and UI controls.
+
+
+## Stage 4: read-only evidence producer (staged, disabled)
+
+`src/awg-service-evidence.py` now creates a **sanitized evidence snapshot** for the existing optional advisory hook; it does not change transport, node, route, nftables, DNS or systemd. It reads the protected runtime selection + node policy, verifies the provider digest against the pool snapshot and performs bounded, individually attributed service checks:
+
+- When main = Mihomo, probe the current node via the localhost Mihomo proxy using its exact node identity.
+- Always probe `awg0` via the interface-bound AWG HTTPS checker **if awg0 exists**, independently of the current production transport.
+- When main = AWG, **do not connect to the stopped production Mihomo**; use the independent Hot Standby cache, subject to provider identity/freshness checks by the observer.
+- If evidence cannot be read or the check times out, emit `UNKNOWN`, never a fabricated PASS. Invalid response bodies, claimed PASS contradicted by per-service checks, misattributed node names, old sample IDs and raw secret fields are stripped or rejected.
+- Only an atomic mode-0600 JSON file `/run/awg-pbr/service-evidence/snapshot.json` is written. Console summary exposes service statuses only, not provider URLs, tokens or private keys.
+
+`units/awg-service-evidence.service` and `units/awg-service-evidence.timer` are **staged files only**: bounded execution time, CPU/RAM limits and a restricted writable `/run/awg-pbr/service-evidence/` directory. The timer is never persistent and is **not deployed/enabled**. The old monitor's optional advisory snapshot path has been updated to match the dedicated RAM directory; `AWG_ADVISORY_ENABLED` continues defaulting to `0`. No automatic failover executor is installed.
+
+**Live, read-only probes, 2026-10-12:** while production `mihomo0` remained active, `awg0` handshake was fresh and direct interface binding routed DNS and TLS through AWG. OpenAI API on AWG returned expected unauthenticated HTTP 401 (API reachable), ChatGPT website responded HTTP 403 (WAF/region cannot be distinguished by this probe), and YouTube watch endpoint responded but the probe could not verify video media bytes. Final AWG service eligibility = `UNKNOWN`. Separately the current production Mihomo exit returned OpenAI `unsupported_country_region_territory` (service `FAIL`), despite generic Mihomo transport health = healthy. **Do not activate failover based on these incomplete proofs.**
+
+Local offline testing increased to **109 Python tests** plus three advisory shell regression checks; a simulated two-probe Mihomo FAIL with AWG PASS produced an advisory recommendation to switch, but an AWG FAIL caused `NO_WORKING_TRANSPORT`. These are recommendations only, with no switching capability.
+
+### Outstanding safety and release gates
+
+1. Ensure stable, low-overhead playback-capable YouTube check and ChatGPT browser-vs-WAF interpretation; treat ambiguous checks as UNKNOWN without turning them into a global outage.
+2. Validate actual standby worker on real subscription nodes under resource/sandbox limits before enabling the staged systemd units.
+3. Add deployment/rollback only after validating observer evidence producer and existing selector lock semantics on isolated fault-injection rigs.
+4. Build and test the transaction-safe single-owner switch executor with correct endpoint DIRECT exceptions, data-plane postflight, precise rollback and no-leak semantics for both Transit/Selective.
+5. Fix the separate provider updater service failure, then confirm full pipeline and P50/P95 recovery without touching MikroTik's primary SSTP.
