@@ -543,3 +543,9 @@ The accepted [event-driven router-attestation ADR](ADR-EVENT-DRIVEN-ROUTER-ATTES
 - [ ] Fully service-qualify ChatGPT web and actual YouTube SABR media prior to any service-aware automatic promotion.
 
 **Do not enable staged router probes or failover units on live Pi until the above validations pass.**
+
+### Event-driven prototype checkpoint
+
+Stage 9: 228 offline Python tests, three advisory shell tests, and three systemd units verified on a clean checkout. Idle router-SSH count was zero; one explicit read-only MikroTik verification returned a shadow-only preflight suggestion. Nothing was installed on the live gateway.
+
+Production blockers remain: actual Mihomo dialed-endpoint attribution, policy drift handling, single-owner switch executor, active traffic postflight/rollback, verified ChatGPT and YouTube media, and measured resource/recovery tests. Do not treat this checkpoint as release approval.
