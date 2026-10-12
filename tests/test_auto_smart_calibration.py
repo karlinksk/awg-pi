@@ -16,7 +16,7 @@ loader.exec_module(smart)
 
 def row(name, protocol, delay, warmup, *, good=True):
     return dict(name=name, type=protocol, delay_ms=delay, warmup_mbps=warmup,
-                warmup_ok=good, service_ok=True, down_mbps=0.0, up_mbps=0.0, score=0.0,
+                warmup_ok=good, service_ok=True, route_ok=True, down_mbps=0.0, up_mbps=0.0, score=0.0,
                 ok=False, confirmed=False, sustained_verified=False,
                 reliability=0)
 
@@ -75,20 +75,37 @@ class CalibrationTests(unittest.TestCase):
         self.assertEqual([r['name'] for r in smart.calibration_confirmed(entries,'current',2)],
                          ['current','rival'])
 
+    def test_assisted_node_cannot_be_recommended_despite_service_pass(self):
+        current = row('current', 'ss', 50, 10)
+        current.update(ok=True,confirmed=True,sustained_verified=True,score=10,down_mbps=12)
+        assisted = row('assisted','vless',10,100)
+        assisted.update(ok=True,confirmed=True,sustained_verified=True,
+                        score=99,down_mbps=150,route_ok=False)
+        result = smart.recommend([current,assisted], 'current',{})
+        self.assertEqual(result['name'],'current')
+        self.assertEqual([n['name'] for n in smart.calibration_finalists(
+            [current,assisted],'current',3)],['current'])
+
+    def test_no_router_verified_node_makes_no_smart_recommendation(self):
+        candidate=row('n1','vless',5,100)
+        candidate.update(ok=True,confirmed=True,score=100,route_ok=False)
+        self.assertEqual(smart.recommend([candidate], '', {}),
+                         {'name':'','advice':'NO_HEALTHY_CANDIDATE'})
+
     def test_unconfirmed_cannot_be_recommended(self):
         confirmed={'name':'current','ok':True,'score':10,
-                   'delay_ms':100,'down_mbps':20,'confirmed':True,'service_ok':True}
+                   'delay_ms':100,'down_mbps':20,'confirmed':True,'service_ok':True,'route_ok':True}
         unverified={'name':'competitor','ok':True,'score':95,
-                   'delay_ms':10,'down_mbps':150,'confirmed':False,'service_ok':True}
+                   'delay_ms':10,'down_mbps':150,'confirmed':False,'service_ok':True,'route_ok':True}
         result=smart.recommend([confirmed,unverified],'current',{})
         self.assertEqual(result['name'],'current')
         self.assertEqual(result['advice'],'CURRENT_BEST')
 
     def test_prior_confirmation_failure_requires_two_new_successes(self):
         current={'name':'SS','ok':True,'confirmed':True,'service_ok':True,'score':30,
-                 'delay_ms':50,'down_mbps':20}
+                 'delay_ms':50,'down_mbps':20,'route_ok':True}
         rival={'name':'HY','ok':True,'confirmed':True,'service_ok':True,'score':90,
-               'delay_ms':100,'down_mbps':130}
+               'delay_ms':100,'down_mbps':130,'route_ok':True}
         a=smart.recommend([current,rival],'SS',{'HY':[0,1]})
         self.assertEqual(a['advice'],'OBSERVE_ONLY_INSUFFICIENT_HISTORY')
         b=smart.recommend([current,rival],'SS',{'HY':[0,1,1]})
@@ -156,6 +173,10 @@ class CalibrationTests(unittest.TestCase):
             with patch.object(smart,'STATE_DIR',d), \
                  patch.object(smart.os,'geteuid',return_value=0), \
                  patch.object(smart,'plan',return_value=(pool,'SS',input_nodes)), \
+                 patch.object(smart.PROVENANCE, 'classify',
+                     return_value={"mode": "DIRECT", "scope": "END_TO_END",
+                                   "router_verified": True,
+                                   "reason": "router_underlay_verified"}), \
                  patch.object(smart,'load_pool_code',return_value=helper), \
                  patch.object(smart,'load_service_code',return_value=types.SimpleNamespace(
                      assess=lambda request:{'status':'PASS','checks':{}},
