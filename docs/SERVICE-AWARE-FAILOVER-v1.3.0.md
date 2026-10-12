@@ -24,10 +24,10 @@ These are conservative probes, **not a guarantee that a logged-in browser sessio
 - No traffic benchmark is performed in these cycles; sustained throughput tests remain a separate, infrequent AUTO SMART activity.
 - State is written atomically, mode 0600, to `/run/awg-pbr/mihomo-standby/state.json` (RAM on Debian). Cache entries carry endpoint+protocol+egress fingerprint, provider checksum, effective region/protocol policy, checked_at and reason codes. Invalid/stale/UNKNOWN entries are never offered as warm.
 - Single-writer file lock prevents simultaneous scans; short-lived probe config with credentials lives in `/dev/shm` with 0600 permissions.
-- Adaptive scan interval is **suggested only** (degraded 30 s, stable 120 s, bounded exponential backoff to 600 s), not currently scheduled.
+- Adaptive scheduling is implemented in the independent **watch** loop (degraded 30 s, stable 120 s, bounded exponential backoff to 600 s), and is shortened when a warm result approaches TTL expiry. It has **not** been deployed or activated on Pi.
 - `show` filters expired cached successes and does **not** authorize routing changes; the production selector must verify live source hash/TTL and do a post-switch data-plane check.
 
-**No standby timer/systemd integration is installed or enabled yet.** Running `scan` against actual credentials needs explicit root permission and production-like network testing in a controlled environment.
+An optional **staged** `units/awg-mihomo-standby.service` runs the independent read-only `watch` loop without depending on the main `awg-mihomo.service`. **Neither the unit nor the watcher has been installed or enabled on Pi.** Running a real scan needs explicit root permission and production-like network testing in a controlled environment.
 
 ## Stage 2: pure failover decision model
 
@@ -46,15 +46,15 @@ In a fresh GitHub branch checkout on Pi RAM, 2026-10-12:
 
 ```sh
 python3 -m unittest discover -s tests -p 'test_*.py' -q
-# 60 tests, OK
+# 63 tests, OK
 ```
 
-Existing repository CI also now runs these tests on PRs; the external runner result must be confirmed separately.
+Existing repository CI also now runs these tests on PRs; the external runner result must be confirmed separately. The new optional standby service file is NOT installed by `install.sh`.
 
 ## Unfinished release-blocking work
 
 1. Secure a robust, low-cost method for authenticating actual ChatGPT and YouTube media access on varied provider nodes, without false PASS during WAF/challenge and without relying on a fixed video stream format.
-2. Wire a **separate, opt-in, resource-bounded service probe timer** that continues even if `awg-mihomo.service` is stopped under AWG, validates candidate endpoints and refreshes RAM.
+2. Validate and integrate the staged **independent read-only standby systemd service** and resource limits that continue even if `awg-mihomo.service` is stopped under AWG. Its real scheduling and safety behavior remain untested on actual subscription nodes.
 3. Implement a read-only service probe **through AWG** with no DIRECT fallback, and independent rapid active-node reachability checks.
 4. Connect results to the **single existing selector** (and its `/run/awg-maintenance.lock`), support safe conditional failback and publish CLI/TUI diagnostics; do not allow AUTO SMART to switch anything.
 5. Preflight + post-switch checks using the **actual data plane**, rollback, double-failure recovery, Selective FAIL-OPEN/Transit FAIL-CLOSED and actual MikroTik transit leakage tests without disrupting SSTP.
