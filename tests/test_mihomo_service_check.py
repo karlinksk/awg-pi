@@ -18,7 +18,7 @@ spec.loader.exec_module(gate)
 
 MEDIA = "https://rr5---sn-test.googlevideo.com/videoplayback?id=abc"
 WATCH = ('<script>var ytInitialPlayerResponse = ' +
-         json.dumps({"streamingData": {"formats": [{"url": MEDIA}]}}) + ';</script>').encode()
+         json.dumps({"playabilityStatus": {"status": "OK"}, "streamingData": {"formats": [{"url": MEDIA}]}}) + ';</script>').encode()
 
 
 def cases(api=(401, b'{"error":{"message":"Missing bearer authentication"}}'),
@@ -60,9 +60,11 @@ class ServiceGateTests(unittest.TestCase):
         result = gate.assess(cases(watch=(200, b"<html>youtube</html>")))
         self.assertEqual(result["status"], "UNKNOWN")
 
-    def test_actual_video_failure_blocks_selection(self):
+    def test_media_url_403_is_not_global_youtube_block(self):
         result = gate.assess(cases(media=(403, b"forbidden")))
-        self.assertEqual(result["status"], "FAIL")
+        self.assertEqual(result["status"], "UNKNOWN")
+        self.assertEqual(result["checks"]["youtube_video"]["reason"],
+                         "youtube_media_http_403_unconfirmed")
 
     def test_invalid_media_host_is_not_requested(self):
         host = "https://googlevideo.com.evil.example/videoplayback?id=foo"
@@ -90,6 +92,56 @@ class ServiceGateTests(unittest.TestCase):
         result = gate.assess(cases(web=(200, b"<html>Just a moment...</html>")))
         self.assertEqual(result["status"], "UNKNOWN")
         self.assertEqual(result["checks"]["chatgpt_web"]["reason"], "chatgpt_web_challenge")
+
+    def test_sabr_player_does_not_fake_actual_media_success(self):
+        sabr = "https://rr3---sn-test.googlevideo.com/videoplayback?sabr=1"
+        goodput = "https://rr3---sn-test.googlevideo.com/videogoodput?sig=demo"
+        page = ("<script>ytInitialPlayerResponse = " +
+                json.dumps({"playabilityStatus": {"status": "OK"},
+                            "streamingData": {
+                                "serverAbrStreamingUrl": sabr,
+                                "probeUrl": goodput,
+                                "adaptiveFormats": [{"itag": 140, "mimeType": "audio/mp4"}]}}) +
+                ";</script>").encode()
+        sent = []
+        def request(url, **kw):
+            sent.append(url)
+            if url == gate.YOUTUBE_WATCH:
+                return 200, page, url
+            if url == goodput:
+                self.assertEqual(kw.get("headers"), {"Range": "bytes=0-1023"})
+                self.assertEqual(kw.get("max_bytes"), 1024)
+                return 206, b"goodput", url
+            raise AssertionError("request must not fetch SABR as direct video bytes")
+        result = gate.youtube_probe(request)
+        self.assertEqual(result.state, "UNKNOWN")
+        self.assertEqual(result.reason, "youtube_sabr_cdn_reachable_media_unverified")
+        self.assertNotIn(sabr, sent)
+
+    def test_sabr_unreachable_cdn_stays_unknown(self):
+        sabr = "https://rr3---sn-test.googlevideo.com/videoplayback?sabr=1"
+        page = ("ytInitialPlayerResponse = " + json.dumps({
+            "playabilityStatus": {"status": "OK"},
+            "streamingData": {"serverAbrStreamingUrl": sabr,
+                              "probeUrl": "https://bad.example.local/videogoodput"}})).encode()
+        outcome = gate.youtube_probe(lambda url, **kw: (200, page, url))
+        self.assertEqual(outcome.state, "UNKNOWN")
+        self.assertEqual(outcome.reason, "youtube_sabr_media_unverified")
+
+    def test_unplayable_single_video_not_global_youtube_failure(self):
+        page = ("ytInitialPlayerResponse = " + json.dumps({
+            "playabilityStatus": {"status": "LOGIN_REQUIRED"},
+            "streamingData": {"formats": [{"url": MEDIA}]}})).encode()
+        result = gate.youtube_probe(lambda url, **kw: (200, page, url))
+        self.assertEqual(result.state, "UNKNOWN")
+        self.assertEqual(result.reason, "youtube_player_not_confirmed_playable")
+
+    def test_malformed_streaming_data_never_throws(self):
+        page = ("ytInitialPlayerResponse = " + json.dumps({
+            "playabilityStatus": {"status": "OK"},
+            "streamingData": {"formats": "bad", "adaptiveFormats": {}}})).encode()
+        self.assertEqual(gate.youtube_probe(lambda url, **kw: (200, page, url)).state,
+                         "UNKNOWN")
 
     def test_no_proxy_wildcard_does_not_bypass_loopback_proxy(self):
         received = []
