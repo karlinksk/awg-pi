@@ -18,7 +18,20 @@ import tempfile
 import time
 
 POLICY_PY = Path(__file__).with_name("awg-failover-policy.py")
+PROVENANCE_PY = Path(__file__).with_name("awg-endpoint-provenance.py")
 DEFAULT_TTL = 120
+
+
+def load_provenance():
+    loader = importlib.machinery.SourceFileLoader("awg_observer_provenance", str(PROVENANCE_PY))
+    spec = importlib.util.spec_from_loader(loader.name, loader)
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = mod
+    loader.exec_module(mod)
+    return mod
+
+
+PROVENANCE = load_provenance()
 
 
 def load_policy():
@@ -103,6 +116,10 @@ def standby_ready(node_state: object, *, now: int, ttl: int = DEFAULT_TTL,
         checked, sample = checked_status(row, now=now, transport="mihomo",
                                          ttl=ttl, identity=name)
         if checked != "PASS" or not sample:
+            continue
+        # A service PASS via an AWG-assisted or unknown underlay is not a
+        # deployable DIRECT hot spare. Pi-local eth0 is not enough either.
+        if not PROVENANCE.proved_direct(row.get("underlay")):
             continue
         accepted.append(name)
     return tuple(accepted)
