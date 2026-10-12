@@ -29,6 +29,46 @@ class ServiceTrialTests(unittest.TestCase):
         nodes=[row("n"+str(n),"194.38.11."+str(n+80)) for n in range(8)]
         self.assertEqual(len(t.select({"nodes":nodes},list(map(raw,nodes)))),3)
 
+    def test_real_pool_unhealthy_null_delays_do_not_break_sort(self):
+        # Regression for Stage 13: out of ~1,869 scanned provider nodes
+        # only ~249 are healthy; unhealthy rows have delay_ms=None.
+        a=row("fast", "194.38.11.86", delay=320)
+        b=row("slow", "45.86.66.170", delay=420)
+        bad=[dict(row("down"+str(i),"198.51.100."+str(i+1)),
+                  healthy=False,delay_ms=None) for i in range(8)]
+        invalid={"name":"(invalid #12)","type":"invalid",
+                 "server":"","port":0,"healthy":False,"delay_ms":None}
+        result=t.select({"nodes":bad+[b,invalid,a]},
+                        [raw(a),raw(b)])
+        self.assertEqual([n["name"] for n in result],["fast","slow"])
+
+    def test_yaml_numeric_string_port_is_normalized(self):
+        a=row("yaml-port","194.38.11.86",port=65443)
+        rec=raw(a)
+        rec["port"]="65443"
+        selected=t.select({"nodes":[a]},[rec])
+        self.assertEqual([n["name"] for n in selected],["yaml-port"])
+
+    def test_index_binding_requires_original_provider_row(self):
+        a=row("one","194.38.11.86")
+        b=row("two","45.86.66.170",delay=400)
+        a["index"]=2
+        b["index"]=1
+        self.assertEqual(t.select({"nodes":[a,b]},
+                                  [raw(a),raw(b)]),[])
+        self.assertEqual(len(t.select({"nodes":[a,b]},
+                         [raw(b),raw(a)])),2)
+
+    def test_invalid_and_boolean_delay_are_skipped(self):
+        healthy=row("good","194.38.11.86")
+        bad1=row("bool","45.86.66.170")
+        bad1["delay_ms"]=True
+        bad2=row("none","45.86.66.171")
+        bad2["delay_ms"]=None
+        good=t.select({"nodes":[bad1,bad2,healthy]},
+                      [raw(bad1),raw(bad2),raw(healthy)])
+        self.assertEqual([n["name"] for n in good],["good"])
+
     def test_duplicate_endpoint_not_independent(self):
         a=row("a","194.38.11.86",443,delay=30)
         b=row("b","194.38.11.86",443,delay=40)
