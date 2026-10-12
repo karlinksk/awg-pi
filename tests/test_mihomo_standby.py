@@ -114,7 +114,12 @@ class StandbyTests(unittest.TestCase):
             inspected.append([n["name"] for n in chosen])
             return {n["name"]: {
                 "status": "PASS" if n["name"] in ("node-2", "node-4") else "UNKNOWN",
-                "reasons": {"openai_api": "mock", "youtube_video": "mock"}
+                "transport": "mihomo",
+                "identity": n["name"],
+                "sample_id": "test-" + n["name"] + "-" + str(len(inspected)),
+                "checks": {key: {"state": ("PASS" if n["name"] in ("node-2", "node-4")
+                                            else "UNKNOWN"), "reason": "mock"}
+                           for key in ("openai_api", "chatgpt_web", "youtube_video")}
             } for n in chosen}
         with tempfile.TemporaryDirectory(dir="/dev/shm") as tmp, \
              patch.object(standby.os, "geteuid", return_value=0), \
@@ -131,6 +136,9 @@ class StandbyTests(unittest.TestCase):
             self.assertEqual(first["tested"], 10)
             self.assertEqual(first["warm"], ["node-2", "node-4"])
             self.assertEqual(first["mode"], "SHADOW_ONLY")
+            self.assertEqual(first["entries"]["node-2"]["identity"], "node-2")
+            self.assertEqual(first["entries"]["node-2"]["transport"], "mihomo")
+            self.assertEqual(first["entries"]["node-2"]["checks"]["youtube_video"]["state"], "PASS")
             self.assertNotIn("password", state_path.read_text())
             self.assertEqual(state_path.stat().st_mode & 0o777, 0o600)
             second = standby.scan(pool_file=pool, provider_file=provider,
