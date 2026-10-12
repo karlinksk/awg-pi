@@ -11,6 +11,7 @@ import argparse
 import json
 import re
 import time
+import uuid
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -206,12 +207,17 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--proxy-port", type=int, required=True)
     parser.add_argument("--timeout", type=float, default=6.0)
+    parser.add_argument("--identity", default="",
+                        help="Exact currently selected Mihomo node name for evidence attribution")
     args = parser.parse_args()
     if not 1 <= args.proxy_port <= 65535 or not 1 <= args.timeout <= 15:
         parser.error("invalid proxy port or timeout")
     def request(url, **kwargs):
         return fetch(args.proxy_port, url, timeout=args.timeout, **kwargs)
     result = assess(request)
+    result["transport"] = "mihomo"
+    result["identity"] = args.identity
+    result["sample_id"] = uuid.uuid4().hex
     print(json.dumps(result, separators=(",", ":"), sort_keys=True))
     return 0 if result["status"] == "PASS" else 1
 
