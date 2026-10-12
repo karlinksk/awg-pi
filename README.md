@@ -17,6 +17,8 @@ unavailable.
 
 Current stable release: **v1.2.0**
 
+**New v1.3.0 design decision:** router-route verification defaults to **event-driven**, with **no continuous MikroTik SSH polling**. RouterOS support is optional; additional auditing is triggered by setup/material route changes or a proposed switch that lacks a fresh endpoint proof. This is [accepted architecture](docs/ADR-EVENT-DRIVEN-ROUTER-ATTESTATION-v1.3.0.md) in draft PR #84, **not yet enabled in the installed gateway**.
+
 ## v1.3.0 development track
 
 v1.3.0 is the current multi-transport development line. It keeps the v1.2
