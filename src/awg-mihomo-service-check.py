@@ -157,6 +157,11 @@ def media_url_from_player(player: dict | None) -> str | None:
     for stream in formats + adaptive:
         if not isinstance(stream, dict):
             continue
+        # Audio-only bytes must NEVER prove video playback. The player must
+        # explicitly describe the selected stream as a VIDEO format.
+        mime = stream.get("mimeType")
+        if not isinstance(mime, str) or not mime.startswith("video/"):
+            continue
         url = stream.get("url")
         if isinstance(url, str) and allowed_media_url(url):
             return url
@@ -178,6 +183,26 @@ def allowed_media_url(url: str) -> bool:
                 and bool(parsed.path))
     except ValueError:
         return False
+
+
+def plausible_video_header(data: bytes) -> bool:
+    """Reject HTML and arbitrary 206 bytes; sniff only known video containers.
+
+    This confirms the start of a *video container* from an actual media URL,
+    NOT video decode or a logged-in browser playback session.
+    """
+    if not isinstance(data, bytes) or len(data) < 12:
+        return False
+    # ISO BMFF/fragmented MP4 must start with a valid sized file/segment box.
+    if data[4:8] in (b"ftyp", b"styp") and int.from_bytes(data[:4], "big") >= 12:
+        return True
+    # Matroska/WebM EBML header magic.
+    if data.startswith(b"\x1a\x45\xdf\xa3"):
+        return True
+    # H.264-in-MPEG-TS: demand at least three sync points, not one arbitrary 0x47.
+    if len(data) >= 377 and all(data[n] == 0x47 for n in (0, 188, 376)):
+        return True
+    return False
 
 
 def youtube_probe(request: Callable) -> Result:
@@ -223,8 +248,10 @@ def youtube_probe(request: Callable) -> Result:
             max_bytes=MAX_MEDIA_BYTES)
         if not allowed_media_url(final_url):
             return Result("UNKNOWN", "youtube_media_unexpected_redirect")
-        if code == 206 and len(data) > 0:
-            return Result("PASS", "youtube_video_media_range")
+        if code == 206 and plausible_video_header(data):
+            return Result("PASS", "youtube_video_container_header_verified")
+        if code == 206:
+            return Result("UNKNOWN", "youtube_video_container_unverified")
         if code in (403, 451):
             # A signed URL can expire or require a playback/PO token. A
             # single video's CDN rejection cannot prove all YouTube is down.
