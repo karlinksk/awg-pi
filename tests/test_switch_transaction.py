@@ -27,8 +27,12 @@ def source(transport="mihomo", node="A", awg="PASS", mihomo="FAIL"):
     now = int(time.time())
     warm = {"mode": "SHADOW_ONLY", "provider_sha256": "provider-test",
             "generated_at": now, "warm": ["B", "C"],
-            "entries": {name: {**proof("mihomo", name), "fingerprint": "f"*64}
-                        for name in ("B", "C")}}
+            "entries": {name: {
+                **proof("mihomo", name), "fingerprint": "f"*64,
+                "underlay": {"mode": "DIRECT", "scope": "END_TO_END",
+                             "reason": "router_underlay_verified",
+                             "router_verified": True}}
+                for name in ("B", "C")}}
     return {"version": 1, "generated_at": now,
             "main": {"transport": transport, "node": node},
             "selection": {"mode": "auto", "priority": ["mihomo", "awg"],
@@ -151,6 +155,23 @@ class TransactionTests(unittest.TestCase):
                                              evidence, backend)
         self.assertEqual(result.status, "BLOCKED")
         self.assertNotIn("prepare", backend.actions)
+
+    def test_assisted_aws_node_is_never_promoted(self):
+        fixture = source()
+        fixture["standby"]["entries"]["B"]["underlay"]["mode"] = "ASSISTED_AWG"
+        fixture["standby"]["entries"]["C"]["underlay"]["mode"] = "UNKNOWN"
+        result = tx.execute_mock_transaction(
+            recommendation("SELECT_NODE", "B"), fixture, FakeBackend())
+        self.assertEqual(result.status, "BLOCKED")
+
+    def test_pi_local_eth0_route_is_not_router_direct_attestation(self):
+        fixture = source()
+        fixture["standby"]["entries"]["B"]["underlay"] = {
+            "mode": "DIRECT_LOCAL_UNVERIFIED", "scope": "PI_ONLY",
+            "reason": "lan_next_hop_router_not_verified", "router_verified": False}
+        result = tx.execute_mock_transaction(
+            recommendation("SELECT_NODE", "B"), fixture, FakeBackend())
+        self.assertEqual(result.status, "BLOCKED")
 
     def test_provider_stale_cache_blocks_node(self):
         evidence = source()
