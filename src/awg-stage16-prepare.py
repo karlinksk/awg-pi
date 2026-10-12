@@ -5,6 +5,7 @@ Only read protected provider and the fresh live pool. Never configure routes,
 change selected node, expose raw subscription, or open a network socket.
 """
 from __future__ import annotations
+import argparse
 import collections
 import hashlib
 import importlib.util
@@ -140,6 +141,10 @@ def write_config(*, item:dict, dirpath:Path=DEST):
 
 def main():
     try:
+        parser=argparse.ArgumentParser()
+        parser.add_argument("--target",choices=("shadowsocks-27307","shadowsocks-415241978"))
+        args=parser.parse_args()
+        expected=tuple(item for item in TARGETS if args.target is None or item[0]==args.target)
         if os.geteuid()!=0: raise Denied("ROOT_PREPARATION_REQUIRED")
         if DEST.exists():raise Denied("STAGING_ALREADY_PRESENT")
         helper=load("stage16_pool","awg-mihomo-pool.py")
@@ -154,8 +159,10 @@ def main():
         raw=helper.read_provider(PROVIDER)
         policy=helper.read_policy_values()
         candidates=prepare(pool=pool,raw=raw,policy=policy,
-                           trial=trial,provenance=provenance)
-        if len(candidates)!=2:raise Denied("EXACTLY_TWO_REQUIRED")
+                           trial=trial,provenance=provenance,
+                           expected_names=expected)
+        if len(candidates)!=len(expected):
+            raise Denied("EXPECTED_CANDIDATE_COUNT_MISMATCH")
         for i,item in enumerate(candidates):
             # Atomic stage root-only directory on first write; rest reuse it.
             if i==0:
