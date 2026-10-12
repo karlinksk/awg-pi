@@ -54,6 +54,7 @@ class FakeBackend:
                       "route": "dev mihomo0" if transport == "mihomo" else "dev awg0"}
         self.lock_available = True
         self.prepare_ok = True
+        self.evidence_ok = True
         self.preflight_ok = True
         self.apply_ok = True
         self.postflight_ok = True
@@ -69,6 +70,9 @@ class FakeBackend:
         return self.lock_available
     def release_action_gate(self):
         self.actions.append("unlock")
+    def confirm_recent_evidence(self, advice, evidence):
+        self.actions.append("verify_evidence")
+        return self.evidence_ok
     def prepare(self, action, target):
         self.actions.append("prepare")
         if self.prepare_changes_route:
@@ -92,6 +96,7 @@ class FakeBackend:
         self.actions.append("restore")
         if self.restore_ok:
             self.state = dict(original)
+        return self.restore_ok
     def force_fail_closed(self):
         self.actions.append("fail_closed")
         self.fenced = True
@@ -107,7 +112,7 @@ class TransactionTests(unittest.TestCase):
         self.assertEqual(result.status, "COMMITTED")
         self.assertEqual(backend.state["node"], "B")
         self.assertEqual(backend.state["route"], "dev mihomo0")
-        self.assertEqual(backend.actions, ["gate", "prepare", "preflight",
+        self.assertEqual(backend.actions, ["gate", "verify_evidence", "prepare", "preflight",
                                           "apply", "postflight", "unlock"])
 
     def test_awg_fallback_commit_after_mihomo_spares_exhausted(self):
@@ -118,6 +123,25 @@ class TransactionTests(unittest.TestCase):
         result = tx.execute_mock_transaction(advice, evidence, backend)
         self.assertEqual(result.status, "COMMITTED")
         self.assertEqual(backend.state["route"], "dev awg0")
+
+    def test_forged_advisory_cannot_skip_independent_confirmation(self):
+        backend = FakeBackend()
+        backend.evidence_ok = False
+        verdict = tx.execute_mock_transaction(recommendation("SELECT_NODE", "B"),
+                                              source(), backend)
+        self.assertEqual((verdict.status, verdict.reason),
+                         ("BLOCKED", "independent_evidence_unconfirmed"))
+        self.assertNotIn("prepare", backend.actions)
+        self.assertEqual(backend.state["route"], "dev mihomo0")
+
+    def test_preflight_abort_failed_requires_fail_closed(self):
+        backend = FakeBackend()
+        backend.preflight_ok = False
+        backend.restore_ok = False
+        verdict = tx.execute_mock_transaction(recommendation("SELECT_NODE", "B"),
+                                              source(), backend)
+        self.assertEqual(verdict.status, "FAIL_CLOSED_REQUIRED")
+        self.assertEqual(backend.state["route"], "unreachable")
 
     def test_wrong_awk_qualification_blocked_without_prepare(self):
         evidence = source(awg="UNKNOWN")
