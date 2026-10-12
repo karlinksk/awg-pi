@@ -150,6 +150,36 @@ class StandbyTests(unittest.TestCase):
         self.assertEqual(standby.report(state)["status"], "STALE")
         self.assertEqual(standby.report(state)["warm"], [])
 
+    def test_next_scan_respects_oldest_warm_cache_ttl(self):
+        t = int(time.time())
+        entries = {"A": {"checked_at": t-120}, "B": {"checked_at": t-10}}
+        self.assertEqual(standby.next_interval(entries, ["A", "B"], t, 180, 0), 45)
+        self.assertEqual(standby.next_interval(entries, [], t, 180, 2), 60)
+
+    def test_watch_uses_adaptive_interval_and_does_not_switch_transport(self):
+        waits, scanned = [], []
+        def scan_stub():
+            scanned.append("scan")
+            return {"mode": "SHADOW_ONLY", "generated_at": int(time.time()),
+                    "ttl_seconds": 180, "warm": [],
+                    "suggested_interval_seconds": 45}
+        standby.watch(scanner=scan_stub, sleeper=waits.append, max_cycles=2)
+        self.assertEqual(scanned, ["scan", "scan"])
+        self.assertEqual(waits, [45])
+
+    def test_watch_recovers_from_probe_errors_without_stop_restart(self):
+        waits, calls = [], []
+        def scan_stub():
+            calls.append("probe")
+            if len(calls) <= 2:
+                raise RuntimeError("offline")
+            return {"mode": "SHADOW_ONLY", "generated_at": int(time.time()),
+                    "ttl_seconds": 180, "warm": [],
+                    "suggested_interval_seconds": 120}
+        standby.watch(scanner=scan_stub, sleeper=waits.append, max_cycles=3)
+        self.assertEqual(len(calls), 3)
+        self.assertEqual(waits, [30, 60])
+
     def test_no_candidates_does_not_launch_probe_instance(self):
         fake_helper = types.SimpleNamespace(
             read_policy_values=lambda: ("all", "all"),
