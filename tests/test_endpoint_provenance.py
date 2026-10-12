@@ -78,6 +78,29 @@ class ProvenanceTests(unittest.TestCase):
                       router_verified=True)
         self.assertTrue(m.proved_direct(forged))
 
+    def test_gateway_lan_reconfigure_is_respected(self):
+        import tempfile
+        with tempfile.TemporaryDirectory(dir="/dev/shm") as tmp:
+            f=Path(tmp) / "env"
+            f.write_text("LAN_IF='eth1'\nROUTER_IP='192.168.2.1'\n")
+            self.assertEqual(m.configured_lan(f), ("eth1","192.168.2.1"))
+            f.write_text("LAN_IF='eth0'\nROUTER_IP='192.168.2.1'\n")
+            self.assertEqual(m.configured_lan(f), ("eth0","192.168.2.1"))
+
+    def test_invalid_or_executable_gateway_env_never_evaluated(self):
+        import tempfile
+        with tempfile.TemporaryDirectory(dir="/dev/shm") as tmp:
+            f=Path(tmp) / "env"
+            f.write_text("LAN_IF='eth0'\nROUTER_IP='$(touch /tmp/unsafe)'\n")
+            with self.assertRaises(ValueError):
+                m.configured_lan(f)
+
+    def test_missing_runtime_lan_env_makes_path_unknown(self):
+        with patch.object(m, "configured_lan", side_effect=OSError("not available")):
+            result=m.classify(node())
+            self.assertEqual((result["mode"],result["reason"]),
+                             ("UNKNOWN","lan_policy_unavailable"))
+
     def test_injected_route_never_executes_shell(self):
         with patch.object(m.subprocess, "run", side_effect=AssertionError("no shell")):
             self.assertEqual(m.classify(node(), route_get=route)["mode"],
