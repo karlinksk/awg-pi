@@ -41,10 +41,38 @@ def cases(api=(401, b'{"error":{"message":"Missing bearer authentication"}}'),
 
 
 class ServiceGateTests(unittest.TestCase):
-    def test_both_services_and_actual_video_range_pass(self):
-        result = gate.assess(cases())
+    def test_all_services_and_decoded_video_frame_pass(self):
+        result = gate.assess(cases(), frame_verifier=lambda: {
+            "state": "PASS", "reason": "youtube_first_video_frame_decoded",
+            "method": "video_frame_decode", "shadow_only": True})
         self.assertEqual(result["status"], "PASS")
-        self.assertEqual(result["checks"]["youtube_video"]["reason"], "youtube_video_container_header_verified")
+        self.assertEqual(result["checks"]["youtube_video"]["reason"],
+                         "youtube_first_video_frame_decoded")
+
+    def test_http_206_container_header_alone_is_not_playback(self):
+        result = gate.assess(cases())
+        self.assertEqual(result["status"], "UNKNOWN")
+        self.assertEqual(result["checks"]["youtube_video"]["reason"],
+                         "youtube_video_container_only")
+
+    def test_verifier_fake_success_not_allowed(self):
+        result = gate.assess(cases(), frame_verifier=lambda: {
+            "state": "PASS", "reason": "got_200_webpage",
+            "method": "webpage", "shadow_only": True})
+        self.assertEqual(result["status"], "UNKNOWN")
+
+    def test_sabr_can_only_pass_with_decoded_video(self):
+        sabr = "https://rr3---sn-test.googlevideo.com/videoplayback?sabr=1"
+        page = ("ytInitialPlayerResponse = " + json.dumps({
+            "playabilityStatus":{"status":"OK"},
+            "streamingData":{"serverAbrStreamingUrl":sabr}})).encode()
+        passed = gate.assess(cases(watch=(200,page)), frame_verifier=lambda: {
+            "state": "PASS", "reason": "youtube_first_video_frame_decoded",
+            "method": "video_frame_decode", "shadow_only": True})
+        self.assertEqual(passed["status"], "PASS")
+        unverified = gate.assess(cases(watch=(200,page)))
+        self.assertEqual(unverified["status"], "UNKNOWN")
+
 
     def test_arbitrary_http_206_bytes_are_not_real_video(self):
         result = gate.assess(cases(media=(206, b"x")))
