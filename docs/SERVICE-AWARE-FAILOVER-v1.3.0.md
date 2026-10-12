@@ -169,3 +169,24 @@ Critical integration caveat: the *existing* `awg-transport select` acquires `/ru
 Remaining before real activation: connect the fast urgent flag to a bounded immediate full-service recheck; robust video and ChatGPT WAF qualification for actual service availability (AWG remains UNKNOWN); build and separately verify a real single-writer route action adapter with live forwarding-plane postcheck, emergency fail-closed guard and rollback; prove Selective/Transit no-leak, MikroTik SSTP independence and P50/P95 recovery; repair failing Mihomo provider auto-refresh. Draft PR #84 must not be merged or deployed as automatic switching until these pass.
 
 Additional fast-alarm hardening: two consecutive distinct REGION_BLOCKED samples must arrive within 45 seconds; an older prior block, reboot, node change or UNKNOWN cannot resurrect a stale alarm. The read-only `show` path also suppresses any urgent indication after the age/boot limit. All timestamps and intervals remain configurable proposals until field validation.
+
+
+## Stage 6 — real YouTube SABR diagnosis and stricter pre-switch proof
+
+Read-only checks on Raspberry Pi on 2026-10-12 revealed that YouTube's current watch page via `awg0` returns HTTP 200 and `playabilityStatus=OK` with 14 adaptive format descriptors, but **none with a directly downloadable media URL**. Instead the player provides `serverAbrStreamingUrl` (SABR/UMP) and `probeUrl` (a signed `/videogoodput` CDN diagnostic). This is a player/protocol feature, **not evidence of country blocking**. No video was decoded or downloaded as actual media in this experiment.
+
+The shared `awg-mihomo-service-check.py` now:
+
+- Parses the player object safely, validates `playabilityStatus`, and explicitly detects SABR rather than conflating it with a missing video or broken YouTube.
+- Optionally reads at most 1 KiB through the same VPN of the `/videogoodput` URL to distinguish CDN network reachability from missing media; **a goodput response is never an actual-video PASS**.
+- Keeps SABR as `UNKNOWN/youtube_sabr_media_unverified` or `UNKNOWN/youtube_sabr_cdn_reachable_media_unverified` until actual media can be verified reliably.
+- A single signed media URL HTTP 403/451 (expiration, playback token or one video's restrictions) is now `UNKNOWN`, not an automatic YouTube-wide FAIL. Actual HTTP 206 media bytes from a validated direct video URL can still PASS. A single `LOGIN_REQUIRED` video remains UNKNOWN (not a global outage).
+- Refuses unsupported/malformed format descriptors rather than throwing or promoting any guessed URL.
+
+The AWG-bound DNS-over-HTTPS client now validates the **echoed DNS question's hostname, A/IN class and truncation flags**, preventing a valid-looking response to an unrelated question from being accepted as current service evidence. Real AWG probe after the change still returns OpenAI API PASS, ChatGPT web 403 UNKNOWN and YouTube SABR media UNKNOWN; `table 100` remained `default dev mihomo0`.
+
+Mock-only `awg-switch-transaction.py` was also strengthened: an independently implemented future execution backend must explicitly confirm *two distinct fresh failure observations* and requalify the target under the separate action gate; a standalone advisory JSON can never authorize itself. A failed preflight attempts to abort/restore preparatory state and, when restoration cannot be verified, returns `FAIL_CLOSED_REQUIRED`. No real fail-closed command is run by this model.
+
+**Verification:** 152 Python tests PASS on the Pi's temporary RAM checkout after these changes, including fresh SABR/media and DNS mismatch regression tests. Production services, routes, SSTP and MikroTik have not been changed. The PR remains DRAFT and **no automatic service-aware switching is safe yet**.
+
+**Remaining gating item:** a maintained, low-cost SABR/UMP *actual media* verification implementation or separately validated playback test. Treating SABR metadata or `/videogoodput` as media proof is prohibited. ChatGPT web HTTP 403 still requires a more reliable WAF/geo vs user-session distinction. Do not weaken the all-PASS gate merely to accelerate rollout.
