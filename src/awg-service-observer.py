@@ -173,19 +173,82 @@ def evaluate_document(input_doc: dict, previous: dict | None = None, *,
     return output, asdict(updated)
 
 
+def state_identity(document: dict) -> str:
+    """Reboot/configuration/new node invalidates cached failure streaks."""
+    fields = {"main": document.get("main", {}),
+              "selection": document.get("selection", {}),
+              "node_policy": document.get("node_policy", {}),
+              "provider_sha256": document.get("provider_sha256", "")}
+    return hashlib.sha256(json.dumps(fields, sort_keys=True,
+                                     ensure_ascii=False).encode()).hexdigest()
+
+
+def boot_id() -> str:
+    try:
+        return Path("/proc/sys/kernel/random/boot_id").read_text().strip()
+    except OSError:
+        return "unknown"
+
+
+def read_advisory_state(path: Path, identity: str, boot: str) -> dict:
+    try:
+        if path.stat().st_size > 8192:
+            return {}
+        record = json.loads(path.read_text("utf-8"))
+        if (not isinstance(record, dict) or
+                record.get("identity") != identity or
+                record.get("boot_id") != boot or
+                not isinstance(record.get("memory"), dict)):
+            return {}
+        return record["memory"]
+    except (OSError, ValueError, TypeError):
+        return {}
+
+
+def save_advisory_state(path: Path, identity: str, boot: str, memory: dict) -> None:
+    """Atomic RAM-only shadow counters. NEVER stores route selector commands."""
+    if not str(path).startswith("/run/awg-pbr/"):
+        raise ValueError("advisory state must be under /run/awg-pbr")
+    path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    fd, temp = tempfile.mkstemp(prefix=".observer-", dir=path.parent)
+    try:
+        os.fchmod(fd, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as stream:
+            json.dump({"identity": identity, "boot_id": boot, "memory": memory},
+                      stream, sort_keys=True, separators=(",", ":"))
+        os.replace(temp, path)
+    finally:
+        if os.path.exists(temp):
+            os.unlink(temp)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--snapshot", required=True,
                         help="JSON fixture containing independent service evidence")
     parser.add_argument("--memory", help="Optional prior decision counters JSON")
+    parser.add_argument("--state-file",
+                        help="Optional RAM-only observer counters for advisory mode")
     parser.add_argument("--ttl", type=int, default=DEFAULT_TTL)
     args = parser.parse_args()
     if not 15 <= args.ttl <= 600:
         parser.error("TTL must be 15..600s")
-    snapshot = json.loads(Path(args.snapshot).read_text(encoding="utf-8"))
-    previous = (json.loads(Path(args.memory).read_text(encoding="utf-8"))
+    if args.memory and args.state_file:
+        parser.error("--memory and --state-file are mutually exclusive")
+    input_path = Path(args.snapshot)
+    if input_path.stat().st_size > 262144:
+        raise ValueError("observer snapshot too large")
+    snapshot = json.loads(input_path.read_text(encoding="utf-8"))
+    state_path = Path(args.state_file) if args.state_file else None
+    identity = state_identity(snapshot)
+    current_boot = boot_id()
+    previous = (read_advisory_state(state_path, identity, current_boot)
+                if state_path else
+                json.loads(Path(args.memory).read_text(encoding="utf-8"))
                 if args.memory else {})
     result, updated = evaluate_document(snapshot, previous, ttl=args.ttl)
+    if state_path:
+        save_advisory_state(state_path, identity, current_boot, updated)
     print(json.dumps({"decision": result, "next_memory": updated}, sort_keys=True))
     return 0
 
