@@ -30,10 +30,39 @@ class Result:
     reason: str
 
 
+def allowed_probe_url(url: str) -> bool:
+    # Static HTTPS origins only. Dynamic Googlevideo media URLs must be
+    # validated BEFORE connecting or following their redirects.
+    if len(url) > 8192:
+        return False
+    try:
+        parsed = urllib.parse.urlsplit(url)
+        host = (parsed.hostname or "").lower()
+        return (
+            parsed.scheme == "https"
+            and not parsed.username and not parsed.password
+            and (parsed.port is None or parsed.port == 443)
+            and (host in ("api.openai.com", "chatgpt.com",
+                          "auth.openai.com", "login.openai.com",
+                          "openai.com", "www.youtube.com", "youtube.com")
+                 or allowed_media_url(url)))
+    except ValueError:
+        return False
+
+
+class RestrictedRedirects(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        if not allowed_probe_url(newurl):
+            raise ValueError("unapproved probe redirect")
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
 def fetch(proxy_port: int, url: str, *, timeout: float = 6.0,
           headers: dict | None = None, max_bytes: int = MAX_WEB_BYTES) -> tuple[int, bytes, str]:
     if not (1 <= proxy_port <= 65535):
         raise ValueError("invalid loopback proxy port")
+    if not allowed_probe_url(url):
+        raise ValueError("unapproved probe URL")
     # ProxyHandler's default implementation obeys NO_PROXY (including "*"),
     # which would silently bypass Mihomo. Force the loopback proxy for every
     # request, including HTTPS redirects, regardless of process environment.
@@ -45,7 +74,7 @@ def fetch(proxy_port: int, url: str, *, timeout: float = 6.0,
     proxy = f"http://127.0.0.1:{proxy_port}"
     opener = urllib.request.build_opener(
         ForcedLoopbackProxy({"http": proxy, "https": proxy}),
-        urllib.request.HTTPSHandler())
+        RestrictedRedirects(), urllib.request.HTTPSHandler())
     request = urllib.request.Request(
         url, headers={"User-Agent": "Mozilla/5.0 AWG-Service-Probe",
                       "Accept": "*/*", **(headers or {})})
@@ -88,6 +117,10 @@ def chatgpt_web_probe(request: Callable) -> Result:
                     b"cf-challenge", b"just a moment...", b"cf-turnstile",
                     b"verify you are human")):
                 return Result("UNKNOWN", "chatgpt_web_challenge")
+            if host != "chatgpt.com":
+                return Result("UNKNOWN", "chatgpt_web_login_only")
+            if b"chatgpt" not in preview or b"<html" not in preview:
+                return Result("UNKNOWN", "chatgpt_web_content_unverified")
             return Result("PASS", "chatgpt_web_http_200")
         # 403 can be Cloudflare challenge rather than an IP-level restriction.
         if code == 403:
