@@ -34,6 +34,20 @@ def load_provenance():
 PROVENANCE = load_provenance()
 
 
+def load_service_qualifier():
+    loader = importlib.machinery.SourceFileLoader(
+        "awg_observer_service_qualifier",
+        str(Path(__file__).with_name("awg-node-qualification.py")))
+    spec = importlib.util.spec_from_loader(loader.name, loader)
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = mod
+    loader.exec_module(mod)
+    return mod
+
+
+QUALIFIER = load_service_qualifier()
+
+
 def load_policy():
     loader = importlib.machinery.SourceFileLoader("awg_dry_run_policy", str(POLICY_PY))
     spec = importlib.util.spec_from_loader(loader.name, loader)
@@ -116,6 +130,8 @@ def standby_ready(node_state: object, *, now: int, ttl: int = DEFAULT_TTL,
         checked, sample = checked_status(row, now=now, transport="mihomo",
                                          ttl=ttl, identity=name)
         if checked != "PASS" or not sample:
+            continue
+        if not QUALIFIER.ready_entry(row, now=now, ttl=ttl):
             continue
         # A service PASS via an AWG-assisted or unknown underlay is not a
         # deployable DIRECT hot spare. Pi-local eth0 is not enough either.
