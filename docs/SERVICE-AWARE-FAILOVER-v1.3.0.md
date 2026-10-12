@@ -394,3 +394,18 @@ User's third operator-sudo trial printed: both protected provider files present 
 - The current one-shot root preparer carries forward the <=480KB private /run shortlist and systemd LoadCredential=selection boundary; no persistent changes, router edits, SSTP changes or sudoers expansion.
 
 **Verification:** 310 Python offline tests PASS, 3 safe shell selector mocks PASS, shell syntax and `systemd-analyze verify` PASS. **Two-round live measurements have NOT yet run** at the time of this code commit, and no interactive ChatGPT session / actual YouTube frame success is claimed. PR remains draft.
+
+
+### Stage 14 — confirmed two-round field trial on the real Pi (2026-10-12)
+
+The operator executed the limited, nonroot, one-shot trial in real deployment (no permanent installation). systemd: `Result=success`, `ExecMainStatus=0`, `MIHOMO_POOL_READY=3/3` **on both independently spawned Mihomo instances**. Total 18.8s, 6 service samples (3 nodes × 2 rounds), about 2.318s systemd CPU usage. Both rounds produced the **same** service classifications and reason codes:
+
+| Anonymized candidate | Protocol | OpenAI API (both rounds) | ChatGPT Web (both rounds) | YouTube (both rounds) |
+|---|---|---|---|---|
+| 584c2a4879d5 | SS | FAIL: unsupported region | UNKNOWN: HTTP 403 | UNKNOWN: timeout |
+| 623ac0222680 | SS | PASS: HTTP 401 authentication required | UNKNOWN: challenge HTTP 403 | UNKNOWN: SABR media not verified |
+| dac635c43fcf | SS | PASS: HTTP 401 authentication required | UNKNOWN: challenge HTTP 403 | UNKNOWN: player not confirmed playable |
+
+The third node changed relative to the previous stage due to live pool refresh/priority; do **not** equate `dac635c43fcf` with the Stage 13 VLESS candidate. ChatGPT WAF/403 is NOT evidence of how an interactive logged-in browser would behave; API HTTP 401 is NOT authenticated ChatGPT proof; YouTube SABR or playability metadata does NOT prove decoded media. The media frame decoder was not enabled. **Zero nodes** are `SERVICE_READY` or `ROUTE_VERIFIED`.
+
+Postflight inspection: transient systemd unit, `/usr/local/lib/awg-pbr-stage13`, and selected private credential all absent. Production active Mihomo healthy, gateway UP, Transit ACTIVE, guard SAFE, table100 `default dev mihomo0`, AWG/Mihomo units active, SSTP and MikroTik untouched. Detailed findings recorded in Issue #83. PR #84 remains DRAFT; no auto-switch or deployment of Stage 14 scanner.
