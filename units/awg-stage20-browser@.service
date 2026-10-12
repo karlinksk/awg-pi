@@ -1,0 +1,45 @@
+[Unit]
+Description=AWG isolated temporary ChatGPT browser proxy on loopback port %i
+After=network-online.target
+Wants=network-online.target
+ConditionPathExists=/run/awg-pbr/stage16-media/proxy-%i.yaml
+
+[Service]
+Type=simple
+DynamicUser=yes
+User=awg-stage20-browser
+Group=awg-stage20-browser
+LoadCredential=proxy:/run/awg-pbr/stage16-media/proxy-%i.yaml
+RuntimeDirectory=awg-stage20-%i
+RuntimeDirectoryMode=0700
+ExecStart=/usr/local/bin/mihomo -d %t/awg-stage20-%i -f %d/proxy
+Restart=no
+RuntimeMaxSec=720
+TimeoutStopSec=5s
+KillMode=control-group
+UMask=0077
+MemoryMax=160M
+CPUQuota=65%
+TasksMax=24
+Nice=12
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+ProtectSystem=strict
+ProtectHome=yes
+ProtectProc=invisible
+ProtectKernelTunables=yes
+ProtectControlGroups=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectClock=yes
+RestrictSUIDSGID=yes
+RestrictRealtime=yes
+LockPersonality=yes
+RestrictAddressFamilies=AF_UNIX AF_INET
+InaccessiblePaths=/var/lib/awg-pbr /etc/awg-pbr /run/awg-pbr
+Environment=PYTHONDONTWRITEBYTECODE=1
+StandardInput=null
+StandardOutput=null
+StandardError=null
+# No Install; never grant TUN, NET_ADMIN or modify routing.
