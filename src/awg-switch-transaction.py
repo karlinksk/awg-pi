@@ -79,7 +79,9 @@ def allowed_action(advice: dict, evidence: dict, backend: Any) -> tuple[bool, st
 
     warmed = module.standby_ready(
         evidence.get("standby"), now=now, ttl=ttl,
-        provider_sha=evidence.get("provider_sha256", ""))
+        provider_sha=evidence.get("provider_sha256", ""),
+        router_generation=evidence.get("router_generation"),
+        router_boot_id=evidence.get("router_boot_id", ""))
     if action == "SELECT_TRANSPORT":
         if target not in ("awg", "mihomo") or target == existing["transport"]:
             return False, "invalid_transport_target"
