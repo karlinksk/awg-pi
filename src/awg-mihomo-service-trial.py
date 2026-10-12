@@ -148,6 +148,52 @@ def select(pool: dict, raw: list[dict], *, region: str = "all",
     return result
 
 
+# Exact allowlist: only fixed, reviewed status categories can leave the
+# protected, ephemeral service runner. Raw network exceptions can contain
+# private endpoints, media URLs, TLS names and signed tokens.
+ALLOWED_REASONS = {
+    "openai_api": {"openai_unsupported_region",
+                   "openai_api_auth_required"} |
+                  {"openai_api_http_" + str(code) for code in
+                   (200, 301, 302, 400, 401, 403, 404, 429, 451, 500, 502, 503)},
+    "chatgpt_web": {"chatgpt_unexpected_redirect",
+                    "chatgpt_web_challenge",
+                    "chatgpt_web_login_only",
+                    "chatgpt_web_content_unverified",
+                    "chatgpt_public_shell_only",
+                    "chatgpt_web_403_challenge"} |
+                   {"chatgpt_web_http_" + str(code) for code in
+                    (200, 301, 302, 400, 401, 403, 404, 429, 451, 500, 502, 503)},
+    "youtube_video": {
+        "youtube_player_data_missing", "youtube_player_not_confirmed_playable",
+        "youtube_media_url_unavailable", "youtube_sabr_media_unverified",
+        "youtube_sabr_cdn_reachable_media_unverified", "youtube_media_unexpected_redirect",
+        "youtube_video_container_only", "youtube_video_container_unverified",
+        "youtube_first_video_frame_decoded", "youtube_video_decode_unverified",
+        "youtube_media_http_403_unconfirmed", "youtube_media_http_451_unconfirmed",
+    } | {"youtube_watch_http_" + str(code) for code in
+         (200, 301, 302, 400, 401, 403, 404, 429, 451, 500, 502, 503)} |
+        {"youtube_media_http_" + str(code) for code in
+         (200, 206, 301, 302, 400, 401, 403, 404, 429, 451, 500, 502, 503)},
+}
+for _part in ALLOWED_REASONS:
+    ALLOWED_REASONS[_part].update(
+        ("youtube" if _part == "youtube_video" else _part) + "_" + reason
+        for reason in (
+            "timeout", "dns_unavailable", "tls_unverified",
+            "connection_refused", "connection_closed", "invalid_response",
+            "network_unknown"))
+
+
+def safe_reason(check: str, state: str, reason: object) -> str:
+    if (not isinstance(reason, str) or
+            reason not in ALLOWED_REASONS.get(check, set())):
+        return "unclassified"
+    if check == "youtube_video" and reason == "youtube_first_video_frame_decoded":
+        return reason if state == "PASS" else "unclassified"
+    return reason
+
+
 def sanitized(raw_result: dict, chosen: list[dict], *,
               provider_sha: str, elapsed: float) -> dict:
     """Emit only per-service result states and a hashed ephemeral node id."""
@@ -160,6 +206,10 @@ def sanitized(raw_result: dict, chosen: list[dict], *,
             record = checks.get(label, {}) if isinstance(checks,dict) else {}
             status = record.get("state") if isinstance(record,dict) else "UNKNOWN"
             clean[label] = status if status in ("PASS","FAIL","UNKNOWN") else "UNKNOWN"
+            # This trial NEVER runs the decoded-frame sidecar. Even if a
+            # caller supplies PASS, the trace must not claim YouTube playback.
+            if label == "youtube_video" and clean[label] == "PASS":
+                clean[label] = "UNKNOWN"
         # The identity is derived from the provider-verified name, no credentials.
         identity = hashlib.sha256(node["name"].encode("utf-8")).hexdigest()[:12]
         nominal = ("PASS" if all(v=="PASS" for v in clean.values())
@@ -170,12 +220,20 @@ def sanitized(raw_result: dict, chosen: list[dict], *,
                   isinstance(r.get("sample_id"),str) and
                   re.fullmatch(r"[a-zA-Z0-9_.:-]{1,128}",r["sample_id"]) and
                   r.get("status")==nominal)
+        reasons = {}
+        for label in ("openai_api", "chatgpt_web", "youtube_video"):
+            record = checks.get(label, {}) if isinstance(checks, dict) else {}
+            reasons[label] = safe_reason(label, clean[label],
+                                         record.get("reason") if isinstance(record, dict)
+                                         else None)
         if not actual:
             nominal = "UNKNOWN"
             clean={name:"UNKNOWN" for name in clean}
+            reasons={name:"unclassified" for name in reasons}
         output.append({"candidate_id":identity,
                        "protocol":node["type"],
                        "checks":clean,
+                       "reason_codes":reasons,
                        "service_single_sample":nominal,
                        "service_ready":False,
                        "routing_qualified":False})
@@ -191,8 +249,8 @@ def sanitized(raw_result: dict, chosen: list[dict], *,
             "results":output}
 
 
-def run(*, limit:int=3, timeout:float=3.0) -> dict:
-    if not 1<=limit<=MAX_CANDIDATES or not 1<=timeout<=5:
+def run(*, limit:int=3, timeout:float=3.0, rounds:int=2) -> dict:
+    if not 1<=limit<=MAX_CANDIDATES or not 1<=timeout<=5 or rounds not in (1,2):
         raise ValueError("unsupported trial budget")
     files = credential_paths()
     envelope = json.loads(files["selection"].read_text("utf-8"))
@@ -228,27 +286,54 @@ def run(*, limit:int=3, timeout:float=3.0) -> dict:
     if (boot_before != envelope.get("boot_id")
             or gen_before != envelope.get("route_generation")):
         raise ValueError("runtime changed after credential preparation")
-    start=time.monotonic()
-    output=standby.probe_candidates(chosen,raw,helper,service,
-                                    timeout=timeout,
-                                    deadline=start+min(TIME_LIMIT,15+limit*25))
-    # This is a ONE-SAMPLE shadow report, never candidate admission. A boot
-    # or local router generation change cancels every observed service result.
-    if (boot_before!=standby.boot_identity()
-            or gen_before!=standby.current_generation()
-            or int(time.time()) - created > 300):
-        output={}
-    return sanitized(output,chosen,provider_sha=provider_hash,
-                     elapsed=time.monotonic()-start)
+    start = time.monotonic()
+    samples = []
+    for round_no in range(1, rounds+1):
+        # Each pass launches a completely NEW short-lived Mihomo instance.
+        # Do not reuse previously opened sockets as an independent sample.
+        if time.monotonic() >= start + TIME_LIMIT - 15:
+            break
+        round_start = time.monotonic()
+        output=standby.probe_candidates(
+            chosen,raw,helper,service,timeout=timeout,
+            deadline=min(start+TIME_LIMIT, round_start+15+len(chosen)*25))
+        # An external network/policy event invalidates results for this run.
+        if (boot_before!=standby.boot_identity()
+                or gen_before!=standby.current_generation()
+                or int(time.time()) - created > 300):
+            output={}
+        sample=sanitized(output,chosen,provider_sha=provider_hash,
+                         elapsed=time.monotonic()-round_start)
+        samples.append(sample)
+        if not output:
+            break
+        if round_no < rounds:
+            time.sleep(2)  # separation between genuinely distinct proxy runs
+    if not samples:
+        raise RuntimeError("no completed isolated candidate sample")
+    # The output deliberately contains observations only, never an admission.
+    return {"mode":"SHADOW_ONLY", "provider_fingerprint":provider_hash[:12],
+            "production_modified":False, "service_ready":False,
+            "routing_qualified":False, "video_decoder_used":False,
+            "candidates_selected":len(chosen),
+            "candidates_tested":max(x["candidates_tested"] for x in samples),
+            "total_service_samples":sum(x["candidates_tested"] for x in samples),
+            "rounds_requested":rounds, "rounds_executed":len(samples),
+            "duration_seconds":round(time.monotonic()-start,1),
+            "service_qualification":"OBSERVE_ONLY_NO_MEDIA_OR_BROWSER_PROOF",
+            "samples":[{"round":i+1,"results":item["results"],
+                        "duration_seconds":item["duration_seconds"]}
+                       for i,item in enumerate(samples)]}
 
 
 def main() -> int:
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--limit",type=int,default=3)
     parser.add_argument("--timeout",type=float,default=3.0)
+    parser.add_argument("--rounds",type=int,choices=(1,2),default=2)
     args=parser.parse_args()
     try:
-        data=run(limit=args.limit,timeout=args.timeout)
+        data=run(limit=args.limit,timeout=args.timeout,rounds=args.rounds)
     except (RuntimeError,PermissionError,OSError,ValueError,KeyError,TypeError):
         data={"mode":"SHADOW_ONLY","candidates_tested":0,
               "status":"UNAVAILABLE","production_modified":False}
