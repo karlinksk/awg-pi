@@ -190,3 +190,28 @@ Mock-only `awg-switch-transaction.py` was also strengthened: an independently im
 **Verification:** 152 Python tests PASS on the Pi's temporary RAM checkout after these changes, including fresh SABR/media and DNS mismatch regression tests. Production services, routes, SSTP and MikroTik have not been changed. The PR remains DRAFT and **no automatic service-aware switching is safe yet**.
 
 **Remaining gating item:** a maintained, low-cost SABR/UMP *actual media* verification implementation or separately validated playback test. Treating SABR metadata or `/videogoodput` as media proof is prohibited. ChatGPT web HTTP 403 still requires a more reliable WAF/geo vs user-session distinction. Do not weaken the all-PASS gate merely to accelerate rollout.
+
+
+## Stage 7 — underlay path provenance, DIRECT vs ASSISTED (2026-10-12)
+
+**Problem proven on real Pi:** both inspected public Mihomo endpoint IPs have `ip -4 route get` next hop `via 192.168.112.1 dev eth0` with Pi source `192.168.112.34`. This establishes only the **Pi-to-MikroTik** hop. The hAP ax² may still mark and route onward through **SSTP** or another path. An HTTP success through a Mihomo exit does **not** prove the node can connect independently of AWG or SSTP.
+
+New `src/awg-endpoint-provenance.py` inspects the precise candidate endpoint using **read-only `ip -4 route get`** (argument list, no shell, 2s limit). It neither resolves arbitrary provider hostnames nor sends packets nor changes ip rules, routes, nftables or RouterOS. Conservatively classified outcomes:
+
+- `DIRECT_LOCAL_UNVERIFIED` — Pi route uses expected `eth0` and next-hop MikroTik; **not proven end-to-end DIRECT**, no automatic promotion.
+- `ASSISTED_AWG` — candidate endpoint routes via an `awg*` interface, or provider explicitly requires an AWG interface; not usable as an independent DIRECT replacement.
+- `ASSISTED_MIHOMO` — endpoint itself is routed through Mihomo or uses a proxy-chain/`dialer-proxy`; not independent.
+- `UNKNOWN` — domain endpoint without independently verified resolution, private/unexpected IP, changed/missing route, unsupported interface or other untrusted evidence; not auto-promotable.
+- `DIRECT` with `scope=END_TO_END` and `router_verified=True` is **only a future signed/independently verified RouterOS route-policy attestation contract**, used in *offline fixtures*. **The Pi-only inspector NEVER creates this state.** No such attestor has been installed.
+
+Integrated into the read-only Hot Standby worker, AUTO SMART and the dry-run observer:
+
+1. Each Hot Standby candidate checks underlay before and after its isolated service probe and records a sanitized `underlay` field (no endpoint address/keys). If the route changes, mark UNKNOWN. A successful ChatGPT/YouTube result alone cannot enter the two-node warm list.
+2. The standby cache, observer and the mock transaction authorization reject old records missing underlay, assisted paths and Pi-local unverified paths. The future production executor must independently recheck the real endpoint and router policy **again at commit time**; a user-supplied or stale JSON claim is not authoritative.
+3. AUTO SMART records the route reason but, with no end-to-end attestation, **skips expensive speed benchmarks and any promotion recommendation** for that node. This prevents spending up to ~85 MB/full run on unverified paths. The service-aware data plane and two-stage speed scoring continue to be modeled and unit-tested with explicitly *hypothetical* certified DIRECT fixtures.
+
+**Acceptance limitation:** Because no read-only MikroTik policy attestation is currently wired, the newly hardened draft cannot produce real auto-eligible hot spares, even if Mihomo's service probe returns PASS. **This is deliberate fail-closed staging, not a completed production feature.** Never weaken `DIRECT_LOCAL_UNVERIFIED` to `DIRECT` to make tests pass. Future attestation should verify RouterOS connection/routing-mark tables, endpoint-specific bypass rules, router-side path and actual prospective production policy under the user's approved configuration, without touching existing SSTP. Explicitly decide how domain/IP-changing endpoints invalidate the proof.
+
+Read-only smoke: `194.38.11.86` and `45.86.66.170` classified `DIRECT_LOCAL_UNVERIFIED`; `example.org` and private addresses UNKNOWN. Production table 100 stayed on `mihomo0`; Transit ACTIVE, guard SAFE.
+
+**Verification:** **173 offline Python tests** pass in the Pi's isolated staging clone (including 14 new provenance cases, cached/assisted no-promotion, AUTO SMART no recommendation, mock transaction rejects unverified paths). CI and clean GitHub checkout will be checked separately. No live route/transport/MikroTik/SSTP changes. Draft PR #84 remains release-blocked by end-to-end DIRECT attestation, ChatGPT+SABR playback verification, real actuator and failover fault injection.
