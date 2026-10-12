@@ -160,8 +160,12 @@ def sanitized(raw_result: dict, chosen: list[dict], *,
                        "service_single_sample":nominal,
                        "service_ready":False,
                        "routing_qualified":False})
+    measured = sum(1 for n in chosen
+                   if isinstance(raw_result.get(n["name"]), dict)
+                   and bool(raw_result[n["name"]].get("sample_id")))
     return {"mode":"SHADOW_ONLY","provider_fingerprint":provider_sha[:12],
-            "candidates_tested":len(output),"duration_seconds":round(elapsed,1),
+            "candidates_selected":len(output),"candidates_tested":measured,
+            "duration_seconds":round(elapsed,1),
             "service_qualification":"SINGLE_SAMPLE_ONLY",
             "video_decoder_used":False,
             "production_modified":False,
@@ -181,6 +185,9 @@ def run(*, limit:int=3, timeout:float=3.0) -> dict:
     pool=json.loads(pool_file.read_text("utf-8"))
     if not smart.fresh_pool(pool, provider_file, standby.MAX_POOL_AGE):
         raise RuntimeError("missing or stale credential-backed Mihomo pool")
+    # Avoid accidental imports of a different installed pool helper;
+    # all trial logic must match the exact audited staging bundle.
+    smart.POOL_PY = MODULE_DIR / "awg-mihomo-pool.py"
     helper=smart.load_pool_code()
     service=smart.load_service_code()
     region, protocol=helper.read_policy_values()
