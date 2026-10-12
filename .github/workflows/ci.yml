@@ -124,6 +124,7 @@ jobs:
           python3 tests/test-maintenance.py
           python3 tests/test-confirm.py
           python3 tests/test-menu.py
+          python3 -m unittest discover -s tests -p 'test_*.py' -q
 
   awg-v31:
     runs-on: ubuntu-latest
