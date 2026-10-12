@@ -1,13 +1,15 @@
 #!/usr/bin/env python3
 """Conservative, read-only service eligibility probes through a loopback Mihomo proxy.
 
-PASS requires BOTH OpenAI region/API and ChatGPT web access, PLUS a YouTube
-watch page and an actual small byte range from a video media endpoint.
+PASS requires actual service evidence; HTML alone and HTTP 206 alone are
+NOT evidence of authenticated ChatGPT or a playable YouTube video frame.
 UNKNOWN is never promoted to PASS. No selector, routes or configuration are changed.
 """
 from __future__ import annotations
 
 import argparse
+import socket
+import ssl
 import json
 import re
 import time
@@ -29,6 +31,31 @@ MAX_MEDIA_BYTES = 1024
 class Result:
     state: str
     reason: str
+
+
+def safe_network_reason(error: Exception, prefix: str) -> str:
+    """Finite, privacy-preserving error categories; never print exception text.
+
+    Domain names, signed URLs, endpoint IPs and proxy credentials may appear
+    in original exceptions. Only known exception *types* leave this module.
+    """
+    if isinstance(error, urllib.error.URLError):
+        cause = error.reason
+    else:
+        cause = error
+    if isinstance(cause, (TimeoutError, socket.timeout)):
+        return prefix + "_timeout"
+    if isinstance(cause, socket.gaierror):
+        return prefix + "_dns_unavailable"
+    if isinstance(cause, ssl.SSLError):
+        return prefix + "_tls_unverified"
+    if isinstance(cause, ConnectionRefusedError):
+        return prefix + "_connection_refused"
+    if isinstance(cause, (ConnectionResetError, ConnectionAbortedError)):
+        return prefix + "_connection_closed"
+    if isinstance(cause, ValueError):
+        return prefix + "_invalid_response"
+    return prefix + "_network_unknown"
 
 
 def allowed_probe_url(url: str) -> bool:
@@ -103,7 +130,7 @@ def openai_probe(request: Callable) -> Result:
             return Result("PASS", "openai_api_auth_required")
         return Result("UNKNOWN", f"openai_api_http_{code}")
     except Exception as exc:
-        return Result("UNKNOWN", "openai_api_" + type(exc).__name__)
+        return Result("UNKNOWN", safe_network_reason(exc, "openai_api"))
 
 
 def chatgpt_web_probe(request: Callable) -> Result:
@@ -112,23 +139,27 @@ def chatgpt_web_probe(request: Callable) -> Result:
         host = (urllib.parse.urlsplit(final).hostname or "").lower()
         if host not in ("chatgpt.com", "auth.openai.com", "login.openai.com", "openai.com"):
             return Result("UNKNOWN", "chatgpt_unexpected_redirect")
+        preview = body[:200_000].lower()
+        challenged = any(marker in preview for marker in (
+            b"cf-challenge", b"just a moment...", b"cf-turnstile",
+            b"verify you are human", b"challenge-platform"))
         if code == 200 and body:
-            preview = body[:200_000].lower()
-            if any(marker in preview for marker in (
-                    b"cf-challenge", b"just a moment...", b"cf-turnstile",
-                    b"verify you are human")):
+            if challenged:
                 return Result("UNKNOWN", "chatgpt_web_challenge")
             if host != "chatgpt.com":
                 return Result("UNKNOWN", "chatgpt_web_login_only")
             if b"chatgpt" not in preview or b"<html" not in preview:
                 return Result("UNKNOWN", "chatgpt_web_content_unverified")
-            return Result("PASS", "chatgpt_web_http_200")
-        # 403 can be Cloudflare challenge rather than an IP-level restriction.
+            # A public un-authenticated HTML shell is not evidence of
+            # account login, chat submission or fully working ChatGPT.
+            return Result("UNKNOWN", "chatgpt_public_shell_only")
+        # 403 could be a WAF/browser challenge; don't infer geo-blocking.
         if code == 403:
-            return Result("UNKNOWN", "chatgpt_web_http_403")
+            return Result("UNKNOWN", "chatgpt_web_403_challenge" if challenged
+                          else "chatgpt_web_http_403")
         return Result("UNKNOWN", f"chatgpt_web_http_{code}")
     except Exception as exc:
-        return Result("UNKNOWN", "chatgpt_web_" + type(exc).__name__)
+        return Result("UNKNOWN", safe_network_reason(exc, "chatgpt_web"))
 
 
 def player_from_html(html: bytes) -> dict | None:
@@ -277,7 +308,7 @@ def youtube_probe(request: Callable, *,
             return Result("UNKNOWN", f"youtube_media_http_{code}_unconfirmed")
         return Result("UNKNOWN", f"youtube_media_http_{code}")
     except Exception as exc:
-        return Result("UNKNOWN", "youtube_" + type(exc).__name__)
+        return Result("UNKNOWN", safe_network_reason(exc, "youtube"))
 
 
 def assess(request: Callable, *, frame_verifier: Callable | None = None) -> dict:
