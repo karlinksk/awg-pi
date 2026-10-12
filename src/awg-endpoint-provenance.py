@@ -10,6 +10,7 @@ command is performed.
 from __future__ import annotations
 
 import ipaddress
+from pathlib import Path
 import re
 import subprocess
 from typing import Callable
@@ -40,11 +41,35 @@ def route_tokens(output: str) -> dict:
     return values
 
 
+def configured_lan(env_path: Path = Path("/etc/awg-pbr/env")) -> tuple[str, str]:
+    """Read the *installed* gateway LAN policy; never execute shell from env."""
+    if env_path.stat().st_size > 16384:
+        raise ValueError("LAN configuration too large")
+    vals = {}
+    for line in env_path.read_text("utf-8").splitlines():
+        line = line.strip()
+        match = re.fullmatch(r"([A-Z_]+)=['\"]?([a-zA-Z0-9_./:-]+)['\"]?", line)
+        if match and match.group(1) in ("LAN_IF", "ROUTER_IP"):
+            vals[match.group(1)] = match.group(2)
+    dev, gw = vals.get("LAN_IF", ""), vals.get("ROUTER_IP", "")
+    if not re.fullmatch(r"[a-zA-Z][a-zA-Z0-9_.-]{0,14}", dev):
+        raise ValueError("invalid LAN device in gateway config")
+    ipaddress.IPv4Address(gw)
+    return dev, gw
+
+
 def classify(node: dict, *, route_get: Callable | None = None,
              lan_interface: str = "eth0", lan_gateway: str = "192.168.112.1") -> dict:
     """Return sanitized evidence only; NEVER assert MikroTik-side DIRECT."""
     evidence = {"mode": "UNKNOWN", "reason": "unverified_endpoint",
                 "scope": "PI_ONLY", "router_verified": False}
+    if route_get is None:
+        # The installed gateway supports SSH-safe LAN reconfiguration, so
+        # never assume the test-stand's eth0/192.168.112.1 in production.
+        try:
+            lan_interface, lan_gateway = configured_lan()
+        except (OSError, ValueError):
+            return {**evidence, "reason": "lan_policy_unavailable"}
     if not isinstance(node, dict):
         return evidence
     if any(node.get(key) for key in CHAIN_KEYS):
