@@ -157,6 +157,22 @@ def atomic_state(path: Path, payload: dict) -> None:
             os.unlink(tmp)
 
 
+def next_interval(entries: dict, warm: list[str], now: int,
+                  ttl: int, error_streak: int) -> int:
+    """Recheck warm nodes before they expire, even after a long full scan."""
+    base = adaptive_interval(len(warm), error_streak)
+    if not warm:
+        return base
+    remaining = []
+    for name in warm:
+        row = entries.get(name, {})
+        if isinstance(row.get("checked_at"), int):
+            remaining.append(ttl - max(0, now - row["checked_at"]))
+    if not remaining:
+        return 5
+    return max(5, min(base, min(remaining) - 15))
+
+
 def build_plan(smart, pool: dict, raw_provider: list[dict], *,
                previous: dict, region: str, protocol: str, cooldown: dict,
                count: int, now: int) -> tuple[list[dict], list[dict], int, list[str]]:
@@ -288,7 +304,7 @@ def scan(*, pool_file: Path = POOL_JSON, provider_file: Path = PROVIDER,
                   "tested": len(outcomes), "considered": len(chosen),
                   "warm": warm, "entries": entries,
                   "error_streak": streak,
-                  "suggested_interval_seconds": adaptive_interval(len(warm), streak)}
+                  "suggested_interval_seconds": next_interval(entries, warm, now, ttl, streak)}
         atomic_state(state_file, result)
         return result
 
@@ -317,9 +333,33 @@ def report(state: dict) -> dict:
     return summary
 
 
+def watch(*, scanner=scan, sleeper=time.sleep, max_cycles: int | None = None,
+          **scan_args) -> None:
+    """Continuous low-duty-cycle worker, independent of the production Mihomo."""
+    error_streak = 0
+    completed = 0
+    while max_cycles is None or completed < max_cycles:
+        try:
+            state = scanner(**scan_args)
+            delay = int(state["suggested_interval_seconds"])
+            error_streak = 0
+            print(json.dumps(report(state), ensure_ascii=False), flush=True)
+        except (OSError, RuntimeError, ValueError, BlockingIOError) as exc:
+            # A missing/stale pool or temporary probe failure must not restart
+            # production services, trigger a failover or hammer upstream.
+            error_streak = min(error_streak + 1, 8)
+            delay = adaptive_interval(0, error_streak)
+            print("HOT_STANDBY_SCAN_ERROR=" + type(exc).__name__, file=sys.stderr,
+                  flush=True)
+        completed += 1
+        if max_cycles is not None and completed >= max_cycles:
+            break
+        sleeper(delay)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=("scan", "show"))
+    parser.add_argument("command", choices=("scan", "show", "watch"))
     parser.add_argument("--count", type=int, default=LIMITS.CANDIDATES)
     parser.add_argument("--ttl", type=int, default=CACHE_TTL)
     parser.add_argument("--max-seconds", type=int, default=MAX_RUN_SECONDS)
@@ -336,8 +376,12 @@ def main() -> int:
             return 1
         print(json.dumps(report(state), ensure_ascii=False))
         return 0
-    state = scan(count=args.count, ttl=args.ttl,
-                 max_seconds=args.max_seconds, timeout=args.timeout)
+    options = dict(count=args.count, ttl=args.ttl,
+                   max_seconds=args.max_seconds, timeout=args.timeout)
+    if args.command == "watch":
+        watch(**options)
+        return 0
+    state = scan(**options)
     print(json.dumps(report(state), ensure_ascii=False))
     return 0
 
