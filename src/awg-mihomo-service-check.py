@@ -205,7 +205,24 @@ def plausible_video_header(data: bytes) -> bool:
     return False
 
 
-def youtube_probe(request: Callable) -> Result:
+def decoded_frame_proof(verifier: Callable | None) -> Result:
+    """Only the separately bounded frame decoder can produce media PASS."""
+    if verifier is None:
+        return Result("UNKNOWN", "youtube_video_decode_not_enabled")
+    try:
+        finding = verifier()
+        if (isinstance(finding, dict) and finding.get("state") == "PASS"
+                and finding.get("reason") == "youtube_first_video_frame_decoded"
+                and finding.get("method") == "video_frame_decode"
+                and finding.get("shadow_only") is True):
+            return Result("PASS", "youtube_first_video_frame_decoded")
+    except Exception:
+        pass
+    return Result("UNKNOWN", "youtube_video_decode_unverified")
+
+
+def youtube_probe(request: Callable, *,
+                  frame_verifier: Callable | None = None) -> Result:
     try:
         status, watch, _ = request(YOUTUBE_WATCH, max_bytes=MAX_WEB_BYTES)
         if status != 200:
@@ -215,8 +232,6 @@ def youtube_probe(request: Callable) -> Result:
             return Result("UNKNOWN", "youtube_player_data_missing")
         playability = player.get("playabilityStatus")
         if not isinstance(playability, dict) or playability.get("status") != "OK":
-            # A particular video could be age-restricted, deleted or blocked:
-            # never extrapolate a video's availability to all of YouTube.
             return Result("UNKNOWN", "youtube_player_not_confirmed_playable")
         video_url = media_url_from_player(player)
         if video_url is None:
@@ -225,10 +240,12 @@ def youtube_probe(request: Callable) -> Result:
                 return Result("UNKNOWN", "youtube_media_url_unavailable")
             sabr = stream.get("serverAbrStreamingUrl")
             if isinstance(sabr, str) and allowed_media_url(sabr):
-                # SABR/UMP does not expose normal video ranges. Do not call
-                # SABR an actual media PASS merely because the player says OK.
-                # The small /videogoodput probe is a *CDN reachability* check,
-                # not decoded, playable video bytes.
+                # Modern SABR metadata cannot demonstrate playback; an
+                # opt-in independent yt-dlp + ffmpeg video frame can.
+                if frame_verifier is not None:
+                    confirmation = decoded_frame_proof(frame_verifier)
+                    if confirmation.state == "PASS":
+                        return confirmation
                 goodput = stream.get("probeUrl")
                 if isinstance(goodput, str) and allowed_media_url(goodput):
                     try:
@@ -249,23 +266,25 @@ def youtube_probe(request: Callable) -> Result:
         if not allowed_media_url(final_url):
             return Result("UNKNOWN", "youtube_media_unexpected_redirect")
         if code == 206 and plausible_video_header(data):
-            return Result("PASS", "youtube_video_container_header_verified")
+            # An MP4/WebM magic header is evidence of a media *container*,
+            # NOT evidence that a frame can actually play. Do not mark PASS.
+            if frame_verifier is not None:
+                return decoded_frame_proof(frame_verifier)
+            return Result("UNKNOWN", "youtube_video_container_only")
         if code == 206:
             return Result("UNKNOWN", "youtube_video_container_unverified")
         if code in (403, 451):
-            # A signed URL can expire or require a playback/PO token. A
-            # single video's CDN rejection cannot prove all YouTube is down.
             return Result("UNKNOWN", f"youtube_media_http_{code}_unconfirmed")
         return Result("UNKNOWN", f"youtube_media_http_{code}")
     except Exception as exc:
         return Result("UNKNOWN", "youtube_" + type(exc).__name__)
 
 
-def assess(request: Callable) -> dict:
+def assess(request: Callable, *, frame_verifier: Callable | None = None) -> dict:
     # Individual probes intentionally run even if the other already failed.
     api = openai_probe(request)
     web = chatgpt_web_probe(request)
-    video = youtube_probe(request)
+    video = youtube_probe(request, frame_verifier=frame_verifier)
     checks = {"openai_api": asdict(api), "chatgpt_web": asdict(web),
               "youtube_video": asdict(video)}
     states = [item.state for item in (api, web, video)]
@@ -280,12 +299,27 @@ def main() -> int:
     parser.add_argument("--timeout", type=float, default=6.0)
     parser.add_argument("--identity", default="",
                         help="Exact currently selected Mihomo node name for evidence attribution")
+    parser.add_argument("--video-frame-check", action="store_true",
+                        help="EXPERIMENTAL opt-in bounded decoded-frame proof; never enabled by default")
     args = parser.parse_args()
     if not 1 <= args.proxy_port <= 65535 or not 1 <= args.timeout <= 15:
         parser.error("invalid proxy port or timeout")
     def request(url, **kwargs):
         return fetch(args.proxy_port, url, timeout=args.timeout, **kwargs)
-    result = assess(request)
+    if args.video_frame_check:
+        import importlib.machinery
+        import importlib.util
+        import sys
+        from pathlib import Path
+        path = Path(__file__).with_name("awg-youtube-frame-check.py")
+        loader = importlib.machinery.SourceFileLoader("awg_optin_video_probe", str(path))
+        spec = importlib.util.spec_from_loader(loader.name, loader)
+        module = importlib.util.module_from_spec(spec)
+        sys.modules[spec.name] = module
+        loader.exec_module(module)
+        result = assess(request, frame_verifier=lambda: module.verify(args.proxy_port))
+    else:
+        result = assess(request)
     result["transport"] = "mihomo"
     result["identity"] = args.identity
     result["sample_id"] = uuid.uuid4().hex
