@@ -111,12 +111,35 @@ class ServiceGateTests(unittest.TestCase):
             thread.start()
             with patch.dict(os.environ, {"NO_PROXY": "*", "no_proxy": "*"}):
                 try:
-                    gate.fetch(port, "https://example.invalid/", timeout=1.5)
+                    gate.fetch(port, gate.OPENAI_API, timeout=1.5)
                 except Exception:
                     pass
             thread.join(timeout=2.5)
         self.assertTrue(received, "the proxy was bypassed")
-        self.assertIn(b"CONNECT example.invalid:443", received[0])
+        self.assertIn(b"CONNECT api.openai.com:443", received[0])
+
+    def test_untrusted_media_url_is_rejected_before_network(self):
+        self.assertFalse(gate.allowed_probe_url("http://api.openai.com/v1/models"))
+        self.assertFalse(gate.allowed_probe_url("https://127.0.0.1/admin"))
+        self.assertFalse(gate.allowed_probe_url("https://googlevideo.com.evil.invalid/a"))
+        self.assertFalse(gate.allowed_probe_url("https://api.openai.com:8443/v1/models"))
+        with self.assertRaisesRegex(ValueError, "unapproved probe URL"):
+            gate.fetch(7890, "https://127.0.0.1/admin")
+
+    def test_redirect_to_untrusted_host_is_rejected_before_network(self):
+        # The HTTP redirect handler must reject the target, not examine it
+        # after making a connection to the untrusted destination.
+        import urllib.request
+        handler = gate.RestrictedRedirects()
+        req = urllib.request.Request(gate.OPENAI_API)
+        with self.assertRaisesRegex(ValueError, "unapproved probe redirect"):
+            handler.redirect_request(req, None, 302, "Found", {},
+                                     "https://evil.invalid/collect")
+        self.assertTrue(gate.allowed_probe_url(gate.OPENAI_API))
+
+    def test_http_200_non_chatgpt_page_is_unknown(self):
+        self.assertEqual(gate.assess(cases(web=(200, b"<html>OK</html>")))["status"],
+                         "UNKNOWN")
 
     def test_loopback_proxy_must_be_valid(self):
         for invalid in (0, 65536, -1):
