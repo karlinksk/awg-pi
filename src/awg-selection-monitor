@@ -7,8 +7,14 @@ AWG_TRANSPORT_CLI="${AWG_TRANSPORT_CLI:-/usr/local/sbin/awg-transport}"
 MIHOMO_NODE_POLICY_CLI="${MIHOMO_NODE_POLICY_CLI:-/usr/local/sbin/awg-mihomo-node-policy}"
 # Optional native Mihomo fallback owns node switching; default is legacy.
 AWG_MIHOMO_NATIVE_FALLBACK="${AWG_MIHOMO_NATIVE_FALLBACK:-0}"
+MIHOMO_FALLBACK_GUARD_CLI="${MIHOMO_FALLBACK_GUARD_CLI:-/usr/local/sbin/awg-mihomo-fallback-refresh-guard.py}"
+MIHOMO_CONFIG_FILE="${MIHOMO_CONFIG_FILE:-/etc/awg-pbr/transports/mihomo/config.yaml}"
+MIHOMO_NATIVE_FALLBACK_MODE_FILE="${MIHOMO_NATIVE_FALLBACK_MODE_FILE:-/etc/awg-pbr/transports/mihomo/native-fallback.mode}"
+AWG_ENV_FILE="${AWG_ENV_FILE:-/etc/awg-pbr/env}"
+AWG_TRANSIT_ROUTING_CLI="${AWG_TRANSIT_ROUTING_CLI:-/usr/local/sbin/awg-transit-routing}"
 AWG_SELECTION_STATE_DIR="${AWG_SELECTION_STATE_DIR:-/run/awg-pbr}"
 AWG_SELECTION_FAILURES="${AWG_SELECTION_FAILURES:-$AWG_SELECTION_STATE_DIR/selection.failures}"
+AWG_NATIVE_QUARANTINE_FILE="${AWG_NATIVE_QUARANTINE_FILE:-$AWG_SELECTION_STATE_DIR/native-fallback-quarantine}"
 AWG_SELECTION_INTERVAL="${AWG_SELECTION_INTERVAL:-10}"
 AWG_SELECTION_FAILURE_THRESHOLD="${AWG_SELECTION_FAILURE_THRESHOLD:-3}"
 LOGGER_BIN="${LOGGER_BIN:-logger}"
@@ -17,6 +23,7 @@ MAINTENANCE_LOCK="${AWG_LOCK_FILE:-/run/awg-maintenance.lock}"
 
 # shellcheck disable=SC1090
 source "$AWG_COMMON_FILE"
+[[ ! -r "$AWG_ENV_FILE" ]] || source "$AWG_ENV_FILE"
 
 mkdir -p "$AWG_SELECTION_STATE_DIR"
 
@@ -65,6 +72,42 @@ transport_healthy(){
   "$AWG_TRANSPORT_CLI" check "$t" >/dev/null 2>&1
 }
 
+native_fallback_state(){
+  local result="" rc=20
+  # A missing helper is legacy-compatible only when native mode is not requested.
+  if [[ ! -r "$MIHOMO_FALLBACK_GUARD_CLI" ]]; then
+    # A missing helper must not be mistaken for legacy on a partly enabled system.
+    if [[ "$AWG_MIHOMO_NATIVE_FALLBACK" == 1 || -e "$MIHOMO_NATIVE_FALLBACK_MODE_FILE" ]] ||
+       { [[ -r "$MIHOMO_CONFIG_FILE" ]] && grep -Eq '^[[:space:]]*type:[[:space:]]*fallback' "$MIHOMO_CONFIG_FILE"; }; then
+      echo NATIVE_UNSAFE
+    else
+      echo LEGACY
+    fi
+    return 0
+  fi
+  if result="$("$MIHOMO_FALLBACK_GUARD_CLI" \
+      --config "$MIHOMO_CONFIG_FILE" \
+      --mode-file "$MIHOMO_NATIVE_FALLBACK_MODE_FILE" \
+      --monitor-check --iface "${LAN_IF:-}" --gateway "${ROUTER_IP:-}" 2>/dev/null)"; then
+    rc=0
+  else
+    rc=$?
+  fi
+  case "$result:$rc" in
+    MONITOR_FALLBACK=NATIVE_OK:0) echo NATIVE_OK ;;
+    MONITOR_FALLBACK=LEGACY:0)
+      if [[ "$AWG_MIHOMO_NATIVE_FALLBACK" == 1 ]]; then echo NATIVE_UNSAFE; else echo LEGACY; fi
+      ;;
+    *) echo NATIVE_UNSAFE ;;
+  esac
+}
+
+quarantine_transit(){
+  [[ "$(awg_mode_get 2>/dev/null || true)" == transit ]] || return 1
+  "$AWG_TRANSIT_ROUTING_CLI" disable >/dev/null 2>&1 || return 1
+  : > "$AWG_NATIVE_QUARANTINE_FILE"
+}
+
 policy_csv(){
   case "$SELECTION_MODE" in
     fixed)
@@ -99,6 +142,11 @@ try_failover(){
   IFS=',' read -ra _items <<<"$csv"
   for candidate in "${_items[@]}"; do
     [[ -n "$candidate" && "$candidate" != "$current" ]] || continue
+    # Never activate Mihomo from AWG when a native fallback underlay is unsafe.
+    if [[ "$candidate" == mihomo && "$(native_fallback_state)" == NATIVE_UNSAFE ]]; then
+      log_event "Denied transport activation: native Mihomo endpoint underlay unsafe"
+      continue
+    fi
     # A fallback backend may be intentionally stopped while on standby.
     # awg-transport select starts it, validates health/preflight and rolls
     # back safely if activation fails.
@@ -113,7 +161,7 @@ try_failover(){
 }
 
 selection_cycle(){
-  local current failures node_policy_enabled=0 transport_policy_enabled=0
+  local current failures node_policy_enabled=0 transport_policy_enabled=0 native_enabled=0 native_unsafe=0 fallback_state=""
 
   # Configuration/node transactions hold the same maintenance lock. Never
   # interpret their intentional short outage as a real transport failure.
@@ -138,13 +186,58 @@ selection_cycle(){
     return 0
   fi
 
-  if [[ "$AWG_MIHOMO_NATIVE_FALLBACK" != 1 && "$current" == mihomo && -x "$MIHOMO_NODE_POLICY_CLI" ]] &&
+  if [[ "$current" == mihomo ]]; then
+    fallback_state="$(native_fallback_state)"
+    case "$fallback_state" in
+      NATIVE_OK) native_enabled=1 ;;
+      NATIVE_UNSAFE) native_enabled=1; native_unsafe=1 ;;
+      LEGACY) ;;
+      *) native_enabled=1; native_unsafe=1 ;;
+    esac
+  fi
+
+  if [[ "$native_enabled" == 0 && "$current" == mihomo && -x "$MIHOMO_NODE_POLICY_CLI" ]] &&
      "$MIHOMO_NODE_POLICY_CLI" enabled >/dev/null 2>&1; then
     node_policy_enabled=1
   fi
 
   if [[ "$SELECTION_MODE" != manual ]] && current_is_allowed "$current"; then
     transport_policy_enabled=1
+  fi
+
+  if (( native_unsafe == 1 )); then
+    # A suspect endpoint underlay must not enjoy the normal multi-cycle
+    # failure grace period. Quarantine forwarding before attempting AWG.
+    if ! quarantine_transit; then
+      log_event "Native fallback unsafe: FAILED to verify Transit quarantine"
+      return 1
+    fi
+    log_event "Native fallback endpoint route unsafe: Transit quarantined"
+    if (( transport_policy_enabled == 1 )) && try_failover "$current"; then
+      rm -f -- "$AWG_NATIVE_QUARANTINE_FILE"
+      return 0
+    fi
+    # A failed transport transaction may restore its previous route/policy.
+    # Always reassert lockdown on failure. No DIRECT fallback is allowed.
+    if ! quarantine_transit; then
+      log_event "Native fallback unsafe: quarantine reassertion failed"
+      return 1
+    fi
+    printf 'NATIVE_FALLBACK=UNSAFE_TRANSIT_LOCKDOWN\n'
+    return 0
+  fi
+
+  # Restore only quarantine created by our own monitor, never a manual
+  # policy shutdown. Require a newly healthy Mihomo and verified DIRECT first.
+  if (( native_enabled == 1 )) && [[ -e "$AWG_NATIVE_QUARANTINE_FILE" ]]; then
+    if ! transport_healthy "$current" ||
+       [[ "$(awg_mode_get 2>/dev/null || true)" != transit ]] ||
+       ! "$AWG_TRANSIT_ROUTING_CLI" apply >/dev/null 2>&1; then
+      log_event "Native fallback recovery deferred: guard/health not ready"
+      return 1
+    fi
+    rm -f -- "$AWG_NATIVE_QUARANTINE_FILE"
+    log_event "Native fallback DIRECT recovered: restored verified Transit policy"
   fi
 
   # MANUAL transport policy does not disable a separately and explicitly

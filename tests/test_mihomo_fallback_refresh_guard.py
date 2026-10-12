@@ -78,5 +78,36 @@ class GuardTests(unittest.TestCase):
         self.write()
         with self.assertRaises(ValueError):guard.audit(self.path,"eth0","192.168.112.1")
 
+
+    def test_monitor_native_tun_and_routes_healthy(self):
+        self.payload["tun"]={"enable":True}
+        self.write()
+        def runner(cmd,**kwargs):
+            return subprocess.CompletedProcess(cmd,0,stdout=f"{cmd[-1]} via 192.168.112.1 dev eth0 src 192.168.112.34\n",stderr="")
+        self.assertEqual(guard.monitor_state(self.path,self.mode,"eth0","192.168.112.1",runner),"NATIVE_OK")
+
+    def test_monitor_rejects_shadow_tun_off(self):
+        self.payload["tun"]={"enable":False}
+        self.write()
+        self.assertEqual(guard.monitor_state(self.path,self.mode,"eth0","192.168.112.1"),"NATIVE_UNSAFE")
+
+    def test_monitor_bad_route_is_unsafe(self):
+        self.payload["tun"]={"enable":True}
+        self.write()
+        def runner(cmd,**kwargs):
+            return subprocess.CompletedProcess(cmd,0,stdout=f"{cmd[-1]} dev mihomo0\n",stderr="")
+        self.assertEqual(guard.monitor_state(self.path,self.mode,"eth0","192.168.112.1",runner),"NATIVE_UNSAFE")
+
+    def test_monitor_legacy_without_marker(self):
+        self.payload["proxy-groups"][0]["type"]="select"
+        self.write()
+        self.assertEqual(guard.monitor_state(self.path,self.mode,"eth0","192.168.112.1"),"LEGACY")
+
+    def test_monitor_rejects_legacy_marker_with_invalid_config(self):
+        self.mode.write_text("legacy\n")
+        self.path.write_text("old-config\n")
+        self.assertEqual(guard.monitor_state(self.path,self.mode,"eth0","192.168.112.1"),"NATIVE_UNSAFE")
+
+
 if __name__=="__main__":
     unittest.main()
