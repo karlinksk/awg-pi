@@ -99,6 +99,11 @@ class Stage18(unittest.TestCase):
         self.assertEqual(side.summarize(17891,frame=good,use_continuity=True,
                          euid=1000,environ={"CREDENTIALS_DIRECTORY":"/run/private"})["state"],"UNKNOWN")
 
+    def test_git_readonly_during_sudo_trial(self):
+        driver=(ROOT/'scripts'/'awg-stage18-run-once.sh').read_text()
+        self.assertIn('GIT_OPTIONAL_LOCKS=0',driver)
+        self.assertIn('git -C "$ROOT" status --porcelain',driver)
+
     def test_operator_script_and_media_unit_no_auto_enabling(self):
         script=(ROOT/"scripts"/"awg-stage18-run-once.sh").read_text()
         unit=(ROOT/"units"/"awg-stage18-media@.service").read_text()
