@@ -53,6 +53,7 @@ jobs:
           bash -n src/awg-mihomo-config
           python3 -m py_compile src/awg-mihomo-provider.py
           python3 -m py_compile src/awg-mihomo-pool.py
+          python3 -m py_compile src/awg-fast-service.py src/awg-switch-transaction.py
           bash -n tests/test-common.sh
           bash -n tests/test-transport.sh
           bash -n tests/test-bootstrap-fetch.sh
