@@ -85,3 +85,22 @@ On the Pi's temporary checkout, **91 offline Python tests** passed; the addition
 No real AWG node was switched and no new systemd unit was enabled. Running tests does **not** validate recovery-time P50/P95 on a real link.
 
 Remaining blockers: controlled live read-only probe against AWG; opt-in AWG health evidence publishing in RAM; robust YouTube video confirmation; cloud-protected ChatGPT classification; action adapter attached to the existing locked selector with data-plane post-check and rollback; rigorous Transit FAIL-CLOSED/Selective FAIL-OPEN and SSTP independence tests; existing failed provider update service.
+
+
+## Stage 3b: opt-in, read-only advisory hook in the legacy selector
+
+The existing `src/awg-selection-monitor` now supports an optional observer subcycle, **disabled by default** with `AWG_ADVISORY_ENABLED=0`. It reads a separately generated evidence snapshot (default `/run/awg-pbr/service-observation.json`) only when explicitly enabled; it calls the dry-run Python observer with a short timeout, publishes the advisory result and counters **only under `/run/awg-pbr/service-advisory/`**, and never passes the advice to `awg-transport select` or the node selector.
+
+The observer's replay/failure counters are tied to the system boot ID, provider hash, active node and transport, and selection policy. A reboot or policy/node change invalidates that state. Malformed/stale/misattributed cache evidence remains UNKNOWN. The callback is skipped while the existing maintenance lock is held. Advisor failures are isolated: the existing transport selection logic continues unchanged.
+
+**This is not a production rollout instruction.** Neither the probe result producer nor the optional observer setting is configured on the live Pi. Do not enable this on production until service evidence workers and the end-to-end security tests are ready. The real production selector still uses the preexisting generic health-based switching.
+
+Regression: `bash tests/test-selection-advisory.sh` proves default-disabled, advisory enabled but no switch, and failing observer with no impact on healthy current transport. The full Python suite has **94 offline tests**. GitHub CI runs both suites.
+
+### Production integration and release criteria still pending
+
+- A protected real evidence producer for both active Mihomo and AWG (currently proof modules are manually invokable prototypes).
+- Isolated, resource-bounded live AWG/Hot Standby field tests.
+- A single serialized switching executor in the legacy selector with preflight, transaction rollback and real forwarded data-plane postvalidation (not advisory-only).
+- Double-outage handling in the forwarding plane, Selective FAIL-OPEN and Transit FAIL-CLOSED regression, safe MikroTik/SSTP boundaries.
+- Duration P50/P95, microSD/noisy probes monitoring, paid/free subscription update failure recovery, and UI controls.
