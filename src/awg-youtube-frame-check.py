@@ -19,6 +19,8 @@ from pathlib import Path
 import re
 import resource
 import shutil
+import signal
+import types
 import subprocess
 import tempfile
 from typing import Callable
@@ -54,6 +56,26 @@ def limited_child() -> None:
     resource.setrlimit(resource.RLIMIT_CPU, (30, 30))
 
 
+def subprocess_group(args: list[str], **kwargs):
+    """On timeout kill yt-dlp AND descendants such as its JS challenge runtime."""
+    timeout = kwargs.pop("timeout", MAX_SECONDS)
+    kwargs.pop("check", None)
+    if kwargs.pop("start_new_session", False) is not True:
+        raise ValueError("media subprocess must have its own process group")
+    proc = subprocess.Popen(args, start_new_session=True, **kwargs)
+    try:
+        stdout, stderr = proc.communicate(timeout=timeout)
+        return types.SimpleNamespace(returncode=proc.returncode,
+                                     stdout=stdout, stderr=stderr)
+    except subprocess.TimeoutExpired:
+        try:
+            os.killpg(proc.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        proc.communicate()
+        raise
+
+
 def ready(exe: str, *, version_runner=subprocess.run) -> bool:
     if not (Path(exe).is_file() and os.access(exe, os.R_OK)):
         return False
@@ -71,7 +93,7 @@ def ready(exe: str, *, version_runner=subprocess.run) -> bool:
 
 def verify(port: int, *, executable: str = "/usr/local/bin/yt-dlp",
            ffmpeg: str = "/usr/bin/ffmpeg",
-           runner: Callable = subprocess.run,
+           runner: Callable = subprocess_group,
            version_runner: Callable = subprocess.run) -> dict:
     """One finite, isolated measurement; never switches a live node."""
     if not isinstance(port, int) or isinstance(port, bool) or not 1 <= port <= 65535:
@@ -100,6 +122,7 @@ def verify(port: int, *, executable: str = "/usr/local/bin/yt-dlp",
                                stdout=subprocess.DEVNULL,
                                stderr=subprocess.DEVNULL,
                                timeout=MAX_SECONDS, check=False,
+                               start_new_session=True,
                                preexec_fn=limited_child)
             if completed.returncode != 0:
                 return result("UNKNOWN", "youtube_extractor_or_media_unavailable")
