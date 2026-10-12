@@ -30,6 +30,7 @@ ACTIVE_NODE = Path("/etc/awg-pbr/transports/mihomo/node-name")
 NODE_POLICY = Path("/etc/awg-pbr/transports/mihomo/node-policy.mode")
 FIXED_NODES = Path("/etc/awg-pbr/transports/mihomo/node-policy.nodes")
 STANDBY = Path("/run/awg-pbr/mihomo-standby/state.json")
+ROUTER_EVENT = Path("/run/awg-pbr/router-events/state.json")
 POOL = Path("/run/awg-pbr/mihomo-pool/live.json")
 PROVIDER = Path("/var/lib/awg-pbr/mihomo/providers/subscription.yaml")
 DEFAULT_PORT = 7890
@@ -155,6 +156,25 @@ def read_standby(path: Path) -> dict:
     return {}
 
 
+def router_context(event_path: Path = ROUTER_EVENT) -> tuple[int, str]:
+    """Missing local event baseline revokes previously cached warm confidence."""
+    try:
+        boot = Path("/proc/sys/kernel/random/boot_id").read_text("utf-8").strip()
+        if event_path.stat().st_size > 4096:
+            return -1, boot
+        event = json.loads(event_path.read_text("utf-8"))
+        generation = event.get("generation")
+        if (event.get("version") == 1 and isinstance(generation, int)
+                and not isinstance(generation, bool) and generation >= 0
+                and isinstance(event.get("parts"), dict)
+                and len(event["parts"]) == 6
+                and all(isinstance(v,str) and len(v)==64 for v in event["parts"].values())):
+            return generation, boot
+        return -1, boot
+    except (OSError, ValueError, TypeError):
+        return -1, ""
+
+
 def source_sha(pool_path: Path, provider_path: Path) -> str:
     """Refuse to forward standby confidence after a provider refresh."""
     try:
@@ -230,8 +250,10 @@ def collect(*, now: int | None = None, runner=subprocess.run,
     if "awg0" in [name for _,name in socket.if_nameindex()]:
         awg = run_probe(AWG_PROBE, ["--interface", "awg0", "--timeout", "3"],
                         transport="awg", identity="awg0", runner=runner)
+    generation, boot = router_context()
     # The reader independently confirms pool/source fingerprints and TTL.
     return {"version": 1, "generated_at": now,
+            "router_generation": generation, "router_boot_id": boot,
             "main": {"transport": active, "node": node},
             "selection": selection,
             "node_policy": {"mode": mode, "allowed": allowed if mode == "fixed" else []},
