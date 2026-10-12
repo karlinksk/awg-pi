@@ -57,7 +57,11 @@ def audit(config,iface,gateway,runner=subprocess.run):
 
 def decide(config, modefile):
     marker=Path(modefile)
-    if marker.exists():
+    try:
+        has_marker=marker.exists()
+    except OSError:
+        return "unknown"
+    if has_marker:
         try:
             value=marker.read_text(encoding="utf-8").strip()
         except OSError:
@@ -67,9 +71,30 @@ def decide(config, modefile):
         if value=="native":return "native"
         # Even explicit legacy marker cannot overrule detected native config
     kind=classify(config)
-    if marker.exists() and value=="legacy" and kind=="unknown":
+    if has_marker and value=="legacy" and kind=="unknown":
         return "legacy"
     return kind
+
+
+def monitor_state(config, modefile, iface, gateway, runner=subprocess.run):
+    # Native mode is only safe when the marker and actual running TUN config agree.
+    mode = decide(config, modefile)
+    if mode == "legacy":
+        return "LEGACY" if classify(config) == "legacy" else "NATIVE_UNSAFE"
+    if mode != "native" or classify(config) != "native":
+        return "NATIVE_UNSAFE"
+    try:
+        data = yaml.safe_load(Path(config).read_text(encoding="utf-8"))
+        tun = data.get("tun")
+        if not isinstance(tun, dict) or tun.get("enable") is not True:
+            return "NATIVE_UNSAFE"
+        ipaddress.IPv4Address(gateway)
+        if not iface or not isinstance(iface, str):
+            return "NATIVE_UNSAFE"
+        audit(config, iface, gateway, runner=runner)
+    except Exception:
+        return "NATIVE_UNSAFE"
+    return "NATIVE_OK"
 
 
 def main():
@@ -77,9 +102,14 @@ def main():
     p.add_argument("--config",required=True)
     p.add_argument("--mode-file",required=True)
     p.add_argument("--audit-direct",action="store_true")
+    p.add_argument("--monitor-check",action="store_true")
     p.add_argument("--iface")
     p.add_argument("--gateway")
     a=p.parse_args()
+    if a.monitor_check:
+        state=monitor_state(a.config,a.mode_file,a.iface,a.gateway)
+        print("MONITOR_FALLBACK="+state)
+        return 0 if state != "NATIVE_UNSAFE" else 20
     state=decide(a.config,a.mode_file)
     if state=="legacy":
         print("FALLBACK_REFRESH_GATE=LEGACY")
