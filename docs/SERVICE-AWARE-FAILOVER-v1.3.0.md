@@ -2,6 +2,9 @@
 
 **Tracking:** #83, draft PR #84. **Experimental: NO production install, auto-switches or background timer are activated.**
 
+**Accepted routing-policy decision (2026-10-12):** [Event-driven router path verification ADR](ADR-EVENT-DRIVEN-ROUTER-ATTESTATION-v1.3.0.md). **EVENT_DRIVEN is the default**: verify the router on initial setup/material network changes and when a proposed switch lacks a fresh, exact-endpoint proof. No constant MikroTik SSH polling; RouterOS is an optional adapter. A 30-second endpoint proof TTL is **not** a 30-second scan period. The ADR supersedes any earlier wording interpreted as mandatory unconditional SSH per candidate or every fixed interval. Not deployed.
+
+
 ## Shared eligibility and limits
 
 `src/awg-mihomo-limits.py` is the single source for **10 shortlisted candidates → up to 3 sustained-speed finalists → up to 2 confirmations**. Both AUTO SMART and Hot Standby import these caps.
