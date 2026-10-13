@@ -222,3 +222,51 @@ The current user facing next step is a new **real Windows Chrome** chat test
 through each candidate's 60-600s Stage20 `browser-session` and SSH localhost
 forwarding, with no transfer of cookies to Pi. Until authenticated ChatGPT
 results can be refreshed safely and independently, AUTO SMART gate stays OFF.
+
+
+## Two candidate browser acceptance tests completed — 13 October 2026
+
+The operator independently confirmed real authenticated ChatGPT message
+exchange (message sent and ChatGPT reply received) in Windows Chrome
+through each fresh one-node Stage20 test proxy. Each node had already
+passed the real 24-frame YouTube/ffmpeg decoder on Pi.
+
+| Exact node | Decoded YouTube | Windows Chrome ChatGPT | Acceptance |
+| --- | --- | --- | --- |
+| shadowsocks-27307 | PASS, 24 decoded video frames | PASS, reply received | Both services manually accepted |
+| vless-1741441891 | PASS, 24 decoded video frames | PASS, reply received | Both services manually accepted |
+
+The second candidate's isolated proxy was verified at 127.0.0.1:17891.
+OpenAI API returned HTTP401 and its public egress IPv4 was 193.233.74.6.
+The previous Shadowsocks test instance was terminated before the VLESS
+instance started. After user confirmed receiving the ChatGPT reply on
+VLESS, the temporary Mihomo was terminated and port 17891 freed.
+Both tests used Windows-local browser sessions with no ChatGPT cookies
+or credentials copied to Pi. The production node remained
+shadowsocks-696792830, transport healthy, Transit guard SAFE and
+table100 default dev mihomo0.
+
+IMPORTANT: This is MANUAL FUNCTIONAL ACCEPTANCE, not continuous autonomous
+browser evidence. Never pretend fresh authorized ChatGPT conversations
+can be verified after the browser closes, nor persist PASS indefinitely.
+The strict automatic gate therefore remains OFF until a secure
+freshness/authorization mechanism is reviewed and tested.
+
+### False-failover blocker corrected in this PR
+
+The initial awg-selection-monitor treated ANY nonzero service checker
+exit status as a failing current-node observation. But anonymous
+Cloudflare and YouTube bot challenges legitimately produce UNKNOWN
+and a nonzero checker exit. Two such observations could previously
+trigger false node fallback, even though user ChatGPT chat works.
+
+The monitor now parses the bounded JSON verdict; only status FAIL
+counts as a negative observation. UNKNOWN (including malformed
+checker data and missing checker) breaks the explicit-failure streak
+without asserting a new PASS. PASS also resets the failure streak.
+Two independent explicit FAIL observations plus the existing selection
+monitor failure threshold and validated eligible target are still needed
+before failover. Bogus mode continues to fail closed.
+Regression tests cover consecutive FAIL, FAIL then UNKNOWN,
+UNKNOWN then FAIL, UNKNOWN twice, malformed data, PASS reset and
+off/bogus service gating. No running Pi services are modified.

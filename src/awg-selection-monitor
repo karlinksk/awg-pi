@@ -75,8 +75,25 @@ transport_healthy(){
   "$AWG_TRANSPORT_CLI" check "$t" >/dev/null 2>&1
 }
 
+service_probe_verdict(){
+  # Checker exit code alone cannot tell explicit regional denial from an
+  # anonymous Cloudflare/YouTube UNKNOWN: only JSON verdict FAIL is negative.
+  # Limit/parse strictly. Malformed/empty responses return UNKNOWN.
+  local response
+  response="$("$MIHOMO_SERVICE_CHECK_BIN" --proxy-port 7890 --timeout 4 2>/dev/null)" || true
+  printf '%s' "${response:0:8192}" | python3 -c '
+import json,sys
+try:
+    obj=json.loads(sys.stdin.read(8192))
+    state=obj.get("status") if isinstance(obj,dict) else None
+    print(state if state in ("PASS","FAIL","UNKNOWN") else "UNKNOWN")
+except (ValueError,UnicodeError):
+    print("UNKNOWN")
+' 2>/dev/null || printf 'UNKNOWN\n'
+}
+
 service_healthy_mihomo(){
-  local node now age
+  local node now age verdict
   case "$MIHOMO_SERVICE_GATE_MODE" in
     off) return 0 ;;
     require) ;;
@@ -95,12 +112,18 @@ service_healthy_mihomo(){
   # challenge or YouTube bot-detection response. No disk writes.
   if (( SERVICE_LAST_TS == 0 || age < 0 || age >= MIHOMO_SERVICE_CHECK_INTERVAL )); then
     SERVICE_LAST_TS="$now"
-    if [[ -x "$MIHOMO_SERVICE_CHECK_BIN" ]] &&
-       "$MIHOMO_SERVICE_CHECK_BIN" --proxy-port 7890 --timeout 4 >/dev/null 2>&1; then
-      SERVICE_BAD_PROBES=0
-    else
-      SERVICE_BAD_PROBES=$((SERVICE_BAD_PROBES + 1))
+    verdict=UNKNOWN
+    if [[ -x "$MIHOMO_SERVICE_CHECK_BIN" ]]; then
+      verdict="$(service_probe_verdict)"
     fi
+    # A 403 Cloudflare challenge or YouTube bot restriction returns UNKNOWN.
+    # Do NOT accumulate outages or trigger fallback without explicit FAIL.
+    # A successful check resets the streak; any UNKNOWN breaks consecutiveness.
+    case "$verdict" in
+      FAIL) SERVICE_BAD_PROBES=$((SERVICE_BAD_PROBES + 1)) ;;
+      PASS|UNKNOWN) SERVICE_BAD_PROBES=0 ;;
+      *) SERVICE_BAD_PROBES=0 ;;
+    esac
   fi
   (( SERVICE_BAD_PROBES < 2 ))
 }
