@@ -412,3 +412,38 @@ This proves live transport switching, plus the automatic selection
 order in isolated mocks. It does not prove a live automatic balanced
 node decision: PR code remains uninstalled and production gate OFF.
 No MikroTik SSTP or NAS changes were made.
+
+
+## Passive production canary staging (NO policy activation)
+
+A reversible, root-operated canary installer lives at
+scripts/awg-mihomo-balanced-canary.sh. It has three explicit actions:
+
+- check: read-only comparison and syntax check of exactly nine staged
+  helpers/units against live install. No sudo, no system changes.
+- apply: requires root, an unchanged local Git worktree, production
+  Mihomo healthy, and current service gate OFF. Takes a private, durable
+  backup under /var/backups/awg-gateway/balanced-canary-TIMESTAMP,
+  atomically stages only the seven scoped helpers plus two passive
+  Stage18 systemd units, validates units, and prints backup path.
+  The apply path NEVER restarts the monitor, enables the timer,
+  changes the gate mode, routes, selected nodes or MikroTik.
+- restore BACKUP_PATH: requires root and validated private backup,
+  disables Stage18 retry timer, returns gate from balanced to OFF
+  if needed, atomically restores the original scoped files/removes
+  previously absent helpers, reloads systemd and restarts only the
+  selection monitor. The installed active Mihomo transport remains
+  independent of staging.
+
+A narrowly scoped selection-monitor integration simulation uses actual
+shell policy functions and isolated mocks on /dev/shm. Six cases PASS:
+qualified VLESS after disqualified Shadowsocks, three candidate failures
+then AWG fallback, AWG fallback failure leaves Mihomo and saturates the
+failure counter, AWG healthy fallback remains sticky, healthy current
+Mihomo avoids false Cloudflare-triggered switching, and maintenance
+lock blocks maintenance-triggered changes. None touches production
+interfaces. The full Python regression suite is 129/129 PASS.
+
+This canary script is NOT invoked automatically by the normal
+installation or timers. The actual root apply/restore and monitored
+opt-in transition to balanced remain separate final acceptance gates.
