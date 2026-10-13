@@ -1,0 +1,14 @@
+# EXAMPLE ONLY — NOT INSTALLED, NOT FUNCTIONAL AS PRODUCTION RECOVERY.
+# Deliberate /usr/bin/false prevents accidental use as a recovery mechanism.
+[Unit]
+Description=AWG Stage34 early boot recovery ordering CONTRACT (NOT INSTALLABLE)
+DefaultDependencies=no
+After=local-fs.target
+Before=network-pre.target awg-pbr-setup.service awg-mihomo.service awg-selection-monitor.service
+RequiresMountsFor=/var/lib/awg-pbr/native-fallback-recovery
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/false
+TimeoutStartSec=20s
+RemainAfterExit=yes
