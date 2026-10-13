@@ -200,3 +200,25 @@ switching, an audited way to refresh actual authenticated browser results
 for each candidate is still required. We do NOT equate API401, the open browser
 proxy, a 403 challenge, or a historical successful chat with current proof.
 The production service gate remains OFF.
+
+## Extended candidate verification — 13 October 2026
+
+After Stage18 frame decoding was integrated, further **isolated one-node live
+service-scan** checks (no production switch, no changes to MikroTik/NAS) showed:
+
+| Exact node | OpenAI API | YouTube decoded 24 frames | ChatGPT | Overall |
+| --- | --- | --- | --- | --- |
+| shadowsocks-27307 | PASS | PASS | UNKNOWN (anonymous Cloudflare) | UNKNOWN |
+| vless-1741441891 | PASS | PASS | UNKNOWN (anonymous Cloudflare) | UNKNOWN |
+| hysteria2-335173174 | PASS | UNKNOWN | UNKNOWN | UNKNOWN |
+| vless-1771506792 | NOT TESTED | NOT TESTED | NOT TESTED | UNKNOWN (FQDN endpoint rejected by strict public-IPv4 DIRECT validator) |
+
+The video PASS is an *actual local ffmpeg >=24-frame decode of a sample
+received through that candidate's own shadow proxy*, not inferred from a
+watch-page HTTP200. A ChatGPT 403/Cloudflare challenge remains UNKNOWN; prior
+user Chrome success on a different day does not silently promote freshness.
+
+The current user facing next step is a new **real Windows Chrome** chat test
+through each candidate's 60-600s Stage20 `browser-session` and SSH localhost
+forwarding, with no transfer of cookies to Pi. Until authenticated ChatGPT
+results can be refreshed safely and independently, AUTO SMART gate stays OFF.
