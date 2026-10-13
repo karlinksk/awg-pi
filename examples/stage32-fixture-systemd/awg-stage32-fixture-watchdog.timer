@@ -1,0 +1,10 @@
+# Development example only, no [Install] section intentionally.
+[Unit]
+Description=AWG Stage32 fixture recovery polling (NOT production)
+
+[Timer]
+OnBootSec=30s
+OnUnitActiveSec=10s
+AccuracySec=1s
+Unit=awg-stage32-fixture-watchdog.service
+Persistent=false

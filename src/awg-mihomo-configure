@@ -16,6 +16,9 @@ MIHOMO_CANDIDATE_ENV_FILE="${MIHOMO_CANDIDATE_ENV_FILE:-/var/lib/awg-pbr/mihomo/
 MIHOMO_CANDIDATE_FETCH_FILE="${MIHOMO_CANDIDATE_FETCH_FILE:-/var/lib/awg-pbr/mihomo/candidate-fetch-path}"
 MIHOMO_CANDIDATE_FORMAT_FILE="${MIHOMO_CANDIDATE_FORMAT_FILE:-/var/lib/awg-pbr/mihomo/candidate-provider-format}"
 MIHOMO_CONFIG_FILE="${MIHOMO_CONFIG_FILE:-/etc/awg-pbr/transports/mihomo/config.yaml}"
+MIHOMO_ACTIVE_NODE_HELPER="${MIHOMO_ACTIVE_NODE_HELPER:-/usr/local/sbin/awg-mihomo-active-node.py}"
+MIHOMO_FALLBACK_REFRESH_GUARD="${MIHOMO_FALLBACK_REFRESH_GUARD:-/usr/local/sbin/awg-mihomo-fallback-refresh-guard.py}"
+MIHOMO_NATIVE_FALLBACK_MODE_FILE="${MIHOMO_NATIVE_FALLBACK_MODE_FILE:-/etc/awg-pbr/transports/mihomo/native-fallback.mode}"
 MIHOMO_INSTALLER="${MIHOMO_INSTALLER:-/usr/local/sbin/awg-mihomo-install}"
 MIHOMO_UPDATER="${MIHOMO_UPDATER:-/usr/local/sbin/awg-mihomo-update}"
 MIHOMO_PREPARE="${MIHOMO_PREPARE:-/usr/local/sbin/awg-mihomo-prepare}"
@@ -254,6 +257,11 @@ status_cmd(){
   printf 'Provider cache: %s\n' "$([[ -r "$MIHOMO_PROVIDER_FILE" ]] && echo ready || echo missing)"
   printf 'Provider candidate: %s\n' "$([[ -r "$MIHOMO_CANDIDATE_FILE" ]] && echo staged || echo none)"
   printf 'Selected node: %s\n' "$([[ -r "$MIHOMO_NODE_NAME_FILE" ]] && cat "$MIHOMO_NODE_NAME_FILE" || echo unknown)"
+  if [[ -f "$MIHOMO_ACTIVE_NODE_HELPER" && -r "$MIHOMO_CONFIG_FILE" ]]; then
+    printf 'Active node (Mihomo API): %s\n' "$("$PYTHON_BIN" "$MIHOMO_ACTIVE_NODE_HELPER" --config "$MIHOMO_CONFIG_FILE" 2>/dev/null || echo unknown)"
+  else
+    printf 'Active node (Mihomo API): unknown (helper unavailable)\n'
+  fi
   printf 'Endpoint: %s\n' "$([[ -r "$MIHOMO_ENDPOINT_IP_FILE" ]] && cat "$MIHOMO_ENDPOINT_IP_FILE" || echo none)"
   printf 'Last fetch path: %s\n' "$([[ -r "$MIHOMO_LAST_FETCH_FILE" ]] && cat "$MIHOMO_LAST_FETCH_FILE" || echo none)"
   printf 'Runtime config: %s\n' "$([[ -r "$MIHOMO_CONFIG_FILE" ]] && echo ready || echo missing)"
@@ -383,7 +391,7 @@ provider_update(){
 }
 
 provider_auto_refresh(){
-  local stage_output stage_rc scan_rc current policy candidate_json selected reason
+  local stage_output stage_rc scan_rc current policy candidate_json selected reason guard_rc=20 guard_output=""
 
   if stage_output="$(stage_provider_update auto)"; then
     stage_rc=0
@@ -400,6 +408,33 @@ provider_auto_refresh(){
     *)
       printf 'MIHOMO_PROVIDER_AUTO_REFRESH=FETCH_FAILED\n' >&2
       return "$stage_rc"
+      ;;
+  esac
+
+
+  # Native Mihomo fallback owns its explicit node group.  The legacy provider
+  # auto-commit regenerates a single select group and would destroy it.
+  # Stage the fetched provider, but never promote it without review.
+  if [[ -r "$MIHOMO_FALLBACK_REFRESH_GUARD" ]]; then
+    if guard_output="$("$PYTHON_BIN" "$MIHOMO_FALLBACK_REFRESH_GUARD" \
+        --config "$MIHOMO_CONFIG_FILE" \
+        --mode-file "$MIHOMO_NATIVE_FALLBACK_MODE_FILE" 2>/dev/null)"; then
+      guard_rc=0
+    else
+      guard_rc=$?
+    fi
+  fi
+  case "$guard_rc" in
+    0) ;; # validated legacy selector: continue existing automatic behavior
+    10)
+      printf 'MIHOMO_PROVIDER_AUTO_REFRESH=STAGED_NATIVE_FALLBACK_REVIEW\n'
+      printf 'LIVE_PROVIDER=UNCHANGED\n'
+      return 0
+      ;;
+    *)
+      printf 'MIHOMO_PROVIDER_AUTO_REFRESH=STAGED_REFRESH_GUARD_UNKNOWN\n'
+      printf 'LIVE_PROVIDER=UNCHANGED\n'
+      return 0
       ;;
   esac
 
