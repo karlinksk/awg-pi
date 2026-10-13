@@ -363,3 +363,52 @@ current restricted operator sudo context (the privileged helper does not
 expose ad-hoc service-scan), so do NOT state that the newly integrated balanced
 mode was live-tested or deployed. The earlier exact-node Stage18 real decoder
 and browser results remain verified separately.
+
+
+## Stage18 RAM runtime after reboot: passive opt-in bootstrap
+
+The balanced candidate gate requires SHA256-verified official Node.js
+v22.16.0 and yt-dlp 2026.08.19 to decode real YouTube video frames.
+The binaries are held in root-owned /dev/shm/awg-stage18-service-runtime
+and disappear after reboot. Missing binaries mean UNKNOWN, not PASS.
+
+The PR adds passive systemd service awg-mihomo-stage18-ram-runtime.service
+and retry timer awg-mihomo-stage18-ram-runtime.timer. install.sh only
+copies the units and pinned bootstrap helper. It DOES NOT enable the timer,
+enable balanced mode, restart the active transport or change firewall rules.
+
+When an operator explicitly opts into balanced mode, the timer may be
+enabled separately. It runs after boot and approximately hourly; the
+service has an ExecCondition requiring the literal balanced mode.
+Pinned official artifacts are downloaded only if absent or invalid
+in RAM, with SHA256 validation. All writes stay in /dev/shm.
+Service constraints include CPUQuota 80%, MemoryMax 256 MiB, 180s timeout,
+NoNewPrivileges, ProtectSystem strict and ReadWritePaths=/dev/shm.
+
+If runtime restoration fails, video decoding cannot claim PASS and
+the candidate fails service eligibility. The existing selected healthy
+transport is not automatically changed by the bootstrap. The timer
+remains disabled by default to reduce overhead and microSD writes.
+Complete canary testing and review is required before opt-in activation.
+
+## Real transport fallback and rollback, 13 October 2026
+
+The existing full selection-monitor mock suite passed: Mihomo node
+fallback first, then AWG transport fallback after node exhaustion,
+standby outage handling, repeated failure threshold, safe manual mode,
+maintenance lock and sticky recovery.
+
+On the real Pi an authorized awg-gpt transport-select switched
+Mihomo -> AmneziaWG -> Mihomo. An independent 75-second failsafe was
+armed and an EXIT-trap would also restore the original transport.
+AWG Transit preflight verified DIRECT underlay, awg0 usable, fresh
+handshake; AWG was healthy with table100 default dev awg0, Transit
+policy ACTIVE and guard SAFE. Returning to Mihomo passed its own
+Transit preflight; table100 returned to default dev mihomo0 with the
+original active node shadowsocks-696792830 and guard SAFE.
+The failsafe was cancelled and is not running.
+
+This proves live transport switching, plus the automatic selection
+order in isolated mocks. It does not prove a live automatic balanced
+node decision: PR code remains uninstalled and production gate OFF.
+No MikroTik SSTP or NAS changes were made.

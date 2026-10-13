@@ -679,12 +679,14 @@ install_project_helper src/awg-mihomo-configure "$MIHOMO_CONFIGURE_SCRIPT"
 install_project_helper src/awg-first-run "$FIRST_RUN_CLI"
 install_project_helper src/awg-selection "$SELECTION_CLI"
 install_project_helper src/awg-selection-monitor "$SELECTION_MONITOR"
-# Service eligibility is installed as read-only helpers only. There is NO
-# automatic service-gated switch until MIHOMO_SERVICE_GATE_MODE=require is
-# explicitly selected after independent service checks and live testing.
+# Service eligibility helpers are installed passive: the opt-in balanced
+# mode is NEVER enabled by installation. The Stage18 RAM runtime timer is
+# also passive until separately enabled after acceptance and rollback tests.
+# Browser tests are NOT a prerequisite for balanced network eligibility.
 install_project_helper src/awg-mihomo-limits.py /usr/local/sbin/awg-mihomo-limits.py
 install_project_helper src/awg-mihomo-service-check.py /usr/local/sbin/awg-mihomo-service-check.py
 install_project_helper src/awg-mihomo-video-decode.py /usr/local/sbin/awg-mihomo-video-decode.py
+install_project_helper scripts/awg-mihomo-stage18-ram-runtime.sh /usr/local/sbin/awg-mihomo-stage18-ram-runtime
 install_project_helper src/awg-mihomo-service-eligibility.py /usr/local/sbin/awg-mihomo-service-eligibility.py
 install_project_helper src/awg-mihomo-network-eligibility.py /usr/local/sbin/awg-mihomo-network-eligibility.py
 install_project_helper src/awg-mihomo-smart /usr/local/sbin/awg-mihomo-smart
@@ -729,6 +731,10 @@ install_project_unit units/awg-mihomo-update.timer /etc/systemd/system/awg-mihom
 install_project_unit units/awg-mihomo-pool-refresh.service /etc/systemd/system/awg-mihomo-pool-refresh.service
 install_project_unit units/awg-mihomo-pool-refresh.timer /etc/systemd/system/awg-mihomo-pool-refresh.timer
 install_project_unit units/awg-selection-monitor.service /etc/systemd/system/awg-selection-monitor.service
+# Do not enable this opt-in timer here; default installs avoid downloads
+# and CPU overhead for the pinned decoder runtime.
+install_project_unit units/awg-mihomo-stage18-ram-runtime.service /etc/systemd/system/awg-mihomo-stage18-ram-runtime.service
+install_project_unit units/awg-mihomo-stage18-ram-runtime.timer /etc/systemd/system/awg-mihomo-stage18-ram-runtime.timer
 install_project_unit units/awg-traffic.service /etc/systemd/system/awg-traffic.service
 cat >/etc/systemd/system/awg-opencck-update.service <<'EOF'
 [Unit]
