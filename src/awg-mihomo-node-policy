@@ -16,6 +16,7 @@ if [[ -z "${MIHOMO_SERVICE_GATE_MODE+x}" ]]; then
   MIHOMO_SERVICE_GATE_MODE="$(cat "$MIHOMO_SERVICE_GATE_MODE_FILE" 2>/dev/null || echo off)"
 fi
 MIHOMO_SERVICE_GATE_BIN="${MIHOMO_SERVICE_GATE_BIN:-/usr/local/sbin/awg-mihomo-service-eligibility.py}"
+MIHOMO_SERVICE_QUICKCHECK_BIN="${MIHOMO_SERVICE_QUICKCHECK_BIN:-/usr/local/sbin/awg-mihomo-smart}"
 
 usage(){
   cat <<'USAGE'
@@ -271,7 +272,14 @@ service_candidate_allowed(){
     off) return 0 ;;
     require)
       [[ -x "$MIHOMO_SERVICE_GATE_BIN" ]] || return 1
-      response="$("$MIHOMO_SERVICE_GATE_BIN" --node "$candidate" 2>/dev/null)" || return 1
+      if response="$("$MIHOMO_SERVICE_GATE_BIN" --node "$candidate" 2>/dev/null)" &&
+         grep -Fxq 'SERVICE_ELIGIBILITY=PASS' <<<"$response"; then
+        return 0
+      fi
+      # A stale cache is not a denial of the node itself: recheck only this
+      # candidate through a separate, RAM-only TUN-disabled Mihomo instance.
+      [[ -x "$MIHOMO_SERVICE_QUICKCHECK_BIN" ]] || return 1
+      response="$("$MIHOMO_SERVICE_QUICKCHECK_BIN" service-scan --node "$candidate" 2>/dev/null)" || return 1
       grep -Fxq 'SERVICE_ELIGIBILITY=PASS' <<<"$response"
       ;;
     *) return 1 ;;
@@ -279,7 +287,7 @@ service_candidate_allowed(){
 }
 
 failover_fixed(){
-  local current="$1" node found_current=0
+  local current="$1" node found_current=0 attempts=0
   while IFS= read -r node || [[ -n "$node" ]]; do
     [[ -n "$node" ]] || continue
     if (( found_current == 0 )); then
@@ -287,6 +295,10 @@ failover_fixed(){
         found_current=1
       fi
       continue
+    fi
+    if [[ "$MIHOMO_SERVICE_GATE_MODE" == require ]]; then
+      (( attempts < 3 )) || break
+      attempts=$((attempts+1))
     fi
     # An unproven ChatGPT/YouTube candidate must never be selected when
     # service gating is required. Continue to the next explicit FIXED node.
@@ -301,7 +313,7 @@ failover_fixed(){
 }
 
 failover_auto(){
-  local current="$1" candidate item
+  local current="$1" candidate item attempts=0
   local -a excludes=("$current") best_args=()
 
   "$MIHOMO_POOL_CLI" ensure live --geo-if-policy >/dev/null 2>&1 || return 1
@@ -314,6 +326,10 @@ failover_auto(){
     done
     candidate="$("$MIHOMO_POOL_CLI" "${best_args[@]}" 2>/dev/null)" || break
     [[ -n "$candidate" ]] || break
+    if [[ "$MIHOMO_SERVICE_GATE_MODE" == require ]]; then
+      (( attempts < 3 )) || break
+      attempts=$((attempts+1))
+    fi
     # AUTO considers health-pool reachability necessary but not sufficient.
     if ! service_candidate_allowed "$candidate"; then
       excludes+=("$candidate")

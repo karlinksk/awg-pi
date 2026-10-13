@@ -18,12 +18,12 @@ All three must be PASS; any FAIL/UNKNOWN makes the node **ineligible** for autom
 
 ## Two missing links now implemented, but not yet activated
 
-1. `awg-mihomo-service-eligibility.py` checks a private root-owned AUTO SMART report, exact node name (unique), current provider SHA-256, <30 min freshness, `service_ok`, three PASS results and independently confirmed candidate throughput. Stale, missing or tampered data always denies an automatic candidate. A max one-hour TTL is a hard ceiling.
-2. `awg-mihomo-node-policy` checks candidate eligibility before `node select-auto` in both FIXED and AUTO. AUTO skips an ineligible node and searches another allowed candidate. FIXED preserves the explicit forward-only list. If none qualifies, the existing AWG transport fallback policy may take over; there is never an unapproved DIRECT exception.
+1. `awg-mihomo-service-eligibility.py` checks a private root-owned AUTO SMART report, exact node name (unique), current provider SHA-256, <30 min freshness, `service_ok`, three PASS results and independently confirmed candidate throughput. Stale/missing data is **never** accepted as PASS. When cache cannot confirm, the node selector uses a *new* one-node shadow service scan before trying to switch; failure/UNKNOWN still blocks the candidate.
+2. `awg-mihomo-node-policy` checks candidate eligibility before `node select-auto` in both FIXED and AUTO. First it looks for a fresh PASS cache. If unconfirmed/stale, it starts `awg-mihomo-smart service-scan --node NAME` to test **this specific node now**, without throughput downloads. That isolated scan accepts only public literal IPv4 endpoints whose Pi route matches the main ethernet gateway; DNS-name endpoints remain UNKNOWN until a separately verified safe resolver is implemented. A scan never reconfigures the active TUN. AUTO excludes ineligible nodes and tries another; FIXED preserves the user-defined forward-only chain. At most **three candidates** are examined per failover. If none qualifies, existing AWG transport fallback may take over; no unapproved DIRECT exception.
 3. `awg-selection-monitor` now also detects degradation **of ChatGPT/YouTube when the proxy transport remains otherwise healthy**. This is opt-in and rate limited: checks at most once per 60 seconds through the existing live loopback proxy. Two independent failing observations are required before the existing transport/node failure counter begins advancing. No filesystem writes are added for monitoring beyond the existing /run state.
 4. `install.sh` includes the already developed AUTO SMART shadow engine, its limit module, service checker and read-only eligibility helper; none is enabled by installation. No new root access is granted.
 
-The gate is **OFF by default**. The same root-owned file `/etc/awg-pbr/transports/mihomo/service-eligibility.mode` can later hold `require`, activating both current-node service monitoring and strict candidate eligibility after supervised testing; `off` reverts immediately after the monitor is restarted. This file is not created or changed in the current work.
+The gate is **OFF by default**. The same root-owned file `/etc/awg-pbr/transports/mihomo/service-eligibility.mode` can later hold `require`, activating both current-node service monitoring and strict candidate eligibility after supervised testing; `off` reverts immediately after the monitor is restarted. This file is not created or changed in the current work. Missing or stale evidence triggers a bounded live one-candidate recheck; no periodic high-bandwidth scan is required merely to keep a cache fresh.
 
 No CI result, shadow recommendation or network HTTP probe may be described as a completed *interactive* ChatGPT + YouTube playback test.
 
@@ -39,7 +39,7 @@ Tests cover region restriction, ChatGPT/Cloudflare uncertainty, YouTube media ra
 
 Production rollout gates:
 - Install the new code in an approved Pi maintenance window, without touching MikroTik or NAS.
-- Run **one new shadow scan** with real service checks; validate at least two independently qualifying nodes, both endpoints routed DIRECT with no recursion.
+- Run **one new shadow scan** with real service checks, then a live **one-node on-demand shadow scan** without changing the selected production node. Validate at least two independently qualifying nodes, both endpoint routes DIRECT on Pi without recursion. This does not independently prove MikroTik WAN underlay routing.
 - Verify ChatGPT chat interaction and actual YouTube playback through the selected test nodes (user acceptance or an authorized browser/video test).
 - Confirm backup of Pi configuration, fail-closed nftables, and AWG transport fallback.
 - Enable service gate explicitly, run staged negative tests: YouTube-only failure, ChatGPT-only failure, unknown, all candidates failed; ensure no leaks and stable hysteresis.
