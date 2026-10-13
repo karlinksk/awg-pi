@@ -92,8 +92,12 @@ case "$MODE" in
     require_root
     precheck
     [[ "$(cat "$GATE" 2>/dev/null || echo off)" == off ]] || fatal "service gate must be OFF"
-    /usr/local/sbin/awg-transport status | grep -Fq 'Transport ID: mihomo' || fatal "requires live Mihomo"
-    /usr/local/sbin/awg-transport status | grep -Fq 'Transport health: healthy' || fatal "Mihomo must be healthy"
+    # Capture the full status before matching. Under pipefail, grep -q closes
+    # its pipe as soon as Transport ID is found; the writer then exits 141
+    # (SIGPIPE), falsely rejecting an actually healthy live Mihomo.
+    transport_snapshot="$(/usr/local/sbin/awg-transport status)" || fatal "unable to read transport status"
+    grep -Fxq 'Transport ID: mihomo' <<<"$transport_snapshot" || fatal "requires live Mihomo"
+    grep -Fxq 'Transport health: healthy' <<<"$transport_snapshot" || fatal "Mihomo must be healthy"
     mkdir -p "$BACKUP_BASE"
     [[ ! -L "$BACKUP_BASE" ]] || fatal "backup base is symlink"
     dir="$BACKUP_BASE/balanced-canary-$(date +%Y%m%d-%H%M%S)"

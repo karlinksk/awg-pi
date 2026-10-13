@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """Passive production canary and rollback remain independent of selection."""
 from pathlib import Path
+import subprocess
+import tempfile
 import unittest
 
 ROOT=Path(__file__).resolve().parents[1]
@@ -33,6 +35,34 @@ class CanarySafety(unittest.TestCase):
         self.assertIn('trap rollback_if_needed EXIT',data)
         self.assertIn("trap 'exit 143' TERM HUP",data)
         self.assertIn('CANARY_RESTORE=COMPLETE',data)
+
+    def test_status_guard_never_pipes_to_grep_q_with_pipefail(self):
+        # Real awg-transport writes three lines. grep -q may close the pipe
+        # after Transport ID, giving the writer SIGPIPE exit 141.
+        text=SRC.read_text()
+        section=text.split('  apply)',1)[1].split('  restore)',1)[0]
+        self.assertNotIn('status | grep -Fq',section)
+        self.assertIn('transport_snapshot="$(/usr/local/sbin/awg-transport status)"',section)
+        self.assertIn("grep -Fxq 'Transport ID: mihomo' <<<\"$transport_snapshot\"",section)
+        self.assertIn("grep -Fxq 'Transport health: healthy' <<<\"$transport_snapshot\"",section)
+
+    def test_status_guard_accepts_real_status_and_rejects_wrong_transport(self):
+        script=SRC.read_text()
+        fragment=script.split('    transport_snapshot=',1)[1].split('    mkdir -p "$BACKUP_BASE"',1)[0]
+        fragment='transport_snapshot='+fragment
+        fragment=fragment.replace('/usr/local/sbin/awg-transport status','"$MOCK_STATUS"')
+        with tempfile.TemporaryDirectory(prefix='awg-canary-pipefail-',dir='/dev/shm') as d:
+            fake=Path(d)/'transport'
+            for ident,health,expected in (
+                    ('mihomo','healthy',0),
+                    ('awg','healthy',1),
+                    ('mihomo','down',1)):
+                fake.write_text("#!/bin/sh\nprintf 'Active transport: test\\nTransport ID: %s\\nTransport health: %s\\n' "+ident+" "+health+"\n")
+                fake.chmod(0o700)
+                runner='set -Eeuo pipefail\nfatal(){ echo "$*" >&2; exit 1; }\n'+fragment+'\n'
+                p=subprocess.run(['bash','-c',runner],env={'MOCK_STATUS':str(fake)},
+                                 capture_output=True,text=True,timeout=6)
+                self.assertEqual(p.returncode,expected,p.stderr)
 
     def test_no_autoenable_on_apply(self):
         s=SRC.read_text()
