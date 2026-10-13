@@ -1,0 +1,645 @@
+#!/usr/bin/env python3
+"""AWG Pi Gateway AUTO SMART (shadow-only, independent Mihomo measurement).
+
+Never changes the live selection, routes, firewall, subscriptions or services.
+Traffic measurement runs through a short-lived, loopback-only *second* Mihomo
+instance. Reads provider secrets as root, but stores probe configs only on RAM.
+This research stage intentionally has NO apply/switch/enable-auto command.
+"""
+from __future__ import annotations
+
+import argparse
+import collections
+import contextlib
+import fcntl
+import hashlib
+import importlib.machinery
+import importlib.util
+import json
+import math
+import os
+from pathlib import Path
+import signal
+import statistics
+import subprocess
+import sys
+import tempfile
+import time
+import urllib.request
+
+SERVICE_PY = Path(__file__).with_name('awg-mihomo-service-check.py')
+LIMITS_PY = Path(__file__).with_name('awg-mihomo-limits.py')
+POOL_PY = Path('/usr/local/sbin/awg-mihomo-pool')
+POOL_JSON = Path('/run/awg-pbr/mihomo-pool/live.json')
+PROVIDER = Path('/var/lib/awg-pbr/mihomo/providers/subscription.yaml')
+NODE_NAME = Path('/etc/awg-pbr/transports/mihomo/node-name')
+STATE_DIR = Path('/run/awg-pbr/mihomo-smart')
+MIHOMO = '/usr/local/bin/mihomo'
+CURL = '/usr/bin/curl'
+DOWN_ENDPOINT = 'https://speed.cloudflare.com/__down?bytes={}'
+UP_ENDPOINT = 'https://speed.cloudflare.com/__up'
+MAX_POOL_AGE = 3600
+
+
+def load_limits():
+    loader = importlib.machinery.SourceFileLoader('awg_smart_shared_limits', str(LIMITS_PY))
+    spec = importlib.util.spec_from_loader(loader.name, loader)
+    mod = importlib.util.module_from_spec(spec)
+    loader.exec_module(mod)
+    return mod
+
+
+LIMITS = load_limits()
+
+
+def load_pool_code():
+    loader = importlib.machinery.SourceFileLoader('awg_pool_for_smart', str(POOL_PY))
+    spec = importlib.util.spec_from_loader(loader.name, loader)
+    mod = importlib.util.module_from_spec(spec)
+    loader.exec_module(mod)
+    return mod
+
+
+def load_service_code():
+    if not SERVICE_PY.is_file():
+        raise RuntimeError('service eligibility probe unavailable: refusing shadow recommendation')
+    loader = importlib.machinery.SourceFileLoader('awg_services_for_smart', str(SERVICE_PY))
+    spec = importlib.util.spec_from_loader(loader.name, loader)
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = mod
+    loader.exec_module(mod)
+    return mod
+
+
+def current_name():
+    try:
+        return NODE_NAME.read_text(encoding='utf-8').strip()
+    except OSError:
+        return ''
+
+
+def eligible(pool: dict, *, region='all', protocol='all', cooldown=None) -> list[dict]:
+    """A missing geo result must never accidentally bypass Europe-only policy."""
+    if not isinstance(pool, dict) or not isinstance(pool.get('nodes'), list):
+        raise ValueError('invalid pool')
+    excluded = set(cooldown or ())
+    result = []
+    for node in pool['nodes']:
+        if not isinstance(node, dict) or not node.get('healthy'):
+            continue
+        name = node.get('name')
+        delay = node.get('delay_ms')
+        kind = str(node.get('type', '')).lower().strip()
+        if (not isinstance(name, str) or not name.strip()
+                or not isinstance(delay, int) or isinstance(delay, bool) or delay <= 0
+                or not isinstance(node.get('server'), str)
+                or not node.get('server') or not isinstance(node.get('port'), int)
+                or name in excluded):
+            continue
+        if region == 'europe' and not node.get('europe'):
+            continue
+        if protocol != 'all' and kind != protocol:
+            continue
+        result.append(node)
+    return sorted(result, key=lambda n: (n['delay_ms'], n.get('index', 1_000_000)))
+
+
+def diverse_shortlist(nodes: list[dict], count: int, current='') -> list[dict]:
+    """Give good latency, protocol diversity and distinct endpoints a voice."""
+    count = max(1, min(15, count))
+    # Duplicate names are not safely selectable by the existing live policy.
+    occurrences = collections.Counter(n['name'] for n in nodes)
+    valid = [n for n in nodes if occurrences[n['name']] == 1]
+    chosen, names, endpoints = [], set(), set()
+
+    def add(n):
+        key = (n['server'], n['port'])
+        if n['name'] in names or key in endpoints or len(chosen) >= count:
+            return False
+        chosen.append(n)
+        names.add(n['name'])
+        endpoints.add(key)
+        return True
+
+    # Always include the current active node *when* it passes the same policy.
+    for n in valid:
+        if n['name'] == current:
+            add(n)
+            break
+    groups = collections.defaultdict(list)
+    for n in valid:
+        groups[str(n['type']).lower()].append(n)
+    # A single fastest representative of every protocol before global fill.
+    first = [values[0] for values in groups.values()]
+    for n in sorted(first, key=lambda item: (item['delay_ms'], item['name'])):
+        add(n)
+    # Round-robin protocol families before selecting the remaining fastest.
+    active = sorted(groups, key=lambda kind: groups[kind][0]['delay_ms'])
+    for depth in range(1, count + 1):
+        for kind in active:
+            if depth < len(groups[kind]):
+                add(groups[kind][depth])
+    for n in valid:
+        add(n)
+    return chosen
+
+
+def mbps(rate_bytes_sec):
+    return round(max(0.0, float(rate_bytes_sec)) * 8.0 / 1_000_000, 3)
+
+
+def score(entry: dict) -> float:
+    """Bounded 0-100 score; downlink dominant, no unverifiable geo inference."""
+    down = max(0, float(entry.get('down_mbps') or 0))
+    up = max(0, float(entry.get('up_mbps') or 0))
+    delay = max(1, int(entry.get('delay_ms') or 99999))
+    successes = max(0.0, min(1.0, float(entry.get('reliability', 0))))
+    d = min(1.0, math.log1p(down) / math.log1p(150))
+    u = min(1.0, math.log1p(up) / math.log1p(100))
+    latency = 1.0 / (1.0 + delay / 250.0)
+    return round(100 * successes * (0.65*d + 0.16*u + 0.19*latency), 2)
+
+
+def fresh_pool(pool, provider: Path, max_age=MAX_POOL_AGE):
+    age = time.time() - int(pool.get('scanned_at') or 0)
+    if age < 0 or age > max_age:
+        return False
+    if not provider.is_file():
+        return False
+    digest = hashlib.sha256()
+    with provider.open('rb') as stream:
+        for chunk in iter(lambda: stream.read(128 * 1024), b''):
+            digest.update(chunk)
+    return digest.hexdigest() == pool.get('provider_sha256')
+
+
+def private_json(path, payload):
+    path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    fd, name = tempfile.mkstemp(prefix='.smart-', dir=path.parent)
+    try:
+        os.fchmod(fd, 0o600)
+        with os.fdopen(fd, 'w') as dest:
+            json.dump(payload, dest, ensure_ascii=False, separators=(',', ':'))
+            dest.write('\n')
+        os.replace(name, path)
+    finally:
+        if os.path.exists(name):
+            os.unlink(name)
+
+
+def read_history(provider_hash):
+    try:
+        data = json.loads((STATE_DIR/'history.json').read_text())
+        if data.get('version') == 3 and data.get('source_sha256') == provider_hash:
+            return data.get('nodes', {})
+    except (OSError, ValueError, TypeError):
+        pass
+    return {}
+
+
+def probe_http(proxy_port: int, url: str, *, nbytes: int, upload=False,
+               max_seconds=11) -> tuple[bool, float, str]:
+    # Use a fresh curl process, strict TLS verification and no user curlrc.
+    args = [CURL, '-q', '-4', '--proxy', f'http://127.0.0.1:{proxy_port}',
+            '--connect-timeout', '4', '--max-time', str(max_seconds),
+            '--silent', '--show-error', '--output', '/dev/null',
+            '--write-out', '%{http_code} %{size_download} %{size_upload} %{speed_download} %{speed_upload}']
+    data = None
+    if upload:
+        args += ['--header', 'Content-Type: application/octet-stream',
+                 '--data-binary', '@-']
+        data = os.urandom(nbytes)
+    else:
+        args += ['--header', 'Cache-Control: no-cache']
+    args.append(url)
+    try:
+        res = subprocess.run(args, input=data, stdout=subprocess.PIPE,
+                             stderr=subprocess.DEVNULL, timeout=max_seconds+2, check=False)
+        parts = res.stdout.decode('ascii', 'replace').split()
+        if res.returncode or len(parts) != 5 or parts[0] != '200':
+            return False, 0.0, 'http_or_timeout'
+        size = int(parts[2 if upload else 1])
+        if size != nbytes:
+            return False, 0.0, 'unexpected_bytes'
+        rate = float(parts[4 if upload else 3])
+        if not math.isfinite(rate) or rate <= 0:
+            return False, 0.0, 'zero_rate'
+        return True, mbps(rate), ''
+    except (ValueError, OSError, subprocess.TimeoutExpired):
+        return False, 0.0, 'network_error'
+
+
+def bounded_history(hist, name, ok):
+    existing = hist.get(name, [])
+    if not isinstance(existing, list):
+        existing = []
+    updated = (existing + [int(bool(ok))])[-5:]
+    hist[name] = updated
+    return round(sum(updated)/len(updated), 3)
+
+
+def rank_results(results):
+    return sorted(results, key=lambda entry: (not entry.get('service_ok', False), not entry.get('confirmed', True), not entry['ok'], -entry['score'],
+                                              entry['delay_ms'], entry['name']))
+
+
+def recommend(results, current, history):
+    ranked = rank_results([r for r in results if r.get('service_ok') and r.get('confirmed', True)])
+    if not ranked or not ranked[0]['ok']:
+        return {'name': '', 'advice': 'NO_HEALTHY_CANDIDATE'}
+    best = ranked[0]
+    present = next((x for x in results if x['name'] == current), None)
+    if best['name'] == current:
+        advice = 'CURRENT_BEST'
+    elif not present or not present['ok'] or not present.get('service_ok') or not present.get('confirmed', True):
+        advice = 'OBSERVE_ONLY_CURRENT_UNMEASURED'
+    elif history.get(best['name'], [])[-2:] != [1, 1]:
+        advice = 'OBSERVE_ONLY_INSUFFICIENT_HISTORY'
+    elif best['down_mbps'] < max(present['down_mbps'] * 1.3, present['down_mbps'] + 10):
+        advice = 'KEEP_CURRENT_IMPROVEMENT_BELOW_THRESHOLD'
+    else:
+        advice = 'REVIEW_CANDIDATE_MANUALLY'
+    return {'name': best['name'], 'advice': advice}
+
+
+def plan(args):
+    fixture = getattr(args, 'fixture', '')
+    source = Path(fixture) if fixture else POOL_JSON
+    pool = json.loads(source.read_text(encoding='utf-8'))
+    if not fixture:
+        module = load_pool_code()
+        region, protocol = module.read_policy_values()
+        if not fresh_pool(pool, PROVIDER):
+            raise RuntimeError('health pool missing, stale or subscription changed; refusing shadow run')
+        if region == 'europe' and not pool.get('geo_enriched'):
+            raise RuntimeError('Europe-only filter requires actual verified geolocation')
+        cooldown = module.load_cooldown()
+        current = current_name()
+    else:
+        region, protocol, cooldown, current = args.region, args.protocol, {}, args.current
+    nodes = eligible(pool, region=region, protocol=protocol, cooldown=cooldown)
+    shortlist = diverse_shortlist(nodes, args.count, current)
+    return pool, current, shortlist
+
+
+
+def calibration_finalists(rows, current: str, limit: int, rotation: int = 0) -> list[dict]:
+    """Short test is reachability only. Preserve current and protocol diversity."""
+    eligible_rows = [r for r in rows if r.get('warmup_ok') and r.get('service_ok')]
+    chosen: list[dict] = []
+    present = next((r for r in eligible_rows if r['name'] == current), None)
+    if present:
+        chosen.append(present)
+    families = collections.defaultdict(list)
+    for row in eligible_rows:
+        families[row['type']].append(row)
+    leaders = [max(group, key=lambda x: (x['warmup_mbps'], -x['delay_ms']))
+               for group in families.values()]
+    leaders = sorted(leaders, key=lambda x: (-x['warmup_mbps'], x['delay_ms']))
+    if leaders:
+        offset = rotation % len(leaders)
+        leaders = leaders[offset:] + leaders[:offset]
+    for row in leaders:
+        if row not in chosen and len(chosen) < limit:
+            chosen.append(row)
+    for row in sorted(eligible_rows, key=lambda x: (-x['warmup_mbps'], x['delay_ms'])):
+        if row not in chosen and len(chosen) < limit:
+            chosen.append(row)
+    return chosen
+
+
+def calibration_confirmed(rows, current: str, limit: int = LIMITS.CONFIRMED) -> list[dict]:
+    """Compare active node and best competitor with a larger second transfer."""
+    candidates = [r for r in rows if r.get('sustained_verified') and r.get('service_ok')]
+    current_row = next((r for r in candidates if r['name'] == current), None)
+    ordered = sorted(candidates, key=lambda r: (-r['score'], -r['down_mbps']))
+    picks = [current_row] if current_row else []
+    for row in ordered:
+        if row not in picks and len(picks) < limit:
+            picks.append(row)
+    return picks
+
+
+def shadow_scan(args):
+    if os.geteuid() != 0:
+        raise RuntimeError('shadow benchmarking requires root to read the protected provider')
+    if getattr(args, 'fixture', ''):
+        raise RuntimeError('fixture is valid only for plan')
+    if not Path('/dev/shm').is_dir():
+        raise RuntimeError('RAM scratch volume missing')
+    STATE_DIR.mkdir(parents=True, exist_ok=True, mode=0o700)
+    with (STATE_DIR/'lock').open('a+') as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        pool_data, current, candidates = plan(args)
+        if not candidates:
+            raise RuntimeError('no eligible candidates; no tests started')
+        helper = load_pool_code()
+        service_gate = load_service_code()
+        raw = helper.read_provider(PROVIDER)
+        by_name = collections.defaultdict(list)
+        for item in raw:
+            if isinstance(item, dict) and isinstance(item.get('name'), str):
+                by_name[item['name']].append(item)
+        chosen = [n for n in candidates if len(by_name.get(n['name'], [])) == 1]
+        if not chosen:
+            raise RuntimeError('no unambiguous provider names')
+        mixed_port = helper.choose_free_port()
+        controller_port = helper.choose_free_port()
+        while controller_port == mixed_port:
+            controller_port = helper.choose_free_port()
+        history = read_history(pool_data['provider_sha256'])
+        results = []
+        with tempfile.TemporaryDirectory(prefix='awg-smart-', dir='/dev/shm') as tmp:
+            config, prepared = helper.make_probe_config(
+                [by_name[n['name']][0] for n in chosen], mixed_port, controller_port)
+            config_path = Path(tmp)/'config.yaml'
+            import yaml
+            config_path.write_text(yaml.safe_dump(config, allow_unicode=True, sort_keys=False))
+            os.chmod(config_path, 0o600)
+            instance = subprocess.Popen([MIHOMO, '-d', tmp, '-f', str(config_path)],
+                                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                                        stdin=subprocess.DEVNULL)
+            try:
+                end = time.monotonic() + 12
+                while time.monotonic() < end:
+                    if instance.poll() is not None:
+                        raise RuntimeError('shadow proxy startup failed')
+                    try:
+                        names = helper.controller_request(controller_port, '/proxies', timeout=.7).get('proxies', {})
+                        if all(item['probe_name'] in names for item in prepared):
+                            break
+                    except Exception:
+                        pass
+                    time.sleep(.2)
+                else:
+                    raise RuntimeError('shadow proxy inventory unavailable')
+
+                # Limit total nominal transfer per run. The screening download is
+                # not a meaningful indicator of steady-state throughput.
+                cap = (len(chosen)*args.download_bytes +
+                       min(getattr(args,'finalists',LIMITS.SUSTAINED),len(chosen))*(args.sustained_bytes+args.sustained_upload_bytes) +
+                       min(LIMITS.CONFIRMED,len(chosen))*args.confirm_bytes)
+                if cap > 115_000_000:
+                    raise RuntimeError('calibration traffic cap exceeded')
+                print('AUTO_SMART_MODE=SHADOW_ONLY', 'CANDIDATES='+str(len(chosen)),
+                      'CALIBRATION=2_STAGE', 'NOMINAL_BYTE_CAP='+str(cap), flush=True)
+                lookup = {node['name']: item for node, item in zip(chosen, prepared)}
+                for node in chosen:
+                    row={'name':node['name'], 'type':node['type'],
+                         'delay_ms':node['delay_ms'], 'warmup_mbps':0.0,
+                         'warmup_ok':False, 'down_mbps':0.0, 'up_mbps':0.0,
+                         'ok':False, 'sustained_verified':False,
+                         'confirmed':False, 'reason':'', 'score':0.0,
+                         'reliability':0.0, 'service_ok':False, 'service_state':'UNKNOWN', 'service_checks':{}}
+                    try:
+                        helper.select_probe(controller_port, lookup[node['name']]['probe_name'])
+                        ok, value, reason = probe_http(
+                            mixed_port, DOWN_ENDPOINT.format(args.download_bytes)+'&calib='+str(time.time_ns()),
+                            nbytes=args.download_bytes,max_seconds=args.per_request_timeout)
+                        row['warmup_mbps']=value
+                        row['warmup_ok']=bool(ok)
+                        row['reason']='' if ok else 'screen_'+reason
+                        if ok:
+                            # The selected probe proxy, NOT the live TUN, must
+                            # pass all three checks before a sustained benchmark.
+                            service = service_gate.assess(
+                                lambda url, **kw: service_gate.fetch(
+                                    mixed_port, url, timeout=min(6, args.per_request_timeout), **kw))
+                            row['service_state'] = service['status']
+                            row['service_checks'] = service['checks']
+                            row['service_ok'] = service['status'] == 'PASS'
+                            if not row['service_ok']:
+                                row['reason'] = 'service_'+service['status'].lower()
+                    except Exception:
+                        row['reason']='screen_or_service_error'
+                    results.append(row)
+                    print('SMART_SCREEN_PROGRESS='+str(len(results))+'/'+str(len(chosen)), flush=True)
+
+                finalists=calibration_finalists(results,current,min(getattr(args,'finalists',LIMITS.SUSTAINED),len(chosen)), rotation=int(time.time() // 28800))
+                for ix,row in enumerate(finalists,1):
+                    try:
+                        helper.select_probe(controller_port, lookup[row['name']]['probe_name'])
+                        ok, value, reason=probe_http(mixed_port,
+                            DOWN_ENDPOINT.format(args.sustained_bytes)+'&calib='+str(time.time_ns()),
+                            nbytes=args.sustained_bytes,max_seconds=args.sustained_timeout)
+                        row['ok']=bool(ok)
+                        row['sustained_verified']=bool(ok)
+                        row['down_mbps']=value
+                        row['reason']='' if ok else 'sustained_'+reason
+                        if ok and args.sustained_upload_bytes:
+                            u_ok, u_rate, u_reason=probe_http(mixed_port, UP_ENDPOINT,
+                                nbytes=args.sustained_upload_bytes,upload=True,
+                                max_seconds=args.sustained_timeout)
+                            row['up_mbps']=u_rate if u_ok else 0.0
+                            if not u_ok:
+                                row['upload_note']='upload_'+u_reason
+                    except Exception:
+                        row['reason']='sustained_selection_error'
+                    # Provisional scores may determine who to confirm, but cannot
+                    # count towards two independently confirmed observations.
+                    row['reliability']=1.0 if row['ok'] else 0.0
+                    row['score']=score(row) if row['ok'] else 0.0
+                    print('SMART_SUSTAINED_PROGRESS='+str(ix)+'/'+str(len(finalists)),flush=True)
+
+                confirmed=calibration_confirmed(results,current,LIMITS.CONFIRMED)
+                for ix,row in enumerate(confirmed,1):
+                    try:
+                        helper.select_probe(controller_port, lookup[row['name']]['probe_name'])
+                        ok, value, reason=probe_http(mixed_port,
+                            DOWN_ENDPOINT.format(args.confirm_bytes)+'&calib='+str(time.time_ns()),
+                            nbytes=args.confirm_bytes,max_seconds=args.confirm_timeout)
+                        if ok:
+                            row['confirmed']=True
+                            row['confirm_mbps']=value
+                            # Larger second transfer counts 2x short sustained test.
+                            row['down_mbps']=round(
+                                (row['down_mbps']+2*value)/3,3)
+                            row['score']=score(row)
+                        else:
+                            row['reason']='confirmation_'+reason
+                    except Exception:
+                        row['reason']='confirmation_selection_error'
+                    print('SMART_CONFIRM_PROGRESS='+str(ix)+'/'+str(len(confirmed)),flush=True)
+                for row in confirmed:
+                    row['reliability']=bounded_history(history,row['name'],row['confirmed'])
+                    row['score']=score(row) if row['confirmed'] else 0.0
+            finally:
+                if instance.poll() is None:
+                    instance.terminate()
+                    try:
+                        instance.wait(timeout=4)
+                    except subprocess.TimeoutExpired:
+                        instance.kill()
+                        instance.wait(timeout=4)
+        report={'version':2,'mode':'shadow','timestamp':int(time.time()),
+                'source_sha256':pool_data['provider_sha256'],
+                'current_at_start':current,'current_at_end':current_name(),
+                'chosen':len(chosen),'sustained_count':len(finalists),
+                'confirmed_count':sum(bool(r['confirmed']) for r in results),
+                'results':rank_results(results),
+                'recommendation':recommend(results,current,history),
+                'download_bytes_per_node':args.download_bytes,
+                'sustained_bytes':args.sustained_bytes,
+                'confirm_bytes':args.confirm_bytes,
+                'nominal_byte_cap':cap,
+                'switches_made':0,'production_modified':False}
+        if current != report['current_at_end']:
+            report['recommendation']={'name':'','advice':'OBSERVE_ONLY_CURRENT_CHANGED'}
+        private_json(STATE_DIR/'last.json',report)
+        append_archive(report)
+        private_json(STATE_DIR/'history.json',
+                     {'version':3,'source_sha256':pool_data['provider_sha256'],'nodes':history})
+        print('SMART_MEASURED='+str(len(results)),
+              'SMART_SCREEN_OK='+str(sum(x['warmup_ok'] for x in results)),
+              'SMART_SERVICE_OK='+str(sum(x['service_ok'] for x in results)),
+              'SMART_SUSTAINED_OK='+str(sum(x['sustained_verified'] for x in results)),
+              'SMART_CONFIRMED='+str(report['confirmed_count']))
+        print('SMART_BEST='+report['recommendation']['name'])
+        print('SMART_ADVICE='+report['recommendation']['advice'])
+        print('SMART_ACTIVE_UNCHANGED='+str(current==current_name()).lower())
+        print('SMART_SWITCHES_MADE=0')
+
+
+
+def append_archive(report):
+    """Keep at most 12 small summary records in tmpfs. Never store credentials."""
+    dest=STATE_DIR/'runs.json'
+    runs=[]
+    try:
+        prior=json.loads(dest.read_text())
+        if prior.get('version') == 1 and prior.get('source_sha256') == report['source_sha256']:
+            runs=prior.get('runs', [])
+            if not isinstance(runs,list):
+                runs=[]
+    except (OSError,ValueError,TypeError):
+        pass
+    observations=[]
+    for n in report.get('results', [])[:15]:
+        observations.append({
+            'name':n['name'], 'type':n['type'],
+            'confirmed':bool(n.get('confirmed')),
+            'sustained':bool(n.get('sustained_verified')),
+            'down_mbps':round(float(n.get('down_mbps') or 0),3),
+            'up_mbps':round(float(n.get('up_mbps') or 0),3),
+            'delay_ms':int(n['delay_ms']),
+            'ok':bool(n.get('ok')),
+        })
+    runs.append({
+        'timestamp':int(report['timestamp']),
+        'current':report['current_at_end'],
+        'advice':report['recommendation']['advice'],
+        'candidates':observations,
+    })
+    private_json(dest,{'version':1,'source_sha256':report['source_sha256'],
+                       'runs':runs[-12:]})
+
+
+def history_report(args):
+    """Read-only view of time-of-day runs; never reads raw subscriptions."""
+    file=STATE_DIR/'runs.json'
+    data=json.loads(file.read_text())
+    if data.get('version')!=1 or not isinstance(data.get('runs'),list):
+        raise ValueError('invalid history')
+    runs=data['runs'][-args.count:]
+    print('SMART_MODE=SHADOW_ONLY')
+    print('SMART_HISTORY_RUNS='+str(len(runs)))
+    for run in runs:
+        when=time.strftime('%Y-%m-%d %H:%M %Z',time.localtime(run['timestamp']))
+        confirmed=[x for x in run['candidates'] if x.get('confirmed')]
+        confirmed.sort(key=lambda x: -x['down_mbps'])
+        tops=' '.join(x['name']+'='+str(x['down_mbps'])+'Mbps' for x in confirmed[:3])
+        print(when,'current='+run['current'],'confirmed='+str(len(confirmed)),
+              'advice='+run['advice'],tops)
+    by_name=collections.defaultdict(list)
+    for run in runs:
+        for n in run['candidates']:
+            if n.get('confirmed'):
+                by_name[n['name']].append(n['down_mbps'])
+    for name,rates in sorted(by_name.items(),key=lambda kv:-statistics.median(kv[1])):
+        print('SMART_NODE='+name,'CONFIRMED='+str(len(rates)),
+              'MEDIAN_DOWN_MBPS='+str(round(statistics.median(rates),2)),
+              'MIN_DOWN_MBPS='+str(round(min(rates),2)),
+              'MAX_DOWN_MBPS='+str(round(max(rates),2)))
+
+
+def show(args):
+    p = STATE_DIR/'last.json'
+    obj = json.loads(p.read_text())
+    print('SMART_MODE=SHADOW_ONLY')
+    print('SMART_TIMESTAMP='+str(obj['timestamp']))
+    print('SMART_CURRENT='+obj['current_at_end'])
+    print('SMART_RECOMMENDATION='+obj['recommendation']['name'])
+    print('SMART_ADVICE='+obj['recommendation']['advice'])
+    for i,n in enumerate(obj['results'][:args.count],start=1):
+        print(f"{i}. {n['name']} {n['type']} delay={n['delay_ms']}ms screen={n.get('warmup_mbps',0)}Mbps sustained={n.get('sustained_verified',False)} confirmed={n.get('confirmed',False)} down={n['down_mbps']}Mbps up={n['up_mbps']}Mbps reliability={n['reliability']} score={n['score']} reason={n.get('reason','')}")
+
+
+    # Existing root-owned awg-gpt smart-report already calls `show`; include
+    # the rolling daypart history without expanding the sudo allow-list.
+    try:
+        history_report(argparse.Namespace(count=12))
+    except (OSError,ValueError,KeyError):
+        print('SMART_HISTORY_RUNS=0')
+
+
+def main():
+    parser=argparse.ArgumentParser(description=__doc__)
+    subs=parser.add_subparsers(dest='command',required=True)
+    p=subs.add_parser('plan',help='Pure candidate preview; --fixture permits unprivileged dry runs')
+    p.add_argument('--fixture',default='')
+    p.add_argument('--region',choices=['all','europe'],default='all')
+    p.add_argument('--protocol',default='all')
+    p.add_argument('--current',default='')
+    p.add_argument('--count',type=int,default=LIMITS.CANDIDATES)
+    p=subs.add_parser('scan',help='Real isolated passive measurement (root only)')
+    p.add_argument('--count',type=int,default=LIMITS.CANDIDATES)
+    p.add_argument('--download-bytes',type=int,default=1_500_000)
+    p.add_argument('--upload-bytes',type=int,default=300_000)
+    p.add_argument('--per-request-timeout',type=int,default=11)
+    p.add_argument('--sustained-bytes',type=int,default=8_000_000)
+    p.add_argument('--confirm-bytes',type=int,default=20_000_000)
+    p.add_argument('--sustained-upload-bytes',type=int,default=2_000_000)
+    p.add_argument('--sustained-timeout',type=int,default=20)
+    p.add_argument('--confirm-timeout',type=int,default=20)
+    p.add_argument('--finalists',type=int,default=LIMITS.SUSTAINED)
+    p=subs.add_parser('history',help='View bounded RAM-only calibration history')
+    p.add_argument('--count',type=int,default=12)
+    p=subs.add_parser('show',help='Show last root-owned RAM report')
+    p.add_argument('--count',type=int,default=LIMITS.CANDIDATES)
+    args=parser.parse_args()
+    if getattr(args,'count',10) not in range(1,16):
+        parser.error('count must be 1..15')
+    if args.command == 'scan' and (not 100_000 <= args.download_bytes <= 3_000_000
+          or not 0 <= args.upload_bytes <= 1_000_000
+          or not 5 <= args.per_request_timeout <= 20
+          or not 4_000_000 <= args.sustained_bytes <= 12_000_000
+          or not 8_000_000 <= args.confirm_bytes <= 20_000_000
+          or not 0 <= args.sustained_upload_bytes <= 3_000_000
+          or not 7 <= args.sustained_timeout <= 25
+          or not 7 <= args.confirm_timeout <= 25
+          or not 1 <= args.finalists <= 5):
+        parser.error('speed probe limits exceeded')
+    if args.command == 'plan':
+        _,current,nodes=plan(args)
+        print('SMART_MODE=PLAN_ONLY')
+        print('SMART_CURRENT='+current)
+        print('SMART_CANDIDATE_COUNT='+str(len(nodes)))
+        for n in nodes:
+            print(n['name'], n['type'], str(n['delay_ms'])+'ms')
+    elif args.command == 'scan':
+        shadow_scan(args)
+    elif args.command == 'history':
+        history_report(args)
+    else:
+        show(args)
+
+
+if __name__ == '__main__':
+    # Explicitly no signal handler that can bypass finally: SIGTERM becomes
+    # KeyboardInterrupt, triggering the subprocess/tempdir finally block.
+    signal.signal(signal.SIGTERM, lambda *args: (_ for _ in ()).throw(KeyboardInterrupt()))
+    try:
+        main()
+    except (RuntimeError, ValueError, FileNotFoundError, BlockingIOError) as e:
+        print('AUTO_SMART_ERROR='+type(e).__name__+':'+str(e)[:100], file=sys.stderr)
+        sys.exit(2)

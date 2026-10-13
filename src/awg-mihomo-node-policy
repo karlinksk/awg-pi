@@ -9,6 +9,14 @@ MIHOMO_NODE_NAME_FILE="${MIHOMO_NODE_NAME_FILE:-/etc/awg-pbr/transports/mihomo/n
 MIHOMO_CONFIGURE="${MIHOMO_CONFIGURE_BIN:-/usr/local/sbin/awg-mihomo-configure}"
 MIHOMO_POOL_CLI="${MIHOMO_POOL_CLI:-/usr/local/sbin/awg-mihomo-pool}"
 
+# OFF preserves the pre-existing live policy until service gating is explicitly
+# enabled, tested and approved. REQUIRE rejects stale/missing/UNKNOWN results.
+MIHOMO_SERVICE_GATE_MODE_FILE="${MIHOMO_SERVICE_GATE_MODE_FILE:-/etc/awg-pbr/transports/mihomo/service-eligibility.mode}"
+if [[ -z "${MIHOMO_SERVICE_GATE_MODE+x}" ]]; then
+  MIHOMO_SERVICE_GATE_MODE="$(cat "$MIHOMO_SERVICE_GATE_MODE_FILE" 2>/dev/null || echo off)"
+fi
+MIHOMO_SERVICE_GATE_BIN="${MIHOMO_SERVICE_GATE_BIN:-/usr/local/sbin/awg-mihomo-service-eligibility.py}"
+
 usage(){
   cat <<'USAGE'
 Usage:
@@ -238,6 +246,7 @@ status(){
       printf 'Automatic Mihomo node switching: disabled\n'
       ;;
   esac
+  printf 'Service eligibility gate: %s\n' "$MIHOMO_SERVICE_GATE_MODE"
   printf 'Country inference from node names: disabled\n'
 }
 
@@ -256,6 +265,19 @@ is_enabled(){
   esac
 }
 
+service_candidate_allowed(){
+  local candidate="$1" response
+  case "$MIHOMO_SERVICE_GATE_MODE" in
+    off) return 0 ;;
+    require)
+      [[ -x "$MIHOMO_SERVICE_GATE_BIN" ]] || return 1
+      response="$("$MIHOMO_SERVICE_GATE_BIN" --node "$candidate" 2>/dev/null)" || return 1
+      grep -Fxq 'SERVICE_ELIGIBILITY=PASS' <<<"$response"
+      ;;
+    *) return 1 ;;
+  esac
+}
+
 failover_fixed(){
   local current="$1" node found_current=0
   while IFS= read -r node || [[ -n "$node" ]]; do
@@ -266,6 +288,9 @@ failover_fixed(){
       fi
       continue
     fi
+    # An unproven ChatGPT/YouTube candidate must never be selected when
+    # service gating is required. Continue to the next explicit FIXED node.
+    service_candidate_allowed "$node" || continue
     if "$MIHOMO_CONFIGURE" node select-auto "$node" >/dev/null; then
       printf 'MIHOMO_NODE_FAILOVER=%s->%s\n' "$current" "$node"
       return 0
@@ -289,6 +314,11 @@ failover_auto(){
     done
     candidate="$("$MIHOMO_POOL_CLI" "${best_args[@]}" 2>/dev/null)" || break
     [[ -n "$candidate" ]] || break
+    # AUTO considers health-pool reachability necessary but not sufficient.
+    if ! service_candidate_allowed "$candidate"; then
+      excludes+=("$candidate")
+      continue
+    fi
     if "$MIHOMO_CONFIGURE" node select-auto "$candidate" >/dev/null; then
       printf 'MIHOMO_NODE_FAILOVER=%s->%s\n' "$current" "$candidate"
       return 0

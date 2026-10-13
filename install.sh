@@ -679,6 +679,13 @@ install_project_helper src/awg-mihomo-configure "$MIHOMO_CONFIGURE_SCRIPT"
 install_project_helper src/awg-first-run "$FIRST_RUN_CLI"
 install_project_helper src/awg-selection "$SELECTION_CLI"
 install_project_helper src/awg-selection-monitor "$SELECTION_MONITOR"
+# Service eligibility is installed as read-only helpers only. There is NO
+# automatic service-gated switch until MIHOMO_SERVICE_GATE_MODE=require is
+# explicitly selected after independent service checks and live testing.
+install_project_helper src/awg-mihomo-limits.py /usr/local/sbin/awg-mihomo-limits.py
+install_project_helper src/awg-mihomo-service-check.py /usr/local/sbin/awg-mihomo-service-check.py
+install_project_helper src/awg-mihomo-service-eligibility.py /usr/local/sbin/awg-mihomo-service-eligibility.py
+install_project_helper src/awg-mihomo-smart /usr/local/sbin/awg-mihomo-smart
 install_project_helper src/awg-mihomo-node-policy "$MIHOMO_NODE_POLICY_CLI"
 install_project_helper src/awg-pbr-setup "$SETUP_SCRIPT"
 install_project_helper src/awg-transit-nft /usr/local/sbin/awg-transit-nft
