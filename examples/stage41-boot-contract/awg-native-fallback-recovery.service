@@ -1,0 +1,14 @@
+# DESIGN CONTRACT ONLY: NEVER INSTALL THIS SAMPLE.
+# ExecStart deliberately fails and there is NO enabling section.
+[Unit]
+Description=Stage41 early-boot AWG recovery ordering contract (NONFUNCTIONAL)
+DefaultDependencies=no
+After=local-fs.target
+Before=network-pre.target awg-pbr-setup.service awg-mihomo.service awg-selection-monitor.service awg-pbr-health.service awg-quick@awg0.service
+RequiresMountsFor=/var/lib/awg-pbr/native-fallback-recovery
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/false
+TimeoutStartSec=20s
+RemainAfterExit=yes
