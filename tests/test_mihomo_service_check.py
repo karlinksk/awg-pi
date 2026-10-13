@@ -64,7 +64,17 @@ class ServiceGateTests(unittest.TestCase):
     def test_chatgpt_web_challenge_must_not_promote_to_pass(self):
         result = gate.assess(cases(web=(403, b"Just a moment...")))
         self.assertEqual(result["status"], "UNKNOWN")
+        self.assertEqual(result["checks"]["chatgpt_web"]["reason"], "chatgpt_web_antibot_challenge")
+
+    def test_generic_403_remains_unknown_without_antibot_evidence(self):
+        result = gate.assess(cases(web=(403, b"<html>blocked</html>")))
+        self.assertEqual(result["status"], "UNKNOWN")
         self.assertEqual(result["checks"]["chatgpt_web"]["reason"], "chatgpt_web_http_403")
+
+    def test_cf_turnstile_403_is_a_challenge_not_a_service_fail(self):
+        result = gate.assess(cases(web=(403, b"<html>cf-turnstile</html>")))
+        self.assertEqual(result["checks"]["chatgpt_web"]["state"], "UNKNOWN")
+        self.assertEqual(result["checks"]["chatgpt_web"]["reason"], "chatgpt_web_antibot_challenge")
 
     def test_login_required_watch_is_explicitly_unknown(self):
         watch = ('var ytInitialPlayerResponse = ' +

@@ -122,8 +122,14 @@ def chatgpt_web_probe(request: Callable) -> Result:
             if b"chatgpt" not in preview or b"<html" not in preview:
                 return Result("UNKNOWN", "chatgpt_web_content_unverified")
             return Result("PASS", "chatgpt_web_http_200")
-        # 403 can be Cloudflare challenge rather than an IP-level restriction.
+        # Cloudflare can challenge even a real, JS-capable Chromium
+        # launched with an empty profile. 403 does not disprove the user's chat.
         if code == 403:
+            preview = body[:200_000].lower()
+            if any(marker in preview for marker in (
+                    b"just a moment", b"cf-challenge", b"cf-turnstile",
+                    b"verify you are human")):
+                return Result("UNKNOWN", "chatgpt_web_antibot_challenge")
             return Result("UNKNOWN", "chatgpt_web_http_403")
         return Result("UNKNOWN", f"chatgpt_web_http_{code}")
     except Exception as exc:

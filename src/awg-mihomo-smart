@@ -447,6 +447,88 @@ def service_scan(args):
     return 0 if result["status"] == "PASS" else 1
 
 
+def browser_session(args):
+    """Stage20-style ephemeral SSH-forwardable browser proxy, no live switch.
+
+    The remote Windows Chrome stays authenticated on the user's computer:
+    no cookies/passwords are copied to Pi. Proof of chat must be supplied
+    separately, never manufactured by proxy reachability.
+    """
+    if os.geteuid() != 0:
+        raise RuntimeError("browser-session requires root")
+    if not 60 <= args.seconds <= 600:
+        raise RuntimeError("browser-session time is outside 60..600 seconds")
+    if not Path("/dev/shm").is_dir():
+        raise RuntimeError("RAM scratch missing")
+    helper = load_pool_code()
+    raw = helper.read_provider(PROVIDER)
+    matched = [node for node in raw
+               if isinstance(node,dict) and node.get("name") == args.node]
+    if len(matched) != 1:
+        raise RuntimeError("ambiguous or missing browser candidate")
+    verify_candidate_direct(matched[0])
+    STATE_DIR.mkdir(parents=True, exist_ok=True, mode=0o700)
+    with (STATE_DIR / "lock").open("a+") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        mixed = 17891
+        controller = helper.choose_free_port()
+        while mixed == controller:
+            controller = helper.choose_free_port()
+        with tempfile.TemporaryDirectory(prefix="awg-stage20-browser-", dir="/dev/shm") as tmp:
+            cfg, entries = helper.make_probe_config(matched,mixed,controller)
+            if len(entries)!=1 or not entries[0].get("probe_name"):
+                raise RuntimeError("invalid browser candidate")
+            # The probe helper pins both listeners to 127.0.0.1, no TUN,
+            # no LAN listener, no routing or service modification.
+            if (cfg.get("allow-lan") is not False or cfg.get("bind-address")!="127.0.0.1"
+                    or cfg.get("mixed-port")!=17891 or cfg.get("tun")):
+                raise RuntimeError("unsafe browser listener configuration")
+            import yaml
+            path=Path(tmp)/"config.yaml"
+            path.write_text(yaml.safe_dump(cfg,allow_unicode=True,sort_keys=False))
+            os.chmod(path,0o600)
+            instance=subprocess.Popen(
+                [MIHOMO,"-d",tmp,"-f",str(path)],
+                stdin=subprocess.DEVNULL,stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL)
+            try:
+                start=time.monotonic()
+                while time.monotonic()-start<10:
+                    if instance.poll() is not None:
+                        raise RuntimeError("browser probe Mihomo exited")
+                    try:
+                        proxies=helper.controller_request(controller,"/proxies",timeout=.7).get("proxies",{})
+                        if entries[0]["probe_name"] in proxies:
+                            break
+                    except Exception:
+                        pass
+                    time.sleep(.2)
+                else:
+                    raise RuntimeError("browser probe Mihomo unavailable")
+                helper.select_probe(controller,entries[0]["probe_name"])
+                print("BROWSER_SESSION_NODE="+args.node,flush=True)
+                print("BROWSER_SESSION_PROXY=127.0.0.1:17891",flush=True)
+                print("BROWSER_SESSION_TIMEOUT_SEC="+str(args.seconds),flush=True)
+                print("BROWSER_SESSION_SHADOW_ONLY=true",flush=True)
+                print("BROWSER_SESSION_PRODUCTION_MODIFIED=false",flush=True)
+                # Time-bounded lease. An interrupted parent always terminates
+                # the child in finally. No persistent systemd units or files.
+                deadline=time.monotonic()+args.seconds
+                while time.monotonic()<deadline:
+                    if instance.poll() is not None:
+                        raise RuntimeError("browser probe exited mid-session")
+                    time.sleep(min(1.0,max(0.05,deadline-time.monotonic())))
+            finally:
+                if instance.poll() is None:
+                    instance.terminate()
+                    try:
+                        instance.wait(timeout=4)
+                    except subprocess.TimeoutExpired:
+                        instance.kill()
+                        instance.wait(timeout=4)
+    print("BROWSER_SESSION_CLEANUP=COMPLETE",flush=True)
+
+
 def shadow_scan(args):
     if os.geteuid() != 0:
         raise RuntimeError('shadow benchmarking requires root to read the protected provider')
@@ -730,6 +812,9 @@ def main():
     p.add_argument('--sustained-timeout',type=int,default=20)
     p.add_argument('--confirm-timeout',type=int,default=20)
     p.add_argument('--finalists',type=int,default=LIMITS.SUSTAINED)
+    p=subs.add_parser('browser-session',help='Stage20 temporary 127.0.0.1:17891 browser proxy (never auto switches)')
+    p.add_argument('--node',required=True)
+    p.add_argument('--seconds',type=int,default=600)
     p=subs.add_parser('service-scan',help='Isolated one-node ChatGPT+YouTube check (root only)')
     p.add_argument('--node',required=True)
     p=subs.add_parser('history',help='View bounded RAM-only calibration history')
@@ -758,6 +843,8 @@ def main():
             print(n['name'], n['type'], str(n['delay_ms'])+'ms')
     elif args.command == 'scan':
         shadow_scan(args)
+    elif args.command == 'browser-session':
+        browser_session(args)
     elif args.command == 'service-scan':
         raise SystemExit(service_scan(args))
     elif args.command == 'history':

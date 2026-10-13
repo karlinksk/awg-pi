@@ -117,3 +117,86 @@ The decoder and SMART integration in the feature branch are not yet installed
 to the working transport selector. Service-gated automatic failover remains
 OFF while ChatGPT eligibility is being resolved. RAM tools must be verified
 and re-created after reboot before any service gating can be enabled.
+
+
+## ChatGPT Chrome/TLS/JavaScript diagnostic, 13 October 2026
+
+On 12 October, the Stage20 browser test had independently confirmed actual
+ChatGPT opening, authentication and message exchange on shadowsocks-27307,
+using Windows Chrome through a temporary SSH tunnel to Pi's isolated Mihomo.
+This historical evidence is NOT a fresh automated PASS.
+
+We restored Chromium 154 ARM64 from signed Raspberry Pi Debian apt packages
+into /dev/shm, including four missing libraries. No system package was installed.
+Chromium rendered a local test HTML document. In a fresh, empty, unprivileged,
+RAM-only browser profile, with all requests directed through a temporary Mihomo
+proxy, ChatGPT returned the Cloudflare JS challenge "Just a moment...".
+This occurred independently with shadowsocks-27307 and hysteria2-335173174.
+Longer JS virtual time did not result in access to an authenticated chat.
+No browser credentials/cookies were transferred to Pi.
+
+A browser challenge or anonymous HTTP403 cannot disprove that ChatGPT works in
+the user's authenticated browser. Equally, OpenAI API HTTP401 and a YouTube
+24-frame video decode cannot prove ChatGPT chat functionality.
+The checker now distinguishes HTTP403 containing anti-bot markers as
+chatgpt_web_antibot_challenge from generic chatgpt_web_http_403.
+Both remain UNKNOWN. There is no implicit PASS for Cloudflare challenge.
+
+The Chromium installation is NOT part of Service Eligibility or production.
+The browser RAM fixture is removed after the experiment. The Stage18 decoder
+keeps its independently confirmed video PASS.
+
+Release gate unchanged: automatic switching remains OFF until there is fresh
+authenticated chat proof for the exact candidate through an authorized browser,
+with no transfer of session cookies/tokens to Pi, and a reviewed freshness
+policy. The project must not conflate anonymous anti-bot blocking with node
+unavailability or assume that a public API401 is a working chat.
+
+## Stage20 ephemeral browser test: fresh proof without copying credentials to Pi
+
+The original 12 October Stage20 user acceptance was a genuine authenticated
+Chrome chat, while anonymous Python and even Chromium from RAM get Cloudflare
+challenge/HTTP403. This **cannot be solved by changing status code policy**.
+
+The focused `awg-mihomo-smart browser-session --node NAME --seconds 600` reuses
+our existing isolated Mihomo candidate listener rather than adding any new
+VPN/backup architecture. It requires root to read private subscription and
+checks the candidate underlay is a public IPv4 with matching Pi DIRECT ethernet
+route. Its proxy is explicitly bound to **127.0.0.1:17891**, the controller is
+also localhost, TUN is disabled, secret config remains in temporary /dev/shm,
+shared smart test lock prevents concurrent shadow tests, and the process is
+terminated and RAM config removed within a maximum 600 seconds. It does not
+set any production health result, whitelist a candidate, change node selection,
+or report ChatGPT PASS merely because the listener exists.
+
+Example, when a Windows browser session is available and **only after** the
+operator decides to perform the controlled test:
+
+```bash
+sudo python3 -B /tmp/awg-service-eligibility-dev/src/awg-mihomo-smart browser-session --node shadowsocks-27307 --seconds 600
+```
+
+In a separate Windows PowerShell terminal, tunnel its loopback port:
+
+```powershell
+ssh -N -L 127.0.0.1:18891:127.0.0.1:17891 karlinks@192.168.112.34
+```
+
+Start Windows Chrome with an **isolated local browser profile** using
+`--proxy-server=http://127.0.0.1:18891 --disable-quic`, open
+`https://chatgpt.com/`, sign in and **actually send a test chat message**.
+User credentials, cookies and chat content remain entirely in Windows Chrome.
+The user may report successful chat as an explicit acceptance result, but no
+RAM-only or GitHub code assumes such a report to be a fresh automated PASS.
+
+**Independent Pi smoke**: port 17891 bound ONLY to 127.0.0.1; request to
+OpenAI API returned 401 through selected shadowsocks-27307; the working
+Mihomo and table100 remained unchanged. The 60-second test lease then
+terminated automatically. No persistent media/browser runtime, systemd,
+MikroTik or NAS changes were made.
+
+**Unresolved original requirement:** before fully autonomous service-qualified
+switching, an audited way to refresh actual authenticated browser results
+for each candidate is still required. We do NOT equate API401, the open browser
+proxy, a 403 challenge, or a historical successful chat with current proof.
+The production service gate remains OFF.
