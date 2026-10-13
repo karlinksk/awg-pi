@@ -1,0 +1,13 @@
+# Development example only. Never installed or enabled by install.sh.
+# Intended to be copied into a nonprivileged systemd --user manager *only*
+# after putting the fixture script under the indicated development path.
+[Unit]
+Description=AWG Stage32 isolated fixture recovery test (NOT production)
+ConditionPathExists=/tmp/awg-stage32-demo/transaction.json
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 -B %h/stage32-sandbox/awg-mihomo-stage32-fixture-watchdog.py --fixture-root /tmp/awg-stage32-demo --check
+NoNewPrivileges=yes
+PrivateTmp=no
+TimeoutStartSec=15s
