@@ -686,6 +686,7 @@ install_project_helper src/awg-mihomo-limits.py /usr/local/sbin/awg-mihomo-limit
 install_project_helper src/awg-mihomo-service-check.py /usr/local/sbin/awg-mihomo-service-check.py
 install_project_helper src/awg-mihomo-video-decode.py /usr/local/sbin/awg-mihomo-video-decode.py
 install_project_helper src/awg-mihomo-service-eligibility.py /usr/local/sbin/awg-mihomo-service-eligibility.py
+install_project_helper src/awg-mihomo-browser-proof.py /usr/local/sbin/awg-mihomo-browser-proof.py
 install_project_helper src/awg-mihomo-smart /usr/local/sbin/awg-mihomo-smart
 install_project_helper src/awg-mihomo-node-policy "$MIHOMO_NODE_POLICY_CLI"
 install_project_helper src/awg-pbr-setup "$SETUP_SCRIPT"

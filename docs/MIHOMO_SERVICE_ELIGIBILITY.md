@@ -300,3 +300,56 @@ cookies or weakening UNKNOWN semantics.
 The latest selection-monitor regression deliberately counts only
 explicit JSON FAIL; UNKNOWN from Cloudflare never causes false failover.
 90 Python tests and GitHub v1.3.0 CI passed for the safety fix.
+
+
+## Expiring operator-browser acceptance for tightly bounded AUTO — 13 Oct 2026
+
+The user manually verified an actual authenticated ChatGPT reply through
+shadowsocks-27307 (egress 169.150.210.233) and vless-1741441891 (egress
+193.233.74.6). Both nodes independently decoded 24 actual YouTube video
+frames. These are genuine dated observations, not perpetual fresh proof.
+
+A strictly opt-in service-eligibility.mode=browser is now available in this
+draft branch; it is NOT installed or enabled on the working gateway.
+
+- A root-only 0600 RAM file in /run/awg-pbr/mihomo-smart stores only exact
+  node name, IPv4 egress, provider SHA256, the actual browser observation
+  timestamp, and the explicit operator-observed-chat-reply claim.
+  NO chat content, cookies, usernames, passwords or tokens are saved.
+- Record requires a real recent user-observed browser reply, a literal public
+  exit IPv4 and explicit acknowledgement. Observations older than 30 minutes
+  or more than 15 seconds in the future cannot be recorded. Stored proof
+  expires 30 minutes from the ACTUAL OBSERVATION, not from later writing.
+- A provider digest change, exact-node mismatch, expired date, changed public
+  exit IP, or insecure/malformed proof rejects eligibility.
+- In browser mode AUTO filters the entire health-pool ranking to ONLY
+  recently approved exact names via the optional pool best --allow NAME.
+  Existing health, country/protocol, delay, cooldown and exclusion rules
+  still apply. An empty/expired list means NO candidate, never the fastest
+  untested node. At most three gated candidate attempts.
+- A proposed candidate must also pass a FRESH one-node RAM-only shadow
+  probe: OpenAI API PASS, actual ffmpeg 24-frame YouTube video PASS,
+  ChatGPT web PASS or UNKNOWN (never explicit FAIL), and the measured
+  shadow-proxy exit IP MUST match the browser observation.
+- Two separate explicit current-node service failures are required before
+  normal failover logic triggers; Cloudflare UNKNOWN is not an outage.
+  Existing AmneziaWG fallback and Transit FAIL-CLOSED remain unchanged.
+- Proof is not renewed by an API HTTP401 or an automatic network probe.
+  An operator must rerun an actual authorized Chrome chat reply for any
+  new 30-minute interval. Proofs disappear on reboot, never touch microSD.
+
+Operator example when a NEW browser reply has truly just been observed:
+
+    sudo /usr/local/sbin/awg-mihomo-browser-proof.py record
+      --node EXACT_NODE --egress-ip REAL_PUBLIC_EXIT
+      --observed-at EPOCH_OF_REAL_REPLY --ack-user-test
+
+Additional root-only commands are check --node NAME --egress-ip IP and
+candidates. No such records are promoted into current production by this PR.
+
+IMPORTANT: This supervised bridge is NOT a fully unattended service
+verification system. Meeting the original indefinite-auto-switching goal
+requires an explicitly authorized browser-side verifier able to refresh a
+real authenticated ChatGPT result per exact node without sending cookies
+or credentials to the Raspberry Pi. Continue to keep production gate OFF
+until that mechanism and full end-to-end failover are reviewed.

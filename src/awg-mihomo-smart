@@ -432,6 +432,20 @@ def service_scan(args):
                 helper.select_probe(controller, entries[0]["probe_name"])
                 result = assess_services_with_stage18(
                     gate, mixed, force_media=True)
+                egress = ""
+                try:
+                    external = subprocess.run([
+                        CURL, "-q", "-4fsS", "--noproxy", "", "-x",
+                        f"http://127.0.0.1:{mixed}", "--connect-timeout", "3",
+                        "--max-time", "8", "https://api.ipify.org",
+                    ], capture_output=True, text=True, timeout=10)
+                    if external.returncode == 0:
+                        candidate_ip = external.stdout.strip()
+                        ip = ipaddress.ip_address(candidate_ip)
+                        if ip.version == 4 and ip.is_global:
+                            egress = candidate_ip
+                except (OSError, subprocess.TimeoutExpired, ValueError):
+                    pass
             finally:
                 if instance.poll() is None:
                     instance.terminate()
@@ -441,6 +455,7 @@ def service_scan(args):
                         instance.kill()
                         instance.wait(timeout=4)
     # Never print a provider URL, key, password or signed media URL.
+    print("SERVICE_EGRESS_IPV4=" + egress)
     print("SERVICE_ELIGIBILITY=" + result["status"])
     for key in ("openai_api", "chatgpt_web", "youtube_video"):
         print("SERVICE_CHECK_" + key.upper() + "=" + result["checks"][key]["state"])
