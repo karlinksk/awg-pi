@@ -72,6 +72,38 @@ def load_service_code():
     return mod
 
 
+def load_video_decode_code():
+    source = Path(__file__).with_name("awg-mihomo-video-decode.py")
+    if not source.is_file():
+        return None
+    loader = importlib.machinery.SourceFileLoader('awg_stage18_video_decode', str(source))
+    spec = importlib.util.spec_from_loader(loader.name, loader)
+    module = importlib.util.module_from_spec(spec)
+    loader.exec_module(module)
+    return module
+
+
+def assess_services_with_stage18(gate, proxy_port: int, *, force_media=False,
+                                 video_module=None) -> dict:
+    result = gate.assess(
+        lambda url, **kw: gate.fetch(proxy_port, url, timeout=6, **kw))
+    checks = result["checks"]
+    if (checks["youtube_video"]["state"] != "UNKNOWN"
+            or checks["openai_api"]["state"] != "PASS"
+            or (checks["chatgpt_web"]["state"] != "PASS" and not force_media)):
+        return result
+    module = video_module if video_module is not None else load_video_decode_code()
+    if module is None:
+        return result
+    state, reason = module.decode_24_frames(proxy_port)
+    checks["youtube_video"] = {"state": state, "reason": reason}
+    statuses = [checks[key]["state"] for key in
+                ("openai_api", "chatgpt_web", "youtube_video")]
+    result["status"] = "PASS" if all(s == "PASS" for s in statuses) else (
+        "FAIL" if "FAIL" in statuses else "UNKNOWN")
+    return result
+
+
 def current_name():
     try:
         return NODE_NAME.read_text(encoding='utf-8').strip()
@@ -398,8 +430,8 @@ def service_scan(args):
                 else:
                     raise RuntimeError("isolated service candidate unavailable")
                 helper.select_probe(controller, entries[0]["probe_name"])
-                result = gate.assess(
-                    lambda url, **kw: gate.fetch(mixed, url, timeout=4, **kw))
+                result = assess_services_with_stage18(
+                    gate, mixed, force_media=True)
             finally:
                 if instance.poll() is None:
                     instance.terminate()
@@ -497,9 +529,8 @@ def shadow_scan(args):
                         if ok:
                             # The selected probe proxy, NOT the live TUN, must
                             # pass all three checks before a sustained benchmark.
-                            service = service_gate.assess(
-                                lambda url, **kw: service_gate.fetch(
-                                    mixed_port, url, timeout=min(6, args.per_request_timeout), **kw))
+                            service = assess_services_with_stage18(
+                                service_gate, mixed_port)
                             row['service_state'] = service['status']
                             row['service_checks'] = service['checks']
                             row['service_ok'] = service['status'] == 'PASS'

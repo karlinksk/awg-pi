@@ -684,6 +684,7 @@ install_project_helper src/awg-selection-monitor "$SELECTION_MONITOR"
 # explicitly selected after independent service checks and live testing.
 install_project_helper src/awg-mihomo-limits.py /usr/local/sbin/awg-mihomo-limits.py
 install_project_helper src/awg-mihomo-service-check.py /usr/local/sbin/awg-mihomo-service-check.py
+install_project_helper src/awg-mihomo-video-decode.py /usr/local/sbin/awg-mihomo-video-decode.py
 install_project_helper src/awg-mihomo-service-eligibility.py /usr/local/sbin/awg-mihomo-service-eligibility.py
 install_project_helper src/awg-mihomo-smart /usr/local/sbin/awg-mihomo-smart
 install_project_helper src/awg-mihomo-node-policy "$MIHOMO_NODE_POLICY_CLI"

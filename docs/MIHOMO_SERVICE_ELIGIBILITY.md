@@ -60,3 +60,60 @@ Further **independent one-node shadow-only diagnostics** (never modifying the se
 The service checker now preserves UNKNOWN with **diagnostic reasons** `youtube_player_login_required` and `youtube_sabr_stream_unvalidated` (only for a trusted Googlevideo SABR URL). It never upgrades either case to PASS. Dedicated offline tests cover both branches and disallow untrusted SABR hosts.
 
 **Deployment decision:** keep `service-eligibility.mode` OFF until an authorized browser-level test can confirm actual ChatGPT interaction and video playback and a safe way exists to produce auditable, per-node eligibility evidence from that result. Do not force PASS on an HTTP status or absent media URL. The existing transport fallback and MikroTik/NAS boundaries are unchanged.
+
+
+## Reused Stage17–18 video decoder — real rediscovery, 13 October 2026
+
+The previously successful Stage17/Stage18 media test was traced back to its
+technical method: a distinct TUN-disabled Mihomo on localhost, yt-dlp
+2026.08.19 using Node.js v22.16.0 and YouTube's official player extractor,
+a bounded initial video segment downloaded **through that same shadow proxy**,
+and ffmpeg decoding at least 24 frames. Stage18 had reported 2/2 independent
+24-frame tests on `shadowsocks-27307`.
+
+We restored **the exact two tool versions** into root-owned mode 0700 under
+`/dev/shm/awg-stage18-service-runtime`, with known SHA-256 hashes of both
+binaries and the downloaded official Node tarball. The new operator-only
+`scripts/awg-mihomo-stage18-ram-runtime.sh` validates or restores this RAM
+runtime. It does not install Debian packages or change system services.
+
+New `src/awg-mihomo-video-decode.py` implements a conservative Stage18
+frame check on the existing shadow HTTP proxy port:
+
+- Root-owned SHA-256 pinned Node/yt-dlp tools required. Absent, modified or
+  non-root-owned runtime always results in UNKNOWN.
+- Fixed known YouTube watch URL, no authentication cookies or user secrets;
+  yt-dlp has an explicitly forced `127.0.0.1:<shadow-port>` HTTP proxy and
+  fixed bounded network timeouts. EJS JavaScript solver obtained from the
+  upstream yt-dlp project as needed through that proxy.
+- `--download-sections *0-4` from a low-resolution video format, hard 2 MiB
+  output limit, max 55 seconds yt-dlp and 17 seconds ffmpeg execution.
+  Temporary file is under `/dev/shm` only, and is deleted at completion.
+- ffmpeg is limited to local `file,pipe,data` inputs; **only 24 decoded frames**
+  can return `PASS / youtube_24_video_frames_decoded`. HTTP statuses,
+  YouTube HTML, SABR presence and an ffmpeg exit without frames are NEVER PASS.
+- The decoder is invoked from the existing `awg-mihomo-smart service-scan`
+  for a specifically selected one-node shadow test; ordinary 10-node
+  benchmarking invokes it only when API and ChatGPT web are already PASS so
+  CPU and downloads are not wasted on ineligible candidates.
+- Service Eligibility still requires **both** ChatGPT and video check PASS.
+  A video PASS cannot erase the ChatGPT web UNKNOWN, and an OpenAI region
+  FAIL is never overridden.
+
+**Independent live proof on 2026-10-13:** for `shadowsocks-27307`, isolated
+yt-dlp obtained the YouTube video and ffmpeg successfully decoded **24 frames**
+from a 43,449-byte RAM-only segment in 7.9 seconds of download processing.
+A subsequent run of the **integrated new Service Eligibility code** returned:
+`OPENAI_API=PASS`, `YOUTUBE_VIDEO=PASS`, `CHATGPT_WEB=UNKNOWN`,
+`SERVICE_ELIGIBILITY=UNKNOWN`. Existing live Mihomo/AWG, table100,
+Transit guard, SSTP on MikroTik and NAS were not modified.
+
+This is a working VIDEO decoder but does **not** prove authenticated ChatGPT
+chat is accessible. Cloudflare HTTP 403 from anonymous Python HTTP requests
+remains UNKNOWN, and previously successful interactive ChatGPT sessions do
+not constitute a fresh per-node automatic browser proof.
+
+The decoder and SMART integration in the feature branch are not yet installed
+to the working transport selector. Service-gated automatic failover remains
+OFF while ChatGPT eligibility is being resolved. RAM tools must be verified
+and re-created after reboot before any service gating can be enabled.

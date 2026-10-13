@@ -158,7 +158,7 @@ class CalibrationTests(unittest.TestCase):
                  patch.object(smart,'plan',return_value=(pool,'SS',input_nodes)), \
                  patch.object(smart,'load_pool_code',return_value=helper), \
                  patch.object(smart,'load_service_code',return_value=types.SimpleNamespace(
-                     assess=lambda request:{'status':'PASS','checks':{}},
+                     assess=lambda request:{'status':'PASS','checks':{key:{'state':'PASS','reason':'fixture'} for key in ('openai_api','chatgpt_web','youtube_video')}},
                      fetch=lambda *a,**kw:None)), \
                  patch.object(smart,'current_name',return_value='SS'), \
                  patch.object(smart,'probe_http',side_effect=probe), \
