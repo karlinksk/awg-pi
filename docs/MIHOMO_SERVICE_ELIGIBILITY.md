@@ -270,3 +270,33 @@ before failover. Bogus mode continues to fail closed.
 Regression tests cover consecutive FAIL, FAIL then UNKNOWN,
 UNKNOWN then FAIL, UNKNOWN twice, malformed data, PASS reset and
 off/bogus service gating. No running Pi services are modified.
+
+
+## Exact two-node isolated Mihomo switch validation — 13 October 2026
+
+After both nodes passed user-authenticated ChatGPT conversation and 24-frame
+YouTube decoding, a separate TUN-disabled in-RAM Mihomo was configured
+with both exact subscription nodes. The existing Mihomo controller
+changed the selected proxy from shadowsocks-27307 to vless-1741441891.
+
+- First selection: shadowsocks-27307 egress 169.150.210.233;
+  OpenAI API HTTP401 as expected.
+- Second selection: vless-1741441891 egress 193.233.74.6;
+  OpenAI API HTTP401 as expected.
+- Selector transition PASS; public egress IPv4 did change.
+- Test Mihomo was terminated and temporary RAM config removed.
+- Production remains selected shadowsocks-696792830, Mihomo healthy,
+  Transit guard SAFE, table100 default dev mihomo0; no MikroTik, SSTP,
+  NAS or AWG modifications.
+
+This proves two-candidate isolated proxy selection and reachability.
+It does NOT by itself prove production failover timers/policies or a
+subsequent automatic authenticated ChatGPT conversation. The user
+confirmed genuine chat replies on both candidates separately earlier.
+Production service gate remains OFF pending a safe unattended way
+to refresh authenticated ChatGPT usability without exporting session
+cookies or weakening UNKNOWN semantics.
+
+The latest selection-monitor regression deliberately counts only
+explicit JSON FAIL; UNKNOWN from Cloudflare never causes false failover.
+90 Python tests and GitHub v1.3.0 CI passed for the safety fix.
