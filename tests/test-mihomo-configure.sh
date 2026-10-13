@@ -218,6 +218,8 @@ run_cli(){
     MIHOMO_CANDIDATE_FETCH_FILE="$tmp/state/candidate-fetch-path" \
     MIHOMO_CANDIDATE_FORMAT_FILE="$tmp/state/candidate-provider-format" \
     MIHOMO_CONFIG_FILE="$tmp/etc/config.yaml" \
+    MIHOMO_FALLBACK_REFRESH_GUARD="${MIHOMO_FALLBACK_REFRESH_GUARD:-$repo_root/src/awg-mihomo-fallback-refresh-guard.py}" \
+    MIHOMO_NATIVE_FALLBACK_MODE_FILE="$tmp/etc/native-fallback.mode" \
     MIHOMO_INSTALLER="$tmp/bin/installer" \
     MIHOMO_UPDATER="$tmp/bin/updater" \
     MIHOMO_PREPARE="$tmp/bin/prepare" \
@@ -578,6 +580,7 @@ grep -Fq 'candidate preserved' "$tmp/err"
 grep -Fq 'Mihomo health-check failed after 3 attempts.' "$tmp/err"
 
 echo "=== periodic auto-refresh keeps the current healthy node and promotes safely ==="
+sudo sh -c "printf 'legacy\n' >'$tmp/etc/native-fallback.mode'"
 sudo sh -c "cat >'$tmp/state/providers/subscription.yaml' <<'YAML'
 proxies:
   - name: Current Node
@@ -648,5 +651,51 @@ echo "=== periodic updater unit runs the safe orchestrator with a long timeout =
 grep -Fq 'Environment=MIHOMO_PERIODIC_REFRESH=1' "$repo_root/units/awg-mihomo-update.service"
 grep -Fq 'ExecStart=/usr/local/sbin/awg-mihomo-configure provider auto-refresh' "$repo_root/units/awg-mihomo-update.service"
 grep -Fq 'TimeoutStartSec=30min' "$repo_root/units/awg-mihomo-update.service"
+
+echo "=== native fallback provider refresh is always staged and live stays unchanged ==="
+sudo sh -c "printf '%s\n' native >'$tmp/etc/native-fallback.mode'"
+sudo sh -c "cat >'$tmp/etc/config.yaml' <<'YAML'
+proxy-groups:
+  - name: AWG-MIHOMO
+    type: fallback
+    proxies:
+      - primary
+      - backup
+YAML"
+sudo cp "$tmp/state/providers/subscription.yaml" "$tmp/native-live-provider.before"
+sudo cp "$tmp/etc/config.yaml" "$tmp/native-live-config.before"
+sudo cp "$tmp/etc/node-name" "$tmp/native-node.before"
+: >"$tmp/systemctl.log"
+out="$(MIHOMO_PERIODIC_REFRESH=1 MOCK_POOL_CURRENT_HEALTHY=1 run_cli provider auto-refresh)"
+grep -Fqx 'MIHOMO_PROVIDER_AUTO_REFRESH=STAGED_NATIVE_FALLBACK_REVIEW' <<<"$out"
+grep -Fqx 'LIVE_PROVIDER=UNCHANGED' <<<"$out"
+sudo cmp -s "$tmp/native-live-provider.before" "$tmp/state/providers/subscription.yaml"
+sudo cmp -s "$tmp/native-live-config.before" "$tmp/etc/config.yaml"
+sudo cmp -s "$tmp/native-node.before" "$tmp/etc/node-name"
+sudo test -e "$tmp/state/providers/candidate.yaml"
+[[ ! -s "$tmp/systemctl.log" ]] || { echo 'FAIL: refresh changed services'; exit 1; }
+echo STAGE28_NATIVE_REFRESH_STAGED_PASS
+
+echo "=== unknown marker stages instead of applying ==="
+sudo sh -c "printf '%s\n' invalid >'$tmp/etc/native-fallback.mode'"
+out="$(MIHOMO_PERIODIC_REFRESH=1 run_cli provider auto-refresh)"
+grep -Fqx 'MIHOMO_PROVIDER_AUTO_REFRESH=STAGED_REFRESH_GUARD_UNKNOWN' <<<"$out"
+sudo cmp -s "$tmp/native-live-config.before" "$tmp/etc/config.yaml"
+sudo cmp -s "$tmp/native-live-provider.before" "$tmp/state/providers/subscription.yaml"
+echo STAGE28_UNKNOWN_MODE_STAGE_PASS
+
+echo "=== legacy mode marker cannot override native fallback config ==="
+sudo sh -c "printf '%s\n' legacy >'$tmp/etc/native-fallback.mode'"
+out="$(MIHOMO_PERIODIC_REFRESH=1 run_cli provider auto-refresh)"
+grep -Fqx 'MIHOMO_PROVIDER_AUTO_REFRESH=STAGED_NATIVE_FALLBACK_REVIEW' <<<"$out"
+sudo cmp -s "$tmp/native-live-provider.before" "$tmp/state/providers/subscription.yaml"
+echo STAGE28_NATIVE_CONFIG_PRECEDENCE_PASS
+
+echo "=== missing refresh guard does not auto-promote ==="
+out="$(MIHOMO_FALLBACK_REFRESH_GUARD=/tmp/does-not-exist-stage28 MIHOMO_PERIODIC_REFRESH=1 run_cli provider auto-refresh)"
+grep -Fqx 'MIHOMO_PROVIDER_AUTO_REFRESH=STAGED_REFRESH_GUARD_UNKNOWN' <<<"$out"
+sudo cmp -s "$tmp/native-live-provider.before" "$tmp/state/providers/subscription.yaml"
+sudo cmp -s "$tmp/native-live-config.before" "$tmp/etc/config.yaml"
+echo STAGE28_MISSING_GUARD_SAFE_PASS
 
 echo "mihomo configure transaction: OK"
