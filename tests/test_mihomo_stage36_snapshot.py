@@ -125,6 +125,28 @@ class Stage36Snapshot(unittest.TestCase):
             self.assertFalse((self.root/"recovery").exists())
             fcntl.flock(f,fcntl.LOCK_UN)
 
+    def test_stage37_maintenance_lock_contention_refuses_snapshot(self):
+        with open(self.root/".maintenance.lock", "w") as f:
+            fcntl.flock(f, fcntl.LOCK_EX)
+            denied=self.cli("--snapshot")
+            self.assertEqual(denied.returncode,2)
+            self.assertFalse((self.root/"recovery").exists())
+            fcntl.flock(f, fcntl.LOCK_UN)
+        self.assertEqual(self.cli("--snapshot").returncode,0)
+        self.assertEqual(self.cli("--verify").returncode,0)
+
+    def test_stage37_symlinked_maintenance_lock_refused(self):
+        (self.root/".maintenance.lock").symlink_to(self.sentinel)
+        self.assertEqual(self.cli("--snapshot").returncode,2)
+        self.assertFalse((self.root/"recovery").exists())
+
+    def test_stage37_malformed_lock_permissions_refused(self):
+        file=self.root/".maintenance.lock"
+        file.write_bytes(b"")
+        file.chmod(0o666)
+        self.assertEqual(self.cli("--snapshot").returncode,2)
+        self.assertFalse((self.root/"recovery").exists())
+
     def test_recovery_parent_refuses_world_writable(self):
         self.root.chmod(0o777)
         self.assertEqual(self.cli("--snapshot").returncode,2)

@@ -210,6 +210,23 @@ def production_paths():
     return Path("/"), RECOVERY, 0
 
 
+def acquire_maintenance_lock(path, owner):
+    if path.is_symlink():
+        raise Reject("maintenance lock symlink")
+    fd = os.open(path, os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
+    try:
+        st = os.fstat(fd)
+        if (not stat.S_ISREG(st.st_mode) or st.st_uid != owner
+                or (stat.S_IMODE(st.st_mode) & 0o022)):
+            raise Reject("maintenance lock ownership or mode unsafe")
+        # Existing awg-selection-monitor honors this exact advisory lock.
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        return fd
+    except Exception:
+        os.close(fd)
+        raise
+
+
 def main():
     p = argparse.ArgumentParser(description="Snapshot/verify ONLY; no production cutover or restore")
     modes = p.add_mutually_exclusive_group(required=True)
@@ -230,16 +247,22 @@ def main():
             if args.acknowledge_production_snapshot:
                 raise Reject("invalid fixture option")
             source, path, uid = prepare_fixture(args.fixture_root)
-        # A separate lock is used for the backup writer. Actual production
-        # cutover MUST ALSO hold awg-maintenance.lock; not implemented here.
+        # Serialize backup with both its own writer and the existing
+        # awg-maintenance.lock. Full cutover must hold the same lock
+        # across subsequent config/service/route transitions.
         lockfile = source.parent / ".stage36-snapshot.lock" if not args.production else RECOVERY.parent / ".stage36-snapshot.lock"
         fd = os.open(lockfile, os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
         try:
             fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            if args.snapshot:
-                result = capture(source, path, uid)
-            else:
-                result = verify(path, uid)
+            maintenance_path = Path("/run/awg-maintenance.lock") if args.production else source.parent / ".maintenance.lock"
+            md = acquire_maintenance_lock(maintenance_path, uid)
+            try:
+                if args.snapshot:
+                    result = capture(source, path, uid)
+                else:
+                    result = verify(path, uid)
+            finally:
+                os.close(md)
         finally:
             os.close(fd)
         print(f"STAGE36_{'SNAPSHOT' if args.snapshot else 'VERIFY'}=PASS entries={result}")

@@ -28,7 +28,7 @@ The first two entries are required; other files are explicitly marked absent/pre
 - Every source is read once through `O_NOFOLLOW`, bounded to 16 MiB per file, and recorded with a SHA-256 digest, original owner/group/mode and present/absent state.
 - Use temporary files, file `fsync`, atomic rename and directory `fsync`. Publish manifest before the `READY` marker; READY is published last.
 - Independent verification checks exact whitelist membership, metadata, digest and payload set. Invalid/incomplete snapshots are rejected. A repeated capture cannot overwrite a previous snapshot.
-- A separate lock forbids concurrent backup writers. **This is not yet synchronized with the existing `/run/awg-maintenance.lock`; production cutover MUST hold that lock across snapshot, configuration replacement and confirmation.**
+- A separate lock forbids concurrent backup writers. **Stage37 additionally integrates the existing `/run/awg-maintenance.lock` for the snapshot operation; full production cutover must still hold that lock across snapshot, configuration replacement and confirmation.**
 - There is deliberately **no** systemctl, ip, nft, RouterOS, NAS, recovery write-back or network operation in this module. It cannot activate or replace a transport.
 
 ### Fixture and actual ext4 validation
