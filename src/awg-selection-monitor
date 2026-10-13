@@ -96,7 +96,7 @@ service_healthy_mihomo(){
   local node now age verdict
   case "$MIHOMO_SERVICE_GATE_MODE" in
     off) return 0 ;;
-    require|browser) ;;
+    require|balanced) ;;
     *) return 1 ;;
   esac
   node="$(cat "$MIHOMO_SERVICE_NODE_FILE" 2>/dev/null || true)"

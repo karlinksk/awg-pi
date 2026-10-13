@@ -302,54 +302,64 @@ explicit JSON FAIL; UNKNOWN from Cloudflare never causes false failover.
 90 Python tests and GitHub v1.3.0 CI passed for the safety fix.
 
 
-## Expiring operator-browser acceptance for tightly bounded AUTO — 13 Oct 2026
+## FINAL DESIGN DECISION — NETWORK BALANCED, NO BROWSER GATE (13 Oct 2026)
 
-The user manually verified an actual authenticated ChatGPT reply through
-shadowsocks-27307 (egress 169.150.210.233) and vless-1741441891 (egress
-193.233.74.6). Both nodes independently decoded 24 actual YouTube video
-frames. These are genuine dated observations, not perpetual fresh proof.
+The user explicitly removed the browser-validation stage from the project's
+target AUTO SMART architecture. The browser-proof design in the preceding
+draft was **reverted**. No time-bound user attestation, logged-in Chrome,
+cookies, account or device integration is required for automatic decisions.
 
-A strictly opt-in service-eligibility.mode=browser is now available in this
-draft branch; it is NOT installed or enabled on the working gateway.
+An opt-in service-eligibility.mode=balanced has been added instead:
 
-- A root-only 0600 RAM file in /run/awg-pbr/mihomo-smart stores only exact
-  node name, IPv4 egress, provider SHA256, the actual browser observation
-  timestamp, and the explicit operator-observed-chat-reply claim.
-  NO chat content, cookies, usernames, passwords or tokens are saved.
-- Record requires a real recent user-observed browser reply, a literal public
-  exit IPv4 and explicit acknowledgement. Observations older than 30 minutes
-  or more than 15 seconds in the future cannot be recorded. Stored proof
-  expires 30 minutes from the ACTUAL OBSERVATION, not from later writing.
-- A provider digest change, exact-node mismatch, expired date, changed public
-  exit IP, or insecure/malformed proof rejects eligibility.
-- In browser mode AUTO filters the entire health-pool ranking to ONLY
-  recently approved exact names via the optional pool best --allow NAME.
-  Existing health, country/protocol, delay, cooldown and exclusion rules
-  still apply. An empty/expired list means NO candidate, never the fastest
-  untested node. At most three gated candidate attempts.
-- A proposed candidate must also pass a FRESH one-node RAM-only shadow
-  probe: OpenAI API PASS, actual ffmpeg 24-frame YouTube video PASS,
-  ChatGPT web PASS or UNKNOWN (never explicit FAIL), and the measured
-  shadow-proxy exit IP MUST match the browser observation.
-- Two separate explicit current-node service failures are required before
-  normal failover logic triggers; Cloudflare UNKNOWN is not an outage.
-  Existing AmneziaWG fallback and Transit FAIL-CLOSED remain unchanged.
-- Proof is not renewed by an API HTTP401 or an automatic network probe.
-  An operator must rerun an actual authorized Chrome chat reply for any
-  new 30-minute interval. Proofs disappear on reboot, never touch microSD.
+1. The existing Mihomo health pool screens **all supported protocol families**
+   and provider entries subject to configured protocol/region policies. There
+   is no fixed 2-node allowlist and no browser-approved node restriction.
+2. At node failover, the best currently healthy candidate is selected from
+   the pool. An independent one-node TUN-disabled RAM-only Mihomo service-scan
+   checks that exact candidate. At most three candidates are checked per
+   failover call, avoiding uncontrolled media tests across a huge provider.
+3. Qualify a candidate as NETWORK_ELIGIBILITY=ELIGIBLE only if:
+   - OpenAI API returned PASS (normally HTTP 401: auth required but region
+     allowed and HTTPS endpoint reached), AND
+   - YouTube real video was **successfully decoded for 24 frames**, AND
+   - ChatGPT HTTPS returned confirmed page access or a challenge response:
+     the web check is PASS, or its UNKNOWN reason is an HTTP 403, recognized
+     Cloudflare challenge, or reached authentication/login page.
+   Failures due to an API region error, video decoder failure, ChatGPT DNS
+   or TLS timeout, malformed output, explicit service FAIL, or unavailable
+   proxy do **NOT** qualify. A network-level 403 is only a probabilistic
+   signal; it is NOT recast as full ChatGPT login/chat PASS.
+4. Candidate rejection in balanced mode temporarily cools it for 180 seconds
+   in the normal RAM-only health pool so repeated failover attempts may
+   inspect more candidates. Existing pool policy, health ranking, cooldown
+   and rollback semantics remain intact; arbitrary healthy nodes are not
+   elevated to qualified status without these checks.
+5. For an active Mihomo node, UNKNOWN from Cloudflare or YouTube antibot
+   **does not accumulate false outages**. Only repeated explicit JSON FAIL
+   can initiate service-health failover; genuine transport connectivity
+   loss still follows the pre-existing health/backup policy.
 
-Operator example when a NEW browser reply has truly just been observed:
+The mode is OPT-IN and NOT installed or enabled in production. Existing
+require (strict full-check) and off modes remain unchanged. Manual Stage20
+historical acceptance through Windows Chrome of two named nodes remains
+documented only as prior test evidence; it no longer participates in the
+new decision policy.
 
-    sudo /usr/local/sbin/awg-mihomo-browser-proof.py record
-      --node EXACT_NODE --egress-ip REAL_PUBLIC_EXIT
-      --observed-at EPOCH_OF_REAL_REPLY --ack-user-test
+**Accuracy contract:** MEDIUM network-level likelihood for ChatGPT plus a
+high-confidence actual YouTube playback test, not guaranteed authenticated
+chat functionality. No browser stage will be designed or required. The
+supported protocol inventory still includes SS, VLESS, Trojan, Hysteria2,
+VMess and the project's other supported Mihomo entries; note the current
+one-node DIRECT-route verifier requires literal public IPv4 endpoints,
+so a DNS-hostname node may remain UNKNOWN pending a separately reviewed
+safe resolver. Neither MikroTik/SSTP nor production Pi route tables, live
+node, NAS or AmneziaWG backup are touched by the feature branch.
 
-Additional root-only commands are check --node NAME --egress-ip IP and
-candidates. No such records are promoted into current production by this PR.
-
-IMPORTANT: This supervised bridge is NOT a fully unattended service
-verification system. Meeting the original indefinite-auto-switching goal
-requires an explicitly authorized browser-side verifier able to refresh a
-real authenticated ChatGPT result per exact node without sending cookies
-or credentials to the Raspberry Pi. Continue to keep production gate OFF
-until that mechanism and full end-to-end failover are reviewed.
+Quality: 108 Python regression tests PASS after removing browser proof tests;
+the existing Stage18 decode is retained, while the new network-only classifier
+rejects timeouts and malformed/unverified responses. A repeat of the actual
+live one-node network scan with this exact branch was not possible from the
+current restricted operator sudo context (the privileged helper does not
+expose ad-hoc service-scan), so do NOT state that the newly integrated balanced
+mode was live-tested or deployed. The earlier exact-node Stage18 real decoder
+and browser results remain verified separately.

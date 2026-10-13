@@ -17,7 +17,7 @@ if [[ -z "${MIHOMO_SERVICE_GATE_MODE+x}" ]]; then
 fi
 MIHOMO_SERVICE_GATE_BIN="${MIHOMO_SERVICE_GATE_BIN:-/usr/local/sbin/awg-mihomo-service-eligibility.py}"
 MIHOMO_SERVICE_QUICKCHECK_BIN="${MIHOMO_SERVICE_QUICKCHECK_BIN:-/usr/local/sbin/awg-mihomo-smart}"
-MIHOMO_BROWSER_PROOF_BIN="${MIHOMO_BROWSER_PROOF_BIN:-/usr/local/sbin/awg-mihomo-browser-proof.py}"
+MIHOMO_NETWORK_GATE_BIN="${MIHOMO_NETWORK_GATE_BIN:-/usr/local/sbin/awg-mihomo-network-eligibility.py}"
 
 usage(){
   cat <<'USAGE'
@@ -271,23 +271,13 @@ service_candidate_allowed(){
   local candidate="$1" response
   case "$MIHOMO_SERVICE_GATE_MODE" in
     off) return 0 ;;
-    browser)
-      # Explicit, recent operator-observed authenticated ChatGPT reply tied
-      # to this exact node and unchanged provider. Never synthetic or eternal.
-      [[ -x "$MIHOMO_BROWSER_PROOF_BIN" && -x "$MIHOMO_SERVICE_QUICKCHECK_BIN" ]] || return 1
-      response="$("$MIHOMO_BROWSER_PROOF_BIN" check --node "$candidate" 2>/dev/null)" || return 1
-      grep -Fxq 'BROWSER_PROOF=PASS' <<<"$response" || return 1
-      # Also need a *fresh*, real Stage18 24-frame video decode and API.
-      # Manual browser acceptance NEVER overrides explicit API or video FAIL.
+    balanced)
+      # Medium NETWORK confidence, explicitly not authenticated chat.
+      # HTTPS challenge or login page is sufficient only alongside API PASS
+      # and a NEW actual 24-frame Stage18 video decode for this exact node.
+      [[ -x "$MIHOMO_SERVICE_QUICKCHECK_BIN" && -x "$MIHOMO_NETWORK_GATE_BIN" ]] || return 1
       response="$("$MIHOMO_SERVICE_QUICKCHECK_BIN" service-scan --node "$candidate" 2>/dev/null)" || true
-      grep -Fxq 'SERVICE_CHECK_OPENAI_API=PASS' <<<"$response" || return 1
-      grep -Fxq 'SERVICE_CHECK_YOUTUBE_VIDEO=PASS' <<<"$response" || return 1
-      grep -Eq '^SERVICE_CHECK_CHATGPT_WEB=(PASS|UNKNOWN)$' <<<"$response" || return 1
-      grep -Eq '^SERVICE_ELIGIBILITY=(PASS|UNKNOWN)$' <<<"$response" || return 1
-      local egress proof
-      egress="$(grep -Em1 '^SERVICE_EGRESS_IPV4=([0-9]+\.){3}[0-9]+$' <<<"$response" | cut -d= -f2)" || return 1
-      proof="$("$MIHOMO_BROWSER_PROOF_BIN" check --node "$candidate" --egress-ip "$egress" 2>/dev/null)" || return 1
-      grep -Fxq 'BROWSER_PROOF=PASS' <<<"$proof"
+      printf '%s\n' "$response" | "$MIHOMO_NETWORK_GATE_BIN" >/dev/null 2>&1
       ;;
     require)
       [[ -x "$MIHOMO_SERVICE_GATE_BIN" ]] || return 1
@@ -315,7 +305,7 @@ failover_fixed(){
       fi
       continue
     fi
-    if [[ "$MIHOMO_SERVICE_GATE_MODE" == require || "$MIHOMO_SERVICE_GATE_MODE" == browser ]]; then
+    if [[ "$MIHOMO_SERVICE_GATE_MODE" == require || "$MIHOMO_SERVICE_GATE_MODE" == balanced ]]; then
       (( attempts < 3 )) || break
       attempts=$((attempts+1))
     fi
@@ -338,35 +328,22 @@ failover_auto(){
   "$MIHOMO_POOL_CLI" ensure live --geo-if-policy >/dev/null 2>&1 || return 1
   "$MIHOMO_POOL_CLI" cooldown add "$current" >/dev/null 2>&1 || true
 
-  local -a browser_names=()
-  if [[ "$MIHOMO_SERVICE_GATE_MODE" == browser ]]; then
-    [[ -x "$MIHOMO_BROWSER_PROOF_BIN" ]] || return 1
-    # Never fall through to unrestricted pool ranking when proof list is
-    # missing, expired, malformed or empty.
-    local line
-    while IFS= read -r line; do
-      [[ "$line" == BROWSER_CANDIDATE=* ]] || continue
-      browser_names+=("${line#BROWSER_CANDIDATE=}")
-    done < <("$MIHOMO_BROWSER_PROOF_BIN" candidates 2>/dev/null)
-    (( ${#browser_names[@]} >= 1 && ${#browser_names[@]} <= 15 )) || return 1
-  fi
-
   while true; do
     best_args=(best live)
-    for item in "${browser_names[@]}"; do
-      best_args+=(--allow "$item")
-    done
     for item in "${excludes[@]}"; do
       best_args+=(--exclude "$item")
     done
     candidate="$("$MIHOMO_POOL_CLI" "${best_args[@]}" 2>/dev/null)" || break
     [[ -n "$candidate" ]] || break
-    if [[ "$MIHOMO_SERVICE_GATE_MODE" == require || "$MIHOMO_SERVICE_GATE_MODE" == browser ]]; then
+    if [[ "$MIHOMO_SERVICE_GATE_MODE" == require || "$MIHOMO_SERVICE_GATE_MODE" == balanced ]]; then
       (( attempts < 3 )) || break
       attempts=$((attempts+1))
     fi
     # AUTO considers health-pool reachability necessary but not sufficient.
     if ! service_candidate_allowed "$candidate"; then
+      if [[ "$MIHOMO_SERVICE_GATE_MODE" == balanced ]]; then
+        "$MIHOMO_POOL_CLI" cooldown add "$candidate" --seconds 180 >/dev/null 2>&1 || true
+      fi
       excludes+=("$candidate")
       continue
     fi

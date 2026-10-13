@@ -850,14 +850,10 @@ def cmd_best(args) -> None:
     pool = load_json(target_paths(args.target)[1])
     nodes = effective_nodes(pool, show_all=False, ignore_policy=args.ignore_policy)
     excluded = set(args.exclude or [])
-    # None means unrestricted legacy ranking. Explicit --allow bounds the
-    # AUTO browser-gated failover to exactly approved provider node names.
-    allowed = set(args.allow or []) if getattr(args, "allow", None) else None
     cooldown = load_cooldown()
     for node in nodes:
         name = str(node.get("name", ""))
-        if (not name or name in excluded or name in cooldown
-                or (allowed is not None and name not in allowed)):
+        if not name or name in excluded or name in cooldown:
             continue
         print(name)
         return
@@ -966,7 +962,6 @@ def main() -> None:
     p = sub.add_parser("best")
     p.add_argument("target", choices=("live", "candidate"), default="live", nargs="?")
     p.add_argument("--exclude", action="append", default=[])
-    p.add_argument("--allow", action="append", default=[])
     p.add_argument("--ignore-policy", action="store_true")
     p.set_defaults(func=cmd_best)
 
