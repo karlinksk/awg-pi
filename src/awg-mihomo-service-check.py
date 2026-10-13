@@ -130,10 +130,9 @@ def chatgpt_web_probe(request: Callable) -> Result:
         return Result("UNKNOWN", "chatgpt_web_" + type(exc).__name__)
 
 
-def media_url_from_html(html: bytes) -> str | None:
+def player_from_html(html: bytes) -> dict | None:
     text = html.decode("utf-8", "replace")
-    # YouTube watch response embeds a player JSON object, which may be absent
-    # under a consent screen, bot challenge or changed player version.
+    # Do not infer playback success from watch-page HTTP 200.
     match = re.search(r"ytInitialPlayerResponse\s*=\s*", text)
     if not match:
         return None
@@ -141,7 +140,12 @@ def media_url_from_html(html: bytes) -> str | None:
         player, _ = json.JSONDecoder().raw_decode(text[match.end():])
     except (ValueError, TypeError):
         return None
-    streams = player.get("streamingData", {}) if isinstance(player, dict) else {}
+    return player if isinstance(player, dict) else None
+
+
+def media_url_from_html(html: bytes) -> str | None:
+    player = player_from_html(html)
+    streams = player.get("streamingData", {}) if player else {}
     if not isinstance(streams, dict):
         return None
     candidates = streams.get("formats", []) + streams.get("adaptiveFormats", [])
@@ -188,6 +192,19 @@ def youtube_probe(request: Callable) -> Result:
             return Result("UNKNOWN", f"youtube_watch_http_{status}")
         video_url = media_url_from_html(watch)
         if video_url is None:
+            player = player_from_html(watch)
+            if isinstance(player, dict):
+                playability = player.get("playabilityStatus")
+                if isinstance(playability, dict) and playability.get("status") == "LOGIN_REQUIRED":
+                    # Bot/login challenge != proof the node cannot play video.
+                    return Result("UNKNOWN", "youtube_player_login_required")
+                streams = player.get("streamingData")
+                if (isinstance(streams, dict)
+                        and isinstance(streams.get("serverAbrStreamingUrl"), str)
+                        and allowed_media_url(streams["serverAbrStreamingUrl"])):
+                    # SABR is not plain MP4/WebM byte-range video: it needs a
+                    # real supporting player. Never pretend reachability=playback.
+                    return Result("UNKNOWN", "youtube_sabr_stream_unvalidated")
             return Result("UNKNOWN", "youtube_media_url_unavailable")
         code, data, final_url = request(
             video_url, headers={"Range": "bytes=0-1023"},

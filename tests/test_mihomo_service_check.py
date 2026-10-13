@@ -66,6 +66,36 @@ class ServiceGateTests(unittest.TestCase):
         self.assertEqual(result["status"], "UNKNOWN")
         self.assertEqual(result["checks"]["chatgpt_web"]["reason"], "chatgpt_web_http_403")
 
+    def test_login_required_watch_is_explicitly_unknown(self):
+        watch = ('var ytInitialPlayerResponse = ' +
+                 json.dumps({"playabilityStatus":{"status":"LOGIN_REQUIRED"},
+                             "streamingData":{"adaptiveFormats":[]}})).encode()
+        result = gate.assess(cases(watch=(200,watch)))
+        self.assertEqual(result["status"],"UNKNOWN")
+        self.assertEqual(result["checks"]["youtube_video"]["reason"],
+                         "youtube_player_login_required")
+
+    def test_sabr_playable_video_without_plain_url_stays_unknown(self):
+        watch = ('var ytInitialPlayerResponse = ' +
+                 json.dumps({"playabilityStatus":{"status":"OK"},
+                             "streamingData":{"adaptiveFormats":[
+                                 {"mimeType":"video/mp4","bitrate":12345}],
+                                 "serverAbrStreamingUrl":MEDIA}})).encode()
+        result = gate.assess(cases(watch=(200,watch)))
+        self.assertEqual(result["status"],"UNKNOWN")
+        self.assertEqual(result["checks"]["youtube_video"]["reason"],
+                         "youtube_sabr_stream_unvalidated")
+
+    def test_sabr_url_untrusted_does_not_qualify(self):
+        watch = ('var ytInitialPlayerResponse = ' +
+                 json.dumps({"playabilityStatus":{"status":"OK"},
+                             "streamingData":{"serverAbrStreamingUrl":
+                                 "https://evil.example/videoplayback"}})).encode()
+        result = gate.assess(cases(watch=(200,watch)))
+        self.assertEqual(result["status"],"UNKNOWN")
+        self.assertEqual(result["checks"]["youtube_video"]["reason"],
+                         "youtube_media_url_unavailable")
+
     def test_watch_page_without_video_is_unknown(self):
         result = gate.assess(cases(watch=(200, b"<html>youtube</html>")))
         self.assertEqual(result["status"], "UNKNOWN")

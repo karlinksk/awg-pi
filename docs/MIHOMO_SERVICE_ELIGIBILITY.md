@@ -46,3 +46,17 @@ Production rollout gates:
 - Retain the off-by-default guard and revert gate mode if any failure appears.
 
 This scope does not require any new persistent recovery layer or change to SSTP, MikroTik, NAS, Selective mode or working transport routes.
+
+## Actual service-specific failure analysis (13 October 2026)
+
+A fresh passive scan on Pi checked 10 provider nodes, seven reached the preliminary warmup and six returned an OpenAI API HTTP 401 rather than a regional error. No node attained both-service PASS. The originally active Shadowsocks node emitted an explicit OpenAI region error and is FAIL.
+
+Further **independent one-node shadow-only diagnostics** (never modifying the selected Mihomo transport or table 100) established:
+
+- `hysteria2-335173174`: OpenAI API 401 PASS; ChatGPT web 403 UNKNOWN; YouTube watch HTTP 200 but embedded `playabilityStatus=LOGIN_REQUIRED`, no verified video bytes. This is an *anonymous player-access restriction*, not definitive evidence that a signed-in end user cannot watch video on this node.
+- `shadowsocks-27307`: OpenAI API 401 PASS; ChatGPT web 403 UNKNOWN; YouTube watch HTTP 200 with `playabilityStatus=OK`. The page advertised 14 adaptive representations, including six video formats, **but none contained a plain stream URL or signatureCipher**; it did include `streamingData.serverAbrStreamingUrl` (SABR). This is an unsupported player/media delivery protocol for our initial byte-range checker. It does **not** prove playable media was decoded or that the node is blocked.
+- A normal Chrome-style `User-Agent` and browser `Accept` headers through the isolated proxy still returned ChatGPT HTTP 403, so changing headers alone did not confirm browser eligibility. No authenticated chat interaction or decoded YouTube playback was attempted.
+
+The service checker now preserves UNKNOWN with **diagnostic reasons** `youtube_player_login_required` and `youtube_sabr_stream_unvalidated` (only for a trusted Googlevideo SABR URL). It never upgrades either case to PASS. Dedicated offline tests cover both branches and disallow untrusted SABR hosts.
+
+**Deployment decision:** keep `service-eligibility.mode` OFF until an authorized browser-level test can confirm actual ChatGPT interaction and video playback and a safe way exists to produce auditable, per-node eligibility evidence from that result. Do not force PASS on an HTTP status or absent media URL. The existing transport fallback and MikroTik/NAS boundaries are unchanged.
