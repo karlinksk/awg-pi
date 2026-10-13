@@ -30,7 +30,8 @@ class CanarySafety(unittest.TestCase):
         data=SRC.read_text()
         self.assertLess(data.index('cp -p -- "${TARGET[i]}"'),data.index('install -m "${FILE_MODE[i]}"'))
         self.assertIn('restore_files(){',data)
-        self.assertIn('trap rollback_if_needed ERR',data)
+        self.assertIn('trap rollback_if_needed EXIT',data)
+        self.assertIn("trap 'exit 143' TERM HUP",data)
         self.assertIn('CANARY_RESTORE=COMPLETE',data)
 
     def test_no_autoenable_on_apply(self):

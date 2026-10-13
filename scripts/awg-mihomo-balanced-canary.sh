@@ -112,14 +112,16 @@ case "$MODE" in
     rollback_pending=1
     rollback_if_needed(){
       local rc=$?
-      trap - ERR
+      trap - EXIT ERR INT TERM HUP
       if (( rollback_pending )); then
         echo "CANARY_ERROR=auto-restore-after-failure" >&2
         restore_files "$dir"
       fi
       exit "$rc"
     }
-    trap rollback_if_needed ERR
+    trap rollback_if_needed EXIT
+    trap 'exit 130' INT
+    trap 'exit 143' TERM HUP
     for i in "${!TARGET[@]}"; do
       tmp="${TARGET[i]}.canary-$$"
       install -m "${FILE_MODE[i]}" "$ROOT/${SOURCE[i]}" "$tmp"
@@ -129,7 +131,7 @@ case "$MODE" in
     systemd-analyze verify /etc/systemd/system/awg-mihomo-stage18-ram-runtime.service /etc/systemd/system/awg-mihomo-stage18-ram-runtime.timer >/dev/null
     [[ "$(cat "$GATE" 2>/dev/null || echo off)" == off ]] || fatal "service gate changed unexpectedly"
     rollback_pending=0
-    trap - ERR
+    trap - EXIT INT TERM HUP
     echo "CANARY_PASSIVE_INSTALL=PASS"
     echo "CANARY_BACKUP=$dir"
     echo "CANARY_GATE=OFF"
