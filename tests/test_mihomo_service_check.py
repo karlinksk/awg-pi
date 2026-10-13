@@ -18,12 +18,12 @@ spec.loader.exec_module(gate)
 
 MEDIA = "https://rr5---sn-test.googlevideo.com/videoplayback?id=abc"
 WATCH = ('<script>var ytInitialPlayerResponse = ' +
-         json.dumps({"streamingData": {"formats": [{"url": MEDIA}]}}) + ';</script>').encode()
+         json.dumps({"streamingData": {"formats": [{"url": MEDIA, "mimeType": "video/mp4"}]}}) + ';</script>').encode()
 
 
 def cases(api=(401, b'{"error":{"message":"Missing bearer authentication"}}'),
           web=(200, b"<!doctype html><html>ChatGPT</html>"),
-          watch=(200, WATCH), media=(206, b"x")):
+          watch=(200, WATCH), media=(206, b"\x00\x00\x00\x18ftypisom" + b"0"*80)):
     def request(url, **kwargs):
         if url == gate.OPENAI_API:
             return *api, url
@@ -43,7 +43,17 @@ class ServiceGateTests(unittest.TestCase):
     def test_both_services_and_actual_video_range_pass(self):
         result = gate.assess(cases())
         self.assertEqual(result["status"], "PASS")
-        self.assertEqual(result["checks"]["youtube_video"]["reason"], "youtube_video_media_range")
+        self.assertEqual(result["checks"]["youtube_video"]["reason"], "youtube_video_media_range_header")
+
+    def test_arbitrary_206_body_does_not_count_as_video(self):
+        result = gate.assess(cases(media=(206, b"<html>blocked but 206</html>")))
+        self.assertEqual(result["status"], "UNKNOWN")
+        self.assertEqual(result["checks"]["youtube_video"]["reason"], "youtube_media_not_recognized")
+
+    def test_audio_only_206_cannot_qualify_video(self):
+        watch = ('var ytInitialPlayerResponse = ' +
+                 json.dumps({"streamingData":{"formats":[{"url":MEDIA,"mimeType":"audio/mp4"}]}})).encode()
+        self.assertEqual(gate.assess(cases(watch=(200,watch)))["status"],"UNKNOWN")
 
     def test_region_block_is_not_healthy(self):
         api = (403, b'{"error":{"code":"unsupported_country_region_territory"}}')

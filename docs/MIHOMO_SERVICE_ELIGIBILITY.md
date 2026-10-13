@@ -10,7 +10,7 @@ The service checker requires three network-level signs, all via **the same selec
 
 1. OpenAI API responds without an `unsupported_country_region_territory` restriction; an unauthenticated 401 is accepted as evidence that the endpoint is reached, not as proof a real chat works.
 2. `chatgpt.com` presents recognizable non-challenge ChatGPT HTML, rejecting Cloudflare challenges and unknown redirects.
-3. A YouTube watch page provides a trusted Googlevideo HTTPS stream URL and an actual 206 media byte-range responds. A watch-page HTTP 200 alone is insufficient.
+3. A YouTube watch page provides a trusted Googlevideo HTTPS **video** stream URL and an actual 206 media byte-range responds with recognizable MP4/WebM/TS container header bytes. A watch-page HTTP 200 alone is insufficient.
 
 This is network-level eligibility, **not a full browser login/chat exchange or a confirmed decoded YouTube playback test**. Those require separate real user acceptance before calling the entire experience proven.
 

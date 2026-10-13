@@ -149,7 +149,10 @@ def media_url_from_html(html: bytes) -> str | None:
         if not isinstance(stream, dict):
             continue
         url = stream.get("url")
-        if isinstance(url, str) and allowed_media_url(url):
+        mime = stream.get("mimeType")
+        # Audio-only responses cannot establish that YouTube video works.
+        if (isinstance(mime, str) and mime.lower().startswith("video/")
+                and isinstance(url, str) and allowed_media_url(url)):
             return url
     return None
 
@@ -167,6 +170,17 @@ def allowed_media_url(url: str) -> bool:
         return False
 
 
+def recognizable_video_header(data: bytes) -> bool:
+    # A random 206 body is not proof the video media endpoint served video.
+    # Accept the conservative initial container magic common to MP4/WebM/TS.
+    if len(data) < 16:
+        return False
+    return ((data[4:8] == b"ftyp" and data[:4] != b"\x00\x00\x00\x00")
+            or data.startswith(b"\x1a\x45\xdf\xa3")
+            or (len(data) >= 377 and data[0] == 0x47
+                and data[188] == 0x47 and data[376] == 0x47))
+
+
 def youtube_probe(request: Callable) -> Result:
     try:
         status, watch, _ = request(YOUTUBE_WATCH, max_bytes=MAX_WEB_BYTES)
@@ -180,8 +194,10 @@ def youtube_probe(request: Callable) -> Result:
             max_bytes=MAX_MEDIA_BYTES)
         if not allowed_media_url(final_url):
             return Result("UNKNOWN", "youtube_media_unexpected_redirect")
-        if code == 206 and len(data) > 0:
-            return Result("PASS", "youtube_video_media_range")
+        if code == 206 and recognizable_video_header(data):
+            return Result("PASS", "youtube_video_media_range_header")
+        if code == 206:
+            return Result("UNKNOWN", "youtube_media_not_recognized")
         if code in (403, 451):
             return Result("FAIL", f"youtube_media_http_{code}")
         return Result("UNKNOWN", f"youtube_media_http_{code}")
