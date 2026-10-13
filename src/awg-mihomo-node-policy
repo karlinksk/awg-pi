@@ -9,6 +9,16 @@ MIHOMO_NODE_NAME_FILE="${MIHOMO_NODE_NAME_FILE:-/etc/awg-pbr/transports/mihomo/n
 MIHOMO_CONFIGURE="${MIHOMO_CONFIGURE_BIN:-/usr/local/sbin/awg-mihomo-configure}"
 MIHOMO_POOL_CLI="${MIHOMO_POOL_CLI:-/usr/local/sbin/awg-mihomo-pool}"
 
+# OFF preserves the pre-existing live policy until service gating is explicitly
+# enabled, tested and approved. REQUIRE rejects stale/missing/UNKNOWN results.
+MIHOMO_SERVICE_GATE_MODE_FILE="${MIHOMO_SERVICE_GATE_MODE_FILE:-/etc/awg-pbr/transports/mihomo/service-eligibility.mode}"
+if [[ -z "${MIHOMO_SERVICE_GATE_MODE+x}" ]]; then
+  MIHOMO_SERVICE_GATE_MODE="$(cat "$MIHOMO_SERVICE_GATE_MODE_FILE" 2>/dev/null || echo off)"
+fi
+MIHOMO_SERVICE_GATE_BIN="${MIHOMO_SERVICE_GATE_BIN:-/usr/local/sbin/awg-mihomo-service-eligibility.py}"
+MIHOMO_SERVICE_QUICKCHECK_BIN="${MIHOMO_SERVICE_QUICKCHECK_BIN:-/usr/local/sbin/awg-mihomo-smart}"
+MIHOMO_NETWORK_GATE_BIN="${MIHOMO_NETWORK_GATE_BIN:-/usr/local/sbin/awg-mihomo-network-eligibility.py}"
+
 usage(){
   cat <<'USAGE'
 Usage:
@@ -238,6 +248,7 @@ status(){
       printf 'Automatic Mihomo node switching: disabled\n'
       ;;
   esac
+  printf 'Service eligibility gate: %s\n' "$MIHOMO_SERVICE_GATE_MODE"
   printf 'Country inference from node names: disabled\n'
 }
 
@@ -256,8 +267,36 @@ is_enabled(){
   esac
 }
 
+service_candidate_allowed(){
+  local candidate="$1" response
+  case "$MIHOMO_SERVICE_GATE_MODE" in
+    off) return 0 ;;
+    balanced)
+      # Medium NETWORK confidence, explicitly not authenticated chat.
+      # HTTPS challenge or login page is sufficient only alongside API PASS
+      # and a NEW actual 24-frame Stage18 video decode for this exact node.
+      [[ -x "$MIHOMO_SERVICE_QUICKCHECK_BIN" && -x "$MIHOMO_NETWORK_GATE_BIN" ]] || return 1
+      response="$("$MIHOMO_SERVICE_QUICKCHECK_BIN" service-scan --node "$candidate" 2>/dev/null)" || true
+      printf '%s\n' "$response" | "$MIHOMO_NETWORK_GATE_BIN" >/dev/null 2>&1
+      ;;
+    require)
+      [[ -x "$MIHOMO_SERVICE_GATE_BIN" ]] || return 1
+      if response="$("$MIHOMO_SERVICE_GATE_BIN" --node "$candidate" 2>/dev/null)" &&
+         grep -Fxq 'SERVICE_ELIGIBILITY=PASS' <<<"$response"; then
+        return 0
+      fi
+      # A stale cache is not a denial of the node itself: recheck only this
+      # candidate through a separate, RAM-only TUN-disabled Mihomo instance.
+      [[ -x "$MIHOMO_SERVICE_QUICKCHECK_BIN" ]] || return 1
+      response="$("$MIHOMO_SERVICE_QUICKCHECK_BIN" service-scan --node "$candidate" 2>/dev/null)" || return 1
+      grep -Fxq 'SERVICE_ELIGIBILITY=PASS' <<<"$response"
+      ;;
+    *) return 1 ;;
+  esac
+}
+
 failover_fixed(){
-  local current="$1" node found_current=0
+  local current="$1" node found_current=0 attempts=0
   while IFS= read -r node || [[ -n "$node" ]]; do
     [[ -n "$node" ]] || continue
     if (( found_current == 0 )); then
@@ -266,6 +305,13 @@ failover_fixed(){
       fi
       continue
     fi
+    if [[ "$MIHOMO_SERVICE_GATE_MODE" == require || "$MIHOMO_SERVICE_GATE_MODE" == balanced ]]; then
+      (( attempts < 3 )) || break
+      attempts=$((attempts+1))
+    fi
+    # An unproven ChatGPT/YouTube candidate must never be selected when
+    # service gating is required. Continue to the next explicit FIXED node.
+    service_candidate_allowed "$node" || continue
     if "$MIHOMO_CONFIGURE" node select-auto "$node" >/dev/null; then
       printf 'MIHOMO_NODE_FAILOVER=%s->%s\n' "$current" "$node"
       return 0
@@ -276,7 +322,7 @@ failover_fixed(){
 }
 
 failover_auto(){
-  local current="$1" candidate item
+  local current="$1" candidate item attempts=0
   local -a excludes=("$current") best_args=()
 
   "$MIHOMO_POOL_CLI" ensure live --geo-if-policy >/dev/null 2>&1 || return 1
@@ -289,6 +335,18 @@ failover_auto(){
     done
     candidate="$("$MIHOMO_POOL_CLI" "${best_args[@]}" 2>/dev/null)" || break
     [[ -n "$candidate" ]] || break
+    if [[ "$MIHOMO_SERVICE_GATE_MODE" == require || "$MIHOMO_SERVICE_GATE_MODE" == balanced ]]; then
+      (( attempts < 3 )) || break
+      attempts=$((attempts+1))
+    fi
+    # AUTO considers health-pool reachability necessary but not sufficient.
+    if ! service_candidate_allowed "$candidate"; then
+      if [[ "$MIHOMO_SERVICE_GATE_MODE" == balanced ]]; then
+        "$MIHOMO_POOL_CLI" cooldown add "$candidate" --seconds 180 >/dev/null 2>&1 || true
+      fi
+      excludes+=("$candidate")
+      continue
+    fi
     if "$MIHOMO_CONFIGURE" node select-auto "$candidate" >/dev/null; then
       printf 'MIHOMO_NODE_FAILOVER=%s->%s\n' "$current" "$candidate"
       return 0
