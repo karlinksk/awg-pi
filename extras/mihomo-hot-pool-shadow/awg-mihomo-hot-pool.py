@@ -30,6 +30,10 @@ POOL_MAX_AGE = 7200
 RETRY_FAILED = 1200
 QUARANTINE_SECS = 7200
 MAX_PROBES = 2
+TARGET_READY = 4
+# Next timer event: 12 min after completion, 1 min timer slack, plus
+# bounded sequential diagnostic probes. Be conservative about expiry.
+NEXT_PROBE_SAFETY = 1260
 CURRENT_FILE = Path('/etc/awg-pbr/transports/mihomo/node-name')
 PROBE_TIMEOUT = 110
 
@@ -375,6 +379,76 @@ def probe_order(nodes: list[dict], state: dict, now: int) -> list[dict]:
     return sorted(nodes, key=priority)
 
 
+def discovery_priority(node: dict, state: dict, now: int,
+                       ready_protocols: dict[str, int]) -> tuple[int, int, int, int]:
+    """Prefer missing transports while giving previous PASS a fast second test.
+
+    Soft diversity target: 2 VLESS, 1 Shadowsocks and 1 Trojan/Hysteria2.
+    This never excludes another available protocol or a healthy node.
+    """
+    protocol = str(node['type']).lower()
+    vless = ready_protocols.get('vless', 0)
+    ss = ready_protocols.get('ss', 0)
+    alternate = ready_protocols.get('trojan', 0) + ready_protocols.get('hysteria2', 0)
+    if protocol == 'vless':
+        diversity = 0 if vless < 2 else 2
+    elif protocol == 'ss':
+        diversity = 0 if ss == 0 else 2
+    elif protocol in ('trojan', 'hysteria2'):
+        diversity = 0 if alternate == 0 else 2
+    else:
+        diversity = 1 if ready_protocols.get(protocol, 0) == 0 else 2
+    record = state['checks'].get(identity(node), {})
+    passes = record.get('passes', [])
+    phase = 0 if record.get('last_result') == 'PASS' and passes else (
+        1 if not record else 2)
+    return (diversity, phase, int(record.get('last_checked', 0)), node['delay_ms'])
+
+
+def select_probes(nodes: list[dict], state: dict, now: int) -> list[tuple[str, dict]]:
+    """Maintenance and discovery lanes; always <=2 isolated checks per cycle.
+
+    Prioritize due-to-expire READY proofs so growth cannot invalidate the
+    reserve. Otherwise devote at least one slot to finding a new independent
+    endpoint until the four-READY target has been reached.
+    """
+    ready = [n for n in nodes if is_ready(n, state, now)]
+    ready.sort(key=lambda n: (state['checks'][identity(n)]['passes'][0],
+                              n['delay_ms'], n.get('index', 999999)))
+    # Do not spend the tiny scan budget maintaining more than our target.
+    maintained = ready[:TARGET_READY]
+    due = [n for n in maintained if eligible_for_probe(n, state, now)]
+    due.sort(key=lambda n: state['checks'][identity(n)]['passes'][0])
+
+    ready_counts: dict[str, int] = {}
+    for n in maintained:
+        protocol = str(n['type']).lower()
+        ready_counts[protocol] = ready_counts.get(protocol, 0) + 1
+    discovering = len(ready) < TARGET_READY
+    explore = [n for n in nodes if not is_ready(n, state, now)
+               and eligible_for_probe(n, state, now)] if discovering else []
+    explore.sort(key=lambda n: discovery_priority(n, state, now, ready_counts))
+
+    plan: list[tuple[str, dict]] = []
+    # Deadline-protect any READY whose oldest proof might expire before our
+    # next scheduled scan (including timer jitter and bounded scan duration).
+    urgent = [n for n in due if
+              state['checks'][identity(n)]['passes'][0] + READY_MAX_AGE - now
+              <= NEXT_PROBE_SAFETY]
+    for n in urgent[:MAX_PROBES]:
+        plan.append(('RENEW', n))
+    due = [n for n in due if n not in urgent]
+
+    # A non-urgent renewal has at least one safe cycle of slack. Spend those
+    # slots exploring instead: otherwise stable READY entries synchronize and
+    # repeatedly consume both scans, preventing growth to four candidates.
+    while discovering and explore and len(plan) < MAX_PROBES:
+        plan.append(('DISCOVER', explore.pop(0)))
+    while due and len(plan) < MAX_PROBES:
+        plan.append(('RENEW', due.pop(0)))
+    return plan
+
+
 def report(nodes: list[dict], state: dict, now: int, current: str) -> str:
     selected = shortlist(nodes, state, current, now=now)
     ready = [n for n in selected if is_ready(n, state, now)]
@@ -383,6 +457,7 @@ def report(nodes: list[dict], state: dict, now: int, current: str) -> str:
         f'HOT_POOL_HEALTHY={len(nodes)}',
         f'HOT_POOL_SHORTLIST={len(selected)}',
         f'HOT_POOL_READY={len(ready)}',
+        f'HOT_POOL_TARGET_READY={TARGET_READY}',
         f'HOT_POOL_QUARANTINED_ENDPOINTS={len(state["quarantine"])}',
         f'HOT_POOL_NEXT={ready[0]["name"] if ready else "NONE"}',
         f'HOT_POOL_CURRENT={current or "UNKNOWN"}',
@@ -420,10 +495,13 @@ def main() -> int:
             save_state(args.state, state)
             print(f'HOT_POOL_QUARANTINE_MATCHES={affected}')
         elif args.action == 'warm':
-            choices = [n for n in shortlist(nodes, state, args.current, now=now)
-                       if eligible_for_probe(n, state, now)]
-            choices = probe_order(choices, state, now)
-            for n in choices[:MAX_PROBES]:
+            selected = shortlist(nodes, state, args.current, now=now)
+            plan = select_probes(selected, state, now)
+            print(f'HOT_POOL_PLAN_RENEW={sum(mode == "RENEW" for mode, _ in plan)}',
+                  flush=True)
+            print(f'HOT_POOL_PLAN_DISCOVER={sum(mode == "DISCOVER" for mode, _ in plan)}',
+                  flush=True)
+            for mode, n in plan:
                 ok, details = scan_one(n['name'])
                 record_scan(state, n, ok, int(time.time()) if not args.now else now)
                 print(f'HOT_POOL_PROBE={n["name"]} RESULT={"PASS" if ok else "NOT_CONFIRMED"} {details}', flush=True)
