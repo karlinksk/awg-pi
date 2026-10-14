@@ -36,12 +36,42 @@ class HotPoolTests(unittest.TestCase):
         self.assertTrue(hot.is_ready(n, self.state, self.now + 660))
         self.assertFalse(hot.is_ready(n, self.state, self.now + 4261))
 
-    def test_failed_probes_reset(self):
+    def test_single_unknown_keeps_proof_but_never_selects_suspect(self):
         n = self.nodes[0]
         hot.record_scan(self.state, n, True, self.now)
-        hot.record_scan(self.state, n, False, self.now + 800)
-        hot.record_scan(self.state, n, True, self.now + 1100)
-        self.assertFalse(hot.is_ready(n, self.state, self.now + 1100))
+        hot.record_scan(self.state, n, True, self.now + 800)
+        self.assertTrue(hot.is_ready(n, self.state, self.now + 800))
+        hot.record_scan(self.state, n, False, self.now + 950)
+        record = self.state['checks'][hot.identity(n)]
+        self.assertEqual(record['last_result'], 'SUSPECT')
+        self.assertEqual(record['passes'], [self.now, self.now + 800])
+        self.assertFalse(hot.is_ready(n, self.state, self.now + 950))
+        self.assertIn('HOT_POOL_SUSPECT=1',hot.report([n],self.state,self.now+950,''))
+        self.assertFalse(hot.eligible_for_probe(n,self.state,self.now+950))
+        self.assertTrue(hot.eligible_for_probe(n,self.state,self.now+1550))
+        hot.record_scan(self.state, n, True, self.now + 1600)
+        self.assertTrue(hot.is_ready(n, self.state, self.now + 1600))
+
+    def test_two_consecutive_unknowns_clear_proofs(self):
+        n=self.nodes[0]
+        hot.record_scan(self.state,n,True,self.now)
+        hot.record_scan(self.state,n,True,self.now+800)
+        hot.record_scan(self.state,n,False,self.now+1000)
+        hot.record_scan(self.state,n,False,self.now+1700)
+        record=self.state['checks'][hot.identity(n)]
+        self.assertEqual(record['last_result'],'FAIL')
+        self.assertEqual(record['passes'],[])
+        self.assertFalse(hot.eligible_for_probe(n,self.state,self.now+1700))
+        self.assertTrue(hot.eligible_for_probe(n,self.state,self.now+2900))
+
+    def test_one_pass_unknown_keeps_history_but_no_ready(self):
+        n=self.nodes[0]
+        hot.record_scan(self.state,n,True,self.now)
+        hot.record_scan(self.state,n,False,self.now+800)
+        self.assertEqual(self.state['checks'][hot.identity(n)]['last_result'],'SUSPECT')
+        self.assertFalse(hot.is_ready(n,self.state,self.now+800))
+        hot.record_scan(self.state,n,True,self.now+1400)
+        self.assertTrue(hot.is_ready(n,self.state,self.now+1400))
 
     def test_endpoint_quarantine_invalidates_aliases(self):
         n, alias = self.nodes[:2]
@@ -70,6 +100,61 @@ class HotPoolTests(unittest.TestCase):
         hot.record_scan(self.state, n, True, self.now)
         hot.record_scan(self.state, n, True, self.now + hot.READY_MAX_AGE + 5)
         self.assertFalse(hot.is_ready(n, self.state, self.now + hot.READY_MAX_AGE + 5))
+
+    def test_suspect_state_persists_without_becoming_ready(self):
+        n=self.nodes[3]
+        hot.record_scan(self.state,n,True,self.now-1400)
+        hot.record_scan(self.state,n,True,self.now-600)
+        hot.record_scan(self.state,n,False,self.now)
+        with tempfile.TemporaryDirectory() as tmp:
+            state_path=Path(tmp)/'shadow.json'
+            hot.save_state(state_path,self.state)
+            loaded=hot.load_state(state_path,'digest',self.now+1)
+            self.assertEqual(loaded['checks'][hot.identity(n)]['last_result'],'SUSPECT')
+            self.assertFalse(hot.is_ready(n,loaded,self.now+1))
+            self.assertEqual(hot.proof_rank(n,loaded,self.now+1),1)
+            self.assertNotIn(n['name'], [x['name'] for x in hot.shortlist([n],loaded,'',now=self.now+1) if hot.is_ready(x,loaded,self.now+1)])
+
+    def test_suspect_expiration_cannot_resurrect_old_proofs(self):
+        n=self.nodes[0]
+        hot.record_scan(self.state,n,True,self.now-2000)
+        hot.record_scan(self.state,n,True,self.now-1000)
+        hot.record_scan(self.state,n,False,self.now)
+        hot.record_scan(self.state,n,True,self.now+5000)
+        self.assertFalse(hot.is_ready(n,self.state,self.now+5000))
+
+    def test_suspect_prioritized_for_recovery_not_selection(self):
+        ready=self.nodes[3]
+        suspect=self.nodes[4]
+        for n in (ready,suspect):
+            hot.record_scan(self.state,n,True,self.now-2200)
+            hot.record_scan(self.state,n,True,self.now-900)
+        hot.record_scan(self.state,suspect,False,self.now-650)
+        plan=hot.select_probes(hot.shortlist(self.nodes,self.state,'',now=self.now),
+                               self.state,self.now)
+        self.assertIn(('RECOVER',suspect),plan)
+        self.assertNotIn(suspect['name'],[n['name'] for n in self.nodes if hot.is_ready(n,self.state,self.now)])
+        self.assertLessEqual(len(plan),2)
+
+    def test_suspect_does_not_steal_emergency_ready_deadline(self):
+        a,b=self.nodes[3:5]
+        for n in (a,b):
+            hot.record_scan(self.state,n,True,self.now-2600)
+            hot.record_scan(self.state,n,True,self.now-1400)
+        hot.record_scan(self.state,self.nodes[0],True,self.now-2000)
+        hot.record_scan(self.state,self.nodes[0],False,self.now-800)
+        plan=hot.select_probes(hot.shortlist(self.nodes,self.state,'',now=self.now),
+                               self.state,self.now)
+        self.assertEqual([mode for mode,_ in plan],['RENEW','RENEW'])
+
+    def test_connect_timings_bounded_history(self):
+        n=self.nodes[0]
+        for j in range(20):
+            hot.record_scan(self.state,n,True,self.now+j*700,connect_ms=j*30)
+        self.assertEqual(len(self.state['checks'][hot.identity(n)]['connect_samples_ms']),12)
+        self.assertEqual(self.state['checks'][hot.identity(n)]['connect_samples_ms'][-1],570)
+        hot.record_scan(self.state,n,False,self.now+20000,connect_ms=120001)
+        self.assertEqual(len(self.state['checks'][hot.identity(n)]['connect_samples_ms']),11)
 
     def test_future_timestamp_rejected(self):
         n = self.nodes[0]
