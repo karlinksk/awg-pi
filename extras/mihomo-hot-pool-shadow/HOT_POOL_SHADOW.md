@@ -55,6 +55,38 @@ On the Pi test stand the diagnostic unit is installed and its timer enabled for 
 - Next release gate: two separated PASS results plus postactivation TUN-path
   and endpoint-quarantine validation, in a separate reviewed change.
 
+## READY retention and renewal fix (2026-10-14)
+
+The initial top-12 ranking could exclude a still-healthy READY candidate
+after a latency spike. More importantly, an oldest qualifying PASS could
+expire at 60 minutes because READY nodes were never probed until expiration.
+
+The patch changes only SHADOW selection and verification:
+
+- READY nodes remain prioritized despite changed latency ranking, but only
+  while present as healthy in the latest provider-matched live pool, within
+  the current policy and with valid recent proofs.
+- Refresh READY 25 minutes before its oldest of two proofs expires, provided
+  at least ten minutes elapsed since its most recent proof.
+- One-pass candidates rank after READY; untested candidates then come next.
+  Failed checks stay lower priority and respect the existing retry cooldown.
+- Aliases sharing a host:port use exactly one shortlist slot and never count
+  as distinct reserve endpoints; aliases of the active endpoint are excluded
+  where the active node appears in the healthy pool.
+- A failed renewal clears that node's proof; no expired state is ever
+  accepted as READY. Source digest changes and quarantine still invalidate.
+- Pre-existing expired proofs cannot be revived retroactively. They must
+  undergo fresh tests.
+- Root-safe installer: apply-ready-retention.sh checks tests first, copies
+  executable and unit backups to /run, briefly disables the Hot Pool timer
+  during the installation, restores the original timer state, and rolls back
+  the files on failure. It never launches a probe or changes the live selector.
+
+Apply on test Pi only with root via:
+sudo bash /home/karlinks/awg-hot-pool-shadow/apply-ready-retention.sh
+
+The staged files and PR do not themselves modify the installed service.
+
 ## Read-only CLI
 
 - `awg-mihomo-hot-pool status`
