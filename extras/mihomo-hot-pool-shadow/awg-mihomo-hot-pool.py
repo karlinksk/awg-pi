@@ -368,7 +368,17 @@ def scan_one(name: str) -> tuple[bool, str]:
             key, value = line.split('=', 1)
             if key in allowed and re.fullmatch(r'[a-zA-Z0-9_]{1,64}', value):
                 fields[key] = value
-        gate = subprocess.run([GATE], input=outcome.stdout, text=True,
+        # The strict balanced gate accepts precisely these five existing fields.
+        # Cold-start metadata is kept for telemetry, never sent to that gate.
+        # Preserve duplicates so the gate can still reject them, fail closed.
+        gated = {'SERVICE_ELIGIBILITY', 'SERVICE_CHECK_OPENAI_API',
+                 'SERVICE_CHECK_CHATGPT_WEB', 'SERVICE_CHECK_YOUTUBE_VIDEO',
+                 'SERVICE_REASON_CHATGPT_WEB'}
+        strict_input = '\n'.join(
+            line for line in outcome.stdout.splitlines()
+            if line.partition('=')[0] in gated
+        ) + '\n'
+        gate = subprocess.run([GATE], input=strict_input, text=True,
                               stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
                               timeout=8, check=False)
         reason = 'GATE_NO_REASON'
