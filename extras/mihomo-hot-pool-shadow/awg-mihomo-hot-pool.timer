@@ -3,8 +3,8 @@ Description=Refresh AWG Mihomo service-qualified reserve in RAM
 
 [Timer]
 OnBootSec=6min
-OnUnitInactiveSec=20min
-AccuracySec=2min
+OnUnitInactiveSec=12min
+AccuracySec=1min
 Unit=awg-mihomo-hot-pool.service
 
 [Install]
