@@ -175,6 +175,44 @@ the SHADOW-only diagnostic components, with rollback in /run:
 The unattended live transport selector, TUN, AWG, SSTP, route policies,
 MikroTik and main gateway services are never modified.
 
+## 24-hour YouTube / egress geography study (2026-10-14)
+
+Hot Pool uses the *existing* \`awg-mihomo-pool.egress_geo\` code with Cloudflare
+\`cdn-cgi/trace\` over the **same isolated Mihomo proxy** after its cold
+HTTPS readiness and service tests, before terminating the test instance.
+No full-pool geolocation scan is enabled. The existing strict
+\`MIHOMO_POOL_REGION=all\` policy and all live routing stay unchanged.
+
+- At most two isolated probes per scheduled cycle; one extra proxied
+  HTTPS call per node, with curl's existing 6-second max time.
+- Only strictly validated **global IPv4 and two-letter location codes**
+  are accepted. Missing trace, malformed/private address, or a timeout is
+  GEO=UNKNOWN, **not a service-gate rejection**. The unchanged
+  balanced OpenAI + 24-frame YouTube gate decides eligibility.
+- Neutral diagnostic fields \`EGRESS_IP\`, \`COUNTRY\`, \`GEO\` and
+  \`GEO_REASON\` are printed together with \`YOUTUBE24\` and
+  \`VIDEO_REASON\`; geo fields are not supplied to the strict gate.
+  The country is what **Cloudflare reports for the outgoing proxy IP**,
+  not the country of the provider's entry server or a guaranteed
+  YouTube/Google geolocation classification.
+- Only sanitized per-check observations are kept in
+  \`/run/awg-pbr/hot-pool/shadow.json\` (RAM, root-only mode 0600);
+  max 256 records and 24-hour TTL. Old readiness proofs are still
+  invalidated on provider changes; historical geo samples survive
+  subscription refreshes within the 24-hour window.
+- Aggregated non-mutating report, after installation:
+  \`sudo /usr/local/sbin/awg-mihomo-hot-pool geo-report\`.
+  It groups YouTube PASS/FAIL/UNKNOWN against actual **exit**
+  country and IP. Samples are correlated observations, not evidence
+  of causation. Never infer READY solely from exit country.
+- Shadow scanner timeout bounded to 135s; systemd oneshot remains
+  5 minutes, CPUQuota 70%, MemoryMax 900M. No extra disk writes.
+
+The existing guarded install script
+\`sudo bash /home/karlinks/awg-hot-pool-shadow/apply-ready-retention.sh\`
+atomically updates only the shadow-only tester and can roll back in
+\`/run/awg-pbr/hot-pool-backup\`.
+
 ## Read-only CLI
 
 - `awg-mihomo-hot-pool status`
