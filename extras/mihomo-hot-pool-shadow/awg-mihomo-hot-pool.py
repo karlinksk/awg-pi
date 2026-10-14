@@ -208,19 +208,47 @@ def failure(state: dict, nodes: list[dict], name: str, now: int, reason: str) ->
     return sum(endpoint(n) == ep for n in nodes)
 
 
-def scan_one(name: str) -> bool:
+def scan_one(name: str) -> tuple[bool, str]:
+    # Only known bounded status tokens are emitted. Never log URLs, raw
+    # scanner stderr, subscription profiles, tokens or media identifiers.
     try:
         outcome = subprocess.run([SCAN, 'service-scan', '--node', name],
                                  stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
                                  text=True, timeout=PROBE_TIMEOUT, check=False)
-        if len(outcome.stdout) > 8192 or not outcome.stdout:
-            return False
-        result = subprocess.run([GATE], input=outcome.stdout, text=True,
-                                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                                timeout=8, check=False)
-        return result.returncode == 0
-    except (OSError, subprocess.TimeoutExpired):
-        return False
+        if len(outcome.stdout) > 8192:
+            return False, 'REASON=SCANNER_OVERSIZE'
+        if not outcome.stdout:
+            return False, f'REASON=SCANNER_EMPTY SCAN_RC={outcome.returncode}'
+        fields = {}
+        allowed = {'SERVICE_CHECK_OPENAI_API', 'SERVICE_CHECK_CHATGPT_WEB',
+                   'SERVICE_CHECK_YOUTUBE_VIDEO', 'SERVICE_REASON_CHATGPT_WEB'}
+        for line in outcome.stdout.splitlines():
+            if '=' not in line:
+                continue
+            key, value = line.split('=', 1)
+            if key in allowed and re.fullmatch(r'[a-zA-Z0-9_]{1,64}', value):
+                fields[key] = value
+        gate = subprocess.run([GATE], input=outcome.stdout, text=True,
+                              stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                              timeout=8, check=False)
+        reason = 'GATE_NO_REASON'
+        for line in gate.stdout.splitlines():
+            if line.startswith('NETWORK_REASON='):
+                candidate = line.split('=', 1)[1]
+                if re.fullmatch(r'[A-Z0-9_]{1,64}', candidate):
+                    reason = candidate
+        status = lambda key: fields.get(key, 'MISSING')
+        summary = ('SCAN_RC=' + str(outcome.returncode) +
+                   ' OPENAI=' + status('SERVICE_CHECK_OPENAI_API') +
+                   ' CHATGPT=' + status('SERVICE_CHECK_CHATGPT_WEB') +
+                   ' YOUTUBE24=' + status('SERVICE_CHECK_YOUTUBE_VIDEO') +
+                   ' WEB_REASON=' + status('SERVICE_REASON_CHATGPT_WEB') +
+                   ' GATE_REASON=' + reason)
+        return gate.returncode == 0, summary
+    except subprocess.TimeoutExpired:
+        return False, 'REASON=SCANNER_OR_GATE_TIMEOUT'
+    except OSError:
+        return False, 'REASON=SCANNER_OR_GATE_EXEC_ERROR'
 
 
 def report(nodes: list[dict], state: dict, now: int, current: str) -> str:
@@ -274,9 +302,9 @@ def main() -> int:
             choices.sort(key=lambda n: (not bool(state['checks'].get(identity(n), {}).get('passes')),
                                         n['delay_ms']))
             for n in choices[:MAX_PROBES]:
-                ok = scan_one(n['name'])
+                ok, details = scan_one(n['name'])
                 record_scan(state, n, ok, int(time.time()) if not args.now else now)
-                print(f'HOT_POOL_PROBE={n["name"]} RESULT={"PASS" if ok else "NOT_CONFIRMED"}')
+                print(f'HOT_POOL_PROBE={n["name"]} RESULT={"PASS" if ok else "NOT_CONFIRMED"} {details}', flush=True)
                 save_state(args.state, state)
             print(report(nodes, state, int(time.time()) if not args.now else now, args.current))
         elif args.action == 'best':
