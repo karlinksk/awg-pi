@@ -20,7 +20,7 @@ import time
 POOL = Path(os.environ.get('AWG_HOT_POOL_SOURCE', '/run/awg-pbr/mihomo-pool/live.json'))
 PROVIDER = Path(os.environ.get('AWG_HOT_POOL_PROVIDER', '/var/lib/awg-pbr/mihomo/providers/subscription.yaml'))
 STATE = Path(os.environ.get('AWG_HOT_POOL_STATE', '/run/awg-pbr/hot-pool/shadow.json'))
-SCAN = os.environ.get('AWG_HOT_POOL_SCANNER', '/usr/local/sbin/awg-mihomo-smart')
+SCAN = os.environ.get('AWG_HOT_POOL_SCANNER', '/usr/local/sbin/awg-mihomo-hot-service-scan')
 GATE = os.environ.get('AWG_HOT_POOL_GATE', '/usr/local/sbin/awg-mihomo-network-eligibility.py')
 POLICY = Path(os.environ.get('MIHOMO_POOL_POLICY_FILE', '/etc/awg-pbr/transports/mihomo/pool-policy.env'))
 PASS_MIN_INTERVAL = 600
@@ -28,6 +28,7 @@ READY_MAX_AGE = 3600
 READY_REFRESH_LEAD = 1500  # refresh before the oldest of two proofs expires
 POOL_MAX_AGE = 7200
 RETRY_FAILED = 1200
+RETRY_SUSPECT = 600  # not before 10 min after a transient unknown
 QUARANTINE_SECS = 7200
 MAX_PROBES = 2
 TARGET_READY = 4
@@ -35,7 +36,7 @@ TARGET_READY = 4
 # bounded sequential diagnostic probes. Be conservative about expiry.
 NEXT_PROBE_SAFETY = 1260
 CURRENT_FILE = Path('/etc/awg-pbr/transports/mihomo/node-name')
-PROBE_TIMEOUT = 110
+PROBE_TIMEOUT = 125  # 10s controller + <=22s readiness + service video + cleanup
 
 
 def sha256(path: Path) -> str:
@@ -84,10 +85,16 @@ def load_state(path: Path, digest: str, now: int) -> dict:
         last_checked = record.get('last_checked')
         if type(last_checked) is not int or last_checked > now + 60:
             continue
-        if record.get('last_result') not in ('PASS', 'FAIL'):
+        if record.get('last_result') not in ('PASS', 'FAIL', 'SUSPECT'):
             continue
         clean[key] = {'passes': stamps[-2:], 'last_result': record['last_result'],
                       'last_checked': last_checked}
+        if record['last_result'] == 'SUSPECT' and not stamps:
+            clean[key]['last_result'] = 'FAIL'
+        samples = record.get('connect_samples_ms', [])
+        if isinstance(samples, list):
+            clean[key]['connect_samples_ms'] = [
+                v for v in samples[-12:] if type(v) is int and 0 <= v <= 120000]
     return {'version': 1, 'provider_sha256': digest, 'checks': clean,
             'quarantine': quarantine}
 
@@ -170,7 +177,7 @@ def proof_rank(node: dict, state: dict, now: int) -> int:
         return 0
     check = state['checks'].get(identity(node), {})
     passes = check.get('passes', [])
-    if (check.get('last_result') == 'PASS' and isinstance(passes, list)
+    if (check.get('last_result') in ('PASS', 'SUSPECT') and isinstance(passes, list)
             and passes and type(passes[-1]) is int
             and 0 <= now - passes[-1] <= READY_MAX_AGE):
         return 1
@@ -224,6 +231,8 @@ def eligible_for_probe(node: dict, state: dict, now: int) -> bool:
     last = raw_last if type(raw_last) is int else 0
     if record.get('last_result') == 'FAIL' and now - last < RETRY_FAILED:
         return False
+    if record.get('last_result') == 'SUSPECT' and now - last < RETRY_SUSPECT:
+        return False
     if record.get('last_result') == 'PASS':
         if is_ready(node, state, now):
             return needs_ready_refresh(node, state, now)
@@ -233,18 +242,36 @@ def eligible_for_probe(node: dict, state: dict, now: int) -> bool:
     return True
 
 
-def record_scan(state: dict, node: dict, passed: bool, now: int) -> None:
+def record_scan(state: dict, node: dict, passed: bool, now: int,
+                connect_ms: int | None = None) -> None:
+    """Preserve evidence on one transient unknown but never select SUSPECT.
+
+    A second consecutive failed qualification discards proofs. Two fresh,
+    spaced PASSes are always required for READY, including after recovery.
+    """
     key = identity(node)
     old = state['checks'].get(key, {})
-    passes = old.get('passes', []) if old.get('last_result') == 'PASS' else []
+    previous = old.get('last_result')
+    passes = old.get('passes', []) if previous in ('PASS', 'SUSPECT') else []
     passes = [x for x in passes if type(x) is int and 0 <= now - x <= READY_MAX_AGE]
     if passed:
         if not passes or now - passes[-1] >= PASS_MIN_INTERVAL:
             passes = (passes + [now])[-2:]
+        result = 'PASS'
+    elif passes and previous == 'PASS':
+        result = 'SUSPECT'
+        # Do not allow a bad or inconclusive check to authorize a live failover.
     else:
+        result = 'FAIL'
         passes = []
-    state['checks'][key] = {'passes': passes, 'last_result': 'PASS' if passed else 'FAIL',
-                            'last_checked': now}
+    raw_samples = old.get('connect_samples_ms', [])
+    samples = [v for v in raw_samples[-11:] if type(v) is int and 0 <= v <= 120000] if isinstance(raw_samples, list) else []
+    if type(connect_ms) is int and 0 <= connect_ms <= 120000:
+        samples.append(connect_ms)
+    state['checks'][key] = {
+        'passes': passes, 'last_result': result,
+        'last_checked': now, 'connect_samples_ms': samples,
+    }
 
 
 def failure(state: dict, nodes: list[dict], name: str, now: int, reason: str) -> int:
@@ -319,7 +346,7 @@ def scan_one(name: str) -> tuple[bool, str]:
     # Only known bounded status tokens are emitted. Never log URLs, raw
     # scanner stderr, subscription profiles, tokens or media identifiers.
     try:
-        outcome = subprocess.run([SCAN, 'service-scan', '--node', name],
+        outcome = subprocess.run([SCAN, '--node', name],
                                  stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                                  text=True, timeout=PROBE_TIMEOUT, check=False)
         if len(outcome.stdout) > 8192:
@@ -330,7 +357,11 @@ def scan_one(name: str) -> tuple[bool, str]:
                            + ' ' + sanitized_trace_point(outcome.stderr))
         fields = {}
         allowed = {'SERVICE_CHECK_OPENAI_API', 'SERVICE_CHECK_CHATGPT_WEB',
-                   'SERVICE_CHECK_YOUTUBE_VIDEO', 'SERVICE_REASON_CHATGPT_WEB'}
+                   'SERVICE_CHECK_YOUTUBE_VIDEO', 'SERVICE_REASON_CHATGPT_WEB',
+                   'SERVICE_REASON_YOUTUBE_VIDEO', 'SERVICE_CONNECT_STATE',
+                   'SERVICE_COLD_READY_MS', 'SERVICE_CONTROLLER_READY_MS',
+                   'SERVICE_CONNECT_WAIT_MS', 'SERVICE_CONNECT_ATTEMPTS',
+                   'SERVICE_CONNECT_FAMILY'}
         for line in outcome.stdout.splitlines():
             if '=' not in line:
                 continue
@@ -352,6 +383,13 @@ def scan_one(name: str) -> tuple[bool, str]:
                    ' CHATGPT=' + status('SERVICE_CHECK_CHATGPT_WEB') +
                    ' YOUTUBE24=' + status('SERVICE_CHECK_YOUTUBE_VIDEO') +
                    ' WEB_REASON=' + status('SERVICE_REASON_CHATGPT_WEB') +
+                   ' VIDEO_REASON=' + status('SERVICE_REASON_YOUTUBE_VIDEO') +
+                   ' CONNECT=' + status('SERVICE_CONNECT_STATE') +
+                   ' COLD_MS=' + status('SERVICE_COLD_READY_MS') +
+                   ' CONTROLLER_MS=' + status('SERVICE_CONTROLLER_READY_MS') +
+                   ' WAIT_MS=' + status('SERVICE_CONNECT_WAIT_MS') +
+                   ' ATTEMPTS=' + status('SERVICE_CONNECT_ATTEMPTS') +
+                   ' CONNECT_FAMILY=' + status('SERVICE_CONNECT_FAMILY') +
                    ' GATE_REASON=' + reason)
         return gate.returncode == 0, summary
     except subprocess.TimeoutExpired:
@@ -400,7 +438,7 @@ def discovery_priority(node: dict, state: dict, now: int,
         diversity = 1 if ready_protocols.get(protocol, 0) == 0 else 2
     record = state['checks'].get(identity(node), {})
     passes = record.get('passes', [])
-    phase = 0 if record.get('last_result') == 'PASS' and passes else (
+    phase = 0 if record.get('last_result') in ('PASS', 'SUSPECT') and passes else (
         1 if not record else 2)
     return (diversity, phase, int(record.get('last_checked', 0)), node['delay_ms'])
 
@@ -425,7 +463,13 @@ def select_probes(nodes: list[dict], state: dict, now: int) -> list[tuple[str, d
         protocol = str(n['type']).lower()
         ready_counts[protocol] = ready_counts.get(protocol, 0) + 1
     discovering = len(ready) < TARGET_READY
+    recover = [n for n in nodes if
+               state['checks'].get(identity(n), {}).get('last_result') == 'SUSPECT'
+               and eligible_for_probe(n, state, now)] if discovering else []
+    recover.sort(key=lambda n: (state['checks'][identity(n)]['last_checked'],
+                                n['delay_ms']))
     explore = [n for n in nodes if not is_ready(n, state, now)
+               and state['checks'].get(identity(n), {}).get('last_result') != 'SUSPECT'
                and eligible_for_probe(n, state, now)] if discovering else []
     explore.sort(key=lambda n: discovery_priority(n, state, now, ready_counts))
 
@@ -439,9 +483,11 @@ def select_probes(nodes: list[dict], state: dict, now: int) -> list[tuple[str, d
         plan.append(('RENEW', n))
     due = [n for n in due if n not in urgent]
 
-    # A non-urgent renewal has at least one safe cycle of slack. Spend those
-    # slots exploring instead: otherwise stable READY entries synchronize and
-    # repeatedly consume both scans, preventing growth to four candidates.
+    # A suspect is never selectable but deserves an early retry before proofs
+    # expire. Reserve one slot for recovery; allow growth in remaining slots.
+    if recover and len(plan) < MAX_PROBES:
+        plan.append(('RECOVER', recover.pop(0)))
+    # A non-urgent renewal has a safe cycle of slack. Discover instead.
     while discovering and explore and len(plan) < MAX_PROBES:
         plan.append(('DISCOVER', explore.pop(0)))
     while due and len(plan) < MAX_PROBES:
@@ -457,6 +503,7 @@ def report(nodes: list[dict], state: dict, now: int, current: str) -> str:
         f'HOT_POOL_HEALTHY={len(nodes)}',
         f'HOT_POOL_SHORTLIST={len(selected)}',
         f'HOT_POOL_READY={len(ready)}',
+        f'HOT_POOL_SUSPECT={sum(state["checks"].get(identity(n), {}).get("last_result") == "SUSPECT" for n in selected)}',
         f'HOT_POOL_TARGET_READY={TARGET_READY}',
         f'HOT_POOL_QUARANTINED_ENDPOINTS={len(state["quarantine"])}',
         f'HOT_POOL_NEXT={ready[0]["name"] if ready else "NONE"}',
@@ -501,10 +548,17 @@ def main() -> int:
                   flush=True)
             print(f'HOT_POOL_PLAN_DISCOVER={sum(mode == "DISCOVER" for mode, _ in plan)}',
                   flush=True)
+            print(f'HOT_POOL_PLAN_RECOVER={sum(mode == "RECOVER" for mode, _ in plan)}',
+                  flush=True)
             for mode, n in plan:
                 ok, details = scan_one(n['name'])
-                record_scan(state, n, ok, int(time.time()) if not args.now else now)
-                print(f'HOT_POOL_PROBE={n["name"]} RESULT={"PASS" if ok else "NOT_CONFIRMED"} {details}', flush=True)
+                metric = re.search(r'(?:^| )COLD_MS=([0-9]{1,6})(?: |$)', details)
+                elapsed = int(metric.group(1)) if metric else None
+                record_scan(state, n, ok, int(time.time()) if not args.now else now,
+                            connect_ms=elapsed)
+                verdict = 'PASS' if ok else 'NOT_CONFIRMED'
+                status = state['checks'][identity(n)]['last_result']
+                print(f'HOT_POOL_PROBE={n["name"]} RESULT={verdict} STATE={status} PROTOCOL={n["type"]} {details}', flush=True)
                 save_state(args.state, state)
             print(report(nodes, state, int(time.time()) if not args.now else now, args.current))
         elif args.action == 'best':
