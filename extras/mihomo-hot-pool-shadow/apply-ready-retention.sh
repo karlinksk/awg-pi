@@ -46,7 +46,7 @@ trap 'rollback $?' EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 
-BACKUP="/run/awg-pbr/hot-pool-backup/ready-retention-$(date +%Y%m%d-%H%M%S)"
+BACKUP="/run/awg-pbr/hot-pool-backup/four-ready-$(date +%Y%m%d-%H%M%S)"
 /usr/bin/install -d -m 0700 "$BACKUP"
 /usr/bin/cp -p /usr/local/sbin/awg-mihomo-hot-pool "$BACKUP/executable"
 /usr/bin/cp -p "/etc/systemd/system/$SERVICE" "$BACKUP/service"
@@ -75,7 +75,7 @@ if [[ "$WAS_ENABLED" -eq 1 ]]; then
   [[ "$(systemctl is-active "$TIMER")" == "active" ]]
 fi
 TOUCHED=0
-echo "HOT_POOL_RETENTION_APPLY=PASS"
+echo "HOT_POOL_RETENTION_APPLY=PASS"\necho "HOT_POOL_4READY_APPLY=PASS"
 echo "HOT_POOL_LIVE_SELECTOR=UNCHANGED"
 echo "HOT_POOL_TIMER=$([[ "$WAS_ENABLED" -eq 1 ]] && echo ENABLED || echo DISABLED)"
 echo "HOT_POOL_BACKUP=$BACKUP"
