@@ -10,6 +10,7 @@ BACKUP=""
 TOUCHED=0
 WAS_ENABLED=0
 TIMER_STOPPED=0
+SHADOW_SCANNER=/usr/local/sbin/awg-mihomo-hot-service-scan
 
 [[ "$(id -u)" -eq 0 ]] || { echo "HOT_POOL_APPLY=REQUIRES_SUDO"; exit 2; }
 [[ -f "$BASE/awg-mihomo-hot-pool.py" && -f "$BASE/test_hot_pool.py" ]] || exit 2
@@ -23,6 +24,7 @@ case "$(systemctl is-enabled "$TIMER" 2>/dev/null || true)" in
 esac
 
 /usr/bin/python3 -B "$BASE/test_hot_pool.py" -q
+/usr/bin/python3 -B "$BASE/test_hot_scan.py" -q
 /usr/bin/python3 -B "$BASE/test_network_gate_contract.py" -q
 /usr/bin/python3 -B -c "import ast,pathlib;ast.parse(pathlib.Path('$BASE/awg-mihomo-hot-pool.py').read_text())"
 /usr/bin/systemd-analyze verify "$BASE/$SERVICE" "$BASE/$TIMER"
@@ -32,6 +34,11 @@ rollback() {
   trap - EXIT INT TERM
   if [[ "$rc" -ne 0 && "$TOUCHED" -eq 1 && -n "$BACKUP" ]]; then
     /usr/bin/install -m 0755 "$BACKUP/executable" /usr/local/sbin/awg-mihomo-hot-pool || true
+    if [[ -f "$BACKUP/shadow-scanner" ]]; then
+      /usr/bin/install -m 0755 "$BACKUP/shadow-scanner" "$SHADOW_SCANNER" || true
+    else
+      /usr/bin/rm -f "$SHADOW_SCANNER" || true
+    fi
     /usr/bin/install -m 0644 "$BACKUP/service" "/etc/systemd/system/$SERVICE" || true
     /usr/bin/install -m 0644 "$BACKUP/timer" "/etc/systemd/system/$TIMER" || true
     /usr/bin/systemctl daemon-reload || true
@@ -49,6 +56,10 @@ trap 'exit 143' TERM
 BACKUP="/run/awg-pbr/hot-pool-backup/four-ready-$(date +%Y%m%d-%H%M%S)"
 /usr/bin/install -d -m 0700 "$BACKUP"
 /usr/bin/cp -p /usr/local/sbin/awg-mihomo-hot-pool "$BACKUP/executable"
+if [[ -e "$SHADOW_SCANNER" ]]; then
+  [[ -f "$SHADOW_SCANNER" && ! -L "$SHADOW_SCANNER" ]] || exit 3
+  /usr/bin/cp -p "$SHADOW_SCANNER" "$BACKUP/shadow-scanner"
+fi
 /usr/bin/cp -p "/etc/systemd/system/$SERVICE" "$BACKUP/service"
 /usr/bin/cp -p "/etc/systemd/system/$TIMER" "$BACKUP/timer"
 
@@ -65,6 +76,7 @@ fi
 TOUCHED=1
 /usr/bin/bash "$BASE/install-shadow.sh"
 /usr/bin/cmp -s "$BASE/awg-mihomo-hot-pool.py" /usr/local/sbin/awg-mihomo-hot-pool
+/usr/bin/cmp -s "$BASE/awg-mihomo-hot-service-scan.py" "$SHADOW_SCANNER"
 [[ "$(systemctl is-enabled "$TIMER" 2>/dev/null || true)" == "disabled" ]]
 [[ "$(systemctl is-active "$SERVICE" 2>/dev/null || true)" == "inactive" ]]
 
@@ -75,7 +87,9 @@ if [[ "$WAS_ENABLED" -eq 1 ]]; then
   [[ "$(systemctl is-active "$TIMER")" == "active" ]]
 fi
 TOUCHED=0
-echo "HOT_POOL_RETENTION_APPLY=PASS"\necho "HOT_POOL_4READY_APPLY=PASS"
+echo "HOT_POOL_RETENTION_APPLY=PASS"
+echo "HOT_POOL_4READY_APPLY=PASS"
+echo "HOT_POOL_COLD_START_SUSPECT_APPLY=PASS"
 echo "HOT_POOL_LIVE_SELECTOR=UNCHANGED"
 echo "HOT_POOL_TIMER=$([[ "$WAS_ENABLED" -eq 1 ]] && echo ENABLED || echo DISABLED)"
 echo "HOT_POOL_BACKUP=$BACKUP"
