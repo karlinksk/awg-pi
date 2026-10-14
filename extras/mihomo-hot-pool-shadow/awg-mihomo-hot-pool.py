@@ -8,6 +8,7 @@ No secrets, URLs, video bytes or raw provider profiles are persisted.
 from __future__ import annotations
 import argparse
 import hashlib
+import ipaddress
 import json
 import os
 from pathlib import Path
@@ -109,6 +110,17 @@ def pool_policy() -> tuple[str, str]:
         return ('all', 'all')
 
 
+def literal_public_ipv4(server: object) -> bool:
+    # Current isolated service-scan enforces a globally routable literal IPv4
+    # and verified DIRECT route. Avoid wasting scan slots on DNS hostnames or
+    # non-public addresses. Never rewrite provider endpoints.
+    try:
+        ip = ipaddress.ip_address(server)
+        return ip.version == 4 and ip.is_global
+    except (ValueError, TypeError):
+        return False
+
+
 def load_nodes(pool: Path, provider: Path, now: int, region='all', protocol='all') -> tuple[str, list[dict]]:
     digest = sha256(provider)
     obj = json.loads(pool.read_text())
@@ -122,6 +134,7 @@ def load_nodes(pool: Path, provider: Path, now: int, region='all', protocol='all
     raw = [n for n in obj.get('nodes', []) if isinstance(n, dict) and n.get('healthy')
            and isinstance(n.get('delay_ms'), int) and n['delay_ms'] > 0
            and all(n.get(k) for k in ('name', 'type', 'server', 'port'))
+           and literal_public_ipv4(n.get('server'))
            and not n.get('duplicate_name') and (region != 'europe' or n.get('europe'))
            and (protocol == 'all' or n.get('type') == protocol)]
     names = {}
@@ -208,17 +221,49 @@ def failure(state: dict, nodes: list[dict], name: str, now: int, reason: str) ->
     return sum(endpoint(n) == ep for n in nodes)
 
 
+def scanner_error_family(stderr: str) -> str:
+    # Categorize Python traceback text without ever logging its raw content:
+    # provider configs and service URL query strings may be embedded in it.
+    data = (stderr or '').lower()[-16000:]
+    if 'read-only file system' in data:
+        return 'SANDBOX_READ_ONLY'
+    if 'permission denied' in data:
+        return 'SANDBOX_PERMISSION_DENIED'
+    if 'operation not permitted' in data:
+        return 'SANDBOX_OPERATION_DENIED'
+    if 'blockingioerror' in data or 'resource temporarily unavailable' in data:
+        return 'SCANNER_LOCK_CONFLICT'
+    if 'service candidate endpoint not direct' in data:
+        return 'CANDIDATE_NOT_DIRECT'
+    if 'service candidate lacks verified literal endpoint' in data:
+        return 'CANDIDATE_NOT_LITERAL'
+    if 'service candidate missing or ambiguous' in data:
+        return 'CANDIDATE_NOT_UNIQUE'
+    if 'invalid service candidate' in data:
+        return 'INVALID_CANDIDATE'
+    if 'isolated service candidate exited' in data:
+        return 'ISOLATED_START_FAILED'
+    if 'isolated service candidate unavailable' in data:
+        return 'ISOLATED_CONTROLLER_TIMEOUT'
+    if 'no such file or directory' in data:
+        return 'MISSING_PATH_OR_BINARY'
+    if 'modulenotfounderror' in data or 'importerror' in data:
+        return 'SCANNER_IMPORT_FAILURE'
+    return 'SCANNER_EXCEPTION'
+
+
 def scan_one(name: str) -> tuple[bool, str]:
     # Only known bounded status tokens are emitted. Never log URLs, raw
     # scanner stderr, subscription profiles, tokens or media identifiers.
     try:
         outcome = subprocess.run([SCAN, 'service-scan', '--node', name],
-                                 stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                                 stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                                  text=True, timeout=PROBE_TIMEOUT, check=False)
         if len(outcome.stdout) > 8192:
             return False, 'REASON=SCANNER_OVERSIZE'
         if not outcome.stdout:
-            return False, f'REASON=SCANNER_EMPTY SCAN_RC={outcome.returncode}'
+            return False, ('REASON=SCANNER_EMPTY SCAN_RC=' + str(outcome.returncode)
+                           + ' SCAN_FAMILY=' + scanner_error_family(outcome.stderr))
         fields = {}
         allowed = {'SERVICE_CHECK_OPENAI_API', 'SERVICE_CHECK_CHATGPT_WEB',
                    'SERVICE_CHECK_YOUTUBE_VIDEO', 'SERVICE_REASON_CHATGPT_WEB'}
@@ -249,6 +294,23 @@ def scan_one(name: str) -> tuple[bool, str]:
         return False, 'REASON=SCANNER_OR_GATE_TIMEOUT'
     except OSError:
         return False, 'REASON=SCANNER_OR_GATE_EXEC_ERROR'
+
+
+def probe_order(nodes: list[dict], state: dict, now: int) -> list[dict]:
+    # Fair, bounded selection: finish one-pass confirmations first, explore
+    # never-tested unique endpoints next, retry failures only after fresh nodes.
+    # Prevent two low-latency but consistently ineligible nodes monopolizing
+    # each scheduled two-probe cycle.
+    def priority(node: dict) -> tuple[int, int, int]:
+        record = state['checks'].get(identity(node))
+        if not record:
+            return (1, 0, node['delay_ms'])
+        passes = record.get('passes', [])
+        if record.get('last_result') == 'PASS' and passes and not is_ready(node, state, now):
+            return (0, int(record.get('last_checked', 0)), node['delay_ms'])
+        # Failed candidates are still eligible after retry cooldown, but last.
+        return (2, int(record.get('last_checked', 0)), node['delay_ms'])
+    return sorted(nodes, key=priority)
 
 
 def report(nodes: list[dict], state: dict, now: int, current: str) -> str:
@@ -298,9 +360,7 @@ def main() -> int:
         elif args.action == 'warm':
             choices = [n for n in shortlist(nodes, state, args.current)
                        if eligible_for_probe(n, state, now)]
-            # Prefer confirmation of one-pass nodes so they become hot sooner.
-            choices.sort(key=lambda n: (not bool(state['checks'].get(identity(n), {}).get('passes')),
-                                        n['delay_ms']))
+            choices = probe_order(choices, state, now)
             for n in choices[:MAX_PROBES]:
                 ok, details = scan_one(n['name'])
                 record_scan(state, n, ok, int(time.time()) if not args.now else now)
