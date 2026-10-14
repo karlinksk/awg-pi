@@ -1,0 +1,204 @@
+#!/usr/bin/env python3
+"""SHADOW-only cold-start timing and service checks for Hot Pool.
+
+Uses a temporary TUN-disabled Mihomo instance and the existing preflight,
+provider, gate and video decoder. Never changes a live selector or route.
+Only bounded status families, timings and checks go to stdout.
+"""
+from __future__ import annotations
+
+import argparse
+import errno
+import fcntl
+import importlib.machinery
+import importlib.util
+import os
+from pathlib import Path
+import re
+import socket
+import ssl
+import subprocess
+import sys
+import tempfile
+import time
+import urllib.error
+
+SMART = Path('/usr/local/sbin/awg-mihomo-smart')
+CONNECT_BUDGET_SECONDS = 22
+CONNECT_ATTEMPTS = 4
+CONNECT_PAUSE_SECONDS = 1
+PROBE_TIMEOUT_SECONDS = 5
+NAME = re.compile(r'^[A-Za-z0-9_.-]{1,100}$')
+
+
+def error_family(exc: Exception) -> str:
+    """Never print raw exceptions: they can contain URLs or provider secrets."""
+    obj = exc.reason if isinstance(exc, urllib.error.URLError) else exc
+    if isinstance(obj, (TimeoutError, socket.timeout)):
+        return 'TIMEOUT'
+    if isinstance(obj, socket.gaierror):
+        return 'DNS'
+    if isinstance(obj, ssl.SSLError):
+        return 'TLS'
+    if isinstance(obj, ConnectionRefusedError):
+        return 'CONNECTION_REFUSED'
+    if isinstance(obj, (ConnectionResetError, BrokenPipeError, ConnectionAbortedError)):
+        return 'CONNECTION_RESET'
+    if isinstance(obj, OSError):
+        if obj.errno == errno.ENETUNREACH or obj.errno == errno.EHOSTUNREACH:
+            return 'UNREACHABLE'
+        if obj.errno in (errno.ETIMEDOUT,):
+            return 'TIMEOUT'
+        if obj.errno in (errno.ECONNREFUSED,):
+            return 'CONNECTION_REFUSED'
+        if obj.errno in (errno.ECONNRESET, errno.EPIPE):
+            return 'CONNECTION_RESET'
+    return 'CONNECTION_UNKNOWN'
+
+
+def cold_connect(fetch, port: int, *, clock=time.monotonic, pause=time.sleep,
+                 attempts=CONNECT_ATTEMPTS, budget=CONNECT_BUDGET_SECONDS,
+                 interval=CONNECT_PAUSE_SECONDS) -> tuple[bool, int, int, str]:
+    """Confirm first HTTPS through the same isolated proxy, not controller visibility.
+
+    A valid TLS-verified HTTP response is transport readiness, not service
+    eligibility. The subsequent normal balanced gate remains mandatory.
+    """
+    began = clock()
+    last_error = 'NO_HTTPS'
+    used = 0
+    for i in range(attempts):
+        left = budget - (clock() - began)
+        if left <= 0:
+            break
+        used += 1
+        try:
+            # Existing fetch pins HTTPS destinations and forces loopback proxy.
+            code, _, _ = fetch(port, 'https://api.openai.com/v1/models',
+                               timeout=min(float(PROBE_TIMEOUT_SECONDS), left),
+                               max_bytes=8192)
+            if type(code) is int and 200 <= code < 600:
+                return True, round((clock() - began) * 1000), used, 'HTTPS_OK'
+            last_error = 'HTTP_INVALID'
+        except Exception as exc:
+            last_error = error_family(exc)
+        left = budget - (clock() - began)
+        if i + 1 < attempts and left > 0:
+            pause(min(interval, left))
+    return False, round((clock() - began) * 1000), used, last_error
+
+
+def load_smart():
+    loader = importlib.machinery.SourceFileLoader('awg_shadow_cold_smart', str(SMART))
+    spec = importlib.util.spec_from_loader(loader.name, loader)
+    obj = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = obj
+    loader.exec_module(obj)
+    return obj
+
+
+def inspect_node(name: str) -> int:
+    if os.geteuid() != 0:
+        print('SERVICE_SHADOW_ERROR=REQUIRES_ROOT')
+        return 2
+    if not Path('/dev/shm').is_dir():
+        print('SERVICE_SHADOW_ERROR=NO_RAM')
+        return 2
+    smart = load_smart()
+    helper, gate = smart.load_pool_code(), smart.load_service_code()
+    raw = helper.read_provider(smart.PROVIDER)
+    matched = [n for n in raw if isinstance(n, dict) and n.get('name') == name]
+    if len(matched) != 1:
+        print('SERVICE_SHADOW_ERROR=NODE_NOT_UNIQUE')
+        return 2
+    smart.verify_candidate_direct(matched[0])
+    smart.STATE_DIR.mkdir(mode=0o700, parents=True, exist_ok=True)
+    print('SERVICE_DIAG_MODE=ISOLATED_SHADOW_ONLY', flush=True)
+    with (smart.STATE_DIR / 'lock').open('a+') as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        mixed = helper.choose_free_port()
+        controller = helper.choose_free_port()
+        while mixed == controller:
+            controller = helper.choose_free_port()
+        with tempfile.TemporaryDirectory(prefix='awg-hot-cold-', dir='/dev/shm') as tmp:
+            config, entries = helper.make_probe_config(matched, mixed, controller)
+            if len(entries) != 1 or not entries[0].get('probe_name'):
+                print('SERVICE_SHADOW_ERROR=INVALID_PROFILE')
+                return 2
+            import yaml
+            cfg = Path(tmp) / 'config.yaml'
+            cfg.write_text(yaml.safe_dump(config, allow_unicode=True, sort_keys=False))
+            os.chmod(cfg, 0o600)
+            start = time.monotonic()
+            instance = subprocess.Popen([smart.MIHOMO, '-d', tmp, '-f', str(cfg)],
+                                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                                        stdin=subprocess.DEVNULL)
+            try:
+                until = time.monotonic() + 10
+                while time.monotonic() < until:
+                    if instance.poll() is not None:
+                        print('SERVICE_SHADOW_ERROR=MIHOMO_EARLY_EXIT')
+                        return 2
+                    try:
+                        proxies = helper.controller_request(controller, '/proxies',
+                                                            timeout=0.7).get('proxies', {})
+                        if entries[0]['probe_name'] in proxies:
+                            break
+                    except Exception:
+                        pass
+                    time.sleep(0.2)
+                else:
+                    print('SERVICE_SHADOW_ERROR=CONTROLLER_START_TIMEOUT')
+                    return 2
+                controller_ms = round((time.monotonic() - start) * 1000)
+                helper.select_probe(controller, entries[0]['probe_name'])
+                ok, wait_ms, attempts, family = cold_connect(gate.fetch, mixed)
+                print('SERVICE_CONNECT_STATE=' + ('PASS' if ok else 'UNKNOWN'))
+                print('SERVICE_CONTROLLER_READY_MS=' + str(controller_ms))
+                print('SERVICE_CONNECT_WAIT_MS=' + str(wait_ms))
+                print('SERVICE_COLD_READY_MS=' +
+                      str(round((time.monotonic() - start) * 1000)))
+                print('SERVICE_CONNECT_ATTEMPTS=' + str(attempts))
+                print('SERVICE_CONNECT_FAMILY=' + family, flush=True)
+                if not ok:
+                    print('SERVICE_ELIGIBILITY=UNKNOWN')
+                    for key in ('OPENAI_API', 'CHATGPT_WEB', 'YOUTUBE_VIDEO'):
+                        print('SERVICE_CHECK_' + key + '=UNKNOWN')
+                    print('SERVICE_REASON_CHATGPT_WEB=connect_not_ready')
+                    return 1
+                result = smart.assess_services_with_stage18(
+                    gate, mixed, force_media=True)
+            finally:
+                if instance.poll() is None:
+                    instance.terminate()
+                    try:
+                        instance.wait(timeout=4)
+                    except subprocess.TimeoutExpired:
+                        instance.kill()
+                        instance.wait(timeout=4)
+    print('SERVICE_ELIGIBILITY=' + result['status'])
+    for key in ('openai_api', 'chatgpt_web', 'youtube_video'):
+        print('SERVICE_CHECK_' + key.upper() + '=' + result['checks'][key]['state'])
+    print('SERVICE_REASON_CHATGPT_WEB=' + result['checks']['chatgpt_web']['reason'])
+    print('SERVICE_REASON_YOUTUBE_VIDEO=' + result['checks']['youtube_video']['reason'])
+    return 0 if result['status'] == 'PASS' else 1
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--node', required=True)
+    args = parser.parse_args()
+    if not NAME.fullmatch(args.node):
+        print('SERVICE_SHADOW_ERROR=INVALID_NAME')
+        return 2
+    try:
+        return inspect_node(args.node)
+    except Exception as exc:
+        # Hardened unit may be missing NETLINK, provider permissions, etc.
+        # Never print the raw exception.
+        print('SERVICE_SHADOW_ERROR=' + error_family(exc))
+        return 2
+
+
+if __name__ == '__main__':
+    raise SystemExit(main())
