@@ -117,5 +117,59 @@ class HotPoolTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 hot.load_nodes(path / 'pool.json', path / 'sub.yaml', self.now)
 
+    def test_diagnostic_pass_sanitizes_output(self):
+        import subprocess
+        from unittest.mock import patch
+        raw = ('SERVICE_ELIGIBILITY=UNKNOWN\n'
+               'SERVICE_CHECK_OPENAI_API=PASS\n'
+               'SERVICE_CHECK_CHATGPT_WEB=UNKNOWN\n'
+               'SERVICE_CHECK_YOUTUBE_VIDEO=PASS\n'
+               'SERVICE_REASON_CHATGPT_WEB=chatgpt_web_http_403\n'
+               'SECRET=private_data_must_not_leak\n')
+        def pretend(argv, **kwargs):
+            if argv[0] == hot.SCAN:
+                return subprocess.CompletedProcess(argv, 1, raw, '')
+            if argv[0] == hot.GATE:
+                return subprocess.CompletedProcess(argv, 0,
+                        'NETWORK_ELIGIBILITY=ELIGIBLE\\nNETWORK_REASON=MEDIUM_NETWORK_CONFIDENCE\\n', '')
+            raise AssertionError('Unexpected executable')
+        with patch.object(hot.subprocess, 'run', side_effect=pretend):
+            allowed, detail = hot.scan_one('vless-a')
+        self.assertTrue(allowed)
+        self.assertIn('OPENAI=PASS', detail)
+        self.assertIn('CHATGPT=UNKNOWN', detail)
+        self.assertIn('YOUTUBE24=PASS', detail)
+        self.assertNotIn('private_data_must_not_leak', detail)
+
+    def test_diagnostic_empty_failure(self):
+        import subprocess
+        from unittest.mock import patch
+        with patch.object(hot.subprocess, 'run', return_value=subprocess.CompletedProcess([], 1, '', 'sensitive error')):
+            allowed, detail = hot.scan_one('vless-a')
+        self.assertFalse(allowed)
+        self.assertEqual(detail, 'REASON=SCANNER_EMPTY SCAN_RC=1')
+        self.assertNotIn('sensitive', detail)
+
+    def test_diagnostic_gate_rejects_missing_video(self):
+        import subprocess
+        from unittest.mock import patch
+        raw = ('SERVICE_ELIGIBILITY=UNKNOWN\n'
+               'SERVICE_CHECK_OPENAI_API=PASS\n'
+               'SERVICE_CHECK_CHATGPT_WEB=UNKNOWN\n'
+               'SERVICE_CHECK_YOUTUBE_VIDEO=UNKNOWN\n'
+               'SERVICE_REASON_CHATGPT_WEB=chatgpt_web_http_403\n')
+        def pretend(argv, **kwargs):
+            if argv[0] == hot.SCAN:
+                return subprocess.CompletedProcess(argv, 1, raw, '')
+            if argv[0] == hot.GATE:
+                return subprocess.CompletedProcess(argv, 1,
+                        'NETWORK_ELIGIBILITY=UNKNOWN\\nNETWORK_REASON=YOUTUBE_VIDEO_NOT_DECODED\\n', '')
+            raise AssertionError('Unexpected executable')
+        with patch.object(hot.subprocess, 'run', side_effect=pretend):
+            allowed, detail = hot.scan_one('vless-a')
+        self.assertFalse(allowed)
+        self.assertIn('YOUTUBE24=UNKNOWN', detail)
+        self.assertIn('SCAN_RC=1', detail)
+
 if __name__ == '__main__':
     unittest.main()
