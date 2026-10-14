@@ -147,7 +147,7 @@ class HotPoolTests(unittest.TestCase):
         with patch.object(hot.subprocess, 'run', return_value=subprocess.CompletedProcess([], 1, '', 'sensitive error')):
             allowed, detail = hot.scan_one('vless-a')
         self.assertFalse(allowed)
-        self.assertEqual(detail, 'REASON=SCANNER_EMPTY SCAN_RC=1')
+        self.assertEqual(detail, 'REASON=SCANNER_EMPTY SCAN_RC=1 SCAN_FAMILY=SCANNER_EXCEPTION')
         self.assertNotIn('sensitive', detail)
 
     def test_diagnostic_gate_rejects_missing_video(self):
@@ -170,6 +170,63 @@ class HotPoolTests(unittest.TestCase):
         self.assertFalse(allowed)
         self.assertIn('YOUTUBE24=UNKNOWN', detail)
         self.assertIn('SCAN_RC=1', detail)
+
+    def test_probe_order_prefers_one_pass_then_untried_then_failed(self):
+        h, ss, v = self.nodes[0], self.nodes[2], self.nodes[3]
+        hot.record_scan(self.state, h, False, self.now - 1500)
+        hot.record_scan(self.state, v, True, self.now - 700)
+        order = hot.probe_order([h, ss, v], self.state, self.now)
+        self.assertEqual([n['name'] for n in order], ['vless-a', 'ss-a', 'hy-a'])
+
+    def test_probe_order_never_repeats_failed_low_latency_before_fresh(self):
+        h, ss, v = self.nodes[0], self.nodes[2], self.nodes[3]
+        hot.record_scan(self.state, h, False, self.now - 3600)
+        got = hot.probe_order([h, ss, v], self.state, self.now)
+        self.assertEqual([n['name'] for n in got], ['ss-a', 'vless-a', 'hy-a'])
+
+    def test_failed_retry_keeps_existing_cooldown(self):
+        h = self.nodes[0]
+        hot.record_scan(self.state, h, False, self.now - 30)
+        self.assertFalse(hot.eligible_for_probe(h, self.state, self.now))
+        self.assertTrue(hot.eligible_for_probe(h, self.state, self.now + hot.RETRY_FAILED))
+
+    def test_error_family_sanitizes_secret_and_permission(self):
+        raw = ('Traceback: Permission denied for token=VERY_SECRET ' +
+               'https://example.com/myprivate?auth=VERY_SECRET')
+        self.assertEqual(hot.scanner_error_family(raw), 'SANDBOX_PERMISSION_DENIED')
+        self.assertNotIn('VERY_SECRET', hot.scanner_error_family(raw))
+        self.assertEqual(hot.scanner_error_family('Read-only file system'), 'SANDBOX_READ_ONLY')
+
+    def test_scanner_empty_reports_sandbox_family_without_traceback(self):
+        import subprocess
+        from unittest.mock import patch
+        raw = 'Permission denied token=SENSITIVE_VALUE'
+        with patch.object(hot.subprocess, 'run', return_value=subprocess.CompletedProcess([], 2, '', raw)):
+            allowed, detail = hot.scan_one('vless-a')
+        self.assertFalse(allowed)
+        self.assertIn('SCAN_FAMILY=SANDBOX_PERMISSION_DENIED', detail)
+        self.assertNotIn('SENSITIVE_VALUE', detail)
+
+    def test_literal_ipv4_preflight_rejects_unverifiable_addresses(self):
+        self.assertTrue(hot.literal_public_ipv4('194.87.118.184'))
+        self.assertFalse(hot.literal_public_ipv4('ragnarok-vpn.ru'))
+        self.assertFalse(hot.literal_public_ipv4('10.1.2.3'))
+        self.assertFalse(hot.literal_public_ipv4('2001:4860:4860::8888'))
+
+    def test_pool_rejects_hostname_before_eligibility_scan(self):
+        with tempfile.TemporaryDirectory() as d:
+            p=Path(d)
+            provider=p/'provider.yaml'
+            provider.write_text('synthetic-no-secrets')
+            digest=hashlib.sha256(provider.read_bytes()).hexdigest()
+            rows=[dict(self.nodes[0]),
+                  {**self.nodes[2], 'name':'dns-only',
+                   'server':'unresolvable.example.test'}]
+            (p/'pool.json').write_text(json.dumps({
+                'provider_sha256':digest, 'scanned_at':self.now,'nodes':rows}))
+            got,filtered=hot.load_nodes(p/'pool.json',provider,self.now)
+            self.assertEqual(got,digest)
+            self.assertEqual([n['name'] for n in filtered],['hy-a'])
 
 if __name__ == '__main__':
     unittest.main()
