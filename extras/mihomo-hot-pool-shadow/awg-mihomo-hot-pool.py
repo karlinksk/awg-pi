@@ -265,9 +265,9 @@ def record_scan(state: dict, node: dict, passed: bool, now: int,
         result = 'FAIL'
         passes = []
     raw_samples = old.get('connect_samples_ms', [])
-    samples = [v for v in raw_samples[-11:] if type(v) is int and 0 <= v <= 120000] if isinstance(raw_samples, list) else []
+    samples = [v for v in raw_samples[-12:] if type(v) is int and 0 <= v <= 120000] if isinstance(raw_samples, list) else []
     if type(connect_ms) is int and 0 <= connect_ms <= 120000:
-        samples.append(connect_ms)
+        samples = (samples + [connect_ms])[-12:]
     state['checks'][key] = {
         'passes': passes, 'last_result': result,
         'last_checked': now, 'connect_samples_ms': samples,
