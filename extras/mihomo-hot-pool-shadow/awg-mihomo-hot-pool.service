@@ -24,4 +24,4 @@ ProtectControlGroups=true
 RestrictRealtime=true
 LockPersonality=true
 RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
-ReadWritePaths=/run/awg-pbr
+ReadWritePaths=/run/awg-pbr /dev/shm
