@@ -3,9 +3,12 @@
 set -Eeuo pipefail
 [[ $(id -u) -eq 0 ]] || { echo 'Run: sudo bash /home/karlinks/awg-hot-pool-shadow/install-shadow.sh' >&2; exit 2; }
 source_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-[[ -f "$source_dir/awg-mihomo-hot-pool.py" && -f "$source_dir/test_hot_pool.py" ]] || exit 2
+[[ -f "$source_dir/awg-mihomo-hot-pool.py" && -f "$source_dir/test_hot_pool.py" &&
+   -f "$source_dir/awg-mihomo-hot-service-scan.py" && -f "$source_dir/test_hot_scan.py" ]] || exit 2
 /usr/bin/python3 -B "$source_dir/test_hot_pool.py" -q
-/usr/bin/python3 -m py_compile "$source_dir/awg-mihomo-hot-pool.py"
+/usr/bin/python3 -B "$source_dir/test_hot_scan.py" -q
+/usr/bin/python3 -B "$source_dir/test_network_gate_contract.py" -q
+/usr/bin/python3 -B -c "import ast,pathlib;[ast.parse(pathlib.Path('$source_dir',p).read_text()) for p in ('awg-mihomo-hot-pool.py','awg-mihomo-hot-service-scan.py')]"
 for unit in awg-mihomo-hot-pool.service awg-mihomo-hot-pool.timer; do
   # "is-enabled --quiet" exits zero for static units on this system.
   # A static inactive oneshot is safe to refresh, but reject anything that
@@ -19,6 +22,7 @@ for unit in awg-mihomo-hot-pool.service awg-mihomo-hot-pool.timer; do
     echo "REFUSED: $unit is running" >&2; exit 3
   fi
 done
+install -m 0755 "$source_dir/awg-mihomo-hot-service-scan.py" /usr/local/sbin/awg-mihomo-hot-service-scan
 install -m 0755 "$source_dir/awg-mihomo-hot-pool.py" /usr/local/sbin/awg-mihomo-hot-pool
 install -m 0644 "$source_dir/awg-mihomo-hot-pool.service" /etc/systemd/system/awg-mihomo-hot-pool.service
 install -m 0644 "$source_dir/awg-mihomo-hot-pool.timer" /etc/systemd/system/awg-mihomo-hot-pool.timer
