@@ -236,5 +236,87 @@ class HotPoolTests(unittest.TestCase):
         self.assertEqual(metadata, 'ERROR_CLASS=RuntimeError STACK=awg-mihomo-smart:411:service_scan')
         self.assertNotIn('SECRET_VALUE', metadata)
 
+    def test_high_latency_ready_is_retained_beyond_twelve_slot_limit(self):
+        cheap = [dict(name='new-' + str(i), type='vless', server='77.16.2.' + str(i+1),
+                      port=10000+i, healthy=True, delay_ms=30+i, index=i)
+                 for i in range(16)]
+        # 4-per-protocol cap plus 12 total: pin a high-latency ready node.
+        ready = dict(name='slow-ready', type='vless', server='62.60.233.157',
+                     port=8444, healthy=True, delay_ms=3320, index=99)
+        hot.record_scan(self.state, ready, True, self.now-2400)
+        hot.record_scan(self.state, ready, True, self.now-1200)
+        chosen = hot.shortlist(cheap + self.nodes[::2] + [ready],
+                               self.state, '', now=self.now)
+        self.assertEqual(chosen[0]['name'], 'slow-ready')
+        self.assertIn('slow-ready', [n['name'] for n in chosen])
+        self.assertLessEqual(len(chosen), 12)
+        self.assertLessEqual(sum(n['type']=='vless' for n in chosen), 4)
+        self.assertIn('HOT_POOL_READY=1', hot.report(cheap + [ready], self.state, self.now, ''))
+
+    def test_ready_proactive_refresh_preserves_two_fresh_passes(self):
+        n = self.nodes[3]
+        hot.record_scan(self.state, n, True, self.now-2600)
+        hot.record_scan(self.state, n, True, self.now-1300)
+        self.assertTrue(hot.is_ready(n, self.state, self.now))
+        self.assertTrue(hot.needs_ready_refresh(n, self.state, self.now))
+        self.assertTrue(hot.eligible_for_probe(n, self.state, self.now))
+        self.assertEqual(hot.probe_order([self.nodes[0], n], self.state, self.now)[0]['name'],
+                         'vless-a')
+        hot.record_scan(self.state, n, True, self.now)
+        self.assertTrue(hot.is_ready(n, self.state, self.now+1300))
+        self.assertEqual(self.state['checks'][hot.identity(n)]['passes'],
+                         [self.now-1300, self.now])
+
+    def test_ready_not_refreshed_too_early(self):
+        n = self.nodes[3]
+        hot.record_scan(self.state, n, True, self.now-900)
+        hot.record_scan(self.state, n, True, self.now-100)
+        self.assertTrue(hot.is_ready(n, self.state, self.now))
+        self.assertFalse(hot.eligible_for_probe(n, self.state, self.now))
+
+    def test_expired_or_failed_ready_is_not_retained_as_ready(self):
+        n = dict(self.nodes[3], delay_ms=3500)
+        hot.record_scan(self.state, n, True, self.now-4600)
+        hot.record_scan(self.state, n, True, self.now-3900)
+        self.assertFalse(hot.is_ready(n, self.state, self.now))
+        self.assertNotEqual(hot.proof_rank(n, self.state, self.now), 0)
+        self.assertIn('HOT_POOL_READY=0', hot.report([n], self.state, self.now, ''))
+        hot.record_scan(self.state, n, False, self.now)
+        self.assertFalse(hot.is_ready(n, self.state, self.now))
+
+    def test_alias_of_active_endpoint_cannot_be_reserved(self):
+        primary, alias = self.nodes[:2]
+        hot.record_scan(self.state, alias, True, self.now-1000)
+        hot.record_scan(self.state, alias, True, self.now-200)
+        rows = hot.shortlist(self.nodes, self.state, primary['name'], now=self.now)
+        self.assertNotIn(primary['name'], [n['name'] for n in rows])
+        self.assertNotIn(alias['name'], [n['name'] for n in rows])
+
+    def test_two_ready_aliases_share_single_endpoint_slot(self):
+        a, b = self.nodes[:2]
+        for n in (a,b):
+            hot.record_scan(self.state, n, True, self.now-1300)
+            hot.record_scan(self.state, n, True, self.now-600)
+        rows = hot.shortlist(self.nodes, self.state, '', now=self.now)
+        self.assertEqual(sum(hot.endpoint(n)==hot.endpoint(a) for n in rows), 1)
+        self.assertIn('HOT_POOL_READY=1', hot.report(self.nodes, self.state, self.now, ''))
+
+    def test_ready_alias_beats_unverified_faster_alias(self):
+        a, b = self.nodes[:2]
+        hot.record_scan(self.state, b, True, self.now-1300)
+        hot.record_scan(self.state, b, True, self.now-600)
+        selected=hot.shortlist(self.nodes, self.state, '', now=self.now)
+        self.assertEqual(selected[0]['name'], 'hy-b')
+
+    def test_unhealthy_or_quarantined_ready_dropped(self):
+        n = self.nodes[3]
+        hot.record_scan(self.state, n, True, self.now-1300)
+        hot.record_scan(self.state, n, True, self.now-600)
+        healthy=[x for x in self.nodes if x['name']!=n['name']]
+        self.assertNotIn(n, hot.shortlist(healthy,self.state,'',now=self.now))
+        hot.failure(self.state,self.nodes,n['name'],self.now,'active-health-failed')
+        self.assertFalse(hot.is_ready(n, self.state, self.now))
+        self.assertNotIn(n, hot.shortlist(self.nodes,self.state,'',now=self.now))
+
 if __name__ == '__main__':
     unittest.main()
