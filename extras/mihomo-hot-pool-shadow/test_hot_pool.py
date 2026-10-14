@@ -260,6 +260,126 @@ class HotPoolTests(unittest.TestCase):
         self.assertEqual(len(seen['gate_input'].splitlines()),5)
         self.assertIn('GATE_REASON=MEDIUM_NETWORK_CONFIDENCE',details)
 
+    def test_geo_fields_are_collected_but_not_passed_to_balanced_gate(self):
+        import subprocess
+        from unittest.mock import patch
+        raw = ('SERVICE_ELIGIBILITY=UNKNOWN\n'
+               'SERVICE_CHECK_OPENAI_API=PASS\n'
+               'SERVICE_CHECK_CHATGPT_WEB=UNKNOWN\n'
+               'SERVICE_CHECK_YOUTUBE_VIDEO=PASS\n'
+               'SERVICE_REASON_CHATGPT_WEB=chatgpt_web_http_403\n'
+               'SERVICE_GEO_EGRESS_IPV4=139.180.146.200\n'
+               'SERVICE_GEO_COUNTRY=SG\n'
+               'SERVICE_GEO_STATE=VERIFIED\n'
+               'SERVICE_GEO_REASON=NONE\n')
+        real_run = subprocess.run
+        seen={}
+        def fake(argv,**kwargs):
+            if argv[0] == hot.SCAN:
+                return subprocess.CompletedProcess(argv,1,raw,'')
+            if argv[0] == hot.GATE:
+                seen['gate'] = kwargs['input']
+                return real_run(['/usr/bin/python3','-B',hot.GATE],
+                                input=kwargs['input'],text=True,capture_output=True,timeout=5)
+            raise AssertionError('Unexpected command')
+        with patch.object(hot.subprocess,'run',side_effect=fake):
+            ok,detail=hot.scan_one('test')
+        self.assertTrue(ok)
+        self.assertIn('EGRESS_IP=139.180.146.200',detail)
+        self.assertIn('COUNTRY=SG',detail)
+        self.assertIn('GEO=VERIFIED',detail)
+        self.assertEqual(len(seen['gate'].splitlines()),5)
+        self.assertNotIn('SERVICE_GEO_',seen['gate'])
+
+    def test_geo_observations_are_ram_bounded_ttl_and_invalid_filtered(self):
+        node=self.nodes[0]
+        for i in range(300):
+            now=self.now + i*270
+            details=('SCAN_RC=1 OPENAI=PASS CHATGPT=UNKNOWN YOUTUBE24=PASS '
+                     'EGRESS_IP=139.180.146.200 COUNTRY=SG GEO=VERIFIED')
+            hot.append_geo_observation(self.state,node,True,details,now)
+        rows=self.state['geo_history']
+        self.assertEqual(len(rows),hot.GEO_HISTORY_LIMIT)
+        self.assertEqual(rows[-1]['country'],'SG')
+        self.assertEqual(rows[-1]['youtube'],'PASS')
+        with tempfile.TemporaryDirectory() as tmp:
+            state_file=Path(tmp)/'shadow.json'
+            hot.save_state(state_file,self.state)
+            restored=hot.load_state(state_file,'digest',self.now+300*270)
+        self.assertTrue(restored['geo_history'])
+        self.assertLessEqual(len(restored['geo_history']),hot.GEO_HISTORY_LIMIT)
+        self.assertTrue(all(r['country']=='SG' for r in restored['geo_history']))
+        self.assertTrue(all(hot.valid_geo_observation(r,self.now+300*270)
+                            for r in restored['geo_history']))
+
+    def test_geo_report_groups_youtube_by_actual_exit_country(self):
+        node1,node2=self.nodes[0],self.nodes[3]
+        hot.append_geo_observation(self.state,node1,False,
+            'YOUTUBE24=UNKNOWN VIDEO_REASON=stage18_ytdlp_extract_or_download_failed '
+            'EGRESS_IP=139.180.146.200 COUNTRY=SG GEO=VERIFIED', self.now)
+        hot.append_geo_observation(self.state,node1,True,
+            'YOUTUBE24=PASS VIDEO_REASON=youtube_24_video_frames_decoded '
+            'EGRESS_IP=139.180.146.200 COUNTRY=SG GEO=VERIFIED',self.now+1)
+        hot.append_geo_observation(self.state,node2,True,
+            'YOUTUBE24=PASS EGRESS_IP=193.233.202.250 COUNTRY=RU GEO=VERIFIED',self.now+2)
+        report=hot.geo_report(self.state,self.now+3)
+        self.assertIn('HOT_POOL_GEO_WINDOW_HOURS=24',report)
+        self.assertIn('HOT_POOL_GEO_VERIFIED=3',report)
+        self.assertIn('HOT_POOL_GEO_COUNTRY=SG SAMPLES=2 YOUTUBE_PASS=1 '
+                      'YOUTUBE_FAIL=0 YOUTUBE_UNKNOWN=1 ELIGIBLE=1 DISTINCT_EGRESS=1', report)
+        self.assertIn('HOT_POOL_GEO_IP=193.233.202.250 COUNTRY=RU SAMPLES=1', report)
+
+    def test_geo_history_survives_provider_hash_change_without_ready_proof(self):
+        n=self.nodes[0]
+        hot.record_scan(self.state,n,True,self.now-800)
+        hot.record_scan(self.state,n,True,self.now)
+        hot.append_geo_observation(self.state,n,True,
+               'YOUTUBE24=PASS EGRESS_IP=139.180.146.200 COUNTRY=SG GEO=VERIFIED',self.now)
+        with tempfile.TemporaryDirectory() as tmp:
+            path=Path(tmp)/'state.json'
+            hot.save_state(path,self.state)
+            changed=hot.load_state(path,'different-provider-hash',self.now+1)
+        self.assertEqual(changed['checks'],{})
+        self.assertEqual(len(changed['geo_history']),1)
+        self.assertFalse(hot.is_ready(n,changed,self.now+1))
+
+    def test_geo_history_expiration(self):
+        n=self.nodes[0]
+        hot.append_geo_observation(self.state,n,True,
+            'YOUTUBE24=PASS EGRESS_IP=139.180.146.200 COUNTRY=SG GEO=VERIFIED',self.now)
+        self.assertIn('HOT_POOL_GEO_SAMPLES=1',hot.geo_report(self.state,self.now))
+        self.assertIn('HOT_POOL_GEO_SAMPLES=0',
+                      hot.geo_report(self.state,self.now+hot.GEO_HISTORY_TTL+1))
+        with tempfile.TemporaryDirectory() as tmp:
+            path=Path(tmp)/'state.json'
+            hot.save_state(path,self.state)
+            loaded=hot.load_state(path,'digest',self.now+hot.GEO_HISTORY_TTL+1)
+        self.assertEqual(loaded['geo_history'],[])
+
+    def test_geo_unknown_is_recorded_without_changing_ready(self):
+        node=self.nodes[3]
+        hot.record_scan(self.state,node,True,self.now)
+        hot.record_scan(self.state,node,True,self.now+800)
+        self.assertTrue(hot.is_ready(node,self.state,self.now+800))
+        hot.append_geo_observation(
+            self.state,node,True,
+            'OPENAI=PASS YOUTUBE24=PASS GEO=UNKNOWN COUNTRY=UNKNOWN EGRESS_IP=UNKNOWN',
+            self.now+800)
+        self.assertTrue(hot.is_ready(node,self.state,self.now+800))
+        self.assertEqual(self.state['geo_history'][-1]['geo_state'],'UNKNOWN')
+
+    def test_geo_sanitizes_private_ips_bad_codes_and_payload(self):
+        n=self.nodes[0]
+        detail=('YOUTUBE24=FAIL EGRESS_IP=192.168.112.34 '
+                'COUNTRY=US GEO=VERIFIED EXTRA=secret-token')
+        hot.append_geo_observation(self.state,n,False,detail,self.now)
+        row=self.state['geo_history'][-1]
+        self.assertEqual(row['geo_state'],'UNKNOWN')
+        self.assertEqual(row['egress_ip'],'UNKNOWN')
+        self.assertNotIn('EXTRA',str(row))
+        self.assertEqual(row['youtube'],'FAIL')
+        self.assertFalse(row['eligible'])
+
     def test_strict_gate_still_rejects_missing_or_duplicate_checks(self):
         import subprocess
         from unittest.mock import patch
