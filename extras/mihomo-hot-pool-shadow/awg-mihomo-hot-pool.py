@@ -7,6 +7,7 @@ No secrets, URLs, video bytes or raw provider profiles are persisted.
 """
 from __future__ import annotations
 import argparse
+import collections
 import hashlib
 import ipaddress
 import json
@@ -36,7 +37,11 @@ TARGET_READY = 4
 # bounded sequential diagnostic probes. Be conservative about expiry.
 NEXT_PROBE_SAFETY = 1260
 CURRENT_FILE = Path('/etc/awg-pbr/transports/mihomo/node-name')
-PROBE_TIMEOUT = 125  # 10s controller + <=22s readiness + service video + cleanup
+PROBE_TIMEOUT = 135  # prior 125s plus <=6s Cloudflare Trace geo check
+GEO_HISTORY_TTL = 86400
+GEO_HISTORY_LIMIT = 256  # max 2 probes per 12min cycle -> <=240/day
+GEO_COUNTRY = re.compile(r'^[A-Z]{2}$')
+
 
 
 def sha256(path: Path) -> str:
@@ -56,7 +61,71 @@ def endpoint(node: dict) -> str:
 
 
 def empty(digest: str) -> dict:
-    return {'version': 1, 'provider_sha256': digest, 'checks': {}, 'quarantine': {}}
+    return {'version': 1, 'provider_sha256': digest, 'checks': {},
+            'quarantine': {}, 'geo_history': []}
+
+
+def valid_geo_observation(row: object, now: int) -> bool:
+    if not isinstance(row, dict):
+        return False
+    at = row.get('at')
+    if type(at) is not int or at > now + 60 or at < now - GEO_HISTORY_TTL:
+        return False
+    if not isinstance(row.get('identity'), str) or not re.fullmatch(r'[0-9a-f]{64}', row['identity']):
+        return False
+    if row.get('youtube') not in ('PASS', 'UNKNOWN', 'FAIL', 'MISSING'):
+        return False
+    if not isinstance(row.get('video_reason', ''), str) or not re.fullmatch(
+            r'[A-Za-z0-9_]{0,64}', row.get('video_reason', '')):
+        return False
+    if type(row.get('eligible')) is not bool:
+        return False
+    if row.get('geo_state') not in ('VERIFIED', 'UNKNOWN'):
+        return False
+    proto = row.get('protocol')
+    if proto not in ('ss', 'vless', 'trojan', 'hysteria2', 'vmess'):
+        return False
+    country, ip = row.get('country'), row.get('egress_ip')
+    if row.get('geo_state') == 'VERIFIED':
+        try:
+            address = ipaddress.ip_address(ip)
+            return (address.version == 4 and address.is_global and
+                    isinstance(country, str) and bool(GEO_COUNTRY.fullmatch(country)))
+        except (TypeError, ValueError):
+            return False
+    return ip == 'UNKNOWN' and country == 'UNKNOWN'
+
+
+def append_geo_observation(state: dict, node: dict, passed: bool, detail: str,
+                           now: int) -> None:
+    # Only the known, allowlisted scan summary is accepted, never raw stdout.
+    fields = dict(re.findall(r'(?:^| )([A-Z][A-Z0-9_]{1,32})=([A-Za-z0-9_.]{1,64})(?= |$)', detail))
+    ip = fields.get('EGRESS_IP', 'UNKNOWN')
+    country = fields.get('COUNTRY', 'UNKNOWN')
+    state_token = fields.get('GEO', 'UNKNOWN')
+    youtube = fields.get('YOUTUBE24', 'MISSING')
+    if youtube not in ('PASS', 'UNKNOWN', 'FAIL', 'MISSING'):
+        youtube = 'MISSING'
+    record = {'at': now, 'identity': identity(node),
+              'protocol': str(node.get('type', '')).lower(),
+              'egress_ip': ip, 'country': country,
+              'geo_state': state_token, 'youtube': youtube,
+              'video_reason': (fields.get('VIDEO_REASON', 'UNKNOWN')
+                               if re.fullmatch(r'[A-Za-z0-9_]{1,64}',
+                                               fields.get('VIDEO_REASON', 'UNKNOWN'))
+                               else 'UNKNOWN'),
+              'eligible': bool(passed)}
+    if not valid_geo_observation(record, now):
+        record.update({'egress_ip': 'UNKNOWN', 'country': 'UNKNOWN',
+                       'geo_state': 'UNKNOWN'})
+    if record['protocol'] not in ('ss', 'vless', 'trojan', 'hysteria2', 'vmess'):
+        return
+    old = state.get('geo_history')
+    cleaned = [r for r in old[-GEO_HISTORY_LIMIT:]
+               if valid_geo_observation(r, now)] if isinstance(old, list) else []
+    state['geo_history'] = (cleaned + [record])[-GEO_HISTORY_LIMIT:]
+
+
 
 
 def load_state(path: Path, digest: str, now: int) -> dict:
@@ -70,8 +139,16 @@ def load_state(path: Path, digest: str, now: int) -> dict:
                   if isinstance(k, str) and isinstance(v, dict)
                   and type(v.get('until')) is int and v['until'] > now
                   and v.get('reason') in ('activation-failed', 'active-health-failed')}
+    observations = obj.get('geo_history', [])
+    observations = ([r for r in observations[-GEO_HISTORY_LIMIT:]
+                     if valid_geo_observation(r, now)]
+                    if isinstance(observations, list) else [])
     if obj.get('provider_sha256') != digest:
-        return {**empty(digest), 'quarantine': quarantine}
+        # Never carry qualification proofs across subscription updates.
+        # Previous strictly bounded anonymous geo observations are historical
+        # evidence and may safely outlive the provider digest.
+        return {**empty(digest), 'quarantine': quarantine,
+                'geo_history': observations}
     checks = obj.get('checks') if isinstance(obj.get('checks'), dict) else {}
     # Treat malformed/stale records as unqualified rather than crashing warm().
     clean = {}
@@ -96,7 +173,7 @@ def load_state(path: Path, digest: str, now: int) -> dict:
             clean[key]['connect_samples_ms'] = [
                 v for v in samples[-12:] if type(v) is int and 0 <= v <= 120000]
     return {'version': 1, 'provider_sha256': digest, 'checks': clean,
-            'quarantine': quarantine}
+            'quarantine': quarantine, 'geo_history': observations}
 
 
 def save_state(path: Path, state: dict) -> None:
@@ -361,12 +438,16 @@ def scan_one(name: str) -> tuple[bool, str]:
                    'SERVICE_REASON_YOUTUBE_VIDEO', 'SERVICE_CONNECT_STATE',
                    'SERVICE_COLD_READY_MS', 'SERVICE_CONTROLLER_READY_MS',
                    'SERVICE_CONNECT_WAIT_MS', 'SERVICE_CONNECT_ATTEMPTS',
-                   'SERVICE_CONNECT_FAMILY'}
+                   'SERVICE_CONNECT_FAMILY', 'SERVICE_GEO_EGRESS_IPV4',
+                   'SERVICE_GEO_COUNTRY', 'SERVICE_GEO_STATE',
+                   'SERVICE_GEO_REASON'}
         for line in outcome.stdout.splitlines():
             if '=' not in line:
                 continue
             key, value = line.split('=', 1)
-            if key in allowed and re.fullmatch(r'[a-zA-Z0-9_]{1,64}', value):
+            if key in allowed and (
+                    re.fullmatch(r'[a-zA-Z0-9_]{1,64}', value) or
+                    (key == 'SERVICE_GEO_EGRESS_IPV4' and literal_public_ipv4(value))):
                 fields[key] = value
         # The strict balanced gate accepts precisely these five existing fields.
         # Cold-start metadata is kept for telemetry, never sent to that gate.
@@ -400,6 +481,10 @@ def scan_one(name: str) -> tuple[bool, str]:
                    ' WAIT_MS=' + status('SERVICE_CONNECT_WAIT_MS') +
                    ' ATTEMPTS=' + status('SERVICE_CONNECT_ATTEMPTS') +
                    ' CONNECT_FAMILY=' + status('SERVICE_CONNECT_FAMILY') +
+                   ' EGRESS_IP=' + status('SERVICE_GEO_EGRESS_IPV4') +
+                   ' COUNTRY=' + status('SERVICE_GEO_COUNTRY') +
+                   ' GEO=' + status('SERVICE_GEO_STATE') +
+                   ' GEO_REASON=' + status('SERVICE_GEO_REASON') +
                    ' GATE_REASON=' + reason)
         return gate.returncode == 0, summary
     except subprocess.TimeoutExpired:
@@ -515,10 +600,45 @@ def report(nodes: list[dict], state: dict, now: int, current: str) -> str:
         f'HOT_POOL_READY={len(ready)}',
         f'HOT_POOL_SUSPECT={sum(state["checks"].get(identity(n), {}).get("last_result") == "SUSPECT" for n in selected)}',
         f'HOT_POOL_TARGET_READY={TARGET_READY}',
+        f'HOT_POOL_GEO_SAMPLES={len(state.get("geo_history", []))}',
         f'HOT_POOL_QUARANTINED_ENDPOINTS={len(state["quarantine"])}',
         f'HOT_POOL_NEXT={ready[0]["name"] if ready else "NONE"}',
         f'HOT_POOL_CURRENT={current or "UNKNOWN"}',
     ))
+
+
+def geo_report(state: dict, now: int) -> str:
+    """Read-only RAM sample aggregates; never asserts that country causes failures."""
+    rows = [r for r in state.get('geo_history', [])
+            if valid_geo_observation(r, now)]
+    grouped: dict[str, list[dict]] = collections.defaultdict(list)
+    by_ip: dict[tuple[str, str], list[dict]] = collections.defaultdict(list)
+    for item in rows:
+        grouped[item['country']].append(item)
+        if item['geo_state'] == 'VERIFIED':
+            by_ip[(item['country'], item['egress_ip'])].append(item)
+    lines = [f'HOT_POOL_GEO_WINDOW_HOURS=24',
+             f'HOT_POOL_GEO_SAMPLES={len(rows)}',
+             f'HOT_POOL_GEO_VERIFIED={sum(r["geo_state"] == "VERIFIED" for r in rows)}']
+    for country, items in sorted(grouped.items()):
+        statuses = collections.Counter(item['youtube'] for item in items)
+        eligible = sum(item['eligible'] for item in items)
+        lines.append(
+            f'HOT_POOL_GEO_COUNTRY={country} SAMPLES={len(items)}'
+            f' YOUTUBE_PASS={statuses["PASS"]}'
+            f' YOUTUBE_FAIL={statuses["FAIL"]}'
+            f' YOUTUBE_UNKNOWN={statuses["UNKNOWN"] + statuses["MISSING"]}'
+            f' ELIGIBLE={eligible}'
+            f' DISTINCT_EGRESS={len({r["egress_ip"] for r in items if r["geo_state"] == "VERIFIED"})}')
+    # Individual exit addresses are public, not subscription secrets.
+    for (country, ip), items in sorted(by_ip.items()):
+        statuses = collections.Counter(item['youtube'] for item in items)
+        lines.append(
+            f'HOT_POOL_GEO_IP={ip} COUNTRY={country} SAMPLES={len(items)}'
+            f' YOUTUBE_PASS={statuses["PASS"]}'
+            f' YOUTUBE_FAIL={statuses["FAIL"]}'
+            f' YOUTUBE_UNKNOWN={statuses["UNKNOWN"] + statuses["MISSING"]}')
+    return '\n'.join(lines)
 
 
 def main() -> int:
@@ -530,6 +650,7 @@ def main() -> int:
     parser.add_argument('--now', type=int, default=0, help=argparse.SUPPRESS)
     sub = parser.add_subparsers(dest='action', required=True)
     sub.add_parser('status')
+    sub.add_parser('geo-report', help='Read-only 24-hour exit-IP/country x YouTube summary')
     sub.add_parser('warm', help='Two isolated service-scans max; never switches live node')
     p = sub.add_parser('best')
     p.add_argument('--exclude', action='append', default=[])
@@ -564,13 +685,16 @@ def main() -> int:
                 ok, details = scan_one(n['name'])
                 metric = re.search(r'(?:^| )COLD_MS=([0-9]{1,6})(?: |$)', details)
                 elapsed = int(metric.group(1)) if metric else None
-                record_scan(state, n, ok, int(time.time()) if not args.now else now,
-                            connect_ms=elapsed)
+                checked = int(time.time()) if not args.now else now
+                record_scan(state, n, ok, checked, connect_ms=elapsed)
+                append_geo_observation(state, n, ok, details, checked)
                 verdict = 'PASS' if ok else 'NOT_CONFIRMED'
                 status = state['checks'][identity(n)]['last_result']
                 print(f'HOT_POOL_PROBE={n["name"]} RESULT={verdict} STATE={status} PROTOCOL={n["type"]} {details}', flush=True)
                 save_state(args.state, state)
             print(report(nodes, state, int(time.time()) if not args.now else now, args.current))
+        elif args.action == 'geo-report':
+            print(geo_report(state, now))
         elif args.action == 'best':
             excluded = set(args.exclude)
             ready = [n for n in shortlist(nodes, state, args.current, now=now)
