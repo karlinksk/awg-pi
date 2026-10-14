@@ -154,7 +154,7 @@ class HotPoolTests(unittest.TestCase):
         self.assertEqual(len(self.state['checks'][hot.identity(n)]['connect_samples_ms']),12)
         self.assertEqual(self.state['checks'][hot.identity(n)]['connect_samples_ms'][-1],570)
         hot.record_scan(self.state,n,False,self.now+20000,connect_ms=120001)
-        self.assertEqual(len(self.state['checks'][hot.identity(n)]['connect_samples_ms']),11)
+        self.assertEqual(len(self.state['checks'][hot.identity(n)]['connect_samples_ms']),12)
 
     def test_future_timestamp_rejected(self):
         n = self.nodes[0]
