@@ -23,5 +23,6 @@ ProtectKernelModules=true
 ProtectControlGroups=true
 RestrictRealtime=true
 LockPersonality=true
-RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX AF_NETLINK
+CapabilityBoundingSet=~CAP_NET_ADMIN
 ReadWritePaths=/run/awg-pbr /dev/shm
