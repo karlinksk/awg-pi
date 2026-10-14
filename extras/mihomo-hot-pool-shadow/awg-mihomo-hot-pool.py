@@ -25,6 +25,7 @@ GATE = os.environ.get('AWG_HOT_POOL_GATE', '/usr/local/sbin/awg-mihomo-network-e
 POLICY = Path(os.environ.get('MIHOMO_POOL_POLICY_FILE', '/etc/awg-pbr/transports/mihomo/pool-policy.env'))
 PASS_MIN_INTERVAL = 600
 READY_MAX_AGE = 3600
+READY_REFRESH_LEAD = 1500  # refresh before the oldest of two proofs expires
 POOL_MAX_AGE = 7200
 RETRY_FAILED = 1200
 QUARANTINE_SECS = 7200
@@ -158,15 +159,43 @@ def is_ready(node: dict, state: dict, now: int) -> bool:
             and 0 <= now - passes[-2] <= READY_MAX_AGE)
 
 
-def shortlist(nodes: list[dict], state: dict, current: str, max_endpoints=12) -> list[dict]:
-    """Best-latency candidates, distinct endpoint, bounded per protocol."""
+def proof_rank(node: dict, state: dict, now: int) -> int:
+    # Only live, policy-conforming nodes supplied by load_nodes are considered.
+    # A formerly READY but expired node is NEVER treated as READY.
+    if is_ready(node, state, now):
+        return 0
+    check = state['checks'].get(identity(node), {})
+    passes = check.get('passes', [])
+    if (check.get('last_result') == 'PASS' and isinstance(passes, list)
+            and passes and type(passes[-1]) is int
+            and 0 <= now - passes[-1] <= READY_MAX_AGE):
+        return 1
+    return 2
+
+
+def shortlist(nodes: list[dict], state: dict, current: str,
+              max_endpoints=12, *, now: int | None = None) -> list[dict]:
+    """Retain fresh READY/one-pass nodes, then best-latency candidates.
+
+    One *endpoint* per shortlist even when names/credentials differ; preserve
+    the existing 4-per-protocol and total size limits. An alias of the active
+    endpoint cannot become its own reserve.
+    """
+    if now is None:
+        now = int(time.time())
+    active_endpoints = {endpoint(n) for n in nodes if n['name'] == current}
+    candidates = [n for n in nodes if n['name'] != current
+                  and endpoint(n) not in active_endpoints
+                  and endpoint(n) not in state['quarantine']]
+    # Sorting before dedupe means a proven alias wins over an unproven,
+    # lower-latency alias sharing the same actual host:port.
+    candidates.sort(key=lambda n: (proof_rank(n, state, now),
+                                   n['delay_ms'], n.get('index', 999999)))
     selected, seen, count = [], set(), {}
-    for node in nodes:
+    for node in candidates:
         ep = endpoint(node)
         proto = str(node['type']).lower()
-        if node['name'] == current or ep in seen or ep in state['quarantine']:
-            continue
-        if count.get(proto, 0) >= 4:
+        if ep in seen or count.get(proto, 0) >= 4:
             continue
         selected.append(node)
         seen.add(ep)
@@ -174,6 +203,15 @@ def shortlist(nodes: list[dict], state: dict, current: str, max_endpoints=12) ->
         if len(selected) >= max_endpoints:
             break
     return selected
+
+
+def needs_ready_refresh(node: dict, state: dict, now: int) -> bool:
+    """Revalidate a proven READY early enough to preserve two fresh passes."""
+    if not is_ready(node, state, now):
+        return False
+    passes = state['checks'][identity(node)]['passes']
+    return (now - passes[0] >= READY_MAX_AGE - READY_REFRESH_LEAD
+            and now - passes[-1] >= PASS_MIN_INTERVAL)
 
 
 def eligible_for_probe(node: dict, state: dict, now: int) -> bool:
@@ -184,7 +222,7 @@ def eligible_for_probe(node: dict, state: dict, now: int) -> bool:
         return False
     if record.get('last_result') == 'PASS':
         if is_ready(node, state, now):
-            return False
+            return needs_ready_refresh(node, state, now)
         passes = record.get('passes', [])
         if passes and type(passes[-1]) is int and 0 <= now - passes[-1] < PASS_MIN_INTERVAL:
             return False
@@ -325,10 +363,12 @@ def probe_order(nodes: list[dict], state: dict, now: int) -> list[dict]:
     # each scheduled two-probe cycle.
     def priority(node: dict) -> tuple[int, int, int]:
         record = state['checks'].get(identity(node))
+        if is_ready(node, state, now):
+            return (-1, 0, node['delay_ms'])  # due for proactive READY renewal
         if not record:
             return (1, 0, node['delay_ms'])
         passes = record.get('passes', [])
-        if record.get('last_result') == 'PASS' and passes and not is_ready(node, state, now):
+        if record.get('last_result') == 'PASS' and passes:
             return (0, int(record.get('last_checked', 0)), node['delay_ms'])
         # Failed candidates are still eligible after retry cooldown, but last.
         return (2, int(record.get('last_checked', 0)), node['delay_ms'])
@@ -336,7 +376,7 @@ def probe_order(nodes: list[dict], state: dict, now: int) -> list[dict]:
 
 
 def report(nodes: list[dict], state: dict, now: int, current: str) -> str:
-    selected = shortlist(nodes, state, current)
+    selected = shortlist(nodes, state, current, now=now)
     ready = [n for n in selected if is_ready(n, state, now)]
     return '\n'.join((
         f'HOT_POOL_MODE=SHADOW_ONLY',
@@ -380,7 +420,7 @@ def main() -> int:
             save_state(args.state, state)
             print(f'HOT_POOL_QUARANTINE_MATCHES={affected}')
         elif args.action == 'warm':
-            choices = [n for n in shortlist(nodes, state, args.current)
+            choices = [n for n in shortlist(nodes, state, args.current, now=now)
                        if eligible_for_probe(n, state, now)]
             choices = probe_order(choices, state, now)
             for n in choices[:MAX_PROBES]:
@@ -391,7 +431,7 @@ def main() -> int:
             print(report(nodes, state, int(time.time()) if not args.now else now, args.current))
         elif args.action == 'best':
             excluded = set(args.exclude)
-            ready = [n for n in shortlist(nodes, state, args.current)
+            ready = [n for n in shortlist(nodes, state, args.current, now=now)
                      if n['name'] not in excluded and is_ready(n, state, now)]
             if not ready:
                 return 3
