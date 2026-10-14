@@ -12,6 +12,7 @@ import errno
 import fcntl
 import importlib.machinery
 import importlib.util
+import ipaddress
 import os
 from pathlib import Path
 import re
@@ -29,6 +30,8 @@ CONNECT_ATTEMPTS = 4
 CONNECT_PAUSE_SECONDS = 1
 PROBE_TIMEOUT_SECONDS = 5
 NAME = re.compile(r'^[A-Za-z0-9_.-]{1,100}$')
+COUNTRY = re.compile(r'^[A-Z]{2}$')
+REASON = re.compile(r'^[A-Z0-9_]{1,48}$')
 
 
 def error_family(exc: Exception) -> str:
@@ -86,6 +89,50 @@ def cold_connect(fetch, port: int, *, clock=time.monotonic, pause=time.sleep,
         if i + 1 < attempts and left > 0:
             pause(min(interval, left))
     return False, round((clock() - began) * 1000), used, last_error
+
+
+
+def safe_egress(ip: object, country: object) -> tuple[str, str, str]:
+    # Trace text is untrusted. Never report private or malformed addresses.
+    try:
+        address = ipaddress.ip_address(ip)
+        if address.version != 4 or not address.is_global:
+            return 'UNKNOWN', 'UNKNOWN', 'INVALID_EGRESS_IPV4'
+        if not isinstance(country, str) or not COUNTRY.fullmatch(country):
+            return 'UNKNOWN', 'UNKNOWN', 'INVALID_COUNTRY'
+        return str(address), country, 'VERIFIED'
+    except (ValueError, TypeError):
+        return 'UNKNOWN', 'UNKNOWN', 'INVALID_EGRESS_IPV4'
+
+
+def isolated_egress(helper, controller: int, mixed: int, item: dict) -> tuple[str, str, str, str]:
+    # Reuse existing egress_geo (Cloudflare Trace over the selected proxy).
+    # Clear environment proxy bypasses only in this short-lived probe process.
+    bypass = {key: os.environ.pop(key, None) for key in ('NO_PROXY', 'no_proxy')}
+    try:
+        ip, country, error = helper.egress_geo(controller, mixed, item)
+    except Exception as exc:
+        return 'UNKNOWN', 'UNKNOWN', 'UNKNOWN', error_family(exc)
+    finally:
+        for key, value in bypass.items():
+            if value is not None:
+                os.environ[key] = value
+    result_ip, result_country, state = safe_egress(ip, country)
+    if state == 'VERIFIED':
+        return result_ip, result_country, 'VERIFIED', 'NONE'
+    if isinstance(error, str) and re.fullmatch(r'curl-[0-9]{1,3}', error):
+        return 'UNKNOWN', 'UNKNOWN', 'UNKNOWN', 'CURL_ERROR'
+    return 'UNKNOWN', 'UNKNOWN', 'UNKNOWN', state
+
+
+def print_geo(ip: str, country: str, state: str, reason: str) -> None:
+    # All arguments come from strict allow-lists, never raw trace or stderr.
+    assert REASON.fullmatch(state) and REASON.fullmatch(reason)
+    assert (ip == 'UNKNOWN' or (safe_egress(ip, country)[2] == 'VERIFIED'))
+    print('SERVICE_GEO_EGRESS_IPV4=' + ip)
+    print('SERVICE_GEO_COUNTRY=' + country)
+    print('SERVICE_GEO_STATE=' + state)
+    print('SERVICE_GEO_REASON=' + reason, flush=True)
 
 
 def load_smart():
@@ -165,9 +212,14 @@ def inspect_node(name: str) -> int:
                     for key in ('OPENAI_API', 'CHATGPT_WEB', 'YOUTUBE_VIDEO'):
                         print('SERVICE_CHECK_' + key + '=UNKNOWN')
                     print('SERVICE_REASON_CHATGPT_WEB=connect_not_ready')
+                    print_geo('UNKNOWN', 'UNKNOWN', 'UNKNOWN', 'CONNECT_NOT_READY')
                     return 1
                 result = smart.assess_services_with_stage18(
                     gate, mixed, force_media=True)
+                # Geo is telemetry only. It MUST NOT influence the balanced gate.
+                geo_ip, geo_country, geo_state, geo_reason = isolated_egress(
+                    helper, controller, mixed, entries[0])
+                print_geo(geo_ip, geo_country, geo_state, geo_reason)
             finally:
                 if instance.poll() is None:
                     instance.terminate()
