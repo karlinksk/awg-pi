@@ -7,10 +7,16 @@ source_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 /usr/bin/python3 -B "$source_dir/test_hot_pool.py" -q
 /usr/bin/python3 -m py_compile "$source_dir/awg-mihomo-hot-pool.py"
 for unit in awg-mihomo-hot-pool.service awg-mihomo-hot-pool.timer; do
-  # A repeated installation must never modify any already enabled/running unit.
-  if /bin/systemctl is-enabled --quiet "$unit" 2>/dev/null; then
-    echo "REFUSED: $unit is enabled; do not overwrite a running experiment" >&2
-    exit 3
+  # "is-enabled --quiet" exits zero for static units on this system.
+  # A static inactive oneshot is safe to refresh, but reject anything that
+  # might be live or auto-starting. The timer must explicitly be disabled.
+  state="$(/bin/systemctl is-enabled "$unit" 2>/dev/null || true)"
+  case "$unit:$state" in
+    awg-mihomo-hot-pool.service:static|awg-mihomo-hot-pool.service:disabled|awg-mihomo-hot-pool.timer:disabled) ;;
+    *) echo "REFUSED: unsafe $unit enabled state=$state" >&2; exit 3 ;;
+  esac
+  if /bin/systemctl is-active --quiet "$unit"; then
+    echo "REFUSED: $unit is running" >&2; exit 3
   fi
 done
 install -m 0755 "$source_dir/awg-mihomo-hot-pool.py" /usr/local/sbin/awg-mihomo-hot-pool
