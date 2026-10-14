@@ -147,7 +147,7 @@ class HotPoolTests(unittest.TestCase):
         with patch.object(hot.subprocess, 'run', return_value=subprocess.CompletedProcess([], 1, '', 'sensitive error')):
             allowed, detail = hot.scan_one('vless-a')
         self.assertFalse(allowed)
-        self.assertEqual(detail, 'REASON=SCANNER_EMPTY SCAN_RC=1 SCAN_FAMILY=SCANNER_EXCEPTION')
+        self.assertIn('REASON=SCANNER_EMPTY SCAN_RC=1 SCAN_FAMILY=SCANNER_EXCEPTION', detail)
         self.assertNotIn('sensitive', detail)
 
     def test_diagnostic_gate_rejects_missing_video(self):
@@ -227,6 +227,14 @@ class HotPoolTests(unittest.TestCase):
             got,filtered=hot.load_nodes(p/'pool.json',provider,self.now)
             self.assertEqual(got,digest)
             self.assertEqual([n['name'] for n in filtered],['hy-a'])
+
+    def test_sanitized_trace_point_does_not_emit_sensitive_exception(self):
+        raw = ('Traceback (most recent call last):\\n'
+               '  File "/usr/local/sbin/awg-mihomo-smart", line 411, in service_scan\\n'
+               'RuntimeError: forbidden?key=SECRET_VALUE')
+        metadata = hot.sanitized_trace_point(raw.replace('\\n', chr(10)))
+        self.assertEqual(metadata, 'ERROR_CLASS=RuntimeError STACK=awg-mihomo-smart:411:service_scan')
+        self.assertNotIn('SECRET_VALUE', metadata)
 
 if __name__ == '__main__':
     unittest.main()
