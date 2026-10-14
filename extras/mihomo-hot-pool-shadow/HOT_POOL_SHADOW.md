@@ -87,6 +87,47 @@ sudo bash /home/karlinks/awg-hot-pool-shadow/apply-ready-retention.sh
 
 The staged files and PR do not themselves modify the installed service.
 
+## Balanced four-READY Hot Pool scheduler (2026-10-14)
+
+Target: four independently qualified READY endpoints (prefer 2 VLESS,
+1 Shadowsocks, 1 Trojan/Hysteria2 when actually eligible), drawn from
+a capped shortlist of twelve healthy, provider-matched, unique endpoints.
+Diversity is a **preference**, not a waiver of balanced service gates.
+Four READY is a capacity target, not a fabricated availability guarantee.
+
+Each 12-minute timer cycle allows at most TWO isolated service probes,
+with <=1 minute timer slack. The shorter cadence matters: simulated
+20-minute paired renewal permanently consumed both scan slots under
+the strict 60-minute two-PASS proof window. Test scenarios with a
+12-minute timer and realistic probe duration maintained four READY
+and allowed additional discovery without changing qualification rules.
+
+- Maintenance lane renews proven READY before proof expiry; urgent renewals
+  take priority when a deadline can be missed before the next scheduled run.
+- Discovery lane uses all safe spare scan slots while READY count is below
+  four. Prefer previously confirmed one-pass prospects and missing
+  protocol types; failed candidates respect retry delays.
+- Discovery cannot steal slots needed to keep READY valid. All assignments
+  share the original two-probes-per-cycle limit. The timer can run without
+  doing any network probe once four READY are stable and none are due.
+- Different names with the same public host:port share one shortlist slot.
+  The existing 4-per-protocol cap is retained, and no failed, expired,
+  quarantined, provider-mismatched or unhealthy node is marked READY.
+- Status now includes HOT_POOL_TARGET_READY=4. Warm-run logs include
+  HOT_POOL_PLAN_RENEW and HOT_POOL_PLAN_DISCOVER for audit, with no secrets.
+- The policy remains SHADOW_ONLY. There is no live TUN or transport
+  selector integration; switching and rollback remain a later, explicit test.
+- The 12-minute cadence increases the number of timer wakes but does not
+  exceed two tests per cycle. Long-term RAM/CPU and microSD impact should
+  be reviewed using the ordinary live system counters.
+
+Staged deployment on the test Pi (root required):
+sudo bash /home/karlinks/awg-hot-pool-shadow/apply-ready-retention.sh
+
+The existing guarded updater preserves the previous timer-enabled state,
+keeps an in-RAM backup, and rejects installation while a shadow probe runs.
+The original live Mihomo, SSTP, AWG and routing remain unchanged.
+
 ## Read-only CLI
 
 - `awg-mihomo-hot-pool status`
