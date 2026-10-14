@@ -128,6 +128,53 @@ The existing guarded updater preserves the previous timer-enabled state,
 keeps an in-RAM backup, and rejects installation while a shadow probe runs.
 The original live Mihomo, SSTP, AWG and routing remain unchanged.
 
+## Cold-connect readiness and SUSPECT retention (2026-10-14)
+
+This SHADOW-only improvement addresses false negatives caused by starting
+the full service check the instant an isolated Mihomo controller sees a node.
+Controller visibility is NOT proof of a working remote transport.
+
+- A dedicated \`awg-mihomo-hot-service-scan\` starts a fresh, isolated,
+  TUN-disabled Mihomo for each selected node using the existing verified
+  DIRECT route, subscription and other read-only smart-code helpers.
+  Its script does NOT replace the common production \`awg-mihomo-smart\`.
+- After controller readiness (max 10s), the script attempts TLS-verified
+  HTTPS through that exact loopback proxy, using the existing allowed
+  OpenAI API endpoint. It retries up to four times, spending at most 22s
+  across attempts. HTTP reachability **only confirms the cold connection**;
+  it is not a PASS for OpenAI or ChatGPT. Afterward the unmodified
+  balanced gate still requires OpenAI and actual YouTube video frames.
+- Logs use only scrubbed fields \`COLD_MS\`, \`CONTROLLER_MS\`, \`WAIT_MS\`,
+  \`ATTEMPTS\` and \`CONNECT_FAMILY\`. No raw URLs, server secrets,
+  downloaded media or authenticated cookies are persisted. A RAM-only
+  bounded twelve-sample history is also kept per node.
+- The first UNKNOWN or other inconclusive/negative check after a PASS
+  changes the node to **SUSPECT**, retaining previous PASS timestamps
+  for forensic analysis and a bounded recovery attempt. A SUSPECT is
+  immediately NOT READY and never eligible for failover. The next
+  retry is permitted after 10 minutes. A later positive scan only
+  restores READY if two separated, unexpired PASS timestamps exist.
+- Two consecutive unsuccessful checks clear all PASS proofs and enter
+  FAIL (20-minute cooldown). Expiry, provider digest changes, missing
+  live-pool health and quarantine continue to invalidate READY.
+- The two-probes-per-cycle cap and four-READY target remain unchanged.
+  REPAIR/RECOVER slots are bounded within that existing cap, after
+  urgent READY renewals and before new discovery.
+- As this is still cold-start testing, it does not prove sustained
+  operation of four simultaneously connected nondes or activate
+  any hot node. Real failover remains a separate gated test.
+- 125s max for each isolated scan; the 5-minute systemd one-shot timeout
+  and 70% CPU / 900MiB memory budget remain unchanged. The shorter
+  12-minute timer is unchanged.
+
+Use the existing guarded root installer to atomically replace only
+the SHADOW-only diagnostic components, with rollback in /run:
+
+\`sudo bash /home/karlinks/awg-hot-pool-shadow/apply-ready-retention.sh\`
+
+The unattended live transport selector, TUN, AWG, SSTP, route policies,
+MikroTik and main gateway services are never modified.
+
 ## Read-only CLI
 
 - `awg-mihomo-hot-pool status`
