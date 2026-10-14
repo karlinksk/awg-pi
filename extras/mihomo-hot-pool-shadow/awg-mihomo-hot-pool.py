@@ -252,6 +252,27 @@ def scanner_error_family(stderr: str) -> str:
     return 'SCANNER_EXCEPTION'
 
 
+def sanitized_trace_point(stderr: str) -> str:
+    # Diagnostic metadata only. Never echo trace lines, URLs or exception text.
+    lines = (stderr or '').splitlines()
+    frames = []
+    pattern = r'^[ ]*File "([^"]+)", line ([0-9]{1,5}), in ([A-Za-z_][A-Za-z_0-9]{0,70})$'
+    for line in lines:
+        match = re.match(pattern, line)
+        if match:
+            filename, lineno, func = match.groups()
+            basename = filename.rsplit('/', 1)[-1]
+            if basename in ('awg-mihomo-smart', 'awg-mihomo-pool',
+                            'socket.py', 'urllib.py', 'request.py', 'tempfile.py',
+                            'subprocess.py', 'pathlib.py', 'os.py', 'fcntl.py'):
+                frames.append(f'{basename}:{lineno}:{func}')
+    last = lines[-1].strip() if lines else ''
+    cls = last.split(':', 1)[0]
+    error_class = cls if re.fullmatch(r'[A-Za-z_][A-Za-z_0-9]{0,60}', cls) else 'UNKNOWN'
+    return ('ERROR_CLASS=' + error_class + ' STACK=' +
+            (frames[-1] if frames else 'UNKNOWN'))
+
+
 def scan_one(name: str) -> tuple[bool, str]:
     # Only known bounded status tokens are emitted. Never log URLs, raw
     # scanner stderr, subscription profiles, tokens or media identifiers.
@@ -263,7 +284,8 @@ def scan_one(name: str) -> tuple[bool, str]:
             return False, 'REASON=SCANNER_OVERSIZE'
         if not outcome.stdout:
             return False, ('REASON=SCANNER_EMPTY SCAN_RC=' + str(outcome.returncode)
-                           + ' SCAN_FAMILY=' + scanner_error_family(outcome.stderr))
+                           + ' SCAN_FAMILY=' + scanner_error_family(outcome.stderr)
+                           + ' ' + sanitized_trace_point(outcome.stderr))
         fields = {}
         allowed = {'SERVICE_CHECK_OPENAI_API', 'SERVICE_CHECK_CHATGPT_WEB',
                    'SERVICE_CHECK_YOUTUBE_VIDEO', 'SERVICE_REASON_CHATGPT_WEB'}
