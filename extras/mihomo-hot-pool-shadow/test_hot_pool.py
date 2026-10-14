@@ -226,6 +226,62 @@ class HotPoolTests(unittest.TestCase):
         self.assertIn('YOUTUBE24=PASS', detail)
         self.assertNotIn('private_data_must_not_leak', detail)
 
+    def test_cold_metadata_is_not_forwarded_to_strict_gate(self):
+        import subprocess
+        from unittest.mock import patch
+        raw = ('SERVICE_DIAG_MODE=ISOLATED_SHADOW_ONLY\n'
+               'SERVICE_CONNECT_STATE=PASS\n'
+               'SERVICE_COLD_READY_MS=1542\n'
+               'SERVICE_CONNECT_ATTEMPTS=2\n'
+               'SERVICE_CONNECT_FAMILY=HTTPS_OK\n'
+               'SERVICE_REASON_YOUTUBE_VIDEO=youtube_24_video_frames_decoded\n'
+               'SERVICE_ELIGIBILITY=UNKNOWN\n'
+               'SERVICE_CHECK_OPENAI_API=PASS\n'
+               'SERVICE_CHECK_CHATGPT_WEB=UNKNOWN\n'
+               'SERVICE_CHECK_YOUTUBE_VIDEO=PASS\n'
+               'SERVICE_REASON_CHATGPT_WEB=chatgpt_web_http_403\n')
+        seen = {}
+        real_run = subprocess.run
+        def tested(argv, **kwargs):
+            if argv[0] == hot.SCAN:
+                return subprocess.CompletedProcess(argv, 1, raw, '')
+            if argv[0] == hot.GATE:
+                seen['gate_input'] = kwargs['input']
+                return real_run(['/usr/bin/python3','-B',hot.GATE],
+                    input=kwargs['input'],text=True,capture_output=True,timeout=5)
+            raise AssertionError('Unexpected command')
+        with patch.object(hot.subprocess, 'run', side_effect=tested):
+            ok,details=hot.scan_one('vless-a')
+        self.assertTrue(ok)
+        self.assertIn('CONNECT_FAMILY=HTTPS_OK',details)
+        self.assertIn('COLD_MS=1542',details)
+        self.assertNotIn('SERVICE_CONNECT_STATE=', seen['gate_input'])
+        self.assertNotIn('SERVICE_REASON_YOUTUBE_VIDEO=', seen['gate_input'])
+        self.assertEqual(len(seen['gate_input'].splitlines()),5)
+        self.assertIn('GATE_REASON=MEDIUM_NETWORK_CONFIDENCE',details)
+
+    def test_strict_gate_still_rejects_missing_or_duplicate_checks(self):
+        import subprocess
+        from unittest.mock import patch
+        raw = ('SERVICE_ELIGIBILITY=UNKNOWN\n'
+               'SERVICE_CHECK_OPENAI_API=PASS\n'
+               'SERVICE_CHECK_OPENAI_API=PASS\n'
+               'SERVICE_CHECK_CHATGPT_WEB=UNKNOWN\n'
+               'SERVICE_CHECK_YOUTUBE_VIDEO=PASS\n'
+               'SERVICE_REASON_CHATGPT_WEB=chatgpt_web_http_403\n')
+        real_run=subprocess.run
+        def fake(argv, **kwargs):
+            if argv[0] == hot.SCAN:
+                return subprocess.CompletedProcess(argv,1,raw,'')
+            if argv[0] == hot.GATE:
+                return real_run(['/usr/bin/python3','-B',hot.GATE],
+                    input=kwargs['input'],text=True,capture_output=True,timeout=5)
+            raise AssertionError('Unexpected executable')
+        with patch.object(hot.subprocess,'run',side_effect=fake):
+            ok, details=hot.scan_one('vless-a')
+        self.assertFalse(ok)
+        self.assertIn('GATE_REASON=BAD_OR_DUPLICATE_CHECK_FIELD',details)
+
     def test_diagnostic_empty_failure(self):
         import subprocess
         from unittest.mock import patch
