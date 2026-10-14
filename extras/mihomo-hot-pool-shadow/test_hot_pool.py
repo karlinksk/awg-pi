@@ -318,5 +318,85 @@ class HotPoolTests(unittest.TestCase):
         self.assertFalse(hot.is_ready(n, self.state, self.now))
         self.assertNotIn(n, hot.shortlist(self.nodes,self.state,'',now=self.now))
 
+    def test_nonurgent_maintenance_leaves_two_discovery_slots(self):
+        ready = self.nodes[3]
+        hot.record_scan(self.state, ready, True, self.now-2200)
+        hot.record_scan(self.state, ready, True, self.now-900)
+        candidates = hot.shortlist(self.nodes, self.state, '', now=self.now)
+        plan = hot.select_probes(candidates, self.state, self.now)
+        self.assertEqual(len(plan), 2)
+        self.assertEqual([x[0] for x in plan], ['DISCOVER', 'DISCOVER'])
+
+    def test_urgent_renewal_both_slots_protects_deadlines(self):
+        a, b = self.nodes[3:5]
+        for n in (a, b):
+            hot.record_scan(self.state, n, True, self.now-2550)
+            hot.record_scan(self.state, n, True, self.now-1200)
+        selected = hot.shortlist(self.nodes, self.state, '', now=self.now)
+        plan = hot.select_probes(selected, self.state, self.now)
+        self.assertEqual([mode for mode, _ in plan], ['RENEW','RENEW'])
+        self.assertEqual({n['name'] for _,n in plan},{'vless-a','vless-b'})
+
+    def test_empty_reserve_explores_two_distinct_endpoints(self):
+        plan = hot.select_probes(
+            hot.shortlist(self.nodes,self.state,'',now=self.now),
+            self.state, self.now)
+        self.assertEqual([mode for mode,_ in plan], ['DISCOVER','DISCOVER'])
+        self.assertEqual(len({hot.endpoint(n) for _, n in plan}), 2)
+
+    def test_four_ready_target_suppresses_extra_scanning(self):
+        for n in (self.nodes[0],self.nodes[2],self.nodes[3],self.nodes[4]):
+            hot.record_scan(self.state, n, True, self.now-1000)
+            hot.record_scan(self.state, n, True, self.now-200)
+        rows = hot.shortlist(self.nodes,self.state,'',now=self.now)
+        self.assertEqual(hot.select_probes(rows,self.state,self.now),[])
+        self.assertIn('HOT_POOL_TARGET_READY=4',
+                      hot.report(self.nodes,self.state,self.now,''))
+
+    def test_diversity_prefers_missing_protocols_with_2_vless_ready(self):
+        a,b=self.nodes[3:5]
+        for n in (a,b):
+            hot.record_scan(self.state,n,True,self.now-1400)
+            hot.record_scan(self.state,n,True,self.now-500)
+        rows=hot.shortlist(self.nodes,self.state,'',now=self.now)
+        plan=hot.select_probes(rows,self.state,self.now)
+        self.assertEqual(len(plan),2)
+        self.assertTrue(all(mode=='DISCOVER' for mode,_ in plan))
+        self.assertEqual({n['type'] for _,n in plan},{'hysteria2','ss'})
+
+    def test_defers_nonurgent_renewal_for_discovery(self):
+        a,b=self.nodes[3:5]
+        hot.record_scan(self.state,a,True,self.now-2550)
+        hot.record_scan(self.state,a,True,self.now-1100)
+        hot.record_scan(self.state,b,True,self.now-2200)
+        hot.record_scan(self.state,b,True,self.now-900)
+        plan=hot.select_probes(hot.shortlist(self.nodes,self.state,'',now=self.now),
+                               self.state,self.now)
+        self.assertEqual([mode for mode,n in plan],['RENEW','DISCOVER'])
+        self.assertEqual(plan[0][1]['name'],'vless-a')
+
+    def test_scheduler_respects_two_checks_across_many_cycles(self):
+        # Two synchronized READY nodes must not permanently starve discovery.
+        a,b=self.nodes[3:5]
+        for n in (a,b):
+            hot.record_scan(self.state,n,True,self.now-2400)
+            hot.record_scan(self.state,n,True,self.now-1200)
+        test_nodes=[self.nodes[0],self.nodes[2],a,b]
+        discovery_count=0
+        peak_ready=0
+        for cycle in range(10):
+            now=self.now+cycle*840  # 12min timer plus typical jitter/scan budget
+            selected=hot.shortlist(test_nodes,self.state,'',now=now)
+            peak_ready=max(peak_ready,sum(hot.is_ready(n,self.state,now)
+                                          for n in selected))
+            plan=hot.select_probes(selected,self.state,now)
+            self.assertLessEqual(len(plan),hot.MAX_PROBES)
+            self.assertEqual(len({hot.endpoint(n) for _,n in plan}),len(plan))
+            discovery_count+=sum(mode=='DISCOVER' for mode,n in plan)
+            for _,n in plan:
+                hot.record_scan(self.state,n,True,now)
+        self.assertGreaterEqual(discovery_count,2)
+        self.assertGreaterEqual(peak_ready,4)
+
 if __name__ == '__main__':
     unittest.main()
