@@ -123,6 +123,9 @@ def build_union(vault, live_profiles, live_health, candidate_profiles,
         p = row["profile"]
         if valid_profile(p):
             source.append((p, row.get("last_delay_ms", 4000), "archive"))
+    for entry in vault.get("pending", []):
+        if valid_profile(entry.get("profile")):
+            source.append((entry["profile"], entry.get("delay_ms", 4000), "pending"))
     source.extend((p, delay, "live") for p, delay in
                   health_matches(live_profiles, live_health))
     source.extend((p, delay, "candidate") for p, delay in
@@ -149,6 +152,35 @@ def build_union(vault, live_profiles, live_health, candidate_profiles,
                       "port": item["port"], "delay_ms": delay,
                       "healthy": True, "index": len(nodes), "origin": origin})
     return output, nodes
+
+
+def retain_pending(vault, candidate_profiles, candidate_health, union,
+                   now):
+    """Save bounded new candidates for later qualification after staging TTL.
+
+    Only a candidate with a recent successful transport-health scan may enter
+    this protected queue. It does NOT inherit READY or trigger live switching.
+    """
+    ready_sigs = {fingerprint(r["profile"]) for r in vault.get("entries", [])}
+    pending = {}
+    for item in vault.get("pending", []):
+        if (isinstance(item, dict)
+                and valid_profile(item.get("profile"))
+                and type(item.get("saved_at")) is int
+                and 0 <= now - item["saved_at"] <= MAX_ARCHIVE_AGE):
+            signature = fingerprint(item["profile"])
+            if signature not in ready_sigs:
+                pending[signature] = item
+    aliases = {fingerprint(item): item["name"] for item in union}
+    for p, delay in health_matches(candidate_profiles, candidate_health):
+        sig = fingerprint(p)
+        if sig in ready_sigs or sig in pending or sig not in aliases:
+            continue
+        renamed = dict(p, name=aliases[sig])
+        pending[sig] = {"profile": renamed, "saved_at": now,
+                        "delay_ms": delay}
+    vault["pending"] = sorted(pending.values(), key=lambda x: -x["saved_at"])[:MAX_EACH_SOURCE]
+    return vault
 
 
 def rebind_state(state, old_provider_digest, old_profiles, previous_vault,
@@ -221,7 +253,13 @@ def run(args):
             previous_source = args.output_provider
     previous_profiles = profiles(previous_source)
     vault = snapshot_vault(previous_source, state, vault, now)
+    vault["pending"] = previous_vault.get("pending", [])
+    vault["pending"] = [p for p in vault["pending"]
+                        if isinstance(p, dict) and valid_profile(p.get("profile"))
+                        and type(p.get("saved_at")) is int
+                        and 0 <= now - p["saved_at"] <= MAX_ARCHIVE_AGE]
     union, nodes = build_union(vault, current, live_health, candidate, cand_health)
+    vault = retain_pending(vault, candidate, cand_health, union, now)
     if not nodes:
         raise ValueError("NO_ELIGIBLE_PROFILES")
     # Output files are always protected, including credentials in provider.
