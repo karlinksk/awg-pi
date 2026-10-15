@@ -419,11 +419,14 @@ def sanitized_trace_point(stderr: str) -> str:
             (frames[-1] if frames else 'UNKNOWN'))
 
 
-def scan_one(name: str) -> tuple[bool, str]:
+def scan_one(name: str, provider: Path | None = None) -> tuple[bool, str]:
     # Only known bounded status tokens are emitted. Never log URLs, raw
     # scanner stderr, subscription profiles, tokens or media identifiers.
     try:
-        outcome = subprocess.run([SCAN, '--node', name],
+        scanner_args = [SCAN, '--node', name]
+        if provider is not None:
+            scanner_args += ['--provider', str(provider)]
+        outcome = subprocess.run(scanner_args,
                                  stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                                  text=True, timeout=PROBE_TIMEOUT, check=False)
         if len(outcome.stdout) > 8192:
@@ -682,7 +685,8 @@ def main() -> int:
             print(f'HOT_POOL_PLAN_RECOVER={sum(mode == "RECOVER" for mode, _ in plan)}',
                   flush=True)
             for mode, n in plan:
-                ok, details = scan_one(n['name'])
+                ok, details = scan_one(n['name'],
+                                       args.provider if args.provider != PROVIDER else None)
                 metric = re.search(r'(?:^| )COLD_MS=([0-9]{1,6})(?: |$)', details)
                 elapsed = int(metric.group(1)) if metric else None
                 checked = int(time.time()) if not args.now else now
