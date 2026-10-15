@@ -193,6 +193,14 @@ class ContinuityTests(unittest.TestCase):
                                        [renamed], "d"*64, NOW)
         self.assertEqual(result["checks"], {})
 
+    def test_wrapper_passes_global_args_before_warm(self):
+        wrapper = (HERE / "awg-mihomo-hot-continuity-run").read_text()
+        start = wrapper.index('exec python3 -B "$POOL"')
+        invocation = wrapper[start:]
+        self.assertLess(invocation.index('--provider'), invocation.index('warm'))
+        self.assertLess(invocation.index('--pool'), invocation.index('warm'))
+        self.assertLess(invocation.index('--state'), invocation.index('warm'))
+
     def test_active_node_is_not_rebranded_as_standby(self):
         union, nodes = core.build_union(
             {"entries": [{"profile": self.old, "saved_at": NOW,
