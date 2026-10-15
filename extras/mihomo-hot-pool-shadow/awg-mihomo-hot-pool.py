@@ -258,6 +258,11 @@ def proof_rank(node: dict, state: dict, now: int) -> int:
             and passes and type(passes[-1]) is int
             and 0 <= now - passes[-1] <= READY_MAX_AGE):
         return 1
+    # A failed or inconclusive node must never displace an untested candidate
+    # merely because its TCP handshake is faster. This affects only the
+    # bounded shadow short-list, not READY eligibility or live selection.
+    if check:
+        return 3
     return 2
 
 
@@ -544,7 +549,9 @@ def discovery_priority(node: dict, state: dict, now: int,
     passes = record.get('passes', [])
     phase = 0 if record.get('last_result') in ('PASS', 'SUSPECT') and passes else (
         1 if not record else 2)
-    return (diversity, phase, int(record.get('last_checked', 0)), node['delay_ms'])
+    # Confirm one fresh PASS before exploring an unfamiliar protocol: a
+    # second PASS 10+ minutes apart is the only path to a new READY.
+    return (phase, diversity, int(record.get('last_checked', 0)), node['delay_ms'])
 
 
 def select_probes(nodes: list[dict], state: dict, now: int) -> list[tuple[str, dict]]:
