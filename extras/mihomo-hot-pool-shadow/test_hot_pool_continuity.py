@@ -73,6 +73,7 @@ class ContinuityTests(unittest.TestCase):
     def args(self, *, now=NOW, candidate=True):
         return types.SimpleNamespace(
             live_provider=self.live, live_pool=self.health,
+            current_file=None,
             candidate_provider=self.candidate if candidate else None,
             candidate_pool=self.candidate_health if candidate else None,
             state=self.state, vault=self.vault, output_provider=self.out,
@@ -191,6 +192,17 @@ class ContinuityTests(unittest.TestCase):
                                        [self.old, self.old_b], {},
                                        [renamed], "d"*64, NOW)
         self.assertEqual(result["checks"], {})
+
+    def test_active_node_is_not_rebranded_as_standby(self):
+        union, nodes = core.build_union(
+            {"entries": [{"profile": self.old, "saved_at": NOW,
+                           "last_delay_ms": 1200}]},
+            [self.old, self.old_b],
+            core.scan_health(self.health, self.live, NOW),
+            [], [], current_name="A")
+        self.assertEqual(sum(p["name"] == "A" for p in union), 1)
+        self.assertEqual(sum(p["uuid"] == "secret-a" for p in union), 1)
+        self.assertEqual(nodes[0]["origin"], "active")
 
     def test_archive_does_not_keep_unconfirmed_nodes(self):
         raw = json.loads(self.state.read_text())
