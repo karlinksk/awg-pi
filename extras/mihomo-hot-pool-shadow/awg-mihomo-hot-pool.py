@@ -443,7 +443,8 @@ def scan_one(name: str, provider: Path | None = None) -> tuple[bool, str]:
                    'SERVICE_CONNECT_WAIT_MS', 'SERVICE_CONNECT_ATTEMPTS',
                    'SERVICE_CONNECT_FAMILY', 'SERVICE_GEO_EGRESS_IPV4',
                    'SERVICE_GEO_COUNTRY', 'SERVICE_GEO_STATE',
-                   'SERVICE_GEO_REASON'}
+                   'SERVICE_GEO_REASON', 'SERVICE_DIAG_AFTER_FIRST_FAIL_24',
+                   'SERVICE_DIAG_AFTER_FIRST_FAIL_REASON'}
         for line in outcome.stdout.splitlines():
             if '=' not in line:
                 continue
@@ -489,6 +490,11 @@ def scan_one(name: str, provider: Path | None = None) -> tuple[bool, str]:
                    ' GEO=' + status('SERVICE_GEO_STATE') +
                    ' GEO_REASON=' + status('SERVICE_GEO_REASON') +
                    ' GATE_REASON=' + reason)
+        if 'SERVICE_DIAG_AFTER_FIRST_FAIL_24' in fields:
+            summary += (' AFTER_FIRST_FAIL_24=' +
+                        status('SERVICE_DIAG_AFTER_FIRST_FAIL_24') +
+                        ' AFTER_FIRST_FAIL_REASON=' +
+                        status('SERVICE_DIAG_AFTER_FIRST_FAIL_REASON'))
         return gate.returncode == 0, summary
     except subprocess.TimeoutExpired:
         return False, 'REASON=SCANNER_OR_GATE_TIMEOUT'
