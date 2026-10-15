@@ -147,5 +147,44 @@ class ColdConnectTests(unittest.TestCase):
         self.assertEqual(family, 'HTTP_INVALID')
 
 
+class FirstFailDiagnosticTests(unittest.TestCase):
+    def test_http403_forces_24frames_but_original_fail_stands(self):
+        import copy
+        class Video:
+            def decode_24_frames(self, port):
+                assert port == 18998
+                return 'PASS', 'youtube_24_video_frames_decoded'
+        class Smart:
+            def load_video_decode_code(self):
+                return Video()
+        gate = {'status': 'FAIL', 'checks': {
+            'openai_api': {'state': 'PASS'},
+            'youtube_video': {'state': 'FAIL', 'reason': 'youtube_media_http_403'}}}
+        before = copy.deepcopy(gate)
+        self.assertEqual(scan.diagnose_first_fail(gate, Smart(), 18998),
+                         ('PASS', 'youtube_24_video_frames_decoded'))
+        self.assertEqual(gate, before)
+
+    def test_unknown_does_not_trigger_extra_decode(self):
+        class Smart:
+            def load_video_decode_code(self):
+                self.fail('Must not launch video')
+        gate = {'status': 'UNKNOWN', 'checks': {
+            'openai_api': {'state': 'PASS'},
+            'youtube_video': {'state': 'UNKNOWN',
+                              'reason': 'youtube_sabr_stream_unvalidated'}}}
+        self.assertIsNone(scan.diagnose_first_fail(gate, Smart(), 18998))
+
+    def test_openai_not_pass_skips_expensive_diagnostic(self):
+        class Smart:
+            def load_video_decode_code(self):
+                self.fail('Must not launch video')
+        gate = {'status': 'FAIL', 'checks': {
+            'openai_api': {'state': 'FAIL'},
+            'youtube_video': {'state': 'FAIL',
+                              'reason': 'youtube_media_http_403'}}}
+        self.assertIsNone(scan.diagnose_first_fail(gate, Smart(), 18998))
+
+
 if __name__ == '__main__':
     unittest.main()
