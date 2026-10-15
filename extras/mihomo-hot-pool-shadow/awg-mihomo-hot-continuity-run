@@ -1,0 +1,30 @@
+#!/usr/bin/env bash
+# SHADOW_ONLY wrapper. Never switch active Mihomo, AWG, SSTP or Pi routing.
+set -Eeuo pipefail
+[[ ${EUID:-$(id -u)} -eq 0 ]] || { echo CONTINUITY_ERROR=REQUIRES_ROOT >&2; exit 2; }
+umask 077
+
+CONTINUITY=/usr/local/sbin/awg-hot-pool-continuity.py
+POOL=/usr/local/sbin/awg-mihomo-hot-pool
+ROOT=/run/awg-pbr/hot-pool/continuity
+VAULT=/var/lib/awg-pbr/hot-pool/continuity/vault.json
+LIVE_PROVIDER=/var/lib/awg-pbr/mihomo/providers/subscription.yaml
+LIVE_HEALTH=/run/awg-pbr/mihomo-pool/live.json
+STAGED_PROVIDER=/var/lib/awg-pbr/mihomo/providers/candidate.yaml
+STAGED_HEALTH=/run/awg-pbr/mihomo-pool/candidate.json
+ORIGINAL_STATE=/run/awg-pbr/hot-pool/shadow.json
+
+install -d -o root -g root -m 0700 "$ROOT" "$(dirname "$VAULT")"
+source_state="$ORIGINAL_STATE"
+[[ -f "$ROOT/state.json" ]] && source_state="$ROOT/state.json"
+
+python3 -B "$CONTINUITY" \
+  --live-provider "$LIVE_PROVIDER" --live-pool "$LIVE_HEALTH" \
+  --candidate-provider "$STAGED_PROVIDER" --candidate-pool "$STAGED_HEALTH" \
+  --state "$source_state" --vault "$VAULT" \
+  --output-provider "$ROOT/provider.yaml" \
+  --output-pool "$ROOT/pool.json" --output-state "$ROOT/state.json"
+
+exec python3 -B "$POOL" warm \
+  --provider "$ROOT/provider.yaml" \
+  --pool "$ROOT/pool.json" --state "$ROOT/state.json"
