@@ -434,6 +434,16 @@ provider_auto_refresh(){
     return 0
   fi
 
+  # Scheduled refreshes must never replace a live transport merely because
+  # a new subscription reordered, renamed, or redefined its nodes. The
+  # candidate is already staged and scanned; manual service-qualified review
+  # is required before changing the live provider or restarting Mihomo.
+  if [[ "$MIHOMO_PERIODIC_REFRESH" == 1 ]]; then
+    printf 'MIHOMO_PROVIDER_AUTO_REFRESH=STAGED_PERIODIC_REVIEW\n'
+    printf 'LIVE_PROVIDER=UNCHANGED\n'
+    return 0
+  fi
+
   candidate_json="$("$MIHOMO_POOL_CLI" list candidate --format json 2>/dev/null || true)"
   selected=""
   reason=""
@@ -463,6 +473,14 @@ provider_auto_refresh(){
 
   printf 'MIHOMO_PROVIDER_AUTO_TARGET=%s\n' "$selected"
   printf 'MIHOMO_PROVIDER_AUTO_REASON=%s\n' "$reason"
+  # Even an explicitly invoked auto-refresh must not silently commit a
+  # different, latency-only "auto-best" node. Such changes require explicit
+  # candidate selection and an independent service test.
+  if [[ "$reason" == auto-best ]]; then
+    printf 'MIHOMO_PROVIDER_AUTO_REFRESH=STAGED_NODE_REVIEW\n'
+    printf 'LIVE_PROVIDER=UNCHANGED\n'
+    return 0
+  fi
   candidate_commit_auto "$selected"
   printf 'MIHOMO_PROVIDER_AUTO_REFRESH=APPLIED\n'
 }
