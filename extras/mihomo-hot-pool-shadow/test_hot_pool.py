@@ -514,6 +514,45 @@ class HotPoolTests(unittest.TestCase):
         self.assertLessEqual(sum(n['type']=='vless' for n in chosen), 4)
         self.assertIn('HOT_POOL_READY=1', hot.report(cheap + [ready], self.state, self.now, ''))
 
+    def test_untried_candidates_displace_previously_failed_fast_endpoints(self):
+        failed = [dict(name=f'bad-{i}', type='vless',
+                       server=f'91.123.20.{i+1}', port=443,
+                       healthy=True, delay_ms=10+i, index=i)
+                  for i in range(4)]
+        fresh = [dict(name=f'new-{i}', type='vless',
+                      server=f'91.123.30.{i+1}', port=443,
+                      healthy=True, delay_ms=110+i, index=20+i)
+                 for i in range(4)]
+        for n in failed:
+            hot.record_scan(self.state, n, False, self.now-200)
+        selected = hot.shortlist(failed+fresh, self.state, '', now=self.now)
+        self.assertEqual({n['name'] for n in selected},
+                         {n['name'] for n in fresh})
+        self.assertTrue(all(hot.proof_rank(n,self.state,self.now)==3
+                            for n in failed))
+        self.assertTrue(all(hot.proof_rank(n,self.state,self.now)==2
+                            for n in fresh))
+
+    def test_second_qualification_precedes_protocol_diversification(self):
+        ready = [dict(name=f'ready-{i}', type='vless',
+                      server=f'8.88.99.{i+1}', port=443, delay_ms=100+i,
+                      index=i, healthy=True) for i in range(2)]
+        pending = dict(name='one-pass', type='vless',
+                       server='8.88.99.10', port=443, delay_ms=300,
+                       index=10, healthy=True)
+        alternate = dict(name='ss-unknown', type='ss',
+                         server='8.88.99.20', port=8388, delay_ms=80,
+                         index=11, healthy=True)
+        for n in ready:
+            hot.record_scan(self.state, n, True, self.now-1450)
+            hot.record_scan(self.state, n, True, self.now-550)
+        hot.record_scan(self.state, pending, True, self.now-650)
+        shortlisted = hot.shortlist(ready+[pending,alternate],
+                                    self.state,'',now=self.now)
+        plan = hot.select_probes(shortlisted,self.state,self.now)
+        self.assertLessEqual(len(plan),hot.MAX_PROBES)
+        self.assertEqual(plan[0][1]['name'],'one-pass')
+
     def test_ready_proactive_refresh_preserves_two_fresh_passes(self):
         n = self.nodes[3]
         hot.record_scan(self.state, n, True, self.now-2600)
