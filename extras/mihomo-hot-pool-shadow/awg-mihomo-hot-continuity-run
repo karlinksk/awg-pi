@@ -20,6 +20,7 @@ source_state="$ORIGINAL_STATE"
 
 python3 -B "$CONTINUITY" \
   --live-provider "$LIVE_PROVIDER" --live-pool "$LIVE_HEALTH" \
+  --current-file /etc/awg-pbr/transports/mihomo/node-name \
   --candidate-provider "$STAGED_PROVIDER" --candidate-pool "$STAGED_HEALTH" \
   --state "$source_state" --vault "$VAULT" \
   --output-provider "$ROOT/provider.yaml" \
