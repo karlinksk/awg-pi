@@ -102,6 +102,34 @@ class ContinuityTests(unittest.TestCase):
         archive = json.loads(self.vault.read_text())
         self.assertIn("secret-c", {x["profile"]["uuid"] for x in archive["entries"]})
 
+    def test_pending_candidates_survive_staged_pool_expiration(self):
+        core.run(self.args())
+        self.state.write_text(self.out_state.read_text())
+        # Candidate staged health scan expires after two hours, but admitted
+        # pending profile remains probeable in the shadow union for one day.
+        core.run(self.args(now=NOW + 8000))
+        profiles = yaml.safe_load(self.out.read_text())["proxies"]
+        self.assertIn("secret-c", {p["uuid"] for p in profiles})
+        self.assertEqual(len(json.loads(self.vault.read_text())["pending"]), 2)
+
+    def test_renamed_credential_collision_keeps_stable_shadow_alias(self):
+        core.run(self.args())
+        before = {p["uuid"]: p["name"] for p in
+                  yaml.safe_load(self.out.read_text())["proxies"]}
+        self.state.write_text(self.out_state.read_text())
+        core.run(self.args(now=NOW + 25, candidate=False))
+        after = {p["uuid"]: p["name"] for p in
+                 yaml.safe_load(self.out.read_text())["proxies"]}
+        self.assertEqual(after["changed-key"], before["changed-key"])
+        self.assertEqual(after["secret-b"], before["secret-b"])
+
+    def test_no_redundant_persistent_vault_write(self):
+        core.run(self.args())
+        ts = self.vault.stat().st_mtime_ns
+        self.state.write_text(self.out_state.read_text())
+        core.run(self.args(now=NOW + 60))
+        self.assertEqual(ts, self.vault.stat().st_mtime_ns)
+
     def test_old_proofs_do_not_attach_to_changed_credentials(self):
         core.run(self.args())
         names = {p["uuid"]: p["name"] for p in yaml.safe_load(self.out.read_text())["proxies"]}
