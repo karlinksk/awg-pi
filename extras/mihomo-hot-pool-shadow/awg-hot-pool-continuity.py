@@ -20,7 +20,8 @@ import yaml
 NAME = re.compile(r"^[A-Za-z0-9_.-]{1,100}$")
 PROTOCOLS = {"ss", "vless", "trojan", "hysteria2", "vmess"}
 MAX_ARCHIVED = 16
-MAX_EACH_SOURCE = 24
+MAX_EACH_SOURCE = 192  # bounded pool of network-healthy profiles in RAM
+MAX_PENDING = 24       # persistent candidate queue remains small
 MAX_ARCHIVE_AGE = 86400
 MAX_POOL_AGE = 7200
 MAX_PROOF_AGE = 3600
@@ -182,7 +183,7 @@ def retain_pending(vault, candidate_profiles, candidate_health, union,
         renamed = dict(p, name=aliases[sig])
         pending[sig] = {"profile": renamed, "saved_at": now,
                         "delay_ms": delay}
-    vault["pending"] = sorted(pending.values(), key=lambda x: -x["saved_at"])[:MAX_EACH_SOURCE]
+    vault["pending"] = sorted(pending.values(), key=lambda x: -x["saved_at"])[:MAX_PENDING]
     return vault
 
 
