@@ -26,6 +26,7 @@ python3 -B "$CONTINUITY" \
   --output-provider "$ROOT/provider.yaml" \
   --output-pool "$ROOT/pool.json" --output-state "$ROOT/state.json"
 
-exec python3 -B "$POOL" warm \
+exec python3 -B "$POOL" \
   --provider "$ROOT/provider.yaml" \
-  --pool "$ROOT/pool.json" --state "$ROOT/state.json"
+  --pool "$ROOT/pool.json" --state "$ROOT/state.json" \
+  warm
