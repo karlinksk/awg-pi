@@ -135,6 +135,47 @@ def print_geo(ip: str, country: str, state: str, reason: str) -> None:
     print('SERVICE_GEO_REASON=' + reason, flush=True)
 
 
+def diagnose_first_fail(result, smart, proxy_port):
+    """Shadow-only extra decode after first-stage YouTube HTTP denial.
+
+    Never mutates result, so eligibility remains determined by the ORIGINAL
+    balanced gate. Only genuine first-stage HTTP 403/451 failures qualify.
+    """
+    checks = result.get('checks', {})
+    video = checks.get('youtube_video', {})
+    if (checks.get('openai_api', {}).get('state') != 'PASS'
+            or video.get('state') != 'FAIL'
+            or video.get('reason') not in
+            ('youtube_media_http_403', 'youtube_media_http_451')):
+        return None
+    try:
+        module = smart.load_video_decode_code()
+        if module is None:
+            return ('UNKNOWN', 'VIDEO_MODULE_UNAVAILABLE')
+        state, reason = module.decode_24_frames(proxy_port)
+        if state not in ('PASS', 'UNKNOWN', 'FAIL'):
+            return ('UNKNOWN', 'INVALID_DIAG_STATE')
+        if not re.fullmatch(r'[a-zA-Z0-9_]{1,64}', reason):
+            return ('UNKNOWN', 'INVALID_DIAG_REASON')
+        return state, reason
+    except Exception:
+        # No raw exception or provider data in stdout.
+        return ('UNKNOWN', 'DIAG_EXCEPTION')
+
+
+def trusted_shadow_provider(path: Path) -> bool:
+    """Allow only root-controlled RAM union provider, never arbitrary paths."""
+    try:
+        physical = path.resolve(strict=True)
+        root = Path('/run/awg-pbr/hot-pool').resolve(strict=True)
+        st = physical.stat()
+        return (physical != root and physical.is_relative_to(root)
+                and st.st_uid == 0 and st.st_mode & 0o077 == 0
+                and physical.is_file())
+    except (OSError, ValueError):
+        return False
+
+
 def load_smart():
     loader = importlib.machinery.SourceFileLoader('awg_shadow_cold_smart', str(SMART))
     spec = importlib.util.spec_from_loader(loader.name, loader)
@@ -144,7 +185,7 @@ def load_smart():
     return obj
 
 
-def inspect_node(name: str) -> int:
+def inspect_node(name: str, provider: Path | None = None) -> int:
     if os.geteuid() != 0:
         print('SERVICE_SHADOW_ERROR=REQUIRES_ROOT')
         return 2
@@ -152,6 +193,11 @@ def inspect_node(name: str) -> int:
         print('SERVICE_SHADOW_ERROR=NO_RAM')
         return 2
     smart = load_smart()
+    if provider is not None:
+        if not trusted_shadow_provider(provider):
+            print('SERVICE_SHADOW_ERROR=UNTRUSTED_PROVIDER')
+            return 2
+        smart.PROVIDER = provider
     helper, gate = smart.load_pool_code(), smart.load_service_code()
     raw = helper.read_provider(smart.PROVIDER)
     matched = [n for n in raw if isinstance(n, dict) and n.get('name') == name]
@@ -216,6 +262,11 @@ def inspect_node(name: str) -> int:
                     return 1
                 result = smart.assess_services_with_stage18(
                     gate, mixed, force_media=True)
+                diagnostic = diagnose_first_fail(result, smart, mixed)
+                if diagnostic is not None:
+                    print('SERVICE_DIAG_AFTER_FIRST_FAIL_24=' + diagnostic[0])
+                    print('SERVICE_DIAG_AFTER_FIRST_FAIL_REASON=' + diagnostic[1],
+                          flush=True)
                 # Geo is telemetry only. It MUST NOT influence the balanced gate.
                 geo_ip, geo_country, geo_state, geo_reason = isolated_egress(
                     helper, controller, mixed, entries[0])
@@ -239,12 +290,14 @@ def inspect_node(name: str) -> int:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--node', required=True)
+    parser.add_argument('--provider', type=Path,
+                        help='Root-owned 0600 profile under /run/awg-pbr/hot-pool')
     args = parser.parse_args()
     if not NAME.fullmatch(args.node):
         print('SERVICE_SHADOW_ERROR=INVALID_NAME')
         return 2
     try:
-        return inspect_node(args.node)
+        return inspect_node(args.node, args.provider)
     except Exception as exc:
         # Hardened unit may be missing NETLINK, provider permissions, etc.
         # Never print the raw exception.

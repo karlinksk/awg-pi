@@ -258,6 +258,11 @@ def proof_rank(node: dict, state: dict, now: int) -> int:
             and passes and type(passes[-1]) is int
             and 0 <= now - passes[-1] <= READY_MAX_AGE):
         return 1
+    # A failed or inconclusive node must never displace an untested candidate
+    # merely because its TCP handshake is faster. This affects only the
+    # bounded shadow short-list, not READY eligibility or live selection.
+    if check:
+        return 3
     return 2
 
 
@@ -419,11 +424,14 @@ def sanitized_trace_point(stderr: str) -> str:
             (frames[-1] if frames else 'UNKNOWN'))
 
 
-def scan_one(name: str) -> tuple[bool, str]:
+def scan_one(name: str, provider: Path | None = None) -> tuple[bool, str]:
     # Only known bounded status tokens are emitted. Never log URLs, raw
     # scanner stderr, subscription profiles, tokens or media identifiers.
     try:
-        outcome = subprocess.run([SCAN, '--node', name],
+        scanner_args = [SCAN, '--node', name]
+        if provider is not None:
+            scanner_args += ['--provider', str(provider)]
+        outcome = subprocess.run(scanner_args,
                                  stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                                  text=True, timeout=PROBE_TIMEOUT, check=False)
         if len(outcome.stdout) > 8192:
@@ -440,7 +448,8 @@ def scan_one(name: str) -> tuple[bool, str]:
                    'SERVICE_CONNECT_WAIT_MS', 'SERVICE_CONNECT_ATTEMPTS',
                    'SERVICE_CONNECT_FAMILY', 'SERVICE_GEO_EGRESS_IPV4',
                    'SERVICE_GEO_COUNTRY', 'SERVICE_GEO_STATE',
-                   'SERVICE_GEO_REASON'}
+                   'SERVICE_GEO_REASON', 'SERVICE_DIAG_AFTER_FIRST_FAIL_24',
+                   'SERVICE_DIAG_AFTER_FIRST_FAIL_REASON'}
         for line in outcome.stdout.splitlines():
             if '=' not in line:
                 continue
@@ -486,6 +495,11 @@ def scan_one(name: str) -> tuple[bool, str]:
                    ' GEO=' + status('SERVICE_GEO_STATE') +
                    ' GEO_REASON=' + status('SERVICE_GEO_REASON') +
                    ' GATE_REASON=' + reason)
+        if 'SERVICE_DIAG_AFTER_FIRST_FAIL_24' in fields:
+            summary += (' AFTER_FIRST_FAIL_24=' +
+                        status('SERVICE_DIAG_AFTER_FIRST_FAIL_24') +
+                        ' AFTER_FIRST_FAIL_REASON=' +
+                        status('SERVICE_DIAG_AFTER_FIRST_FAIL_REASON'))
         return gate.returncode == 0, summary
     except subprocess.TimeoutExpired:
         return False, 'REASON=SCANNER_OR_GATE_TIMEOUT'
@@ -535,7 +549,9 @@ def discovery_priority(node: dict, state: dict, now: int,
     passes = record.get('passes', [])
     phase = 0 if record.get('last_result') in ('PASS', 'SUSPECT') and passes else (
         1 if not record else 2)
-    return (diversity, phase, int(record.get('last_checked', 0)), node['delay_ms'])
+    # Confirm one fresh PASS before exploring an unfamiliar protocol: a
+    # second PASS 10+ minutes apart is the only path to a new READY.
+    return (phase, diversity, int(record.get('last_checked', 0)), node['delay_ms'])
 
 
 def select_probes(nodes: list[dict], state: dict, now: int) -> list[tuple[str, dict]]:
@@ -682,7 +698,8 @@ def main() -> int:
             print(f'HOT_POOL_PLAN_RECOVER={sum(mode == "RECOVER" for mode, _ in plan)}',
                   flush=True)
             for mode, n in plan:
-                ok, details = scan_one(n['name'])
+                ok, details = scan_one(n['name'],
+                                       args.provider if args.provider != PROVIDER else None)
                 metric = re.search(r'(?:^| )COLD_MS=([0-9]{1,6})(?: |$)', details)
                 elapsed = int(metric.group(1)) if metric else None
                 checked = int(time.time()) if not args.now else now
