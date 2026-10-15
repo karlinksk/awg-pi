@@ -135,6 +135,34 @@ def print_geo(ip: str, country: str, state: str, reason: str) -> None:
     print('SERVICE_GEO_REASON=' + reason, flush=True)
 
 
+def diagnose_first_fail(result, smart, proxy_port):
+    """Shadow-only extra decode after first-stage YouTube HTTP denial.
+
+    Never mutates result, so eligibility remains determined by the ORIGINAL
+    balanced gate. Only genuine first-stage HTTP 403/451 failures qualify.
+    """
+    checks = result.get('checks', {})
+    video = checks.get('youtube_video', {})
+    if (checks.get('openai_api', {}).get('state') != 'PASS'
+            or video.get('state') != 'FAIL'
+            or video.get('reason') not in
+            ('youtube_media_http_403', 'youtube_media_http_451')):
+        return None
+    try:
+        module = smart.load_video_decode_code()
+        if module is None:
+            return ('UNKNOWN', 'VIDEO_MODULE_UNAVAILABLE')
+        state, reason = module.decode_24_frames(proxy_port)
+        if state not in ('PASS', 'UNKNOWN', 'FAIL'):
+            return ('UNKNOWN', 'INVALID_DIAG_STATE')
+        if not re.fullmatch(r'[a-zA-Z0-9_]{1,64}', reason):
+            return ('UNKNOWN', 'INVALID_DIAG_REASON')
+        return state, reason
+    except Exception:
+        # No raw exception or provider data in stdout.
+        return ('UNKNOWN', 'DIAG_EXCEPTION')
+
+
 def trusted_shadow_provider(path: Path) -> bool:
     """Allow only root-controlled RAM union provider, never arbitrary paths."""
     try:
@@ -234,6 +262,11 @@ def inspect_node(name: str, provider: Path | None = None) -> int:
                     return 1
                 result = smart.assess_services_with_stage18(
                     gate, mixed, force_media=True)
+                diagnostic = diagnose_first_fail(result, smart, mixed)
+                if diagnostic is not None:
+                    print('SERVICE_DIAG_AFTER_FIRST_FAIL_24=' + diagnostic[0])
+                    print('SERVICE_DIAG_AFTER_FIRST_FAIL_REASON=' + diagnostic[1],
+                          flush=True)
                 # Geo is telemetry only. It MUST NOT influence the balanced gate.
                 geo_ip, geo_country, geo_state, geo_reason = isolated_egress(
                     helper, controller, mixed, entries[0])
