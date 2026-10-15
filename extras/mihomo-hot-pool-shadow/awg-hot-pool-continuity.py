@@ -116,9 +116,12 @@ def snapshot_vault(current, state, vault, now):
 
 
 def build_union(vault, live_profiles, live_health, candidate_profiles,
-                candidate_health):
-    """Old proofs remain attached only to unchanged full profiles."""
+                candidate_health, current_name=""):
+    """Retain exact-profile proofs; never classify active node as its own reserve."""
     source = []
+    active = [p for p in live_profiles if p["name"] == current_name]
+    if len(active) == 1:
+        source.append((active[0], 4000, "active"))
     for row in vault.get("entries", []):
         p = row["profile"]
         if valid_profile(p):
@@ -258,7 +261,14 @@ def run(args):
                         if isinstance(p, dict) and valid_profile(p.get("profile"))
                         and type(p.get("saved_at")) is int
                         and 0 <= now - p["saved_at"] <= MAX_ARCHIVE_AGE]
-    union, nodes = build_union(vault, current, live_health, candidate, cand_health)
+    current_name = ""
+    if args.current_file is not None:
+        try:
+            current_name = args.current_file.read_text().strip()
+        except OSError:
+            pass
+    union, nodes = build_union(vault, current, live_health,
+                              candidate, cand_health, current_name)
     vault = retain_pending(vault, candidate, cand_health, union, now)
     if not nodes:
         raise ValueError("NO_ELIGIBLE_PROFILES")
@@ -289,6 +299,7 @@ def run(args):
 def main():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--live-provider", type=Path, required=True)
+    p.add_argument("--current-file", type=Path)
     p.add_argument("--live-pool", type=Path, required=True)
     p.add_argument("--candidate-provider", type=Path)
     p.add_argument("--candidate-pool", type=Path)
