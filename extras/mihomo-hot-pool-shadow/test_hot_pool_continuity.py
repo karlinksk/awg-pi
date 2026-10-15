@@ -160,6 +160,31 @@ class ContinuityTests(unittest.TestCase):
         self.assertIn("secret-c", uuids)
         self.assertEqual(len(json.loads(self.out_state.read_text())["checks"]), 2)
 
+    def test_over_24_preflight_healthy_reaches_expanded_candidate_universe(self):
+        batch = [dict(self.old, name=f'candidate-{i}', port=18000+i,
+                      uuid=f'synthetic-credential-{i}')
+                 for i in range(95)]
+        emit_provider(self.live, batch)
+        emit_pool(self.health, self.live, batch)
+        self.assertEqual(len(core.health_matches(batch,core.scan_health(
+                         self.health,self.live,NOW))),95)
+        core.run(self.args(candidate=False))
+        nodes = yaml.safe_load(self.out.read_text())['proxies']
+        self.assertEqual(len(nodes),95)
+        self.assertLessEqual(len(json.loads(self.vault.read_text())
+                                 .get('pending',[])),core.MAX_PENDING)
+
+    def test_candidate_queue_remains_bounded_at_24(self):
+        batch = [dict(self.old, name=f'candidate-{i}', port=19000+i,
+                      uuid=f'synthetic-credential-{i}')
+                 for i in range(65)]
+        emit_provider(self.candidate,batch)
+        emit_pool(self.candidate_health,self.candidate,batch)
+        core.run(self.args())
+        stored=json.loads(self.vault.read_text())
+        self.assertLessEqual(len(stored.get('pending',[])),24)
+        self.assertEqual(len(stored.get('pending',[])),24)
+
     def test_secret_files_not_world_readable(self):
         core.run(self.args())
         for path in (self.vault, self.out, self.out_pool, self.out_state):
