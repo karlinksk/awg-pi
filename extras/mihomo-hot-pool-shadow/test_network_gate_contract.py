@@ -7,7 +7,7 @@ import subprocess
 import unittest
 from pathlib import Path
 
-GATE = Path("/usr/local/sbin/awg-mihomo-network-eligibility.py")
+GATE = Path(__file__).resolve().parents[2] / "src" / "awg-mihomo-network-eligibility.py"
 
 def call_gate(*, openai="PASS", chatgpt="UNKNOWN", youtube="PASS",
               reason="chatgpt_web_http_403", aggregate="UNKNOWN"):
