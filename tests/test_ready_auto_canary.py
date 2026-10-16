@@ -3,7 +3,7 @@ HERE=pathlib.Path(__file__).resolve().parent
 SCRIPT=str(HERE/'awg-mihomo-node-policy' if (HERE/'awg-mihomo-node-policy').exists() else HERE.parent/'src/awg-mihomo-node-policy')
 GUARD=str(HERE/'ready_live_match.py' if (HERE/'ready_live_match.py').exists() else HERE.parent/'src/awg-mihomo-ready-live-match')
 class ReadyAutoV2(unittest.TestCase):
- def case(self, ready='1', guard='1', activate='1', post='1', rollback='1', gate='balanced', checker='1',canary='1'):
+ def case(self, ready='1', guard='1', activate='1', post='1', rollback='1', gate='balanced', checker='1',canary='1',post_reason='EGRESS_FAILED'):
   with tempfile.TemporaryDirectory(prefix='ready-v2-') as d:
    p=pathlib.Path(d)
    (p/'mode').write_text('auto\n')
@@ -36,7 +36,7 @@ if [[ "$1" == node && "$2" == select-auto ]]; then printf '%s\n' "$3" > "$NODE_F
 ''',
     'post': '''#!/bin/bash
 echo "post:$*" >> "$LOG"
-if [[ "$1" == standby && "$POST_OK" != 1 ]]; then echo READY_TUN_CHECK=EGRESS_FAILED; exit 1; fi
+if [[ "$1" == standby && "$POST_OK" != 1 ]]; then echo "READY_TUN_CHECK=$POST_REASON"; exit 1; fi
 ''',
     'scan': '''#!/bin/bash
 echo "scan:$*" >> "$LOG"
@@ -55,7 +55,7 @@ cat >/dev/null
            'MIHOMO_READY_GUARD_BIN':str(p/'guard'),'MIHOMO_READY_POSTCHECK_BIN':str(p/'post'),
            'MIHOMO_SERVICE_QUICKCHECK_BIN':str(p/'scan'),'MIHOMO_NETWORK_GATE_BIN':str(p/'network'),
            'MIHOMO_READY_AUTO_CANARY':canary,'MIHOMO_SERVICE_GATE_MODE':gate,
-           'READY':ready,'GUARD_OK':guard,'ACTIVATE_OK':activate,'POST_OK':post,
+           'READY':ready,'GUARD_OK':guard,'ACTIVATE_OK':activate,'POST_OK':post,'POST_REASON':post_reason,
            'ROLLBACK_OK':rollback,'CHECKER_OK':checker,'LOG':str(p/'events'),'NODE_FILE':str(p/'node')}
    r=subprocess.run(['sudo','-n','env',*(f'{k}={v}' for k,v in params.items()),'bash',SCRIPT,'failover'],text=True,capture_output=True,timeout=7)
    return r,(p/'events').read_text(),(p/'node').read_text().strip()
@@ -70,7 +70,11 @@ cat >/dev/null
  def test_failed_ready_activation_quarantines(self):
   r,log,node=self.case(activate='0');self.assertEqual(r.returncode,0,r.stderr);self.assertEqual(node,'ordinary');self.assertIn('quarantine standby --reason activation-failed',log)
  def test_postcheck_failure_rolls_back_and_quarantines(self):
-  r,log,node=self.case(post='0');self.assertNotEqual(r.returncode,0);self.assertEqual(node,'original');self.assertIn('config:node select-auto original',log);self.assertIn('quarantine standby --reason active-health-failed',log);self.assertNotIn('config:node select-auto ordinary',log);self.assertIn('READY_AUTO=POSTCHECK_FAILED',r.stderr);self.assertIn('REASON=EGRESS_FAILED',r.stderr)
+  r,log,node=self.case(post='0');self.assertNotEqual(r.returncode,0);self.assertEqual(node,'original');self.assertIn('config:node select-auto original',log);self.assertNotIn('quarantine standby',log);self.assertIn('cooldown add standby --seconds 180',log);self.assertNotIn('config:node select-auto ordinary',log);self.assertIn('READY_AUTO=POSTCHECK_FAILED',r.stderr);self.assertIn('REASON=EGRESS_FAILED',r.stderr)
+ def test_transit_route_failure_does_not_quarantine(self):
+  r,log,node=self.case(post='0',post_reason='ROUTE_MISSING');self.assertNotEqual(r.returncode,0);self.assertEqual(node,'original');self.assertIn('READY_AUTO=POSTCHECK_FAILED REASON=ROUTE_MISSING',r.stderr);self.assertNotIn('quarantine standby',log);self.assertNotIn('cooldown add standby',log)
+ def test_invalid_egress_quarantines(self):
+  r,log,node=self.case(post='0',post_reason='EGRESS_INVALID');self.assertNotEqual(r.returncode,0);self.assertEqual(node,'original');self.assertIn('quarantine standby --reason active-health-failed',log)
  def test_rollback_failure_stops_without_next_node(self):
   r,log,node=self.case(post='0',rollback='0');self.assertNotEqual(r.returncode,0);self.assertEqual(node,'standby');self.assertNotIn('config:node select-auto ordinary',log)
  def test_service_gate_off_fails_closed(self):
