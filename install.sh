@@ -711,6 +711,27 @@ install_project_helper src/awg-mihomo-smart /usr/local/sbin/awg-mihomo-smart
 install_project_python_helper src/awg-mihomo-ready-live-match "$MIHOMO_READY_GUARD"
 install_project_helper src/awg-mihomo-ready-postcheck-tun "$MIHOMO_READY_POSTCHECK"
 install_project_helper src/awg-mihomo-node-policy "$MIHOMO_NODE_POLICY_CLI"
+
+# Hot Pool is packaged passively and is SHADOW_ONLY. Never enable/start its
+# timer or run its scanner during installation. Existing *active* shadow
+# deployments are managed independently: preserve their executables and units
+# rather than replacing files beneath a running service.
+_hot_pool_timer_state="$(systemctl is-enabled awg-mihomo-hot-pool.timer 2>/dev/null || echo not-found)"
+if systemctl is-active --quiet awg-mihomo-hot-pool.service ||
+   systemctl is-active --quiet awg-mihomo-hot-pool.timer ||
+   [[ "$_hot_pool_timer_state" != disabled && "$_hot_pool_timer_state" != not-found ]]; then
+  warn "Hot Pool уже управляется отдельно (timer=$_hot_pool_timer_state); сохраняем установленную версию без изменений"
+else
+  install_project_python_helper extras/mihomo-hot-pool-shadow/awg-mihomo-hot-pool.py /usr/local/sbin/awg-mihomo-hot-pool
+  install_project_python_helper extras/mihomo-hot-pool-shadow/awg-mihomo-hot-service-scan.py /usr/local/sbin/awg-mihomo-hot-service-scan
+  install_project_python_helper extras/mihomo-hot-pool-shadow/awg-hot-pool-continuity.py /usr/local/sbin/awg-hot-pool-continuity.py
+  install_project_helper extras/mihomo-hot-pool-shadow/awg-mihomo-hot-continuity-run /usr/local/sbin/awg-mihomo-hot-continuity-run
+  install_project_unit extras/mihomo-hot-pool-shadow/awg-mihomo-hot-pool.service /etc/systemd/system/awg-mihomo-hot-pool.service
+  install_project_unit extras/mihomo-hot-pool-shadow/awg-mihomo-hot-pool.timer /etc/systemd/system/awg-mihomo-hot-pool.timer
+  install -d -o root -g root -m 0700 /var/lib/awg-pbr/hot-pool/continuity /run/awg-pbr/hot-pool/continuity
+  ok "Hot Pool continuity SHADOW_ONLY установлен пассивно; timer NOT ENABLED"
+fi
+unset _hot_pool_timer_state
 install_project_helper src/awg-pbr-setup "$SETUP_SCRIPT"
 install_project_helper src/awg-transit-nft /usr/local/sbin/awg-transit-nft
 install_project_helper src/awg-transit-preflight /usr/local/sbin/awg-transit-preflight
