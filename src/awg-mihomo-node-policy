@@ -346,6 +346,12 @@ failover_auto(){
       echo "READY_AUTO=SERVICE_GATE_DISABLED" >&2
       return 1
     }
+    # Missing Hot Pool is a broken canary installation, not "zero READY".
+    # Fail closed rather than silently claiming READY-priority behavior.
+    [[ -x "$MIHOMO_HOT_POOL_CLI" ]] || {
+      echo "READY_AUTO=HOT_POOL_UNAVAILABLE" >&2
+      return 1
+    }
   fi
 
   "$MIHOMO_POOL_CLI" ensure live --geo-if-policy >/dev/null 2>&1 || return 1
