@@ -113,3 +113,20 @@ Do not activate unattended AUTO based on this draft.
 - A later simultaneous 12-second sample counted **98** Internet-bound packets from router MAC on `eth0` and **100** outbound IPv4 packets on `mihomo0`, while marked forwarding of source `192.168.112.1` resolved to table 100 / `mihomo0`. Gateway Mihomo healthy, Transit guard SAFE.
 - **Interpretation:** actual router→Pi→Mihomo aggregate traffic is observed; it is NOT yet provably attributable to this iPhone because source NAT collapses client addresses. Safari showing router's public IP may be a separate DIRECT route for that domain, or another path. Remains to inspect MikroTik connection tracking/routing policy for the exact iPhone source IP during a simultaneous client request.
 - No MikroTik, SSTP, policy, or Pi production configurations were modified.
+
+
+## iPhone forwarded LAN service path — PASS (2026-10-16 ~19:10–19:20 +07)
+
+- Client IPv4 `192.168.112.21`; router conntrack recorded **7** active source connections with SRCNAT. Reply-destination after NAT was **192.168.112.1** (router bridge LAN), explaining why Pi receives packets from the router IP rather than the iPhone IP.
+- Active `r_to_vpn` default next hop was **192.168.112.34** (Pi); separate SSTP route was **disabled**. The installed `DNSAUTO-TO-VPN` prerouting mangle rule matches destinations in address-list `to_vpn_auto`, with per-client connections reporting `orig-fasttrack-packets=0` and `repl-fasttrack-packets=0`. The MikroTik srcnat masquerade rule covers outgoing interfaces, including the Pi LAN next-hop.
+- iPhone ChatGPT connections in RouterOS conntrack included `104.18.39.85` (DNS address-list comment `ios.chat.openai.com.cdn.cloudflare.net`), `104.18.39.21` (`ws.chatgpt.com`), and `104.18.32.47` (`chatgpt.com`). Each destination existed in `to_vpn_auto` and the matching conntrack entries showed two-way traffic and reply destination `192.168.112.1`.
+- iPhone's UDP 443 connection to `185.225.248.176` delivered about **2.9 MB** of reply data; destination present in `to_vpn_auto` with `rr5.sn-x2pm-f5fr.googlevideo.com` DNS comment. End user confirmed YouTube video playback and ChatGPT access on the phone.
+- Pi independently observed a 12-second simultaneous sample of **98** Internet-bound router-source packets entering eth0 and **100** outbound packets on mihomo0. This is supporting *aggregate* evidence, not flow-level one-to-one correlation; client attribution is established from **MikroTik conntrack + NAT + destination list + active Pi next-hop**.
+- The iPhone's direct public-IP test may still display the router public IP as selective policy does not necessarily include `api.ipify.org`. This is not a DNS leak or a failed service route.
+- **Conclusion:** practical forwarded LAN client path for ChatGPT and YouTube through MikroTik → Raspberry Pi (Transit) → Mihomo is verified; end-to-end service use also reported by the user. No router, SSTP, Pi production or client network settings changed during this evidence gathering.
+
+### Remaining gates after LAN verification
+
+- READY→AUTO real supervised transition, Pi-bound route-aware postcheck and rollback: PASS.
+- Manual Mihomo→AWG→Mihomo and selector-driven actual AWG activation with injected Mihomo failure: PASS (not a naturally occurring provider-wide failure).
+- **Outstanding:** GitHub Actions CI result; installer/upgrade/uninstall integration of optional binaries, stacked PR dependencies and clean review before RC1. Keep `MIHOMO_READY_AUTO_CANARY=0` by default and PR draft until these pass.
