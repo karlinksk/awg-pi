@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# Read-only post-activation control for the canary selector.
-# Binds requests to mihomo0; does not claim to emulate a forwarded LAN client.
+# Read-only post-activation check for canary; PI-bound TUN, NOT LAN forwarding.
+# A short bounded grace period prevents a false failure while the health
+# monitor restores Transit policy routing after restarting mihomo.
 set -Eeuo pipefail
 [[ $# == 1 && -n "$1" ]] || exit 2
 NODE_FILE="${MIHOMO_READY_NODE_FILE:-/etc/awg-pbr/transports/mihomo/node-name}"
@@ -8,24 +9,68 @@ TUN="${MIHOMO_READY_TUN_IF:-mihomo0}"
 TABLE="${MIHOMO_READY_TABLE:-100}"
 CURL="${MIHOMO_READY_CURL_BIN:-curl}"
 ROUTE="${MIHOMO_READY_IP_BIN:-ip}"
+SLEEP="${MIHOMO_READY_SLEEP_BIN:-sleep}"
+ATTEMPTS="${MIHOMO_READY_POSTCHECK_ATTEMPTS:-3}"
+DELAY="${MIHOMO_READY_POSTCHECK_DELAY:-3}"
 [[ "$TUN" =~ ^[a-zA-Z0-9_.-]{1,15}$ && "$TABLE" =~ ^[0-9]{1,5}$ ]] || exit 2
-[[ "$(cat "$NODE_FILE" 2>/dev/null || true)" == "$1" ]] || { echo READY_TUN_CHECK=NODE_CHANGED; exit 1; }
-"$ROUTE" -o link show dev "$TUN" | grep -q 'UP' || { echo READY_TUN_CHECK=IF_DOWN; exit 1; }
-"$ROUTE" -4 route show table "$TABLE" | grep -Eq "^default dev $TUN( |$)" || { echo READY_TUN_CHECK=ROUTE_MISSING; exit 1; }
-"$ROUTE" -4 route get 1.1.1.1 mark 0x100 | grep -q "dev $TUN" || { echo READY_TUN_CHECK=MARK_MISMATCH; exit 1; }
-ip_out="$("$CURL" -4 --interface "$TUN" --connect-timeout 3 --max-time 8 -fsS https://api.ipify.org)" || { echo READY_TUN_CHECK=EGRESS_FAILED; exit 1; }
-python3 - "$ip_out" <<'PY'
+[[ "$ATTEMPTS" =~ ^[1-4]$ && "$DELAY" =~ ^[0-9]$ ]] || exit 2
+
+is_valid_public_ipv4(){
+  python3 - "$1" <<'PY'
 import ipaddress,sys
 try:
-    x=ipaddress.ip_address(sys.argv[1].strip())
-    assert x.version == 4 and x.is_global
+    address=ipaddress.ip_address(sys.argv[1].strip())
+    assert address.version==4 and address.is_global
 except (ValueError,AssertionError):
-    sys.exit(1)
+    raise SystemExit(1)
 PY
-code="$("$CURL" -4 --interface "$TUN" --connect-timeout 3 --max-time 8 -sS -o /dev/null -w '%{http_code}' https://api.openai.com/v1/models)" || { echo READY_TUN_CHECK=OPENAI_NETWORK_FAILED; exit 1; }
-[[ "$code" == 401 ]] || { echo READY_TUN_CHECK=OPENAI_NOT_QUALIFIED; exit 1; }
-[[ "$(cat "$NODE_FILE" 2>/dev/null || true)" == "$1" ]] || { echo READY_TUN_CHECK=NODE_CHANGED; exit 1; }
-echo READY_TUN_CHECK=PASS
-echo READY_TUN_SCOPE=PI_BOUND_TUN_NOT_FORWARDED_CLIENT
+}
+reason=UNKNOWN
+for (( attempt=1; attempt<=ATTEMPTS; attempt++ )); do
+  # Node identity is never allowed to drift during verification.
+  if [[ "$(cat "$NODE_FILE" 2>/dev/null || true)" != "$1" ]]; then
+    echo READY_TUN_CHECK=NODE_CHANGED
+    echo "READY_TUN_ATTEMPTS=$attempt"
+    exit 1
+  fi
+  if ! "$ROUTE" -o link show dev "$TUN" 2>/dev/null | grep -q 'UP'; then
+    reason=IF_DOWN
+  elif ! "$ROUTE" -4 route show table "$TABLE" 2>/dev/null | grep -Eq "^default dev $TUN( |$)"; then
+    reason=ROUTE_MISSING
+  elif ! "$ROUTE" -4 route get 1.1.1.1 mark 0x100 2>/dev/null | grep -q "dev $TUN"; then
+    reason=MARK_MISMATCH
+  else
+    if ! ip_out="$("$CURL" -4 --interface "$TUN" --connect-timeout 3 --max-time 8 -fsS https://api.ipify.org 2>/dev/null)"; then
+      reason=EGRESS_FAILED
+    elif ! is_valid_public_ipv4 "$ip_out"; then
+      reason=EGRESS_INVALID
+    elif [[ "$(cat "$NODE_FILE" 2>/dev/null || true)" != "$1" ]]; then
+      reason=NODE_CHANGED
+      echo READY_TUN_CHECK="$reason"
+      echo "READY_TUN_ATTEMPTS=$attempt"
+      exit 1
+    elif ! code="$("$CURL" -4 --interface "$TUN" --connect-timeout 3 --max-time 8 -sS -o /dev/null -w '%{http_code}' https://api.openai.com/v1/models 2>/dev/null)"; then
+      reason=OPENAI_NETWORK_FAILED
+    elif [[ "$code" != 401 ]]; then
+      # A Cloudflare 403/challenge is UNKNOWN, not proof of working ChatGPT.
+      reason=OPENAI_NOT_QUALIFIED
+    elif [[ "$(cat "$NODE_FILE" 2>/dev/null || true)" != "$1" ]]; then
+      reason=NODE_CHANGED
+      echo READY_TUN_CHECK="$reason"
+      echo "READY_TUN_ATTEMPTS=$attempt"
+      exit 1
+    else
+      echo READY_TUN_CHECK=PASS
+      if (( attempt > 1 )); then echo "READY_TUN_RECOVERED_FROM=$reason"; fi
+      echo "READY_TUN_ATTEMPTS=$attempt"
+      echo READY_TUN_SCOPE=PI_BOUND_TUN_NOT_FORWARDED_CLIENT
+      exit 0
+    fi
+  fi
+  if (( attempt < ATTEMPTS )); then "$SLEEP" "$DELAY"; fi
+done
+echo "READY_TUN_CHECK=$reason"
+echo "READY_TUN_ATTEMPTS=$ATTEMPTS"
+exit 1
 
 [executed on device: awg-upgrade (7ff7c792-9f11-48ea-9b09-8734178c247a)]
