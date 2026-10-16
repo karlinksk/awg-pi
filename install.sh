@@ -705,11 +705,12 @@ install_project_helper scripts/awg-mihomo-stage18-ram-runtime.sh /usr/local/sbin
 install_project_helper src/awg-mihomo-service-eligibility.py /usr/local/sbin/awg-mihomo-service-eligibility.py
 install_project_helper src/awg-mihomo-network-eligibility.py /usr/local/sbin/awg-mihomo-network-eligibility.py
 install_project_helper src/awg-mihomo-smart /usr/local/sbin/awg-mihomo-smart
-install_project_helper src/awg-mihomo-node-policy "$MIHOMO_NODE_POLICY_CLI"
-# The READY helpers are *only* dependencies for a future explicitly enabled
-# canary; this installer never exports MIHOMO_READY_AUTO_CANARY=1.
+# Install optional READY dependencies BEFORE the live selector, minimizing
+# the upgrade window if an operator explicitly enabled the canary elsewhere.
+# The installer never sets MIHOMO_READY_AUTO_CANARY=1.
 install_project_python_helper src/awg-mihomo-ready-live-match "$MIHOMO_READY_GUARD"
 install_project_helper src/awg-mihomo-ready-postcheck-tun "$MIHOMO_READY_POSTCHECK"
+install_project_helper src/awg-mihomo-node-policy "$MIHOMO_NODE_POLICY_CLI"
 install_project_helper src/awg-pbr-setup "$SETUP_SCRIPT"
 install_project_helper src/awg-transit-nft /usr/local/sbin/awg-transit-nft
 install_project_helper src/awg-transit-preflight /usr/local/sbin/awg-transit-preflight
