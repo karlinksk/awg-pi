@@ -125,3 +125,16 @@ Do not activate unattended AUTO based on this draft.
 - READY→AUTO real supervised transition, Pi-bound route-aware postcheck and rollback: PASS.
 - Manual Mihomo→AWG→Mihomo and selector-driven actual AWG activation with injected Mihomo failure: PASS (not a naturally occurring provider-wide failure).
 - **Outstanding:** GitHub Actions CI result; installer/upgrade/uninstall integration of optional binaries, stacked PR dependencies and clean review before RC1. Keep `MIHOMO_READY_AUTO_CANARY=0` by default and PR draft until these pass.
+
+
+## RC1 release installation & CI review — 2026-10-16
+
+- `install.sh` now installs the READY exact-live profile guard (Python AST syntax verified) and read-only TUN postcheck (Bash syntax verified) as **passive executable dependencies**. It NEVER sets `MIHOMO_READY_AUTO_CANARY=1`, creates no READY activation timer and does not turn on the balanced service gate. A fresh install without the optional Hot Pool package retains the existing standard AUTO.
+- `src/awg-update` now includes both READY helper paths in backup and in removal-before-extract rollback; `tar --ignore-failed-read` allows upgrades from older releases without these optional files.
+- Canary now refuses to operate with `READY_AUTO=HOT_POOL_UNAVAILABLE` if its optional Hot Pool dependency is not installed. This is intentionally a canary-only fail-closed condition; default non-canary AUTO remains unchanged.
+- Added `tests/test-ready-install-integration.sh` and enabled CI syntax/invariant checks for the passive install and rollback paths.
+- Earlier CI failures exposed remote-tool metadata accidentally appended to Python and Bash source files; **all seven affected files were cleaned in GitHub** and verified on a clean checkout. Another failure exposed a fixture which assumed health-pool CLI was preinstalled on the CI runner; the fixture now explicitly supplies an isolated health-pool executable.
+- **Latest verified Actions run:** `f0697fc3`, https://github.com/karlinksk/awg-pi/actions/runs/38902289844, `success` (the base `shell` job and pinned AWG v3.1 build job previously passed; latest combined run success). Offline clean-checkout regression: 14 selector/guard + 11 TUN + 5 monitor = **30 PASS**, installer invariant test PASS; existing mode/selection/transport tests PASS.
+- Dry-run stack rehearsal in a *separate unpushed local checkout*: PR #110 + #111 merged cleanly, then PR #109 merged cleanly. Composite fixture runs: 54 Hot Pool + 10 periodic update + 30 READY/TUN/monitor PASS. **No PR was merged and main/develop/production were not changed**.
+- **Packaging limitation:** Hot Pool and continuity code currently remain under `extras/mihomo-hot-pool-shadow/` with a separate experimental `install-shadow.sh`; the normal `install.sh` does **not** install/enable that package. Before considering a full-from-scratch RC1, either provide a safe optional installer integrated with backup/upgrade, or clearly identify Hot Pool as a separate, opt-in post-install prerequisite. Its service and retention tests must be checked together with the other stacked PRs.
+- The pending merge order is service eligibility #106; shadow reserve #108 + continuation #110; periodic refresh safety #109; READY AUTO #111. Because these are **open draft PRs**, do not tag RC1 or enable unattended production READY AUTO yet.
