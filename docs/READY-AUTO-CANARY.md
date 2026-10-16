@@ -36,3 +36,9 @@ This is an opt-in prototype, **not enabled by installation**. This code is **not
 Do not activate unattended AUTO based on this draft.
 
 [executed on device: awg-upgrade (7ff7c792-9f11-48ea-9b09-8734178c247a)]
+## Second supervised trial — 2026-10-16: root cause isolated
+
+- Exact failure now confirmed as `READY_AUTO=POSTCHECK_FAILED REASON=ROUTE_MISSING`; automatic return to the prior Shadowsocks node succeeded, no additional node attempts occurred and AWG remained healthy.
+- Mihomo process started at **18:13:38** (Novosibirsk, UTC+7). The independent Transit health monitor applied the route at **18:13:51**, **13 seconds later**. The original short postcheck exhausted all three attempts before the Transit route was available; **do not blame the tested transport or interpret this as an OpenAI failure**.
+- New draft postcheck explicitly waits for the marked default route in table 100, with bounded retry (12 polls, 2-second interval, max 22 seconds of sleeps) before making any network request. Only then does it perform up to three strict public-egress + OpenAI API 401 checks. A 403 remains non-passing; node drift aborts immediately. All errors use allowlisted codes.
+- 27/27 selector, TUN and monitor isolated regressions PASS; current live Shadowsocks node passed the revised read-only check on first route poll and network attempt. **The revised route-grace code has not yet passed a real failover trial at the time of this note**.
