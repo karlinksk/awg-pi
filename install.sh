@@ -726,6 +726,8 @@ install_project_python_helper src/awg-mihomo-video-decode.py /usr/local/sbin/awg
 install_project_helper scripts/awg-mihomo-stage18-ram-runtime.sh /usr/local/sbin/awg-mihomo-stage18-ram-runtime
 install_project_python_helper src/awg-mihomo-service-eligibility.py /usr/local/sbin/awg-mihomo-service-eligibility.py
 install_project_python_helper src/awg-mihomo-network-eligibility.py /usr/local/sbin/awg-mihomo-network-eligibility.py
+# Passive bounded numeric-IP HTTPS probe; not scheduled or run during install.
+install_project_python_helper extras/mihomo-hot-pool-shadow/awg-mihomo-ip-connect-probe.py /usr/local/sbin/awg-mihomo-ip-connect-probe
 install_project_python_helper src/awg-mihomo-smart /usr/local/sbin/awg-mihomo-smart
 # Install optional READY dependencies BEFORE the live selector, minimizing
 # the upgrade window if an operator explicitly enabled the canary elsewhere.
