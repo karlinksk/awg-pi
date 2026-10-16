@@ -522,4 +522,3 @@ case "${1:-status}" in
     ;;
 esac
 
-[executed on device: awg-upgrade (7ff7c792-9f11-48ea-9b09-8734178c247a)]
