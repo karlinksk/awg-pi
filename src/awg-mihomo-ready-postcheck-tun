@@ -95,4 +95,3 @@ echo "READY_TUN_ROUTE_POLLS=$route_poll"
 echo "READY_TUN_ATTEMPTS=$ATTEMPTS"
 exit 1
 
-[executed on device: awg-upgrade (7ff7c792-9f11-48ea-9b09-8734178c247a)]
