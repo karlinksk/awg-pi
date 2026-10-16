@@ -9,6 +9,9 @@ p = Path(__file__).with_name('awg-mihomo-hot-pool.py')
 spec = importlib.util.spec_from_file_location('hot_pool', p)
 hot = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(hot)
+# The test must exercise the repository gate, not a helper that happens to
+# be installed on a developer's Pi. Production default stays unchanged.
+hot.GATE = str(Path(__file__).resolve().parents[2] / 'src' / 'awg-mihomo-network-eligibility.py')
 
 class HotPoolTests(unittest.TestCase):
     def setUp(self):
