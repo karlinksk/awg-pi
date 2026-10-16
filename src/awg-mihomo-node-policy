@@ -8,6 +8,14 @@ MIHOMO_NODE_POLICY_ORDER_FILE="${MIHOMO_NODE_POLICY_ORDER_FILE:-/etc/awg-pbr/tra
 MIHOMO_NODE_NAME_FILE="${MIHOMO_NODE_NAME_FILE:-/etc/awg-pbr/transports/mihomo/node-name}"
 MIHOMO_CONFIGURE="${MIHOMO_CONFIGURE_BIN:-/usr/local/sbin/awg-mihomo-configure}"
 MIHOMO_POOL_CLI="${MIHOMO_POOL_CLI:-/usr/local/sbin/awg-mihomo-pool}"
+MIHOMO_HOT_POOL_CLI="${MIHOMO_HOT_POOL_CLI:-/usr/local/sbin/awg-mihomo-hot-pool}"
+MIHOMO_READY_AUTO_CANARY="${MIHOMO_READY_AUTO_CANARY:-0}"
+MIHOMO_READY_GUARD_BIN="${MIHOMO_READY_GUARD_BIN:-/usr/local/sbin/awg-mihomo-ready-live-match}"
+MIHOMO_READY_POSTCHECK_BIN="${MIHOMO_READY_POSTCHECK_BIN:-}"
+MIHOMO_READY_LIVE_PROVIDER="${MIHOMO_READY_LIVE_PROVIDER:-/var/lib/awg-pbr/mihomo/providers/subscription.yaml}"
+MIHOMO_READY_UNION_PROVIDER="${MIHOMO_READY_UNION_PROVIDER:-/run/awg-pbr/hot-pool/continuity/provider.yaml}"
+MIHOMO_READY_UNION_POOL="${MIHOMO_READY_UNION_POOL:-/run/awg-pbr/hot-pool/continuity/pool.json}"
+MIHOMO_READY_UNION_STATE="${MIHOMO_READY_UNION_STATE:-/run/awg-pbr/hot-pool/continuity/state.json}"
 
 # OFF preserves the pre-existing live policy until service gating is explicitly
 # enabled, tested and approved. REQUIRE rejects stale/missing/UNKNOWN results.
@@ -322,24 +330,67 @@ failover_fixed(){
 }
 
 failover_auto(){
-  local current="$1" candidate item attempts=0
-  local -a excludes=("$current") best_args=()
+  local current="$1" candidate item attempts=0 from_ready=0
+  local -a excludes=("$current") best_args=() hot_args=()
+  local -a union_args=(--provider "$MIHOMO_READY_UNION_PROVIDER"
+     --pool "$MIHOMO_READY_UNION_POOL" --state "$MIHOMO_READY_UNION_STATE")
+
+  # Canary requires an independent post-activation verifier; missing verifier
+  # must fail closed rather than silently accept a localhost proxy test.
+  if [[ "$MIHOMO_READY_AUTO_CANARY" == 1 ]]; then
+    [[ -x "$MIHOMO_READY_POSTCHECK_BIN" && -f "$MIHOMO_READY_GUARD_BIN" ]] || {
+      echo "READY_AUTO=POSTCHECK_OR_GUARD_UNAVAILABLE" >&2
+      return 1
+    }
+    [[ "$MIHOMO_SERVICE_GATE_MODE" == balanced || "$MIHOMO_SERVICE_GATE_MODE" == require ]] || {
+      echo "READY_AUTO=SERVICE_GATE_DISABLED" >&2
+      return 1
+    }
+    # Missing Hot Pool is a broken canary installation, not "zero READY".
+    # Fail closed rather than silently claiming READY-priority behavior.
+    [[ -x "$MIHOMO_HOT_POOL_CLI" ]] || {
+      echo "READY_AUTO=HOT_POOL_UNAVAILABLE" >&2
+      return 1
+    }
+  fi
 
   "$MIHOMO_POOL_CLI" ensure live --geo-if-policy >/dev/null 2>&1 || return 1
   "$MIHOMO_POOL_CLI" cooldown add "$current" >/dev/null 2>&1 || true
 
   while true; do
     best_args=(best live)
-    for item in "${excludes[@]}"; do
-      best_args+=(--exclude "$item")
-    done
-    candidate="$("$MIHOMO_POOL_CLI" "${best_args[@]}" 2>/dev/null)" || break
+    for item in "${excludes[@]}"; do best_args+=(--exclude "$item"); done
+    candidate=""
+    from_ready=0
+    if [[ "$MIHOMO_READY_AUTO_CANARY" == 1 && -x "$MIHOMO_HOT_POOL_CLI" ]]; then
+      hot_args=("${union_args[@]}" best)
+      for item in "${excludes[@]}"; do hot_args+=(--exclude "$item"); done
+      candidate="$("$MIHOMO_HOT_POOL_CLI" "${hot_args[@]}" 2>/dev/null)" || candidate=""
+      [[ -z "$candidate" ]] || from_ready=1
+    fi
+    if [[ -z "$candidate" ]]; then
+      candidate="$("$MIHOMO_POOL_CLI" "${best_args[@]}" 2>/dev/null)" || break
+    fi
     [[ -n "$candidate" ]] || break
+    validate_node_name "$candidate" || return 1
+
+    # READY only: reject missing/renamed/duplicated or credential-changed
+    # profiles. Staged/archived nodes are NOT automatically live-selectable.
+    if (( from_ready == 1 )); then
+      if ! python3 -B "$MIHOMO_READY_GUARD_BIN" \
+        --live "$MIHOMO_READY_LIVE_PROVIDER" \
+        --union "$MIHOMO_READY_UNION_PROVIDER" \
+        --node "$candidate" >/dev/null; then
+        echo "READY_AUTO=IDENTITY_REJECTED" >&2
+        excludes+=("$candidate")
+        continue
+      fi
+    fi
+
     if [[ "$MIHOMO_SERVICE_GATE_MODE" == require || "$MIHOMO_SERVICE_GATE_MODE" == balanced ]]; then
       (( attempts < 3 )) || break
-      attempts=$((attempts+1))
+      attempts=$((attempts + 1))
     fi
-    # AUTO considers health-pool reachability necessary but not sufficient.
     if ! service_candidate_allowed "$candidate"; then
       if [[ "$MIHOMO_SERVICE_GATE_MODE" == balanced ]]; then
         "$MIHOMO_POOL_CLI" cooldown add "$candidate" --seconds 180 >/dev/null 2>&1 || true
@@ -347,9 +398,58 @@ failover_auto(){
       excludes+=("$candidate")
       continue
     fi
+
     if "$MIHOMO_CONFIGURE" node select-auto "$candidate" >/dev/null; then
-      printf 'MIHOMO_NODE_FAILOVER=%s->%s\n' "$current" "$candidate"
-      return 0
+      # Only the canary adds this additional validation; the underlying
+      # configure command already provides its own rollback on failure.
+      if [[ "$MIHOMO_READY_AUTO_CANARY" != 1 ]]; then
+        printf 'MIHOMO_NODE_FAILOVER=%s->%s\n' "$current" "$candidate"
+        return 0
+      fi
+      local post_summary="" post_reason="NODE_CHANGED"
+      if [[ "$(cat "$MIHOMO_NODE_NAME_FILE" 2>/dev/null || true)" == "$candidate" ]]; then
+        if post_summary="$("$MIHOMO_READY_POSTCHECK_BIN" "$candidate" 2>&1)"; then
+          printf 'READY_AUTO_POSTCHECK=PASS\n' >&2
+          printf 'MIHOMO_NODE_FAILOVER=%s->%s\n' "$current" "$candidate"
+          return 0
+        fi
+        post_reason="$(grep -oE 'READY_TUN_CHECK=(IF_DOWN|ROUTE_MISSING|MARK_MISMATCH|EGRESS_FAILED|EGRESS_INVALID|OPENAI_NETWORK_FAILED|OPENAI_NOT_QUALIFIED|NODE_CHANGED)' <<<"$post_summary" | tail -1 || true)"
+        post_reason="${post_reason#READY_TUN_CHECK=}"
+        [[ -n "$post_reason" ]] || post_reason=UNKNOWN
+      fi
+      echo "READY_AUTO=POSTCHECK_FAILED REASON=$post_reason" >&2
+      # A missing/late Transit route, mark or TUN is an infrastructure
+      # fault, NOT evidence that the candidate endpoint failed. Do NOT
+      # quarantine healthy nodes because of our own routing transition.
+      case "$post_reason" in
+        EGRESS_INVALID)
+          if (( from_ready == 1 )); then
+            "$MIHOMO_HOT_POOL_CLI" "${union_args[@]}" quarantine "$candidate" --reason active-health-failed >/dev/null 2>&1 || true
+          fi
+          ;;
+        EGRESS_FAILED|OPENAI_NETWORK_FAILED|OPENAI_NOT_QUALIFIED)
+          # Transient network and challenge/HTTP 403 remain uncertain;
+          # use short cooldown, not a 2-hour shared-endpoint quarantine.
+          "$MIHOMO_POOL_CLI" cooldown add "$candidate" --seconds 180 >/dev/null 2>&1 || true
+          ;;
+        ROUTE_MISSING|MARK_MISMATCH|IF_DOWN|NODE_CHANGED|UNKNOWN)
+          # Infrastructure readiness; no candidate penalty.
+          ;;
+      esac
+      # Do not leave an unverified node live. If rollback itself fails,
+      # return failure to the transport selector (AWG/FAIL-CLOSED).
+      if ! "$MIHOMO_CONFIGURE" node select-auto "$current" >/dev/null; then
+        echo "READY_AUTO=ROLLBACK_FAILED" >&2
+        return 1
+      fi
+      echo "READY_AUTO=ROLLBACK_COMPLETED" >&2
+      # Canary safety: do not start a second disruptive live switchover
+      # after a failed TUN postcheck. The transport monitor owns AWG fallback.
+      return 1
+    else
+      if (( from_ready == 1 )); then
+        "$MIHOMO_HOT_POOL_CLI" "${union_args[@]}" quarantine "$candidate" --reason activation-failed >/dev/null 2>&1 || true
+      fi
     fi
     "$MIHOMO_POOL_CLI" cooldown add "$candidate" >/dev/null 2>&1 || true
     excludes+=("$candidate")
@@ -427,3 +527,4 @@ case "${1:-status}" in
     exit 2
     ;;
 esac
+

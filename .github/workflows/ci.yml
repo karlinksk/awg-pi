@@ -34,6 +34,8 @@ jobs:
           bash -n src/awg-selection
           bash -n src/awg-selection-monitor
           bash -n src/awg-mihomo-node-policy
+          bash -n src/awg-mihomo-ready-postcheck-tun
+          python3 -m py_compile src/awg-mihomo-ready-live-match
           bash -n src/awg-pbr-setup
           bash -n src/awg-transit-nft
           bash -n src/awg-transit-preflight
@@ -75,6 +77,7 @@ jobs:
           bash -n tests/test-health-mode.sh
           bash -n tests/test-mode-switch.sh
           bash -n tests/test-upgrade-mode.sh
+          bash -n tests/test-ready-install-integration.sh
           bash -n tests/test-opencck-updater.sh
           bash -n tests/test-direct-domain-precedence.sh
           bash -n tests/test-traffic.sh
@@ -86,7 +89,7 @@ jobs:
           bash -n tests/test-visible-inputs.sh
       - name: ShellCheck errors
         run: |
-          shellcheck -S error install.sh src/awg-common src/awg-route src/awg-transport src/awg-fetch src/awg-first-run src/awg-selection src/awg-selection-monitor src/awg-mihomo-node-policy src/awg-pbr-setup src/awg-transit-nft src/awg-transit-preflight src/awg-transit-apply src/awg-transit-routing src/awg-mode-switch src/awg-pbr-health src/awg-opencck-update src/awg-core-update src/awg-update src/awg-traffic src/awg-menu src/awg-mihomo-config src/awg-mihomo-update src/awg-mihomo-install src/awg-mihomo-prepare src/awg-mihomo-configure tests/test-mihomo-install.sh tests/test-diagnostics-hardening.sh tests/test-common.sh tests/test-transport.sh tests/test-bootstrap-fetch.sh tests/test-first-run.sh tests/test-selection.sh tests/test-mihomo-node-policy.sh tests/test-transport-switch.sh tests/test-mihomo-runtime.sh tests/test-mihomo-configure.sh tests/test-mihomo-node-select.sh tests/test-mihomo-onboarding.sh tests/test-mode.sh tests/test-route-mode.sh tests/test-setup-mode.sh tests/test-transit-nft.sh tests/test-transit-preflight.sh tests/test-transit-apply.sh tests/test-transit-routing.sh tests/test-health-mode.sh tests/test-mode-switch.sh tests/test-upgrade-mode.sh tests/test-opencck-updater.sh tests/test-direct-domain-precedence.sh tests/test-traffic.sh tests/mock-curl.sh tests/test-nft-template.sh tests/test-visible-inputs.sh
+          shellcheck -S error install.sh src/awg-common src/awg-route src/awg-transport src/awg-fetch src/awg-first-run src/awg-selection src/awg-selection-monitor src/awg-mihomo-node-policy src/awg-mihomo-ready-postcheck-tun src/awg-pbr-setup src/awg-transit-nft src/awg-transit-preflight src/awg-transit-apply src/awg-transit-routing src/awg-mode-switch src/awg-pbr-health src/awg-opencck-update src/awg-core-update src/awg-update src/awg-traffic src/awg-menu src/awg-mihomo-config src/awg-mihomo-update src/awg-mihomo-install src/awg-mihomo-prepare src/awg-mihomo-configure tests/test-mihomo-install.sh tests/test-diagnostics-hardening.sh tests/test-common.sh tests/test-transport.sh tests/test-bootstrap-fetch.sh tests/test-first-run.sh tests/test-selection.sh tests/test-mihomo-node-policy.sh tests/test-transport-switch.sh tests/test-mihomo-runtime.sh tests/test-mihomo-configure.sh tests/test-mihomo-node-select.sh tests/test-mihomo-onboarding.sh tests/test-mode.sh tests/test-route-mode.sh tests/test-setup-mode.sh tests/test-transit-nft.sh tests/test-transit-preflight.sh tests/test-transit-apply.sh tests/test-transit-routing.sh tests/test-health-mode.sh tests/test-mode-switch.sh tests/test-upgrade-mode.sh tests/test-opencck-updater.sh tests/test-direct-domain-precedence.sh tests/test-traffic.sh tests/mock-curl.sh tests/test-nft-template.sh tests/test-visible-inputs.sh
       - name: Unit tests
         run: |
           bash tests/test-common.sh
@@ -111,6 +114,7 @@ jobs:
           bash tests/test-health-mode.sh
           bash tests/test-mode-switch.sh
           bash tests/test-upgrade-mode.sh
+          bash tests/test-ready-install-integration.sh
           bash tests/test-opencck-updater.sh
           bash tests/test-direct-domain-precedence.sh
           bash tests/test-traffic.sh
@@ -124,6 +128,9 @@ jobs:
           python3 tests/test-maintenance.py
           python3 tests/test-confirm.py
           python3 tests/test-menu.py
+          python3 -B tests/test_ready_auto_canary.py
+          python3 -B tests/test_ready_tun_postcheck.py
+          python3 -B tests/test_ready_monitor_contract.py
 
   awg-v31:
     runs-on: ubuntu-latest
