@@ -53,4 +53,3 @@ esac
   self.assertEqual(r.returncode,0,r.stderr);self.assertNotIn('node:failover',log);self.assertNotIn('transport:select',log)
 if __name__=='__main__':unittest.main(verbosity=2)
 
-[executed on device: awg-upgrade (7ff7c792-9f11-48ea-9b09-8734178c247a)]
