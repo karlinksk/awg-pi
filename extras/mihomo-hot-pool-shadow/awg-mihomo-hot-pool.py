@@ -446,7 +446,8 @@ def scan_one(name: str, provider: Path | None = None) -> tuple[bool, str]:
                    'SERVICE_REASON_YOUTUBE_VIDEO', 'SERVICE_CONNECT_STATE',
                    'SERVICE_COLD_READY_MS', 'SERVICE_CONTROLLER_READY_MS',
                    'SERVICE_CONNECT_WAIT_MS', 'SERVICE_CONNECT_ATTEMPTS',
-                   'SERVICE_CONNECT_FAMILY', 'SERVICE_GEO_EGRESS_IPV4',
+                   'SERVICE_CONNECT_FAMILY', 'SERVICE_IP_CONNECT_STATE',
+                   'SERVICE_IP_CONNECT_REASON', 'SERVICE_GEO_EGRESS_IPV4',
                    'SERVICE_GEO_COUNTRY', 'SERVICE_GEO_STATE',
                    'SERVICE_GEO_REASON', 'SERVICE_DIAG_AFTER_FIRST_FAIL_24',
                    'SERVICE_DIAG_AFTER_FIRST_FAIL_REASON'}
@@ -490,6 +491,8 @@ def scan_one(name: str, provider: Path | None = None) -> tuple[bool, str]:
                    ' WAIT_MS=' + status('SERVICE_CONNECT_WAIT_MS') +
                    ' ATTEMPTS=' + status('SERVICE_CONNECT_ATTEMPTS') +
                    ' CONNECT_FAMILY=' + status('SERVICE_CONNECT_FAMILY') +
+                   ' IP_CONNECT=' + status('SERVICE_IP_CONNECT_STATE') +
+                   ' IP_REASON=' + status('SERVICE_IP_CONNECT_REASON') +
                    ' EGRESS_IP=' + status('SERVICE_GEO_EGRESS_IPV4') +
                    ' COUNTRY=' + status('SERVICE_GEO_COUNTRY') +
                    ' GEO=' + status('SERVICE_GEO_STATE') +
