@@ -25,6 +25,25 @@ YOUTUBE_URL = "https://www.youtube.com/watch?v=jNQXAC9IVRw"
 MAX_SAMPLE_BYTES = 2 * 1024 * 1024
 MIN_FRAMES = 24
 
+def _ytdlp_failure_reason(returncode: int, stderr: str) -> str:
+    """Classify only known stderr patterns; never print signed media URLs."""
+    raw = stderr[-12000:].lower()
+    if returncode == -25 or re.search(r"file size limit exceeded|\[errno 27\]|file too large", raw):
+        return "stage18_ytdlp_file_limit"
+    if re.search(r"confirm you.re not a bot|sign in to confirm|bot verification|use --cookies", raw):
+        return "stage18_ytdlp_bot_challenge"
+    if re.search(r"http error[ :]+(?:403|429|451)\b|status code[ :]+(?:403|429|451)\b", raw):
+        return "stage18_ytdlp_http_denied"
+    if re.search(r"requested format is not available|no video formats found|format is not available", raw):
+        return "stage18_ytdlp_format_unavailable"
+    if re.search(r"remote component|ejs|nsig|signature extraction|signature solving|javascript challenge", raw):
+        return "stage18_ytdlp_js_challenge"
+    if re.search(r"ffmpeg.*(?:error|failed|exited|not found)|(?:error|failed).*ffmpeg", raw):
+        return "stage18_ytdlp_ffmpeg_error"
+    if re.search(r"timed out|timeout|connection reset|network is unreachable", raw):
+        return "stage18_ytdlp_network_error"
+    return "stage18_ytdlp_extract_or_download_failed"
+
 def _verified_file(path: Path, expected: str) -> bool:
     if path.is_symlink() or not path.is_file():
         return False
@@ -90,7 +109,7 @@ def decode_24_frames(proxy_port: int, *, root: Path = RAM_RUNTIME,
             job = runner(argv, capture_output=True, text=True, timeout=55,
                          env=env, preexec_fn=_limits)
             if job.returncode != 0:
-                return "UNKNOWN", "stage18_ytdlp_extract_or_download_failed"
+                return "UNKNOWN", _ytdlp_failure_reason(job.returncode, job.stderr or "")
             files = [p for p in Path(temp).glob("probe.*") if p.is_file() and not p.is_symlink()]
             if len(files) != 1 or not 0 < files[0].stat().st_size <= MAX_SAMPLE_BYTES:
                 return "UNKNOWN", "stage18_media_sample_invalid"
