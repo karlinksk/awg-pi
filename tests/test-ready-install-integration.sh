@@ -19,6 +19,16 @@ must install.sh 'install_project_helper src/awg-mihomo-ready-postcheck-tun "$MIH
 must install.sh 'python3 -B -c'
 must install.sh 'bash -n "$MIHOMO_READY_POSTCHECK"'
 must install.sh 'python3-minimal python3-yaml'
+# The selector must be the last of these three installed files. An existing
+# opt-in canary must not run with a newly replaced selector but missing guard.
+python3 -B - <<'PY'
+from pathlib import Path
+text=Path("install.sh").read_text()
+guard=text.index('install_project_python_helper src/awg-mihomo-ready-live-match "$MIHOMO_READY_GUARD"')
+post=text.index('install_project_helper src/awg-mihomo-ready-postcheck-tun "$MIHOMO_READY_POSTCHECK"')
+selector=text.index('install_project_helper src/awg-mihomo-node-policy "$MIHOMO_NODE_POLICY_CLI"')
+assert guard < post < selector, "READY installer dependency ordering broken"
+PY
 must src/awg-mihomo-node-policy 'MIHOMO_READY_AUTO_CANARY="${MIHOMO_READY_AUTO_CANARY:-0}"'
 must src/awg-mihomo-node-policy 'MIHOMO_READY_POSTCHECK_BIN="${MIHOMO_READY_POSTCHECK_BIN:-}"'
 
