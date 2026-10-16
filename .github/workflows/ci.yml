@@ -77,6 +77,7 @@ jobs:
           bash -n tests/test-health-mode.sh
           bash -n tests/test-mode-switch.sh
           bash -n tests/test-upgrade-mode.sh
+          bash -n tests/test-ready-install-integration.sh
           bash -n tests/test-opencck-updater.sh
           bash -n tests/test-direct-domain-precedence.sh
           bash -n tests/test-traffic.sh
@@ -113,6 +114,7 @@ jobs:
           bash tests/test-health-mode.sh
           bash tests/test-mode-switch.sh
           bash tests/test-upgrade-mode.sh
+          bash tests/test-ready-install-integration.sh
           bash tests/test-opencck-updater.sh
           bash tests/test-direct-domain-precedence.sh
           bash tests/test-traffic.sh
