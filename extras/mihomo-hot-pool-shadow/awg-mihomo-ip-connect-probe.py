@@ -53,7 +53,7 @@ def curl_args(mode: str, ip: str, *, port: int | None, interface: str | None) ->
         "--output", "/dev/null",
         "--write-out", "%{http_code}",
     ]
-    if mode == "shadow":
+    if mode == "proxy":
         common += [
             "--proxy", f"http://127.0.0.1:{port}",
             "--noproxy", "",
@@ -104,15 +104,15 @@ def diagnose(mode: str, *, port: int | None, interface: str | None,
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     group = parser.add_mutually_exclusive_group(required=True)
-    group.add_argument("--shadow-port", type=int)
+    group.add_argument("--proxy-port", "--shadow-port", dest="proxy_port", type=int)
     group.add_argument("--tun-interface")
     args = parser.parse_args(argv)
-    if args.shadow_port is not None and not (1 <= args.shadow_port <= 65535):
+    if args.proxy_port is not None and not (1 <= args.proxy_port <= 65535):
         parser.error("invalid proxy port")
     if args.tun_interface is not None and not SAFE_IF.fullmatch(args.tun_interface):
         parser.error("invalid interface")
-    mode = "shadow" if args.shadow_port is not None else "tun"
-    state, reason, count = diagnose(mode, port=args.shadow_port,
+    mode = "proxy" if args.proxy_port is not None else "tun"
+    state, reason, count = diagnose(mode, port=args.proxy_port,
                                     interface=args.tun_interface,
                                     resolver=os.environ.get("AWG_IP_CONNECT_GETENT", "getent"),
                                     curl=os.environ.get("AWG_IP_CONNECT_CURL", "curl"))
@@ -120,7 +120,7 @@ def main(argv: list[str] | None = None) -> int:
     print("IP_CONNECT_STATE=" + state)
     print("IP_CONNECT_REASON=" + reason)
     print("IP_CONNECT_CHECKED_IPV4=" + str(count))
-    print("IP_CONNECT_SCOPE=" + ("ISOLATED_PROXY" if mode == "shadow" else "PI_BOUND_TUN"))
+    print("IP_CONNECT_SCOPE=" + ("LOOPBACK_PROXY" if mode == "proxy" else "PI_BOUND_TUN"))
     return 0 if state == "PASS" else 1
 
 
