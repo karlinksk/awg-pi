@@ -84,6 +84,7 @@ cat >/dev/null
    (p/'node').write_text('original\n')
    env=dict(os.environ, MIHOMO_NODE_POLICY_MODE_FILE=str(p/'mode'),
      MIHOMO_NODE_NAME_FILE=str(p/'node'), MIHOMO_READY_AUTO_CANARY='1',
+     MIHOMO_POOL_CLI='/bin/true',
      MIHOMO_READY_POSTCHECK_BIN='/bin/true',
      MIHOMO_READY_GUARD_BIN=GUARD,
      MIHOMO_HOT_POOL_CLI=str(p/'does-not-exist'),
