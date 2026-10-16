@@ -100,4 +100,3 @@ class ExactLiveIdentity(unittest.TestCase):
    self.assertNotEqual(subprocess.run(cmd,capture_output=True).returncode,0)
 if __name__=='__main__':unittest.main(verbosity=2)
 
-[executed on device: awg-upgrade (7ff7c792-9f11-48ea-9b09-8734178c247a)]
