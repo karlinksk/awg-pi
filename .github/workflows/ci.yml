@@ -117,6 +117,7 @@ jobs:
           bash tests/test-mode-switch.sh
           bash tests/test-upgrade-mode.sh
           bash tests/test-ready-install-integration.sh
+          python3 -B tests/test-installer-script-dispatch.py
           bash tests/test-hot-pool-packaging.sh
           python3 -B extras/mihomo-hot-pool-shadow/test_hot_pool.py
           python3 -B extras/mihomo-hot-pool-shadow/test_hot_pool_continuity.py
