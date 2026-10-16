@@ -597,7 +597,10 @@ sudo touch "$tmp/unit-state/awg-mihomo-update.timer.enabled" "$tmp/unit-state/aw
 for policy in manual fixed auto; do
   sudo sh -c "printf '%s\n' '$policy' >'$tmp/etc/node-policy.mode'"
   out="$(MIHOMO_PERIODIC_REFRESH=1 MOCK_POOL_CURRENT_HEALTHY=1 run_cli provider auto-refresh)"
-  grep -Fqx 'MIHOMO_PROVIDER_AUTO_REFRESH=STAGED_PERIODIC_REVIEW' <<<"$out"
+  case "$policy" in
+    fixed) grep -Fqx 'MIHOMO_PROVIDER_AUTO_REFRESH=STAGED_FIXED_REVIEW' <<<"$out" ;;
+    *) grep -Fqx 'MIHOMO_PROVIDER_AUTO_REFRESH=STAGED_PERIODIC_REVIEW' <<<"$out" ;;
+  esac
   grep -Fqx 'LIVE_PROVIDER=UNCHANGED' <<<"$out"
   sudo cmp -s "$tmp/live.before-periodic" "$tmp/state/providers/subscription.yaml"
   sudo cmp -s "$tmp/config.before-periodic" "$tmp/etc/config.yaml"
