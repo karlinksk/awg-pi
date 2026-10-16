@@ -1,0 +1,31 @@
+#!/usr/bin/env bash
+# Read-only post-activation control for the canary selector.
+# Binds requests to mihomo0; does not claim to emulate a forwarded LAN client.
+set -Eeuo pipefail
+[[ $# == 1 && -n "$1" ]] || exit 2
+NODE_FILE="${MIHOMO_READY_NODE_FILE:-/etc/awg-pbr/transports/mihomo/node-name}"
+TUN="${MIHOMO_READY_TUN_IF:-mihomo0}"
+TABLE="${MIHOMO_READY_TABLE:-100}"
+CURL="${MIHOMO_READY_CURL_BIN:-curl}"
+ROUTE="${MIHOMO_READY_IP_BIN:-ip}"
+[[ "$TUN" =~ ^[a-zA-Z0-9_.-]{1,15}$ && "$TABLE" =~ ^[0-9]{1,5}$ ]] || exit 2
+[[ "$(cat "$NODE_FILE" 2>/dev/null || true)" == "$1" ]] || { echo READY_TUN_CHECK=NODE_CHANGED; exit 1; }
+"$ROUTE" -o link show dev "$TUN" | grep -q 'UP' || { echo READY_TUN_CHECK=IF_DOWN; exit 1; }
+"$ROUTE" -4 route show table "$TABLE" | grep -Eq "^default dev $TUN( |$)" || { echo READY_TUN_CHECK=ROUTE_MISSING; exit 1; }
+"$ROUTE" -4 route get 1.1.1.1 mark 0x100 | grep -q "dev $TUN" || { echo READY_TUN_CHECK=MARK_MISMATCH; exit 1; }
+ip_out="$("$CURL" -4 --interface "$TUN" --connect-timeout 3 --max-time 8 -fsS https://api.ipify.org)" || { echo READY_TUN_CHECK=EGRESS_FAILED; exit 1; }
+python3 - "$ip_out" <<'PY'
+import ipaddress,sys
+try:
+    x=ipaddress.ip_address(sys.argv[1].strip())
+    assert x.version == 4 and x.is_global
+except (ValueError,AssertionError):
+    sys.exit(1)
+PY
+code="$("$CURL" -4 --interface "$TUN" --connect-timeout 3 --max-time 8 -sS -o /dev/null -w '%{http_code}' https://api.openai.com/v1/models)" || { echo READY_TUN_CHECK=OPENAI_NETWORK_FAILED; exit 1; }
+[[ "$code" == 401 ]] || { echo READY_TUN_CHECK=OPENAI_NOT_QUALIFIED; exit 1; }
+[[ "$(cat "$NODE_FILE" 2>/dev/null || true)" == "$1" ]] || { echo READY_TUN_CHECK=NODE_CHANGED; exit 1; }
+echo READY_TUN_CHECK=PASS
+echo READY_TUN_SCOPE=PI_BOUND_TUN_NOT_FORWARDED_CLIENT
+
+[executed on device: awg-upgrade (7ff7c792-9f11-48ea-9b09-8734178c247a)]
