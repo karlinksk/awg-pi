@@ -407,14 +407,29 @@ failover_auto(){
           printf 'MIHOMO_NODE_FAILOVER=%s->%s\n' "$current" "$candidate"
           return 0
         fi
-        post_reason="$(grep -oE 'READY_TUN_CHECK=(IF_DOWN|ROUTE_MISSING|MARK_MISMATCH|EGRESS_FAILED|OPENAI_NETWORK_FAILED|OPENAI_NOT_QUALIFIED|NODE_CHANGED)' <<<"$post_summary" | tail -1 || true)"
+        post_reason="$(grep -oE 'READY_TUN_CHECK=(IF_DOWN|ROUTE_MISSING|MARK_MISMATCH|EGRESS_FAILED|EGRESS_INVALID|OPENAI_NETWORK_FAILED|OPENAI_NOT_QUALIFIED|NODE_CHANGED)' <<<"$post_summary" | tail -1 || true)"
         post_reason="${post_reason#READY_TUN_CHECK=}"
         [[ -n "$post_reason" ]] || post_reason=UNKNOWN
       fi
       echo "READY_AUTO=POSTCHECK_FAILED REASON=$post_reason" >&2
-      if (( from_ready == 1 )); then
-        "$MIHOMO_HOT_POOL_CLI" "${union_args[@]}" quarantine "$candidate" --reason active-health-failed >/dev/null 2>&1 || true
-      fi
+      # A missing/late Transit route, mark or TUN is an infrastructure
+      # fault, NOT evidence that the candidate endpoint failed. Do NOT
+      # quarantine healthy nodes because of our own routing transition.
+      case "$post_reason" in
+        EGRESS_INVALID)
+          if (( from_ready == 1 )); then
+            "$MIHOMO_HOT_POOL_CLI" "${union_args[@]}" quarantine "$candidate" --reason active-health-failed >/dev/null 2>&1 || true
+          fi
+          ;;
+        EGRESS_FAILED|OPENAI_NETWORK_FAILED|OPENAI_NOT_QUALIFIED)
+          # Transient network and challenge/HTTP 403 remain uncertain;
+          # use short cooldown, not a 2-hour shared-endpoint quarantine.
+          "$MIHOMO_POOL_CLI" cooldown add "$candidate" --seconds 180 >/dev/null 2>&1 || true
+          ;;
+        ROUTE_MISSING|MARK_MISMATCH|IF_DOWN|NODE_CHANGED|UNKNOWN)
+          # Infrastructure readiness; no candidate penalty.
+          ;;
+      esac
       # Do not leave an unverified node live. If rollback itself fails,
       # return failure to the transport selector (AWG/FAIL-CLOSED).
       if ! "$MIHOMO_CONFIGURE" node select-auto "$current" >/dev/null; then
