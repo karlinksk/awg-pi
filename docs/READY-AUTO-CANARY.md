@@ -49,3 +49,11 @@ Do not activate unattended AUTO based on this draft.
 - Updated draft: infrastructure errors (`ROUTE_MISSING`, `MARK_MISMATCH`, `IF_DOWN`, node drift) never quarantine or cooldown the candidate. Bounded uncertain network or OpenAI response uses only a brief pool cooldown (180 seconds). Explicit invalid external IP remains quarantine-worthy. Actual activation failure still quarantines, subject to later review.
 - Independent route-ready wait passes 11 fixture tests, including transient route recovery and expiry of the bounded deadline; full selector/TUN/selection-monitor suite passes **29/29**. No third disruptive live trial has been performed: the active shadow pool fell to one READY with two endpoints quarantined, so the safety precondition was not met.
 - Live AUTO executable is unchanged. Production enabling and RC1 remain blocked pending a clean canary and forwarded LAN-client test.
+
+## Verified quarantine correction (shadow only)
+
+- Inspected the two shared endpoint quarantine entries without exporting credentials. `shadowsocks-1827146828` remained quarantined because its first live postcheck failure reason was not recorded precisely.
+- The single `hysteria2-1827145588` quarantine from the **confirmed** second `ROUTE_MISSING` trial was backed up and removed under a paused Hot Pool timer. The timer was restarted. No READY service proofs were restored or fabricated: qualification requires two new PASS checks, 10+ minutes apart.
+- One root-owned backup of the previous shadow state was retained on Pi in `/var/backups/awg-gateway/false-quarantine-route-20261016/`. The operational AUTO selector, live provider, routing and AWG were not changed by this correction.
+- Full current Pi regressions: **74 Hot Pool + 18 continuity + 10 safe refresh + 29 READY/TUN/monitor = 131/131 PASS**. Production Mihomo `healthy`, Transit guard `SAFE`, standby AWG `healthy`.
+- Acceptance gates remain: prove the revised route-aware postcheck with another guarded live canary when at least two freshly service-qualified READY candidates exist; test forwarded LAN-client TUN and true AWG failover. Do not merge/enable the draft meanwhile.
