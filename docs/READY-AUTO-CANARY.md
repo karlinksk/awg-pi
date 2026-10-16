@@ -57,3 +57,10 @@ Do not activate unattended AUTO based on this draft.
 - One root-owned backup of the previous shadow state was retained on Pi in `/var/backups/awg-gateway/false-quarantine-route-20261016/`. The operational AUTO selector, live provider, routing and AWG were not changed by this correction.
 - Full current Pi regressions: **74 Hot Pool + 18 continuity + 10 safe refresh + 29 READY/TUN/monitor = 131/131 PASS**. Production Mihomo `healthy`, Transit guard `SAFE`, standby AWG `healthy`.
 - Acceptance gates remain: prove the revised route-aware postcheck with another guarded live canary when at least two freshly service-qualified READY candidates exist; test forwarded LAN-client TUN and true AWG failover. Do not merge/enable the draft meanwhile.
+
+## Shadow follow-up, 2026-10-16 18:25 (+07)
+
+- After the normal 1,677-profile live health-pool refresh ended, one Hot Pool `SHADOW_ONLY` cycle was run without live node selection. Result: `vless-1827156073` passed fresh OpenAI + 24-frame YouTube checks, while an additional VLESS candidate failed `connect_not_ready`. `HOT_POOL_READY=1` still: new/recovered nodes require two qualifying checks spaced at least 10 minutes, and no proof was fabricated.
+- `HOT_POOL_QUARANTINED_ENDPOINTS=1` after correcting the demonstrably false route-race quarantine. The unrelated earlier quarantine remains in place pending natural expiry or additional evidence.
+- Original production `awg-mihomo-node-policy` SHA unchanged; opt-in canary binaries refreshed to match the reviewed draft, **not attached to the running selector**.
+- Final Pi gateway: Transit guard SAFE, Mihomo healthy on original Shadowsocks, AWG backup healthy, default table 100 via `mihomo0`, zero failed units. Emergency timer inactive.
