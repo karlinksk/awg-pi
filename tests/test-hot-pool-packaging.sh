@@ -19,7 +19,8 @@ for file in files:
     assert upd.count('usr/local/sbin/'+file)==2, 'backup/rollback missing '+file
 for file in ('awg-mihomo-hot-pool.service','awg-mihomo-hot-pool.timer'):
     assert ins.count('extras/mihomo-hot-pool-shadow/'+file)==1, 'unit not installed'
-    assert upd.count('etc/systemd/system/'+file)==2, 'unit backup/rollback missing'
+    assert sum(line.strip().startswith('etc/systemd/system/'+file+' ') for line in upd.splitlines())==1, 'unit backup missing'
+    assert sum(line.strip().startswith('/etc/systemd/system/'+file+' ') for line in upd.splitlines())==1, 'unit rollback missing'
 assert upd.count('var/lib/awg-pbr/hot-pool')>=2
 assert 'hot-pool-timer-state' in upd
 assert 'systemctl enable --now awg-mihomo-hot-pool.timer' in upd
