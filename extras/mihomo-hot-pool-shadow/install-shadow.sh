@@ -5,7 +5,13 @@ set -Eeuo pipefail
 source_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 [[ -f "$source_dir/awg-mihomo-hot-pool.py" && -f "$source_dir/awg-hot-pool-continuity.py" &&
    -f "$source_dir/awg-mihomo-hot-continuity-run" && -f "$source_dir/test_hot_pool.py" &&
-   -f "$source_dir/awg-mihomo-hot-service-scan.py" && -f "$source_dir/test_hot_scan.py" ]] || exit 2
+   -f "$source_dir/awg-mihomo-hot-service-scan.py" && -f "$source_dir/test_hot_scan.py" &&
+   -f "$source_dir/awg-mihomo-ip-connect-probe.py" ]] || exit 2
+# Avoid a partly upgraded shadow scanner: candidate IP checks are fail-closed.
+grep -Fq 'def ip_connect_shadow_probe(' /usr/local/sbin/awg-mihomo-smart || {
+  echo 'REFUSED: AWG SMART must support IP CONNECT probe; upgrade passive helpers first' >&2
+  exit 3
+}
 /usr/bin/python3 -B "$source_dir/test_hot_pool.py" -q
 /usr/bin/python3 -B "$source_dir/test_hot_scan.py" -q
 /usr/bin/python3 -B "$source_dir/test_network_gate_contract.py" -q
@@ -26,6 +32,7 @@ for unit in awg-mihomo-hot-pool.service awg-mihomo-hot-pool.timer; do
     echo "REFUSED: $unit is running" >&2; exit 3
   fi
 done
+install -m 0755 "$source_dir/awg-mihomo-ip-connect-probe.py" /usr/local/sbin/awg-mihomo-ip-connect-probe
 install -m 0755 "$source_dir/awg-mihomo-hot-service-scan.py" /usr/local/sbin/awg-mihomo-hot-service-scan
 install -m 0755 "$source_dir/awg-mihomo-hot-pool.py" /usr/local/sbin/awg-mihomo-hot-pool
 install -m 0755 "$source_dir/awg-hot-pool-continuity.py" /usr/local/sbin/awg-hot-pool-continuity.py
