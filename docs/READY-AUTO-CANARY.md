@@ -104,3 +104,12 @@ Do not activate unattended AUTO based on this draft.
 - Restored original Mihomo using production `awg-transport select mihomo`; original node unchanged and TUN postcheck PASS, AWG backup healthy, table 100 `default dev mihomo0`, Transit guard SAFE, no failed systemd units. Canceled independent one-shot watchdog and removed recovery helper.
 - **Scope qualifier:** selector behavior and real AWG activation are proven with an *injected* synthetic failure result. Genuine exhaustion of all subscribed Mihomo nodes was NOT created; no working server was blocked. SSTP/MikroTik untouched. The mock wrapper was not committed to installable production scripts.
 - Remaining release gate: one real end-to-end **LAN-forwarded client application test**, plus green CI/install-upgrade review and integration of stacked dependencies. Do not enable canary by default or tag RC1 before those checks.
+
+
+## iPhone LAN spot-check — 2026-10-16 19:13–19:16 (+07)
+
+- Device reported DHCP IPv4 `192.168.112.21`. Passive captures of direct `192.168.112.21` ingress to Pi (`eth0`) observed **zero** packets in a 20-second interval.
+- However, a passive 15-second sample captured **118** Internet-bound packets from the actual MikroTik source MAC, all with source IP `192.168.112.1`, consistent with MikroTik performing source NAT *before* forwarding to Pi. No packet content was retained. Thus the client's source IP may be hidden on Pi.
+- A later simultaneous 12-second sample counted **98** Internet-bound packets from router MAC on `eth0` and **100** outbound IPv4 packets on `mihomo0`, while marked forwarding of source `192.168.112.1` resolved to table 100 / `mihomo0`. Gateway Mihomo healthy, Transit guard SAFE.
+- **Interpretation:** actual router→Pi→Mihomo aggregate traffic is observed; it is NOT yet provably attributable to this iPhone because source NAT collapses client addresses. Safari showing router's public IP may be a separate DIRECT route for that domain, or another path. Remains to inspect MikroTik connection tracking/routing policy for the exact iPhone source IP during a simultaneous client request.
+- No MikroTik, SSTP, policy, or Pi production configurations were modified.
