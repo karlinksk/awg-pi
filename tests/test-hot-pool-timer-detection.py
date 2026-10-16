@@ -70,4 +70,10 @@ check("masked", 1, expected_install=False)
 check("static", 0, expected_install=False)
 check("not-found", 1, service=True, expected_install=False)
 check("not-found", 1, timer=True, expected_install=False)
+standalone = (ROOT / "extras/mihomo-hot-pool-shadow/install-shadow.sh").read_text(encoding="utf-8")
+assert "awg-mihomo-hot-pool.service:not-found" in standalone
+assert "awg-mihomo-hot-pool.timer:not-found" in standalone
+assert 'is-active --quiet "$unit"' in standalone
+assert "install -m 0644" in standalone
+assert '/bin/systemctl enable --now' not in standalone
 print("HOT_POOL_TIMER_PROBE=PASS (8 isolated cases)")
