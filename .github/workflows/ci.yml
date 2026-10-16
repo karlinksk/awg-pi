@@ -78,6 +78,7 @@ jobs:
           bash -n tests/test-mode-switch.sh
           bash -n tests/test-upgrade-mode.sh
           bash -n tests/test-ready-install-integration.sh
+          bash -n tests/test-hot-pool-packaging.sh
           bash -n tests/test-opencck-updater.sh
           bash -n tests/test-direct-domain-precedence.sh
           bash -n tests/test-traffic.sh
@@ -115,6 +116,12 @@ jobs:
           bash tests/test-mode-switch.sh
           bash tests/test-upgrade-mode.sh
           bash tests/test-ready-install-integration.sh
+          bash tests/test-hot-pool-packaging.sh
+          python3 -B extras/mihomo-hot-pool-shadow/test_hot_pool.py
+          python3 -B extras/mihomo-hot-pool-shadow/test_hot_pool_continuity.py
+          python3 -B extras/mihomo-hot-pool-shadow/test_hot_scan.py
+          python3 -B extras/mihomo-hot-pool-shadow/test_network_gate_contract.py
+          python3 -B tests/test-mihomo-periodic-review.py
           bash tests/test-opencck-updater.sh
           bash tests/test-direct-domain-precedence.sh
           bash tests/test-traffic.sh
