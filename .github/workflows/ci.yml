@@ -120,6 +120,7 @@ jobs:
           python3 -B tests/test-installer-script-dispatch.py
           python3 -B tests/test-installer-interrupted-resume.py
           bash tests/test-hot-pool-packaging.sh
+          python3 -B tests/test-hot-pool-timer-detection.py
           python3 -B extras/mihomo-hot-pool-shadow/test_hot_pool.py
           python3 -B extras/mihomo-hot-pool-shadow/test_hot_pool_continuity.py
           python3 -B extras/mihomo-hot-pool-shadow/test_hot_scan.py
