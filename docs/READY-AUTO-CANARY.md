@@ -93,3 +93,14 @@ Do not activate unattended AUTO based on this draft.
 3. Integrate opt-in components with safe installer/upgrade/uninstall and get a clean GitHub Actions CI result; reconcile stacked PRs #106/#108/#109/#110 before merging or creating RC1.
 
 **Status:** READY-priority AUTO canary and manual AWG fallback are real-world PASS. Production enablement and RC1 remain blocked on the remaining acceptance gates above.
+
+
+## One-shot automatic selection monitor integration — 2026-10-16 18:51 (+07)
+
+- Recovery timer armed before test; original transport `mihomo`, original node `shadowsocks-1827146201`, AWG backup `healthy`, transport AUTO order `mihomo,awg`.
+- Invoked **production** `awg-selection-monitor` once with **only this process** receiving an isolated, temporary mock `check mihomo = FAIL` and `Mihomo node failover = unavailable`; provider, transport daemons, existing node policy and persistent selector state were untouched.
+- The first harness attempt from `/run/awg-pbr` failed `Permission denied` when trying to invoke its temporary command wrapper and **did not switch** the transport. It is **not** a successful test. Re-ran from an executable, isolated temporary directory with an assertion of the actual post-state.
+- **PASS:** `REAL_AWG_SELECT_INVOCATION=YES`, `FAILOVER=mihomo->awg`, `ACTUAL_TRANSPORT=awg`, `TEST=REAL_MONITOR_FALLBACK_PASS`. The real transport selected AWG, table 100 became `default dev awg0`, Transit guard SAFE, health up.
+- Restored original Mihomo using production `awg-transport select mihomo`; original node unchanged and TUN postcheck PASS, AWG backup healthy, table 100 `default dev mihomo0`, Transit guard SAFE, no failed systemd units. Canceled independent one-shot watchdog and removed recovery helper.
+- **Scope qualifier:** selector behavior and real AWG activation are proven with an *injected* synthetic failure result. Genuine exhaustion of all subscribed Mihomo nodes was NOT created; no working server was blocked. SSTP/MikroTik untouched. The mock wrapper was not committed to installable production scripts.
+- Remaining release gate: one real end-to-end **LAN-forwarded client application test**, plus green CI/install-upgrade review and integration of stacked dependencies. Do not enable canary by default or tag RC1 before those checks.
