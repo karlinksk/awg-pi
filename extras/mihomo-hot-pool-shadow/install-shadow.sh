@@ -29,6 +29,7 @@ install -m 0755 "$source_dir/awg-mihomo-hot-service-scan.py" /usr/local/sbin/awg
 install -m 0755 "$source_dir/awg-mihomo-hot-pool.py" /usr/local/sbin/awg-mihomo-hot-pool
 install -m 0755 "$source_dir/awg-hot-pool-continuity.py" /usr/local/sbin/awg-hot-pool-continuity.py
 install -m 0755 "$source_dir/awg-mihomo-hot-continuity-run" /usr/local/sbin/awg-mihomo-hot-continuity-run
+install -d -o root -g root -m 0700 /var/lib/awg-pbr/hot-pool/continuity /run/awg-pbr/hot-pool/continuity
 install -m 0644 "$source_dir/awg-mihomo-hot-pool.service" /etc/systemd/system/awg-mihomo-hot-pool.service
 install -m 0644 "$source_dir/awg-mihomo-hot-pool.timer" /etc/systemd/system/awg-mihomo-hot-pool.timer
 /bin/systemctl daemon-reload
