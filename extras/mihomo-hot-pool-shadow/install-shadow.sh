@@ -3,12 +3,15 @@
 set -Eeuo pipefail
 [[ $(id -u) -eq 0 ]] || { echo 'Run: sudo bash /home/karlinks/awg-hot-pool-shadow/install-shadow.sh' >&2; exit 2; }
 source_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-[[ -f "$source_dir/awg-mihomo-hot-pool.py" && -f "$source_dir/test_hot_pool.py" &&
+[[ -f "$source_dir/awg-mihomo-hot-pool.py" && -f "$source_dir/awg-hot-pool-continuity.py" &&
+   -f "$source_dir/awg-mihomo-hot-continuity-run" && -f "$source_dir/test_hot_pool.py" &&
    -f "$source_dir/awg-mihomo-hot-service-scan.py" && -f "$source_dir/test_hot_scan.py" ]] || exit 2
 /usr/bin/python3 -B "$source_dir/test_hot_pool.py" -q
 /usr/bin/python3 -B "$source_dir/test_hot_scan.py" -q
 /usr/bin/python3 -B "$source_dir/test_network_gate_contract.py" -q
-/usr/bin/python3 -B -c "import ast,pathlib;[ast.parse(pathlib.Path('$source_dir',p).read_text()) for p in ('awg-mihomo-hot-pool.py','awg-mihomo-hot-service-scan.py')]"
+/usr/bin/python3 -B "$source_dir/test_hot_pool_continuity.py" -q
+/bin/bash -n "$source_dir/awg-mihomo-hot-continuity-run"
+/usr/bin/python3 -B -c "import ast,pathlib;[ast.parse(pathlib.Path('$source_dir',p).read_text()) for p in ('awg-mihomo-hot-pool.py','awg-mihomo-hot-service-scan.py','awg-hot-pool-continuity.py')]"
 for unit in awg-mihomo-hot-pool.service awg-mihomo-hot-pool.timer; do
   # "is-enabled --quiet" exits zero for static units on this system.
   # A static inactive oneshot is safe to refresh, but reject anything that
