@@ -400,13 +400,18 @@ failover_auto(){
         printf 'MIHOMO_NODE_FAILOVER=%s->%s\n' "$current" "$candidate"
         return 0
       fi
-      if [[ "$(cat "$MIHOMO_NODE_NAME_FILE" 2>/dev/null || true)" == "$candidate" ]] &&
-         "$MIHOMO_READY_POSTCHECK_BIN" "$candidate" >/dev/null 2>&1; then
-        printf 'READY_AUTO_POSTCHECK=PASS\n' >&2
-        printf 'MIHOMO_NODE_FAILOVER=%s->%s\n' "$current" "$candidate"
-        return 0
+      local post_summary="" post_reason="NODE_CHANGED"
+      if [[ "$(cat "$MIHOMO_NODE_NAME_FILE" 2>/dev/null || true)" == "$candidate" ]]; then
+        if post_summary="$("$MIHOMO_READY_POSTCHECK_BIN" "$candidate" 2>&1)"; then
+          printf 'READY_AUTO_POSTCHECK=PASS\n' >&2
+          printf 'MIHOMO_NODE_FAILOVER=%s->%s\n' "$current" "$candidate"
+          return 0
+        fi
+        post_reason="$(grep -oE 'READY_TUN_CHECK=(IF_DOWN|ROUTE_MISSING|MARK_MISMATCH|EGRESS_FAILED|OPENAI_NETWORK_FAILED|OPENAI_NOT_QUALIFIED|NODE_CHANGED)' <<<"$post_summary" | tail -1 || true)"
+        post_reason="${post_reason#READY_TUN_CHECK=}"
+        [[ -n "$post_reason" ]] || post_reason=UNKNOWN
       fi
-      echo "READY_AUTO=POSTCHECK_FAILED" >&2
+      echo "READY_AUTO=POSTCHECK_FAILED REASON=$post_reason" >&2
       if (( from_ready == 1 )); then
         "$MIHOMO_HOT_POOL_CLI" "${union_args[@]}" quarantine "$candidate" --reason active-health-failed >/dev/null 2>&1 || true
       fi
@@ -417,6 +422,9 @@ failover_auto(){
         return 1
       fi
       echo "READY_AUTO=ROLLBACK_COMPLETED" >&2
+      # Canary safety: do not start a second disruptive live switchover
+      # after a failed TUN postcheck. The transport monitor owns AWG fallback.
+      return 1
     else
       if (( from_ready == 1 )); then
         "$MIHOMO_HOT_POOL_CLI" "${union_args[@]}" quarantine "$candidate" --reason activation-failed >/dev/null 2>&1 || true
