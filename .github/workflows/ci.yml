@@ -34,6 +34,8 @@ jobs:
           bash -n src/awg-selection
           bash -n src/awg-selection-monitor
           bash -n src/awg-mihomo-node-policy
+          bash -n src/awg-mihomo-ready-postcheck-tun
+          python3 -m py_compile src/awg-mihomo-ready-live-match
           bash -n src/awg-pbr-setup
           bash -n src/awg-transit-nft
           bash -n src/awg-transit-preflight
@@ -124,6 +126,8 @@ jobs:
           python3 tests/test-maintenance.py
           python3 tests/test-confirm.py
           python3 tests/test-menu.py
+          python3 -B tests/test_ready_auto_canary.py
+          python3 -B tests/test_ready_tun_postcheck.py
 
   awg-v31:
     runs-on: ubuntu-latest
