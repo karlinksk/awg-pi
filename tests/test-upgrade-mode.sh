@@ -92,7 +92,7 @@ do
   grep -Fq "$needle" src/awg-update
 done
 
-grep -Fq 'rm -rf /etc/awg-pbr /var/lib/awg-pbr/mihomo /var/lib/awg-pbr/traffic /usr/local/lib/awg-pi' src/awg-update
+grep -Fq 'rm -rf /etc/awg-pbr /var/lib/awg-pbr/mihomo /var/lib/awg-pbr/hot-pool /var/lib/awg-pbr/traffic /usr/local/lib/awg-pi' src/awg-update
 grep -Fq 'systemctl stop \' src/awg-update
 grep -Fq 'awg-mihomo-update.timer \' src/awg-update
 grep -Fq 'awg-mihomo.service \' src/awg-update

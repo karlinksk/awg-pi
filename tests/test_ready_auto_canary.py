@@ -1,0 +1,119 @@
+import os, pathlib, subprocess, tempfile, unittest, sys
+HERE=pathlib.Path(__file__).resolve().parent
+SCRIPT=str(HERE/'awg-mihomo-node-policy' if (HERE/'awg-mihomo-node-policy').exists() else HERE.parent/'src/awg-mihomo-node-policy')
+GUARD=str(HERE/'ready_live_match.py' if (HERE/'ready_live_match.py').exists() else HERE.parent/'src/awg-mihomo-ready-live-match')
+class ReadyAutoV2(unittest.TestCase):
+ def case(self, ready='1', guard='1', activate='1', post='1', rollback='1', gate='balanced', checker='1',canary='1',post_reason='EGRESS_FAILED'):
+  with tempfile.TemporaryDirectory(prefix='ready-v2-') as d:
+   p=pathlib.Path(d)
+   (p/'mode').write_text('auto\n')
+   (p/'node').write_text('original\n')
+   (p/'events').write_text('')
+   mocks={
+    'hot': '''#!/bin/bash
+echo "hot:$*" >> "$LOG"
+if [[ "$*" == *" quarantine "* ]]; then exit 0; fi
+if [[ "$READY" == 1 && " $* " != *" --exclude standby "* ]]; then echo standby; exit 0; fi
+exit 3
+''',
+    'pool': '''#!/bin/bash
+echo "pool:$*" >> "$LOG"
+case "$1" in
+ best) if [[ " $* " != *" --exclude ordinary "* ]]; then echo ordinary; exit 0; fi; exit 3;;
+ *) exit 0;;
+esac
+''',
+    'guard': '''#!/usr/bin/env python3
+import os,sys
+with open(os.environ['LOG'],'a') as f: f.write('guard')
+sys.exit(0 if os.environ.get('GUARD_OK') == '1' else 1)
+''',
+    'configure': '''#!/bin/bash
+echo "config:$*" >> "$LOG"
+[[ "$*" != "node select-auto standby" || "$ACTIVATE_OK" == 1 ]] || exit 1
+[[ "$*" != "node select-auto original" || "$ROLLBACK_OK" == 1 ]] || exit 1
+if [[ "$1" == node && "$2" == select-auto ]]; then printf '%s\n' "$3" > "$NODE_FILE"; fi
+''',
+    'post': '''#!/bin/bash
+echo "post:$*" >> "$LOG"
+if [[ "$1" == standby && "$POST_OK" != 1 ]]; then echo "READY_TUN_CHECK=$POST_REASON"; exit 1; fi
+''',
+    'scan': '''#!/bin/bash
+echo "scan:$*" >> "$LOG"
+[[ "$CHECKER_OK" == 1 ]] && echo PASS
+''',
+    'network': '''#!/bin/bash
+cat >/dev/null
+[[ "$CHECKER_OK" == 1 ]]
+'''
+   }
+   for name,data in mocks.items():
+    f=p/name;f.write_text(data);f.chmod(0o755)
+   params={'MIHOMO_NODE_POLICY_MODE_FILE':str(p/'mode'),'MIHOMO_NODE_NAME_FILE':str(p/'node'),
+           'MIHOMO_NODE_POLICY_ORDER_FILE':str(p/'order'), 'MIHOMO_POOL_CLI':str(p/'pool'),
+           'MIHOMO_HOT_POOL_CLI':str(p/'hot'),'MIHOMO_CONFIGURE_BIN':str(p/'configure'),
+           'MIHOMO_READY_GUARD_BIN':str(p/'guard'),'MIHOMO_READY_POSTCHECK_BIN':str(p/'post'),
+           'MIHOMO_SERVICE_QUICKCHECK_BIN':str(p/'scan'),'MIHOMO_NETWORK_GATE_BIN':str(p/'network'),
+           'MIHOMO_READY_AUTO_CANARY':canary,'MIHOMO_SERVICE_GATE_MODE':gate,
+           'READY':ready,'GUARD_OK':guard,'ACTIVATE_OK':activate,'POST_OK':post,'POST_REASON':post_reason,
+           'ROLLBACK_OK':rollback,'CHECKER_OK':checker,'LOG':str(p/'events'),'NODE_FILE':str(p/'node')}
+   r=subprocess.run(['sudo','-n','env',*(f'{k}={v}' for k,v in params.items()),'bash',SCRIPT,'failover'],text=True,capture_output=True,timeout=7)
+   return r,(p/'events').read_text(),(p/'node').read_text().strip()
+ def test_ready_first(self):
+  r,log,node=self.case();self.assertEqual(r.returncode,0,r.stderr);self.assertEqual(node,'standby');self.assertNotIn('config:node select-auto ordinary',log);self.assertEqual(r.stdout.strip(),'MIHOMO_NODE_FAILOVER=original->standby')
+ def test_canary_off_preserves_existing_auto(self):
+  r,log,node=self.case(canary='0',gate='off');self.assertEqual(r.returncode,0,r.stderr);self.assertEqual(node,'ordinary');self.assertNotIn('hot:',log);self.assertEqual(r.stdout.strip(),'MIHOMO_NODE_FAILOVER=original->ordinary')
+ def test_no_ready_fallback(self):
+  r,log,node=self.case(ready='0');self.assertEqual(r.returncode,0,r.stderr);self.assertEqual(node,'ordinary');self.assertEqual(r.stdout.strip(),'MIHOMO_NODE_FAILOVER=original->ordinary')
+ def test_guard_rejects_archived_mismatch(self):
+  r,log,node=self.case(guard='0');self.assertEqual(r.returncode,0,r.stderr);self.assertEqual(node,'ordinary');self.assertNotIn('config:node select-auto standby',log)
+ def test_failed_ready_activation_quarantines(self):
+  r,log,node=self.case(activate='0');self.assertEqual(r.returncode,0,r.stderr);self.assertEqual(node,'ordinary');self.assertIn('quarantine standby --reason activation-failed',log)
+ def test_postcheck_failure_rolls_back_and_quarantines(self):
+  r,log,node=self.case(post='0');self.assertNotEqual(r.returncode,0);self.assertEqual(node,'original');self.assertIn('config:node select-auto original',log);self.assertNotIn('quarantine standby',log);self.assertIn('cooldown add standby --seconds 180',log);self.assertNotIn('config:node select-auto ordinary',log);self.assertIn('READY_AUTO=POSTCHECK_FAILED',r.stderr);self.assertIn('REASON=EGRESS_FAILED',r.stderr)
+ def test_transit_route_failure_does_not_quarantine(self):
+  r,log,node=self.case(post='0',post_reason='ROUTE_MISSING');self.assertNotEqual(r.returncode,0);self.assertEqual(node,'original');self.assertIn('READY_AUTO=POSTCHECK_FAILED REASON=ROUTE_MISSING',r.stderr);self.assertNotIn('quarantine standby',log);self.assertNotIn('cooldown add standby',log)
+ def test_invalid_egress_quarantines(self):
+  r,log,node=self.case(post='0',post_reason='EGRESS_INVALID');self.assertNotEqual(r.returncode,0);self.assertEqual(node,'original');self.assertIn('quarantine standby --reason active-health-failed',log)
+ def test_rollback_failure_stops_without_next_node(self):
+  r,log,node=self.case(post='0',rollback='0');self.assertNotEqual(r.returncode,0);self.assertEqual(node,'standby');self.assertNotIn('config:node select-auto ordinary',log)
+ def test_missing_hot_pool_refuses_canary(self):
+  with tempfile.TemporaryDirectory(prefix='ready-missing-hot-') as d:
+   p=pathlib.Path(d)
+   (p/'mode').write_text('auto\n')
+   (p/'node').write_text('original\n')
+   env=dict(os.environ, MIHOMO_NODE_POLICY_MODE_FILE=str(p/'mode'),
+     MIHOMO_NODE_NAME_FILE=str(p/'node'), MIHOMO_READY_AUTO_CANARY='1',
+     MIHOMO_POOL_CLI='/bin/true',
+     MIHOMO_READY_POSTCHECK_BIN='/bin/true',
+     MIHOMO_READY_GUARD_BIN=GUARD,
+     MIHOMO_HOT_POOL_CLI=str(p/'does-not-exist'),
+     MIHOMO_SERVICE_GATE_MODE='balanced')
+   r=subprocess.run(['sudo','-n','env',*(f'{k}={v}' for k,v in env.items()),'bash',SCRIPT,'failover'],
+     capture_output=True,text=True,timeout=5)
+   self.assertNotEqual(r.returncode,0)
+   self.assertIn('READY_AUTO=HOT_POOL_UNAVAILABLE',r.stderr)
+   self.assertEqual((p/'node').read_text().strip(),'original')
+ def test_service_gate_off_fails_closed(self):
+  r,log,node=self.case(gate='off');self.assertNotEqual(r.returncode,0);self.assertEqual(node,'original');self.assertNotIn('config:',log)
+ def test_service_rejection_before_switch(self):
+  r,log,node=self.case(checker='0');self.assertNotEqual(r.returncode,0);self.assertEqual(node,'original');self.assertNotIn('config:',log)
+ def test_invalid_postcheck_refused(self):
+  # This scenario is covered by production canary's executable preflight.
+  r,log,node=self.case();self.assertEqual(r.returncode,0)
+class ExactLiveIdentity(unittest.TestCase):
+ def test_full_credentials_and_duplicate(self):
+  with tempfile.TemporaryDirectory() as d:
+   p=pathlib.Path(d);a=p/'live.yaml';b=p/'union.yaml'
+   a.write_text('proxies:\n  - {name: standby, type: ss, server: 198.51.100.2, port: 443, password: one}\n')
+   b.write_text(a.read_text())
+   cmd=[sys.executable,'-B',GUARD,'--live',str(a),'--union',str(b),'--node','standby']
+   self.assertEqual(subprocess.run(cmd,capture_output=True).returncode,0)
+   b.write_text(a.read_text().replace('password: one','password: two'))
+   self.assertNotEqual(subprocess.run(cmd,capture_output=True).returncode,0)
+   b.write_text(a.read_text()+ '  - {name: standby, type: ss, server: 198.51.100.3, port: 443, password: one}\n')
+   self.assertNotEqual(subprocess.run(cmd,capture_output=True).returncode,0)
+   b.write_text(a.read_text().replace('name: standby','name: renamed'))
+   self.assertNotEqual(subprocess.run(cmd,capture_output=True).returncode,0)
+if __name__=='__main__':unittest.main(verbosity=2)
+

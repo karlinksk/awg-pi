@@ -42,6 +42,9 @@ FIRST_RUN_CLI="/usr/local/sbin/awg-first-run"
 SELECTION_CLI="/usr/local/sbin/awg-selection"
 SELECTION_MONITOR="/usr/local/sbin/awg-selection-monitor"
 MIHOMO_NODE_POLICY_CLI="/usr/local/sbin/awg-mihomo-node-policy"
+# READY AUTO is installed as *passive* opt-in only; no activation on upgrade.
+MIHOMO_READY_GUARD="/usr/local/sbin/awg-mihomo-ready-live-match"
+MIHOMO_READY_POSTCHECK="/usr/local/sbin/awg-mihomo-ready-postcheck-tun"
 UPDATE_SCRIPT="/usr/local/sbin/awg-update"
 TRAFFIC_CLI="/usr/local/sbin/awg-traffic"
 SETUP_SERVICE="/etc/systemd/system/awg-pbr-setup.service"
@@ -151,7 +154,29 @@ AUTO_TRANSIT="${AWG_PI_UPGRADE_TRANSIT:-}"
 EXISTING_VERSION="$(cat "$PUBLIC_VERSION_FILE" 2>/dev/null || cat "$VERSION_FILE" 2>/dev/null || true)"
 MODE_PREEXISTED=0
 [[ -f "$MODE_FILE" ]] && MODE_PREEXISTED=1
-if [[ -f "$ENV_FILE" ]]; then
+# An interrupted fresh install may already have env/mode/transport files
+# from stage 6, but no installed version or live backend yet. Do not mistake
+# this for an existing production installation: it must still reach the
+# first-transport wizard, including the "configure nothing" recovery choice.
+# Refuse this path whenever the installation is versioned or any backend/health
+# service is already running.
+PARTIAL_FRESH_RESUME=0
+if [[ -f "$ENV_FILE" && -z "$EXISTING_VERSION" &&
+      ! -f "$CONF_FILE" &&
+      -f "$MODE_FILE" && "$(cat "$MODE_FILE" 2>/dev/null || true)" == selective &&
+      -f "$TRANSPORT_FILE" && "$(cat "$TRANSPORT_FILE" 2>/dev/null || true)" == unconfigured ]] &&
+   ! systemctl is-active --quiet awg-pbr-health.service &&
+   ! systemctl is-active --quiet awg-mihomo.service &&
+   ! systemctl is-active --quiet "awg-quick@$VPN_IF.service"; then
+  PARTIAL_FRESH_RESUME=1
+fi
+if (( PARTIAL_FRESH_RESUME == 1 )); then
+  warn "Обнаружена незавершённая первоначальная установка (без VPN и версии)."
+  confirm "Продолжить установку как fresh install с повторной проверкой LAN/DNS?" "N" ||
+    die "Возобновление незавершённой установки отменено"
+  ok "PARTIAL_FRESH_RESUME=YES; first-transport wizard будет запущен"
+fi
+if [[ -f "$ENV_FILE" && "$PARTIAL_FRESH_RESUME" == 0 ]]; then
   printf "Обнаружена существующая AWG Pi Gateway: %s\n" "${EXISTING_VERSION:-версия до v1.1.0}"
   if [[ "$AUTO_UPGRADE" == 1 ]] || confirm "Выполнить безопасное обновление существующей установки до v$AWG_PI_VERSION с сохранением AWG-конфига, доменов и клиентов?" "Y"; then
     UPGRADE_EXISTING=1
@@ -636,6 +661,18 @@ install_project_helper(){
   install -m 755 "$tmp" "$target"
   rm -f "$tmp"
 }
+# A Python helper must be parsed by Python, not bash -n. Validate the
+# downloaded artifact before replacing the existing executable.
+install_project_python_helper(){
+  local remote="$1" target="$2" tmp
+  tmp="$(mktemp)"
+  curl -4fLsS --retry 3 --connect-timeout 8 --max-time 45 "$PROJECT_RAW_BASE/$remote" -o "$tmp" \
+    || die "Не удалось загрузить $remote из проекта ($PROJECT_REF)"
+  python3 -B -c 'import ast,sys; ast.parse(open(sys.argv[1], encoding="utf-8").read())' "$tmp" \
+    || die "Синтаксическая проверка Python $remote не пройдена"
+  install -m 755 "$tmp" "$target"
+  rm -f "$tmp"
+}
 install_project_unit(){
   local remote="$1" target="$2" tmp
   tmp="$(mktemp)"
@@ -647,7 +684,7 @@ install_project_unit(){
 mkdir -p /usr/local/lib/awg-pi
 install_project_helper src/awg-common /usr/local/lib/awg-pi/common.sh
 chmod 644 /usr/local/lib/awg-pi/common.sh
-install_project_helper src/awg-health-probe /usr/local/sbin/awg-health-probe
+install_project_python_helper src/awg-health-probe /usr/local/sbin/awg-health-probe
 python3 -m py_compile /usr/local/sbin/awg-health-probe || die "Ошибка синтаксиса awg-health-probe"
 _manage_tmp="$(mktemp)"
 curl -4fLsS --retry 3 --connect-timeout 8 --max-time 45 "$PROJECT_RAW_BASE/src/awg-manage.py" -o "$_manage_tmp" || die "Не удалось загрузить awg-manage.py"
@@ -679,7 +716,47 @@ install_project_helper src/awg-mihomo-configure "$MIHOMO_CONFIGURE_SCRIPT"
 install_project_helper src/awg-first-run "$FIRST_RUN_CLI"
 install_project_helper src/awg-selection "$SELECTION_CLI"
 install_project_helper src/awg-selection-monitor "$SELECTION_MONITOR"
+# Service eligibility helpers are installed passive: the opt-in balanced
+# mode is NEVER enabled by installation. The Stage18 RAM runtime timer is
+# also passive until separately enabled after acceptance and rollback tests.
+# Browser tests are NOT a prerequisite for balanced network eligibility.
+install_project_python_helper src/awg-mihomo-limits.py /usr/local/sbin/awg-mihomo-limits.py
+install_project_python_helper src/awg-mihomo-service-check.py /usr/local/sbin/awg-mihomo-service-check.py
+install_project_python_helper src/awg-mihomo-video-decode.py /usr/local/sbin/awg-mihomo-video-decode.py
+install_project_helper scripts/awg-mihomo-stage18-ram-runtime.sh /usr/local/sbin/awg-mihomo-stage18-ram-runtime
+install_project_python_helper src/awg-mihomo-service-eligibility.py /usr/local/sbin/awg-mihomo-service-eligibility.py
+install_project_python_helper src/awg-mihomo-network-eligibility.py /usr/local/sbin/awg-mihomo-network-eligibility.py
+install_project_python_helper src/awg-mihomo-smart /usr/local/sbin/awg-mihomo-smart
+# Install optional READY dependencies BEFORE the live selector, minimizing
+# the upgrade window if an operator explicitly enabled the canary elsewhere.
+# The installer never sets MIHOMO_READY_AUTO_CANARY=1.
+install_project_python_helper src/awg-mihomo-ready-live-match "$MIHOMO_READY_GUARD"
+install_project_helper src/awg-mihomo-ready-postcheck-tun "$MIHOMO_READY_POSTCHECK"
 install_project_helper src/awg-mihomo-node-policy "$MIHOMO_NODE_POLICY_CLI"
+
+# Hot Pool is packaged passively and is SHADOW_ONLY. Never enable/start its
+# timer or run its scanner during installation. Existing *active* shadow
+# deployments are managed independently: preserve their executables and units
+# rather than replacing files beneath a running service.
+# systemctl may print "not-found" AND exit nonzero. Never append a second
+# "not-found": multi-line output would masquerade as a managed external unit.
+_hot_pool_timer_state="$(systemctl is-enabled awg-mihomo-hot-pool.timer 2>/dev/null || true)"
+[[ -n "$_hot_pool_timer_state" ]] || _hot_pool_timer_state=not-found
+if systemctl is-active --quiet awg-mihomo-hot-pool.service ||
+   systemctl is-active --quiet awg-mihomo-hot-pool.timer ||
+   [[ "$_hot_pool_timer_state" != disabled && "$_hot_pool_timer_state" != not-found ]]; then
+  warn "Hot Pool уже управляется отдельно (timer=$_hot_pool_timer_state); сохраняем установленную версию без изменений"
+else
+  install_project_python_helper extras/mihomo-hot-pool-shadow/awg-mihomo-hot-pool.py /usr/local/sbin/awg-mihomo-hot-pool
+  install_project_python_helper extras/mihomo-hot-pool-shadow/awg-mihomo-hot-service-scan.py /usr/local/sbin/awg-mihomo-hot-service-scan
+  install_project_python_helper extras/mihomo-hot-pool-shadow/awg-hot-pool-continuity.py /usr/local/sbin/awg-hot-pool-continuity.py
+  install_project_helper extras/mihomo-hot-pool-shadow/awg-mihomo-hot-continuity-run /usr/local/sbin/awg-mihomo-hot-continuity-run
+  install_project_unit extras/mihomo-hot-pool-shadow/awg-mihomo-hot-pool.service /etc/systemd/system/awg-mihomo-hot-pool.service
+  install_project_unit extras/mihomo-hot-pool-shadow/awg-mihomo-hot-pool.timer /etc/systemd/system/awg-mihomo-hot-pool.timer
+  install -d -o root -g root -m 0700 /var/lib/awg-pbr/hot-pool/continuity /run/awg-pbr/hot-pool/continuity
+  ok "Hot Pool continuity SHADOW_ONLY установлен пассивно; timer NOT ENABLED"
+fi
+unset _hot_pool_timer_state
 install_project_helper src/awg-pbr-setup "$SETUP_SCRIPT"
 install_project_helper src/awg-transit-nft /usr/local/sbin/awg-transit-nft
 install_project_helper src/awg-transit-preflight /usr/local/sbin/awg-transit-preflight
@@ -720,6 +797,10 @@ install_project_unit units/awg-mihomo-update.timer /etc/systemd/system/awg-mihom
 install_project_unit units/awg-mihomo-pool-refresh.service /etc/systemd/system/awg-mihomo-pool-refresh.service
 install_project_unit units/awg-mihomo-pool-refresh.timer /etc/systemd/system/awg-mihomo-pool-refresh.timer
 install_project_unit units/awg-selection-monitor.service /etc/systemd/system/awg-selection-monitor.service
+# Do not enable this opt-in timer here; default installs avoid downloads
+# and CPU overhead for the pinned decoder runtime.
+install_project_unit units/awg-mihomo-stage18-ram-runtime.service /etc/systemd/system/awg-mihomo-stage18-ram-runtime.service
+install_project_unit units/awg-mihomo-stage18-ram-runtime.timer /etc/systemd/system/awg-mihomo-stage18-ram-runtime.timer
 install_project_unit units/awg-traffic.service /etc/systemd/system/awg-traffic.service
 cat >/etc/systemd/system/awg-opencck-update.service <<'EOF'
 [Unit]
@@ -794,6 +875,11 @@ for f in "$ROUTE_CLI" "$TRANSPORT_CLI" "$FETCH_CLI" "$MIHOMO_CONFIG_SCRIPT" "$MI
   [[ -x "$f" ]] || die "Не установлен исполняемый компонент: $f"
   bash -n "$f" || die "Синтаксическая проверка компонента не пройдена: $f"
 done
+[[ -x "$MIHOMO_READY_GUARD" ]] || die "Не установлен READY guard: $MIHOMO_READY_GUARD"
+python3 -B -c 'import ast,sys; ast.parse(open(sys.argv[1],encoding="utf-8").read())' "$MIHOMO_READY_GUARD" \
+  || die "READY guard: синтаксическая ошибка"
+[[ -x "$MIHOMO_READY_POSTCHECK" ]] || die "Не установлен READY postcheck: $MIHOMO_READY_POSTCHECK"
+bash -n "$MIHOMO_READY_POSTCHECK" || die "READY postcheck: синтаксическая ошибка"
 [[ -x "$MIHOMO_POOL_CLI" ]] || die "Не установлен исполняемый компонент: $MIHOMO_POOL_CLI"
 python3 -m py_compile "$MIHOMO_POOL_CLI" || die "Синтаксическая проверка компонента не пройдена: $MIHOMO_POOL_CLI"
 ok "Компоненты управления v$AWG_PI_VERSION установлены"

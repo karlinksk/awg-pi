@@ -1,0 +1,28 @@
+[Unit]
+Description=AWG Pi Gateway Mihomo continuity-aware service reserve (shadow only)
+Wants=network-online.target
+After=network-online.target awg-mihomo-pool-refresh.service
+ConditionPathExists=/var/lib/awg-pbr/mihomo/providers/subscription.yaml
+ConditionPathExists=/run/awg-pbr/mihomo-pool/live.json
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/awg-mihomo-hot-continuity-run
+UMask=0077
+Nice=15
+IOSchedulingClass=idle
+CPUQuota=70%
+MemoryMax=900M
+TimeoutStartSec=5min
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictRealtime=true
+LockPersonality=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX AF_NETLINK
+CapabilityBoundingSet=~CAP_NET_ADMIN
+ReadWritePaths=/run/awg-pbr /var/lib/awg-pbr/hot-pool/continuity /dev/shm

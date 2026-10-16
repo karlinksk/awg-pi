@@ -1,0 +1,12 @@
+[Unit]
+Description=Retry-safe Stage18 RAM-only runtime bootstrap when balanced service-gate is enabled
+
+[Timer]
+OnBootSec=2min
+OnUnitInactiveSec=1h
+RandomizedDelaySec=2min
+Persistent=false
+Unit=awg-mihomo-stage18-ram-runtime.service
+
+[Install]
+WantedBy=timers.target
