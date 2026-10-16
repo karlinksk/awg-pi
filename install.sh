@@ -738,7 +738,10 @@ install_project_helper src/awg-mihomo-node-policy "$MIHOMO_NODE_POLICY_CLI"
 # timer or run its scanner during installation. Existing *active* shadow
 # deployments are managed independently: preserve their executables and units
 # rather than replacing files beneath a running service.
-_hot_pool_timer_state="$(systemctl is-enabled awg-mihomo-hot-pool.timer 2>/dev/null || echo not-found)"
+# systemctl may print "not-found" AND exit nonzero. Never append a second
+# "not-found": multi-line output would masquerade as a managed external unit.
+_hot_pool_timer_state="$(systemctl is-enabled awg-mihomo-hot-pool.timer 2>/dev/null || true)"
+[[ -n "$_hot_pool_timer_state" ]] || _hot_pool_timer_state=not-found
 if systemctl is-active --quiet awg-mihomo-hot-pool.service ||
    systemctl is-active --quiet awg-mihomo-hot-pool.timer ||
    [[ "$_hot_pool_timer_state" != disabled && "$_hot_pool_timer_state" != not-found ]]; then
