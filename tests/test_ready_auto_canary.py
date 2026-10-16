@@ -70,7 +70,7 @@ cat >/dev/null
  def test_failed_ready_activation_quarantines(self):
   r,log,node=self.case(activate='0');self.assertEqual(r.returncode,0,r.stderr);self.assertEqual(node,'ordinary');self.assertIn('quarantine standby --reason activation-failed',log)
  def test_postcheck_failure_rolls_back_and_quarantines(self):
-  r,log,node=self.case(post='0');self.assertEqual(r.returncode,0,r.stderr);self.assertEqual(node,'ordinary');self.assertIn('config:node select-auto original',log);self.assertIn('quarantine standby --reason active-health-failed',log)
+  r,log,node=self.case(post='0');self.assertNotEqual(r.returncode,0);self.assertEqual(node,'original');self.assertIn('config:node select-auto original',log);self.assertIn('quarantine standby --reason active-health-failed',log);self.assertNotIn('config:node select-auto ordinary',log);self.assertIn('READY_AUTO=POSTCHECK_FAILED',r.stderr)
  def test_rollback_failure_stops_without_next_node(self):
   r,log,node=self.case(post='0',rollback='0');self.assertNotEqual(r.returncode,0);self.assertEqual(node,'standby');self.assertNotIn('config:node select-auto ordinary',log)
  def test_service_gate_off_fails_closed(self):
