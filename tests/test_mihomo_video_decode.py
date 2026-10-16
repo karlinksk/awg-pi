@@ -32,6 +32,36 @@ class VideoStage18(unittest.TestCase):
             return CompletedProcess(argv,0,f"frame={frames}\nprogress=end\n","")
         return runner,calls
 
+    def test_ytdlp_failure_families_are_bounded_and_secret_free(self):
+        cases = (
+            ("ERROR: HTTP Error 403: Forbidden https://SECRET", "stage18_ytdlp_http_denied"),
+            ("ERROR: Sign in to confirm you're not a bot", "stage18_ytdlp_bot_challenge"),
+            ("ERROR: Requested format is not available", "stage18_ytdlp_format_unavailable"),
+            ("ERROR: Failed to solve EJS challenge", "stage18_ytdlp_js_challenge"),
+            ("ERROR: ffmpeg exited with code 1", "stage18_ytdlp_ffmpeg_error"),
+            ("ERROR: The read operation timed out", "stage18_ytdlp_network_error"),
+            ("ERROR: File size limit exceeded", "stage18_ytdlp_file_limit"),
+            ("ERROR: unknown SECRET=token", "stage18_ytdlp_extract_or_download_failed"),
+        )
+        for message, expected in cases:
+            with self.subTest(expected=expected):
+                actual = vid._ytdlp_failure_reason(1, message)
+                self.assertEqual(actual, expected)
+                self.assertNotIn("SECRET", actual)
+        self.assertEqual(vid._ytdlp_failure_reason(-25, ""),
+                         "stage18_ytdlp_file_limit")
+
+    def test_ytdlp_failure_is_reported_without_raw_stderr(self):
+        calls = []
+        def runner(argv, **kwargs):
+            calls.append(argv)
+            return CompletedProcess(argv, 1, "", "ERROR: HTTP Error 403: https://SECRET")
+        with patch.object(vid.os, "geteuid", return_value=0):
+            state, reason = vid.decode_24_frames(
+                17891, runner=runner, check_runtime=lambda root: True)
+        self.assertEqual((state, reason), ("UNKNOWN", "stage18_ytdlp_http_denied"))
+        self.assertEqual(len(calls), 1)
+
     def test_twenty_four_frames_are_pass(self):
         runner,calls=self.mock_subprocess()
         with patch.object(vid.os,"geteuid",return_value=0):
