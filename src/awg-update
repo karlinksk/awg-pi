@@ -47,6 +47,9 @@ backup_gateway(){
   local dir="$1"
   mkdir -p "$dir"
   chmod 700 "$dir"
+  # Preserve opt-in timer state separately; the tar archive stores only files.
+  systemctl is-enabled awg-mihomo-hot-pool.timer 2>/dev/null >"$dir/hot-pool-timer-state" || true
+  chmod 600 "$dir/hot-pool-timer-state"
   tar -C / -czf "$dir/gateway-state.tgz" \
     --ignore-failed-read \
     etc/awg-pbr \
@@ -63,9 +66,12 @@ backup_gateway(){
     etc/systemd/system/awg-mihomo.service \
     etc/systemd/system/awg-mihomo-update.service \
     etc/systemd/system/awg-mihomo-update.timer \
+    etc/systemd/system/awg-mihomo-hot-pool.service \
+    etc/systemd/system/awg-mihomo-hot-pool.timer \
     etc/systemd/system/awg-selection-monitor.service \
     etc/systemd/system/awg-traffic.service \
     var/lib/awg-pbr/mihomo \
+    var/lib/awg-pbr/hot-pool \
     var/lib/awg-pbr/traffic \
     usr/local/lib/awg-pi \
     usr/share/awg-pbr \
@@ -79,6 +85,10 @@ backup_gateway(){
     usr/local/sbin/awg-mihomo-node-policy \
     usr/local/sbin/awg-mihomo-ready-live-match \
     usr/local/sbin/awg-mihomo-ready-postcheck-tun \
+    usr/local/sbin/awg-mihomo-hot-pool \
+    usr/local/sbin/awg-mihomo-hot-service-scan \
+    usr/local/sbin/awg-hot-pool-continuity.py \
+    usr/local/sbin/awg-mihomo-hot-continuity-run \
     usr/local/sbin/awg-menu \
     usr/local/sbin/awg-opencck-update \
     usr/local/sbin/awg-core-update \
@@ -109,6 +119,8 @@ restore_gateway(){
   local dir="$1"
   echo "Восстановление предыдущей версии AWG Pi Gateway..." >&2
   systemctl stop \
+    awg-mihomo-hot-pool.timer \
+    awg-mihomo-hot-pool.service \
     awg-mihomo-update.timer \
     awg-mihomo.service \
     awg-selection-monitor.service \
@@ -117,7 +129,7 @@ restore_gateway(){
     awg-pbr-health.service \
     2>/dev/null || true
 
-  rm -rf /etc/awg-pbr /var/lib/awg-pbr/mihomo /var/lib/awg-pbr/traffic /usr/local/lib/awg-pi /usr/share/awg-pbr
+  rm -rf /etc/awg-pbr /var/lib/awg-pbr/mihomo /var/lib/awg-pbr/hot-pool /var/lib/awg-pbr/traffic /usr/local/lib/awg-pi /usr/share/awg-pbr
   rm -f \
     /usr/local/bin/mihomo \
     /usr/local/sbin/awg-route \
@@ -129,6 +141,10 @@ restore_gateway(){
     /usr/local/sbin/awg-mihomo-node-policy \
     /usr/local/sbin/awg-mihomo-ready-live-match \
     /usr/local/sbin/awg-mihomo-ready-postcheck-tun \
+    /usr/local/sbin/awg-mihomo-hot-pool \
+    /usr/local/sbin/awg-mihomo-hot-service-scan \
+    /usr/local/sbin/awg-hot-pool-continuity.py \
+    /usr/local/sbin/awg-mihomo-hot-continuity-run \
     /usr/local/sbin/awg-menu \
     /usr/local/sbin/awg-opencck-update \
     /usr/local/sbin/awg-core-update \
@@ -156,6 +172,8 @@ restore_gateway(){
     /etc/systemd/system/awg-mihomo.service \
     /etc/systemd/system/awg-mihomo-update.service \
     /etc/systemd/system/awg-mihomo-update.timer \
+    /etc/systemd/system/awg-mihomo-hot-pool.service \
+    /etc/systemd/system/awg-mihomo-hot-pool.timer \
     /etc/systemd/system/awg-selection-monitor.service \
     /etc/systemd/system/awg-traffic.service \
     /etc/profile.d/awg-menu.sh
@@ -176,6 +194,14 @@ restore_gateway(){
     systemctl start awg-mihomo.service 2>/dev/null || true
   [[ -f /etc/systemd/system/awg-mihomo-update.timer ]] &&
     systemctl start awg-mihomo-update.timer 2>/dev/null || true
+  # Restore the exact prior activation policy: fresh/passive installations
+  # must NOT accidentally enable Hot Pool during rollback.
+  if [[ -f /etc/systemd/system/awg-mihomo-hot-pool.timer &&
+        "$(cat "$dir/hot-pool-timer-state" 2>/dev/null || true)" == enabled ]]; then
+    systemctl enable --now awg-mihomo-hot-pool.timer 2>/dev/null || true
+  else
+    systemctl disable --now awg-mihomo-hot-pool.timer 2>/dev/null || true
+  fi
   echo "Rollback завершён." >&2
 }
 
