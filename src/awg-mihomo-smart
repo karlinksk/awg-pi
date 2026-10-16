@@ -37,6 +37,7 @@ NODE_NAME = Path('/etc/awg-pbr/transports/mihomo/node-name')
 STATE_DIR = Path('/run/awg-pbr/mihomo-smart')
 MIHOMO = '/usr/local/bin/mihomo'
 CURL = '/usr/bin/curl'
+IP_CONNECT_PROBE = Path('/usr/local/sbin/awg-mihomo-ip-connect-probe')
 DOWN_ENDPOINT = 'https://speed.cloudflare.com/__down?bytes={}'
 UP_ENDPOINT = 'https://speed.cloudflare.com/__up'
 MAX_POOL_AGE = 3600
@@ -70,6 +71,46 @@ def load_service_code():
     sys.modules[spec.name] = mod
     loader.exec_module(mod)
     return mod
+
+
+def ip_connect_shadow_probe(port: int, *, probe=IP_CONNECT_PROBE,
+                            runner=subprocess.run) -> tuple[str, str]:
+    """Read-only, bounded test of numeric-IP CONNECT over the isolated proxy.
+
+    This is separate from expensive ChatGPT/YouTube service eligibility.
+    A missing or failed verifier never turns into a qualified candidate.
+    """
+    if not (1 <= port <= 65535):
+        return 'UNKNOWN', 'INVALID_PORT'
+    if not probe.is_file():
+        return 'UNKNOWN', 'HELPER_MISSING'
+    try:
+        check = runner([sys.executable, '-B', str(probe), '--proxy-port', str(port)],
+                       capture_output=True, text=True, timeout=21, check=False)
+    except (OSError, subprocess.TimeoutExpired):
+        return 'UNKNOWN', 'PROBE_UNAVAILABLE'
+    if len(check.stdout) > 1024:
+        return 'UNKNOWN', 'INVALID_OUTPUT'
+    fields = {}
+    for line in check.stdout.splitlines():
+        key, sep, value = line.partition('=')
+        if sep != '=' or key in fields or not value or len(value) > 64:
+            return 'UNKNOWN', 'INVALID_OUTPUT'
+        fields[key] = value
+    valid_reasons = {'TLS_FAILED', 'TIMEOUT', 'CONNECT_ERROR', 'HTTP_NOT_200',
+                     'DNS_UNAVAILABLE', 'NO_GLOBAL_IPV4', 'ALL_CHECKED_IPV4_HTTPS_OK'}
+    if (fields.get('IP_CONNECT_MODE') != 'PROXY'
+            or fields.get('IP_CONNECT_SCOPE') != 'LOOPBACK_PROXY'
+            or fields.get('IP_CONNECT_CHECKED_IPV4') not in ('0', '1', '2')
+            or fields.get('IP_CONNECT_REASON') not in valid_reasons):
+        return 'UNKNOWN', 'INVALID_OUTPUT'
+    if (check.returncode == 0 and fields.get('IP_CONNECT_STATE') == 'PASS'
+            and fields.get('IP_CONNECT_REASON') == 'ALL_CHECKED_IPV4_HTTPS_OK'
+            and fields.get('IP_CONNECT_CHECKED_IPV4') in ('1', '2')):
+        return 'PASS', 'ALL_CHECKED_IPV4_HTTPS_OK'
+    if check.returncode not in (0, 1):
+        return 'UNKNOWN', 'PROBE_UNAVAILABLE'
+    return 'UNKNOWN', fields['IP_CONNECT_REASON']
 
 
 def load_video_decode_code():
@@ -430,6 +471,16 @@ def service_scan(args):
                 else:
                     raise RuntimeError("isolated service candidate unavailable")
                 helper.select_probe(controller, entries[0]["probe_name"])
+                # Candidate eligibility is IP-based in Selective Gateway.
+                # Reject broken numeric-IP CONNECT *before* costly video decode.
+                ip_state, ip_reason = ip_connect_shadow_probe(mixed)
+                if ip_state != 'PASS':
+                    print('SERVICE_ELIGIBILITY=UNKNOWN')
+                    print('SERVICE_CHECK_OPENAI_API=UNKNOWN')
+                    print('SERVICE_CHECK_CHATGPT_WEB=UNKNOWN')
+                    print('SERVICE_CHECK_YOUTUBE_VIDEO=UNKNOWN')
+                    print('SERVICE_REASON_CHATGPT_WEB=ip_connect_unverified')
+                    return 1
                 result = assess_services_with_stage18(
                     gate, mixed, force_media=True)
             finally:
