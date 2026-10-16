@@ -143,6 +143,7 @@ jobs:
           python3 -B tests/test_ready_tun_postcheck.py
           python3 -B tests/test_mihomo_ip_connect_probe.py
           python3 -B tests/test_mihomo_ip_connect_gate.py
+          python3 -B tests/test_mihomo_video_decode.py
           python3 -B tests/test_ready_monitor_contract.py
 
   awg-v31:
