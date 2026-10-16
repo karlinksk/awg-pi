@@ -37,4 +37,3 @@ if __name__ == "__main__":
     print("READY_LIVE_MATCH=" + ("PASS" if ok else "REJECT"))
     sys.exit(0 if ok else 1)
 
-[executed on device: awg-upgrade (7ff7c792-9f11-48ea-9b09-8734178c247a)]
