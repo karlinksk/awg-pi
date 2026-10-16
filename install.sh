@@ -154,7 +154,29 @@ AUTO_TRANSIT="${AWG_PI_UPGRADE_TRANSIT:-}"
 EXISTING_VERSION="$(cat "$PUBLIC_VERSION_FILE" 2>/dev/null || cat "$VERSION_FILE" 2>/dev/null || true)"
 MODE_PREEXISTED=0
 [[ -f "$MODE_FILE" ]] && MODE_PREEXISTED=1
-if [[ -f "$ENV_FILE" ]]; then
+# An interrupted fresh install may already have env/mode/transport files
+# from stage 6, but no installed version or live backend yet. Do not mistake
+# this for an existing production installation: it must still reach the
+# first-transport wizard, including the "configure nothing" recovery choice.
+# Refuse this path whenever the installation is versioned or any backend/health
+# service is already running.
+PARTIAL_FRESH_RESUME=0
+if [[ -f "$ENV_FILE" && -z "$EXISTING_VERSION" &&
+      ! -f "$CONF_FILE" &&
+      -f "$MODE_FILE" && "$(cat "$MODE_FILE" 2>/dev/null || true)" == selective &&
+      -f "$TRANSPORT_FILE" && "$(cat "$TRANSPORT_FILE" 2>/dev/null || true)" == unconfigured ]] &&
+   ! systemctl is-active --quiet awg-pbr-health.service &&
+   ! systemctl is-active --quiet awg-mihomo.service &&
+   ! systemctl is-active --quiet "awg-quick@$VPN_IF.service"; then
+  PARTIAL_FRESH_RESUME=1
+fi
+if (( PARTIAL_FRESH_RESUME == 1 )); then
+  warn "Обнаружена незавершённая первоначальная установка (без VPN и версии)."
+  confirm "Продолжить установку как fresh install с повторной проверкой LAN/DNS?" "N" ||
+    die "Возобновление незавершённой установки отменено"
+  ok "PARTIAL_FRESH_RESUME=YES; first-transport wizard будет запущен"
+fi
+if [[ -f "$ENV_FILE" && "$PARTIAL_FRESH_RESUME" == 0 ]]; then
   printf "Обнаружена существующая AWG Pi Gateway: %s\n" "${EXISTING_VERSION:-версия до v1.1.0}"
   if [[ "$AUTO_UPGRADE" == 1 ]] || confirm "Выполнить безопасное обновление существующей установки до v$AWG_PI_VERSION с сохранением AWG-конфига, доменов и клиентов?" "Y"; then
     UPGRADE_EXISTING=1
