@@ -42,6 +42,9 @@ FIRST_RUN_CLI="/usr/local/sbin/awg-first-run"
 SELECTION_CLI="/usr/local/sbin/awg-selection"
 SELECTION_MONITOR="/usr/local/sbin/awg-selection-monitor"
 MIHOMO_NODE_POLICY_CLI="/usr/local/sbin/awg-mihomo-node-policy"
+# READY AUTO is installed as *passive* opt-in only; no activation on upgrade.
+MIHOMO_READY_GUARD="/usr/local/sbin/awg-mihomo-ready-live-match"
+MIHOMO_READY_POSTCHECK="/usr/local/sbin/awg-mihomo-ready-postcheck-tun"
 UPDATE_SCRIPT="/usr/local/sbin/awg-update"
 TRAFFIC_CLI="/usr/local/sbin/awg-traffic"
 SETUP_SERVICE="/etc/systemd/system/awg-pbr-setup.service"
@@ -636,6 +639,18 @@ install_project_helper(){
   install -m 755 "$tmp" "$target"
   rm -f "$tmp"
 }
+# A Python helper must be parsed by Python, not bash -n. Validate the
+# downloaded artifact before replacing the existing executable.
+install_project_python_helper(){
+  local remote="$1" target="$2" tmp
+  tmp="$(mktemp)"
+  curl -4fLsS --retry 3 --connect-timeout 8 --max-time 45 "$PROJECT_RAW_BASE/$remote" -o "$tmp" \
+    || die "Не удалось загрузить $remote из проекта ($PROJECT_REF)"
+  python3 -B -c 'import ast,sys; ast.parse(open(sys.argv[1], encoding="utf-8").read())' "$tmp" \
+    || die "Синтаксическая проверка Python $remote не пройдена"
+  install -m 755 "$tmp" "$target"
+  rm -f "$tmp"
+}
 install_project_unit(){
   local remote="$1" target="$2" tmp
   tmp="$(mktemp)"
@@ -691,6 +706,10 @@ install_project_helper src/awg-mihomo-service-eligibility.py /usr/local/sbin/awg
 install_project_helper src/awg-mihomo-network-eligibility.py /usr/local/sbin/awg-mihomo-network-eligibility.py
 install_project_helper src/awg-mihomo-smart /usr/local/sbin/awg-mihomo-smart
 install_project_helper src/awg-mihomo-node-policy "$MIHOMO_NODE_POLICY_CLI"
+# The READY helpers are *only* dependencies for a future explicitly enabled
+# canary; this installer never exports MIHOMO_READY_AUTO_CANARY=1.
+install_project_python_helper src/awg-mihomo-ready-live-match "$MIHOMO_READY_GUARD"
+install_project_helper src/awg-mihomo-ready-postcheck-tun "$MIHOMO_READY_POSTCHECK"
 install_project_helper src/awg-pbr-setup "$SETUP_SCRIPT"
 install_project_helper src/awg-transit-nft /usr/local/sbin/awg-transit-nft
 install_project_helper src/awg-transit-preflight /usr/local/sbin/awg-transit-preflight
@@ -809,6 +828,11 @@ for f in "$ROUTE_CLI" "$TRANSPORT_CLI" "$FETCH_CLI" "$MIHOMO_CONFIG_SCRIPT" "$MI
   [[ -x "$f" ]] || die "Не установлен исполняемый компонент: $f"
   bash -n "$f" || die "Синтаксическая проверка компонента не пройдена: $f"
 done
+[[ -x "$MIHOMO_READY_GUARD" ]] || die "Не установлен READY guard: $MIHOMO_READY_GUARD"
+python3 -B -c 'import ast,sys; ast.parse(open(sys.argv[1],encoding="utf-8").read())' "$MIHOMO_READY_GUARD" \
+  || die "READY guard: синтаксическая ошибка"
+[[ -x "$MIHOMO_READY_POSTCHECK" ]] || die "Не установлен READY postcheck: $MIHOMO_READY_POSTCHECK"
+bash -n "$MIHOMO_READY_POSTCHECK" || die "READY postcheck: синтаксическая ошибка"
 [[ -x "$MIHOMO_POOL_CLI" ]] || die "Не установлен исполняемый компонент: $MIHOMO_POOL_CLI"
 python3 -m py_compile "$MIHOMO_POOL_CLI" || die "Синтаксическая проверка компонента не пройдена: $MIHOMO_POOL_CLI"
 ok "Компоненты управления v$AWG_PI_VERSION установлены"
