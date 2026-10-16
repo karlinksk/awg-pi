@@ -17,8 +17,9 @@ for unit in awg-mihomo-hot-pool.service awg-mihomo-hot-pool.timer; do
   # A static inactive oneshot is safe to refresh, but reject anything that
   # might be live or auto-starting. The timer must explicitly be disabled.
   state="$(/bin/systemctl is-enabled "$unit" 2>/dev/null || true)"
+  [[ -n "$state" ]] || state=not-found
   case "$unit:$state" in
-    awg-mihomo-hot-pool.service:static|awg-mihomo-hot-pool.service:disabled|awg-mihomo-hot-pool.timer:disabled) ;;
+    awg-mihomo-hot-pool.service:static|awg-mihomo-hot-pool.service:disabled|awg-mihomo-hot-pool.service:not-found|awg-mihomo-hot-pool.timer:disabled|awg-mihomo-hot-pool.timer:not-found) ;;
     *) echo "REFUSED: unsafe $unit enabled state=$state" >&2; exit 3 ;;
   esac
   if /bin/systemctl is-active --quiet "$unit"; then
