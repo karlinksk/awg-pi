@@ -77,6 +77,22 @@ cat >/dev/null
   r,log,node=self.case(post='0',post_reason='EGRESS_INVALID');self.assertNotEqual(r.returncode,0);self.assertEqual(node,'original');self.assertIn('quarantine standby --reason active-health-failed',log)
  def test_rollback_failure_stops_without_next_node(self):
   r,log,node=self.case(post='0',rollback='0');self.assertNotEqual(r.returncode,0);self.assertEqual(node,'standby');self.assertNotIn('config:node select-auto ordinary',log)
+ def test_missing_hot_pool_refuses_canary(self):
+  with tempfile.TemporaryDirectory(prefix='ready-missing-hot-') as d:
+   p=pathlib.Path(d)
+   (p/'mode').write_text('auto\n')
+   (p/'node').write_text('original\n')
+   env=dict(os.environ, MIHOMO_NODE_POLICY_MODE_FILE=str(p/'mode'),
+     MIHOMO_NODE_NAME_FILE=str(p/'node'), MIHOMO_READY_AUTO_CANARY='1',
+     MIHOMO_READY_POSTCHECK_BIN='/bin/true',
+     MIHOMO_READY_GUARD_BIN=GUARD,
+     MIHOMO_HOT_POOL_CLI=str(p/'does-not-exist'),
+     MIHOMO_SERVICE_GATE_MODE='balanced')
+   r=subprocess.run(['sudo','-n','env',*(f'{k}={v}' for k,v in env.items()),'bash',SCRIPT,'failover'],
+     capture_output=True,text=True,timeout=5)
+   self.assertNotEqual(r.returncode,0)
+   self.assertIn('READY_AUTO=HOT_POOL_UNAVAILABLE',r.stderr)
+   self.assertEqual((p/'node').read_text().strip(),'original')
  def test_service_gate_off_fails_closed(self):
   r,log,node=self.case(gate='off');self.assertNotEqual(r.returncode,0);self.assertEqual(node,'original');self.assertNotIn('config:',log)
  def test_service_rejection_before_switch(self):
