@@ -662,7 +662,7 @@ install_project_unit(){
 mkdir -p /usr/local/lib/awg-pi
 install_project_helper src/awg-common /usr/local/lib/awg-pi/common.sh
 chmod 644 /usr/local/lib/awg-pi/common.sh
-install_project_helper src/awg-health-probe /usr/local/sbin/awg-health-probe
+install_project_python_helper src/awg-health-probe /usr/local/sbin/awg-health-probe
 python3 -m py_compile /usr/local/sbin/awg-health-probe || die "Ошибка синтаксиса awg-health-probe"
 _manage_tmp="$(mktemp)"
 curl -4fLsS --retry 3 --connect-timeout 8 --max-time 45 "$PROJECT_RAW_BASE/src/awg-manage.py" -o "$_manage_tmp" || die "Не удалось загрузить awg-manage.py"
@@ -698,13 +698,13 @@ install_project_helper src/awg-selection-monitor "$SELECTION_MONITOR"
 # mode is NEVER enabled by installation. The Stage18 RAM runtime timer is
 # also passive until separately enabled after acceptance and rollback tests.
 # Browser tests are NOT a prerequisite for balanced network eligibility.
-install_project_helper src/awg-mihomo-limits.py /usr/local/sbin/awg-mihomo-limits.py
-install_project_helper src/awg-mihomo-service-check.py /usr/local/sbin/awg-mihomo-service-check.py
-install_project_helper src/awg-mihomo-video-decode.py /usr/local/sbin/awg-mihomo-video-decode.py
+install_project_python_helper src/awg-mihomo-limits.py /usr/local/sbin/awg-mihomo-limits.py
+install_project_python_helper src/awg-mihomo-service-check.py /usr/local/sbin/awg-mihomo-service-check.py
+install_project_python_helper src/awg-mihomo-video-decode.py /usr/local/sbin/awg-mihomo-video-decode.py
 install_project_helper scripts/awg-mihomo-stage18-ram-runtime.sh /usr/local/sbin/awg-mihomo-stage18-ram-runtime
-install_project_helper src/awg-mihomo-service-eligibility.py /usr/local/sbin/awg-mihomo-service-eligibility.py
-install_project_helper src/awg-mihomo-network-eligibility.py /usr/local/sbin/awg-mihomo-network-eligibility.py
-install_project_helper src/awg-mihomo-smart /usr/local/sbin/awg-mihomo-smart
+install_project_python_helper src/awg-mihomo-service-eligibility.py /usr/local/sbin/awg-mihomo-service-eligibility.py
+install_project_python_helper src/awg-mihomo-network-eligibility.py /usr/local/sbin/awg-mihomo-network-eligibility.py
+install_project_python_helper src/awg-mihomo-smart /usr/local/sbin/awg-mihomo-smart
 # Install optional READY dependencies BEFORE the live selector, minimizing
 # the upgrade window if an operator explicitly enabled the canary elsewhere.
 # The installer never sets MIHOMO_READY_AUTO_CANARY=1.
