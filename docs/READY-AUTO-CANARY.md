@@ -64,3 +64,32 @@ Do not activate unattended AUTO based on this draft.
 - `HOT_POOL_QUARANTINED_ENDPOINTS=1` after correcting the demonstrably false route-race quarantine. The unrelated earlier quarantine remains in place pending natural expiry or additional evidence.
 - Original production `awg-mihomo-node-policy` SHA unchanged; opt-in canary binaries refreshed to match the reviewed draft, **not attached to the running selector**.
 - Final Pi gateway: Transit guard SAFE, Mihomo healthy on original Shadowsocks, AWG backup healthy, default table 100 via `mihomo0`, zero failed units. Emergency timer inactive.
+
+
+## Guarded live acceptance — 2026-10-16 18:38–18:46 (+07)
+
+### READY-priority AUTO — PASS on Pi
+
+- Normal SHADOW_ONLY round recovered **2 READY** profiles; the top READY and second READY both matched the unique exact live-provider profile/credentials (no archived/staged-only activation).
+- An independent root-owned recovery timer was armed (original node `shadowsocks-1827146201`) before triggering one opt-in canary; MikroTik and SSTP were not changed.
+- Actual result: `READY_AUTO_POSTCHECK=PASS` and `MIHOMO_NODE_FAILOVER=shadowsocks-1827146201->shadowsocks-1827146133`.
+- A separate post-activation `awg-mihomo-ready-postcheck-tun` returned `READY_TUN_CHECK=PASS` on the selected READY node, including marked table 100 and real TUN-bound HTTPS/OpenAI API 401, while Transit guard remained SAFE and standby AWG healthy.
+- Restored `shadowsocks-1827146201` using production `awg-mihomo-configure node select-auto`. Original node passed independent TUN postcheck; backup AWG remained healthy. Canceled the recovery timer and removed the one-time recovery helper.
+- An **8-second aggregate-only passive packet capture** found no usable forwarded LAN-client traffic. Accordingly **LAN-forwarded application reachability is NOT proven**; no packet content or user flows were collected.
+
+### Real transport switch — PASS (manual AWG activation)
+
+- A separate independent timed recovery was armed for the transition.
+- `awg-transport select awg` succeeded with Transit preflight, fresh AWG handshake, DIRECT AWG endpoint, table 100 `default dev awg0`, `Transit guard: SAFE` and `Health state: up`.
+- Independent HTTPS bound to `awg0` returned a public IPv4, and OpenAI API `/v1/models` returned HTTP 401. Thus real AWG dataplane and service network access were demonstrated on Pi.
+- `awg-transport select mihomo` returned to original Mihomo node; activation recovery used the existing healthy node, TUN postcheck PASS, table 100 restored to `default dev mihomo0`, health up, Transit guard SAFE, zero failed systemd units. The timed recovery was canceled and temporary helper removed.
+- **This is a manual transport activation/rollback test, NOT yet an automatic transport-selector failover caused by exhaustion of all Mihomo nodes.** The latter remains tested by mocks and earlier project history, not by this current canary.
+- Running production `/usr/local/sbin/awg-mihomo-node-policy` was never replaced. The experimental canary and postcheck remain available separately, opt-in remains OFF.
+
+### Remaining release gates
+
+1. Run a real forwarded LAN-client service check via MikroTik → Pi → `mihomo0` and distinguish app service success from mere packet counters.
+2. Verify full automated Mihomo-node exhaustion → AWG under controlled watchdog, without changing SSTP (or explicitly accept the existing historical test plus new mock).
+3. Integrate opt-in components with safe installer/upgrade/uninstall and get a clean GitHub Actions CI result; reconcile stacked PRs #106/#108/#109/#110 before merging or creating RC1.
+
+**Status:** READY-priority AUTO canary and manual AWG fallback are real-world PASS. Production enablement and RC1 remain blocked on the remaining acceptance gates above.
