@@ -77,6 +77,8 @@ backup_gateway(){
     usr/local/sbin/awg-selection \
     usr/local/sbin/awg-selection-monitor \
     usr/local/sbin/awg-mihomo-node-policy \
+    usr/local/sbin/awg-mihomo-ready-live-match \
+    usr/local/sbin/awg-mihomo-ready-postcheck-tun \
     usr/local/sbin/awg-menu \
     usr/local/sbin/awg-opencck-update \
     usr/local/sbin/awg-core-update \
@@ -125,6 +127,8 @@ restore_gateway(){
     /usr/local/sbin/awg-selection \
     /usr/local/sbin/awg-selection-monitor \
     /usr/local/sbin/awg-mihomo-node-policy \
+    /usr/local/sbin/awg-mihomo-ready-live-match \
+    /usr/local/sbin/awg-mihomo-ready-postcheck-tun \
     /usr/local/sbin/awg-menu \
     /usr/local/sbin/awg-opencck-update \
     /usr/local/sbin/awg-core-update \
