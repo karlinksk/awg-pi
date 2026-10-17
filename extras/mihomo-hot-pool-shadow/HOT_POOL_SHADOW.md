@@ -3,7 +3,7 @@
 **Scope: NOT a production selector.** This module creates a separate eligibility
 record for nodes of the existing healthy pool. No TUN, transport, policy,
 SSTP/MikroTik, DNS, nftables or forwarding changes. `best` is reporting only.
-On the Pi test stand the diagnostic unit is installed and its timer enabled for SHADOW-only observation. It never selects or changes a live node.
+A prior test deployment enabled SHADOW-only observation on 2026-10-14; on the current `awg-upgrade-test` test microSD the Hot Pool timer was **inactive** at the 2026-10-17 audit. Do not assume it is enabled on any host. It never selects a live node by itself.
 
 ## 2026-10-17 safety review: live-proxy isolation
 
