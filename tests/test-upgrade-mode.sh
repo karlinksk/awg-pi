@@ -38,7 +38,7 @@ grep -Fq 'usr/share/awg-pbr' src/awg-update
 confirm_parser="$(awk '/^confirm_yes\(\)\{/{capture=1} capture{print} capture && /^}$/{exit}' install.sh)"
 eval "$confirm_parser"
 cr="$(printf '\r')"
-for answer in y Y yes Yes YES д Д да Да ДА "y${cr}" ' y ' "да${cr}"; do
+for answer in y Y yes Yes YES у У д Д да Да ДА "y${cr}" "у${cr}" ' y ' ' у ' "да${cr}"; do
   confirm_yes "$answer" || { echo "FAIL: affirmative confirmation rejected: [$answer]" >&2; exit 1; }
 done
 for answer in n N no No NO нет Нет '' '   '; do
