@@ -2,6 +2,8 @@
 
 This document is the hardware/release gate for v1.3.0.
 
+**Full 150-case execution matrix (all modes, transports, selectors and negative cases):** [RELEASE-ACCEPTANCE-MATRIX-v1.3.0.md](RELEASE-ACCEPTANCE-MATRIX-v1.3.0.md). Items in that checklist remain unaccepted until scoped evidence is attached to the current candidate.
+
 v1.3.0 adds a transport abstraction and an optional Mihomo backend while
 preserving the v1.2 routing semantics:
 
