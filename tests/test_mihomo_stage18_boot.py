@@ -8,6 +8,7 @@ ROOT=Path(__file__).resolve().parents[1]
 UNIT=ROOT/"units/awg-mihomo-stage18-ram-runtime.service"
 TIMER=ROOT/"units/awg-mihomo-stage18-ram-runtime.timer"
 PATH_UNIT=ROOT/"units/awg-mihomo-stage18-ram-runtime.path"
+HOT_POOL_UNIT=ROOT/"extras/mihomo-hot-pool-shadow/awg-mihomo-hot-pool.service"
 BOOT=ROOT/"scripts/awg-mihomo-stage18-ram-runtime.sh"
 INSTALL=ROOT/"install.sh"
 
@@ -42,6 +43,13 @@ class RuntimeBootSafety(unittest.TestCase):
         self.assertIn("PathChanged=/var/lib/awg-pbr/mihomo/providers/subscription.yaml",p)
         self.assertIn("Unit=awg-mihomo-stage18-ram-runtime.service",p)
         self.assertIn("WantedBy=multi-user.target",p)
+
+    def test_hot_pool_waits_for_video_runtime(self):
+        text=HOT_POOL_UNIT.read_text()
+        self.assertIn("Wants=network-online.target awg-mihomo-stage18-ram-runtime.service",text)
+        self.assertIn("After=network-online.target awg-mihomo-pool-refresh.service awg-mihomo-stage18-ram-runtime.service",text)
+        self.assertIn("SHADOW",text.upper())
+        self.assertNotIn("awg-transport select",text)
 
     def test_install_is_complete_and_guarded(self):
         s=INSTALL.read_text()
