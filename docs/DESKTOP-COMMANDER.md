@@ -11,9 +11,9 @@ Versioned in this repository and deployed to fresh installs **and upgrades**:
 - `src/awg-dc` → `/usr/local/bin/awg-dc`: safe onboarding/diagnostics CLI.
 - `units/awg-dc-remote@.service` → `/etc/systemd/system/awg-dc-remote@.service`: **disabled** systemd template; runs under a normal user, not root.
 - `install.sh` stages both files; it does not pair a device, copy credentials, change network routing, alter SSH, or start DC automatically.
-- With explicit environment variables `AWG_DC_PREPARE=1` and `AWG_DC_USER=<your-Linux-user>` on installation, `awg-dc prepare` installs Debian `nodejs`, `npm`, `ca-certificates` (only if required) and prefetches the officially documented DC agent through `npx`, **as the non-root user**. A preparation failure produces a warning and does not roll back the gateway. The default is `AWG_DC_PREPARE=0`.
+- With explicit environment variables `AWG_DC_PREPARE=1` and `AWG_DC_USER=<your-Linux-user>` on installation, `awg-dc prepare` checks Debian `nodejs`/`npm` and, when necessary, installs bootstrap packages. It then prefetches **isolated `node@22`** and the pinned DC agent in the ordinary user's npm cache, verifying native `WebSocket`. System `/usr/bin/node` and AWG/Stage18 runtimes are **not upgraded**. A preparation failure produces a warning and does not roll back the gateway. The default is `AWG_DC_PREPARE=0`.
 
-This is an official third-party npm dependency: the remote agent is obtained from the publisher, not vendored into the AWG repository. Only download and authorize software you trust. The gateway candidate pins the npm package to `@wonderwhy-er/desktop-commander@0.2.52` (publisher's npm release observed on 2026-10-17) instead of auto-following `@latest`. This prevents unreviewed changes on reboot. Debian 13 ARM64 pairing, autostart and reboot acceptance are still pending; update the pinned version only after compatibility testing.
+This is an official third-party npm dependency: the remote agent and `node@22` runtime are obtained from npm, not vendored into the AWG repository. Only download and authorize software you trust. The system Node.js 20 on Debian 13 is enough to run npm, but is **not** adequate to execute DC 0.2.52: its startup fails with `native WebSocket not found`. The remote agent must use Node.js 22+. The gateway candidate pins the npm package to `@wonderwhy-er/desktop-commander@0.2.52` (publisher's npm release observed on 2026-10-17) instead of auto-following `@latest`. This prevents unreviewed changes on reboot. Debian 13 ARM64 pairing, autostart and reboot acceptance are still pending; update the pinned version only after compatibility testing.
 
 ## First pairing on the Raspberry Pi
 
@@ -62,10 +62,20 @@ To **revoke authorization**, use the Desktop Commander device dashboard. Disabli
 
 - [ ] Syntax and installer regression tests pass.
 - [ ] Fresh Debian 13 ARM64 clean install stages CLI and inactive unit without Node/npm unless opted in.
-- [ ] Explicit prepare installs Node/npm and can prefetch the package without root-owned user cache.
-- [ ] Normal-user browser-based OAuth pairing works; secret file is owner-only `0600`.
+- [ ] Explicit prepare verifies isolated Node.js 22 native `WebSocket` and can prefetch the package without root-owned user cache, even when Debian system Node.js remains v20.
+- [ ] Normal-user browser-based OAuth pairing works with Node.js 22 and an existing device session is reused; secret file is owner-only `0600`.
 - [ ] Autostart is disabled before pairing, enabled after permission check, restarts successfully after reboot.
 - [ ] Upgrade preserves existing authorization, user ownership and service enabled/disabled state.
 - [ ] DC disable has no effect on AWG/Mihomo/DNS/SSH/SSTP, and a read-only connected tool call works.
 
 As of the current PR, this is **draft code**, not proof that pairing/reboot tests have passed on the live Raspberry Pi.
+
+### 2026-10-17 Node.js 20 failure, isolated Node.js 22 remediation
+
+On `awg-upgrade-test`, `node v20.19.2` plus npm 9.2.0 with a saved DC session connected to both local MCP and Remote MCP but failed at startup with **`Node.js detected but native WebSocket not found`**. The previous installer check `Node >=18` was a false positive. The optional module now uses the separate `node@22` package (via npm's `--package` PATH isolation), leaving the Debian system Node.js unchanged, and checks for global `WebSocket`. The operating user's one-off recovery command is:
+
+```bash
+npm exec --yes --package=node@22 --package=@wonderwhy-er/desktop-commander@0.2.52 -- sh -c 'node --version && desktop-commander remote'
+```
+
+This intervention is a **proposed remediation until the user confirms the command and successful DC Remote reconnect**. Do not mark the Debian13 ARM64 live/reboot/upgrade checks complete yet.
