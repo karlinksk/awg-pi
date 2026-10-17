@@ -134,7 +134,7 @@ This checklist supplements `docs/TESTING-v1.3.0.md`. Checkboxes below are delibe
 - [ ] H02. Hot Pool scanner never changes active transport, node, router, DNS or live provider; controls CPU/RAM/bandwidth use.
 - [ ] H03. READY requires two independent successful checks spaced ≥600s; no fabricated proofs on reboot/retention.
 - [ ] H04. API, ChatGPT web network response and actual 24-frame YouTube decode participate; the rejected initial HTTP-only YouTube prefilter is absent.
-- [ ] H05. 403/challenge/unknown/TLS errors are not converted to authenticated ChatGPT success or unconditional node failure.
+- [ ] H05. Service eligibility `off`, `balanced` and `require` are exercised under Mihomo MANUAL/FIXED/AUTO and READY on/off; 403/challenge/unknown/TLS errors never become authenticated ChatGPT success or unconditional node failure.
 - [ ] H06. Numeric IPv4 endpoint HTTPS check rejects broken domain-only proxies; test multiple clean public IPs and no private IP targets.
 - [ ] H07. Hot Pool READY candidate equals a unique exact *current live provider* node including credentials, endpoint and transport options.
 - [ ] H08. READY candidate accepted→live node activation→true `mihomo0` postcheck→verified client application success.
