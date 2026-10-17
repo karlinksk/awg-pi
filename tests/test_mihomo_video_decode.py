@@ -149,12 +149,12 @@ class VideoStage18(unittest.TestCase):
     def test_unknown_video_decoder_cannot_promote(self):
         gate=self.gate()
         video=types.SimpleNamespace(decode_24_frames=lambda port:("UNKNOWN","stage18_insufficient_frames"))
-        self.assertEqual(smart.assess_services_with_stage18(gate,17891,video_module=video)["status"],"FAIL")
+        self.assertEqual(smart.assess_services_with_stage18(gate,17891,video_module=video)["status"],"UNKNOWN")
 
     def test_api_region_failure_never_promoted(self):
         gate=self.gate(api="FAIL")
         video=types.SimpleNamespace(decode_24_frames=lambda port:(_ for _ in ()).throw(AssertionError("called")))
-        self.assertEqual(smart.assess_services_with_stage18(gate,17891,video_module=video)["status"],"UNKNOWN")
+        self.assertEqual(smart.assess_services_with_stage18(gate,17891,video_module=video)["status"],"FAIL")
 
     def test_no_expensive_decoder_when_web_unconfirmed_in_bulk_scan(self):
         gate=self.gate(web="UNKNOWN")
