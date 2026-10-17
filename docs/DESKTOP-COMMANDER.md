@@ -20,8 +20,8 @@ This is an official third-party npm dependency: the remote agent is obtained fro
 Run the following **after** a gateway installation, substituting your local login username:
 
 ```bash
-sudo awg-dc prepare karlinks
-sudo awg-dc doctor karlinks
+sudo awg-dc prepare gatewayuser
+sudo awg-dc doctor gatewayuser
 ```
 
 Then, from a terminal **logged in as that same ordinary user** (not as root):
@@ -35,8 +35,8 @@ DC prints a device verification URL and one-time code. The user must open the of
 Only **after successful user authorization**, enable automatic restart on reboot:
 
 ```bash
-sudo awg-dc enable karlinks
-sudo awg-dc status karlinks
+sudo awg-dc enable gatewayuser
+sudo awg-dc status gatewayuser
 ```
 
 The systemd unit is user-scoped (`User=%i`) and has no inbound firewall rule. Remote connectivity still depends on the Desktop Commander service and a connected, authorized ChatGPT plugin. `systemctl active` or a local session file does not by itself prove cloud connectivity; check the DC device dashboard and perform a benign read-only terminal test.
@@ -44,7 +44,7 @@ The systemd unit is user-scoped (`User=%i`) and has no inbound firewall rule. Re
 Stop DC remote access without revoking the device:
 
 ```bash
-sudo awg-dc disable karlinks
+sudo awg-dc disable gatewayuser
 ```
 
 To **revoke authorization**, use the Desktop Commander device dashboard. Disabling a systemd service only stops the local process; it does not revoke the cloud-side device token.
