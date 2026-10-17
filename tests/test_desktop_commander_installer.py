@@ -56,7 +56,9 @@ class DesktopCommanderInstaller(unittest.TestCase):
         self.assertIn('[[ "$home" == "/home/$name"', source)
         self.assertIn('runuser -u "$DC_USER"', source)
         self.assertIn('remote --help', source)
-        self.assertIn('exec npx --yes "$DC_PACKAGE" remote', source)
+        self.assertIn('typeof WebSocket !== "function"', source)
+        self.assertIn('sh -c', source)
+        self.assertIn('exec npm exec --yes --package="$DC_NODE_PACKAGE" --package="$DC_PACKAGE" -- desktop-commander remote', source)
         self.assertNotIn('NOPASSWD:ALL', source)
         self.assertNotIn('device.json" >', source)
 
@@ -65,7 +67,7 @@ class DesktopCommanderInstaller(unittest.TestCase):
         self.assertIn("User=%i", unit)
         self.assertIn("WorkingDirectory=/home/%i", unit)
         self.assertIn("UMask=0077", unit)
-        self.assertIn("ExecStart=/usr/bin/env npx --yes", unit)
+        self.assertIn("ExecStart=/usr/bin/env npm exec --yes --package=node@22", unit)
         self.assertIn("Restart=on-failure", unit)
         self.assertNotIn("User=root", unit)
         self.assertNotIn("ExecStartPre=sudo", unit)
@@ -78,6 +80,9 @@ class DesktopCommanderInstaller(unittest.TestCase):
         pinned = "@wonderwhy-er/desktop-commander@0.2.52"
         self.assertIn(pinned, source)
         self.assertIn(pinned, unit)
+        self.assertIn("DC_NODE_PACKAGE='node@22'", source)
+        self.assertIn("--package=node@22", unit)
+        self.assertIn('node@22', source)
         self.assertNotIn("@latest", source)
         self.assertNotIn("@latest", unit)
 
