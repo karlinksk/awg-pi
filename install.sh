@@ -842,10 +842,11 @@ install_project_unit units/awg-mihomo-update.timer /etc/systemd/system/awg-mihom
 install_project_unit units/awg-mihomo-pool-refresh.service /etc/systemd/system/awg-mihomo-pool-refresh.service
 install_project_unit units/awg-mihomo-pool-refresh.timer /etc/systemd/system/awg-mihomo-pool-refresh.timer
 install_project_unit units/awg-selection-monitor.service /etc/systemd/system/awg-selection-monitor.service
-# Do not enable this opt-in timer here; default installs avoid downloads
-# and CPU overhead for the pinned decoder runtime.
+# Stage18 is provider-guarded: automatic boot and provider-change recovery,
+# without running an isolated media test during bare installation.
 install_project_unit units/awg-mihomo-stage18-ram-runtime.service /etc/systemd/system/awg-mihomo-stage18-ram-runtime.service
 install_project_unit units/awg-mihomo-stage18-ram-runtime.timer /etc/systemd/system/awg-mihomo-stage18-ram-runtime.timer
+install_project_unit units/awg-mihomo-stage18-ram-runtime.path /etc/systemd/system/awg-mihomo-stage18-ram-runtime.path
 install_project_unit units/awg-traffic.service /etc/systemd/system/awg-traffic.service
 cat >/etc/systemd/system/awg-opencck-update.service <<'EOF'
 [Unit]
@@ -1020,7 +1021,7 @@ systemctl is-active --quiet awg-opencck-update.timer || warn "OpenCCK timer не
 # without initiating any VPN/route change or trying to select a node.
 # Upgrades preserve the existing operator's enabled/disabled policy.
 if (( UPGRADE_EXISTING == 0 )); then
-  for unit in awg-mihomo-pool-refresh.timer awg-mihomo-stage18-ram-runtime.timer awg-mihomo-hot-pool.timer; do
+  for unit in awg-mihomo-pool-refresh.timer awg-mihomo-stage18-ram-runtime.timer awg-mihomo-stage18-ram-runtime.path awg-mihomo-hot-pool.timer; do
     systemctl enable --now "$unit" >/dev/null || die "Не удалось включить $unit"
     systemctl is-active --quiet "$unit" || die "Не запущен обязательный таймер $unit"
   done
