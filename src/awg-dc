@@ -4,13 +4,14 @@
 set -Eeuo pipefail
 umask 077
 DC_PACKAGE='@wonderwhy-er/desktop-commander@0.2.52'
+DC_NODE_PACKAGE='node@22'
 UNIT_PREFIX='awg-dc-remote@'
 fail(){ printf 'AWG_DC_ERROR=%s\n' "$1" >&2; exit 2; }
 usage(){
   cat <<'HELP'
 Usage:
   awg-dc doctor [USER]       Read-only runtime/pairing/service diagnosis
-  sudo awg-dc prepare USER   Debian Node.js/npm + official DC agent prefetch
+  sudo awg-dc prepare USER   Bootstrap isolated Node.js 22 + DC agent in user npm cache
   awg-dc pair                Interactive device authorization, never as root
   sudo awg-dc enable USER    Enable per-user service AFTER pairing
   sudo awg-dc disable USER   Disable service without deleting authorization
@@ -52,10 +53,11 @@ show_status(){
   local unit="$UNIT_PREFIX$DC_USER.service"
   printf 'AWG_DC_USER=%s\n' "$DC_USER"
   if deps_ok; then
-    printf 'AWG_DC_NODE=%s\n' "$(node --version)"
+    printf 'AWG_DC_SYSTEM_NODE=%s\n' "$(node --version)"
     echo 'AWG_DC_NPM=READY'
+    echo 'AWG_DC_NODE22_STATUS=CHECK_BY_PREPARE_OR_AGENT'
   else
-    echo 'AWG_DC_RUNTIME=MISSING_OR_TOO_OLD'
+    echo 'AWG_DC_BOOTSTRAP=MISSING_NODE18_OR_NPM'
   fi
   if session_ok; then
     echo 'AWG_DC_PAIRING=LOCAL_SESSION_PRESENT'
@@ -93,31 +95,34 @@ case "${1:-}" in
       apt-get update -qq || fail APT_UPDATE_FAILED
       apt-get install -y --no-install-recommends nodejs npm ca-certificates || fail APT_INSTALL_FAILED
     fi
-    deps_ok || fail NODE18_NPM_NOT_READY
-    echo "AWG_DC_NODE=$(node --version)"
+    deps_ok || fail BOOTSTRAP_NODE18_NPM_NOT_READY
+    echo "AWG_DC_SYSTEM_NODE=$(node --version)"
     echo 'AWG_DC_AGENT_PACKAGE=PREFETCH_START'
-    # Official CLI is run under ordinary user permissions. Never as root.
+    # Debian 13 may provide Node.js 20: that can bootstrap npm, but remote DC
+    # REQUIRES the global WebSocket supplied by Node.js 22+. Keep it in the
+    # ordinary user's npm cache so AWG/Stage18/system Node stay untouched.
     runuser -u "$DC_USER" -- env \
       HOME="$DC_HOME" XDG_CACHE_HOME="$DC_HOME/.cache" \
       npm_config_yes=true \
-      npx --yes "$DC_PACKAGE" remote --help >/dev/null ||
-      fail PACKAGE_PREFETCH_FAILED
-    echo 'AWG_DC_AGENT_PACKAGE=PREFETCHED'
+      npm exec --yes --package="$DC_NODE_PACKAGE" --package="$DC_PACKAGE" -- \
+      sh -c 'node -e '\''if (+process.versions.node.split(".")[0] < 22 || typeof WebSocket !== "function") process.exit(2)'\'' && desktop-commander remote --help' >/dev/null ||
+      fail NODE22_WEBSOCKET_OR_AGENT_PREFETCH_FAILED
+    echo 'AWG_DC_AGENT_PACKAGE=PREFETCHED_NODE22_WEBSOCKET_OK'
     echo 'AWG_DC_PAIRING=REQUIRES_USER_ACTION'
     echo 'AWG_DC_AUTOSTART=NOT_CHANGED'
     ;;
   pair)
     (( EUID != 0 )) || fail PAIR_AS_NONROOT_USER
     validate_user "$(id -un)"
-    deps_ok || fail NODE18_NPM_NOT_READY
+    deps_ok || fail BOOTSTRAP_NODE18_NPM_NOT_READY
     echo 'AWG_DC_PAIRING=INTERACTIVE_OAUTH'
     echo 'AWG_DC_NOTICE=VERIFY_BROWSER_DEVICE_CODE_THEN_STOP_WITH_CTRL_C'
-    exec npx --yes "$DC_PACKAGE" remote
+    exec npm exec --yes --package="$DC_NODE_PACKAGE" --package="$DC_PACKAGE" -- desktop-commander remote
     ;;
   enable)
     require_root
     validate_user "${2:-}"
-    deps_ok || fail NODE18_NPM_NOT_READY
+    deps_ok || fail BOOTSTRAP_NODE18_NPM_NOT_READY
     session_ok || fail PAIRING_REQUIRED_OR_UNSAFE_SESSION_PERMISSIONS
     systemctl cat "$UNIT_PREFIX$DC_USER.service" >/dev/null 2>&1 || fail AGENT_UNIT_NOT_INSTALLED
     systemctl enable --now "$UNIT_PREFIX$DC_USER.service" >/dev/null || fail SERVICE_START_FAILED
