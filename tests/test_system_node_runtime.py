@@ -51,7 +51,7 @@ class SystemNodeRuntime(unittest.TestCase):
 
     def test_dc_system_node_preferred_and_old_upgrade_fallback(self):
         self.assertIn('system_node_ok(){', DC)
-        self.assertIn('if system_node_ok; then\n    exec npx --yes "$DC_PACKAGE" remote', DC)
+        self.assertIn('if system_node_ok; then\n    exec npx "${npm_args[@]}" "$DC_PACKAGE" remote', DC)
         self.assertIn('exec npm exec --yes --package="$DC_NODE_PACKAGE"', DC)
         self.assertIn('ExecStart=/usr/local/bin/awg-dc agent', DC_SERVICE)
         self.assertIn('User=%i', DC_SERVICE)
