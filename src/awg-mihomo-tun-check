@@ -1,0 +1,40 @@
+#!/usr/bin/env bash
+# Read-only, on-demand selected-node TUN acceptance. Does not prove LAN forwarding.
+# Proxy/API health alone does not validate numeric-IP HTTPS through mihomo0.
+set -Eeuo pipefail
+[[ $# == 0 ]] || { echo 'Usage: awg-mihomo-tun-check' >&2; exit 2; }
+if (( EUID != 0 )); then
+  echo 'MIHOMO_TUN_CHECK=ROOT_REQUIRED'
+  exit 2
+fi
+NODE_FILE="${MIHOMO_TUN_NODE_FILE:-/etc/awg-pbr/transports/mihomo/node-name}"
+TRANSPORT_FILE="${MIHOMO_TUN_TRANSPORT_FILE:-/etc/awg-pbr/transport}"
+POSTCHECK="${MIHOMO_TUN_POSTCHECK_BIN:-/usr/local/sbin/awg-mihomo-ready-postcheck-tun}"
+if [[ "$(cat "$TRANSPORT_FILE" 2>/dev/null || true)" != mihomo ]]; then
+  echo 'MIHOMO_TUN_CHECK=NOT_ACTIVE'
+  exit 2
+fi
+node="$(cat "$NODE_FILE" 2>/dev/null || true)"
+if [[ ! "$node" =~ ^[a-zA-Z0-9_.-]{1,128}$ ]]; then
+  echo 'MIHOMO_TUN_CHECK=NODE_NOT_CONFIGURED'
+  exit 2
+fi
+if [[ ! -x "$POSTCHECK" ]]; then
+  echo 'MIHOMO_TUN_CHECK=POSTCHECK_MISSING'
+  exit 2
+fi
+# Existing postcheck waits for route readiness, checks actual TUN HTTPS,
+# and refuses to accept a changed selected node.
+rc=0
+result="$(timeout --signal=TERM --kill-after=5s 100s "$POSTCHECK" "$node" 2>/dev/null)" || rc=$?
+if (( rc == 0 )) && grep -Fxq 'READY_TUN_CHECK=PASS' <<<"$result"; then
+  echo 'MIHOMO_TUN_CHECK=PASS'
+  echo 'MIHOMO_TUN_SCOPE=PI_BOUND_TUN_NOT_LAN_CLIENT'
+  exit 0
+fi
+reason="$(sed -nE 's/^READY_TUN_CHECK=([A-Z0-9_]{1,64})$/\1/p' <<<"$result" | tail -1)"
+[[ -n "$reason" ]] || reason=POSTCHECK_UNAVAILABLE
+echo 'MIHOMO_TUN_CHECK=NOT_CONFIRMED'
+echo "MIHOMO_TUN_REASON=$reason"
+echo 'MIHOMO_TUN_SCOPE=PI_BOUND_TUN_NOT_LAN_CLIENT'
+exit 1
