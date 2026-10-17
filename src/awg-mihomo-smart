@@ -550,6 +550,7 @@ def service_scan(args):
                     print('SERVICE_CHECK_CHATGPT_WEB=UNKNOWN')
                     print('SERVICE_CHECK_YOUTUBE_VIDEO=UNKNOWN')
                     print('SERVICE_REASON_CHATGPT_WEB=ip_connect_unverified')
+                    print('SERVICE_REASON_YOUTUBE_VIDEO=not_run_ip_connect')
                     return 1
                 result = assess_services_with_stage18(
                     gate, mixed, force_media=True)
@@ -568,6 +569,8 @@ def service_scan(args):
     # A stable, non-sensitive reason distinguishes reachable Cloudflare
     # challenge from a timeout. UNKNOWN is NOT relabelled a browser PASS.
     print("SERVICE_REASON_CHATGPT_WEB=" + result["checks"]["chatgpt_web"]["reason"])
+    # Decoder returns bounded reason tokens, never raw yt-dlp stderr or signed URLs.
+    print("SERVICE_REASON_YOUTUBE_VIDEO=" + result["checks"]["youtube_video"]["reason"])
     return 0 if result["status"] == "PASS" else 1
 
 
