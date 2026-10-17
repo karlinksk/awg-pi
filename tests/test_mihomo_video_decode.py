@@ -2,6 +2,7 @@
 """Regression for Stage18 24-frame decoder integration, no real network."""
 import importlib.machinery
 import importlib.util
+import inspect
 import json
 import os
 from pathlib import Path
@@ -173,6 +174,26 @@ class VideoStage18(unittest.TestCase):
         result=smart.assess_services_with_stage18(gate,17891,video_module=video)
         self.assertEqual(result["checks"]["youtube_video"]["state"],"UNKNOWN")
         self.assertEqual(result["status"],"UNKNOWN")
+
+    def test_force_media_unknown_web_reports_decoder_reason(self):
+        gate=self.gate(api="PASS",web="UNKNOWN")
+        video=types.SimpleNamespace(decode_24_frames=lambda port:(
+            "UNKNOWN","stage18_ytdlp_network_error"))
+        out=smart.assess_services_with_stage18(
+            gate,17891,force_media=True,video_module=video)
+        self.assertEqual(out["checks"]["youtube_video"], {
+            "state":"UNKNOWN","reason":"stage18_ytdlp_network_error"})
+        self.assertEqual(out["status"],"UNKNOWN")
+
+    def test_smart_service_scan_prints_bounded_video_reason(self):
+        source=inspect.getsource(smart.service_scan)
+        self.assertIn(
+            'print("SERVICE_REASON_YOUTUBE_VIDEO=" + result["checks"]["youtube_video"]["reason"])',
+            source)
+        self.assertIn(
+            "print('SERVICE_REASON_YOUTUBE_VIDEO=not_run_ip_connect')",
+            source)
+        self.assertEqual(source.count('assess_services_with_stage18('), 1)
 
     def test_stage18_does_not_call_legacy_youtube_http_probe(self):
         called=[]
