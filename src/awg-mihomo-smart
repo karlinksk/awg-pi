@@ -540,6 +540,10 @@ def service_scan(args):
                 # Reject broken numeric-IP CONNECT *before* costly video decode.
                 ip_state, ip_reason = ip_connect_shadow_probe(mixed)
                 require_shadow_safe(matched[0], raw)
+                # The bounded verifier returns only allow-listed reason codes.
+                # Preserve the exact failure reason for diagnosis, never raw stderr.
+                print('SERVICE_IP_CONNECT_STATE=' + ip_state)
+                print('SERVICE_IP_CONNECT_REASON=' + ip_reason, flush=True)
                 if ip_state != 'PASS':
                     print('SERVICE_ELIGIBILITY=UNKNOWN')
                     print('SERVICE_CHECK_OPENAI_API=UNKNOWN')
