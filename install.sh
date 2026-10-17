@@ -98,17 +98,28 @@ ask(){
 confirm_yes(){
   local v="$1"
   v="$(printf '%s' "$v" | tr -d '\\015' | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
+  # Cyrillic у is easily confused with Latin y on Russian SSH terminals.
   case "$v" in
-    Y|y|YES|Yes|yes|Д|д|ДА|Да|да) return 0 ;;
+    Y|y|YES|Yes|yes|У|у|Д|д|ДА|Да|да) return 0 ;;
     *) return 1 ;;
   esac
 }
 confirm(){
-  local p="$1" d="${2:-N}" v s
+  local p="$1" d="${2:-N}" v s attempt
   [[ "$d" =~ ^[YyДд]$ ]] && s="Y/n" || s="y/N"
-  read -r -p "$p [$s]: " v <"$TTY"
-  v="${v:-$d}"
-  confirm_yes "$v"
+  for attempt in 1 2 3; do
+    # Read directly from /dev/tty; never expose entered text in logs.
+    IFS= read -r -p "$p [$s]: " v <"$TTY" || return 1
+    v="${v:-$d}"
+    if confirm_yes "$v"; then
+      return 0
+    fi
+    case "$v" in
+      N|n|NO|No|no|Н|н|НЕТ|Нет|нет) return 1 ;;
+    esac
+    printf 'Ответ не распознан. Используйте y/у/да или n/нет.\n' >"$TTY"
+  done
+  return 1
 }
 valid_ipv4(){
   local IFS=. a b c d
