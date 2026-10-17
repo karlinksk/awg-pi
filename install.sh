@@ -1124,11 +1124,18 @@ elif (( ACTIVATE_TRANSIT_AFTER_INSTALL == 1 )); then
 fi
 
 # -----------------------------------------------------------------------------
-# Optional Remote Desktop Commander prerequisites. Never auto-pair or expose
-# device credentials. A package install problem must NOT roll back the gateway.
-# On existing hosts, preserve any already-paired agent and systemd enablement.
-# Invocation: sudo env AWG_DC_PREPARE=1 AWG_DC_USER=gatewayuser bash install.sh
-# After installation, owner must run: awg-dc pair ; sudo awg-dc enable USER
+# Optional Remote Desktop Commander: installed as a non-root, boot-persistent
+# systemd service, independent of SSH sessions, gateway routing and SSTP.
+# NEVER silently enable remote administration before the owner authorized
+# their device and explicitly opted in to persistent remote access.
+#
+# Fresh install, then one-time authorization:
+# sudo env AWG_DC_PREPARE=1 AWG_DC_USER=karlinks bash install.sh
+# awg-dc pair (ordinary user) ; sudo awg-dc enable karlinks
+#
+# Reinstall with already-restored owner-only DC session:
+# sudo env AWG_DC_PREPARE=1 AWG_DC_AUTOSTART=1 AWG_DC_USER=karlinks bash install.sh
+# Existing upgrades preserve the enabled/disabled service state by default.
 # -----------------------------------------------------------------------------
 case "${AWG_DC_PREPARE:-0}" in
   0) : ;;
@@ -1137,12 +1144,28 @@ case "${AWG_DC_PREPARE:-0}" in
     if [[ -z "$_dc_user" || "$_dc_user" == root ]]; then
       warn "DC runtime: укажите обычного пользователя через AWG_DC_USER (без активации DC)."
     elif "$DC_CLI" prepare "$_dc_user"; then
-      ok "DC runtime подготовлен для $_dc_user; авторизация и автозапуск отдельно."
+      ok "DC runtime подготовлен для $_dc_user, включая автономный старт из локального npm cache."
     else
       warn "DC runtime не подготовлен; VPN/DNS/SSH не изменены. Повторите: sudo awg-dc prepare USER."
     fi
     ;;
   *) die "AWG_DC_PREPARE должен быть 0 или 1" ;;
+esac
+
+case "${AWG_DC_AUTOSTART:-0}" in
+  0) : ;; # Preserve existing systemd enablement during upgrades.
+  1)
+    _dc_user="${AWG_DC_USER:-${SUDO_USER:-}}"
+    if [[ -z "$_dc_user" || "$_dc_user" == root ]]; then
+      warn "DC autostart: укажите AWG_DC_USER; служба осталась без изменений."
+    elif "$DC_CLI" enable "$_dc_user"; then
+      ok "DC работает независимо от SSH, systemd восстановит его после reboot."
+    else
+      warn "DC autostart не включён: сначала требуется однократная OAuth-авторизация, root-owned systemd unit и кэш агента."
+      warn "После awg-dc pair выполните: sudo awg-dc enable $_dc_user"
+    fi
+    ;;
+  *) die "AWG_DC_AUTOSTART должен быть 0 или 1" ;;
 esac
 
 # -----------------------------------------------------------------------------
@@ -1230,7 +1253,8 @@ printf "  sudo awg-system-node status  # проверка системного N
 printf "  sudo awg-dc doctor USER      # диагностика Remote DC\n"
 printf "  sudo awg-dc prepare USER     # опциональная установка Node/npm/агента\n"
 printf "  awg-dc pair                 # OAuth от обычного пользователя\n"
-printf "  sudo awg-dc enable USER     # автозапуск только после привязки\n"
+printf "  sudo awg-dc enable USER     # постоянно через systemd, без открытого SSH; после OAuth\n"
+printf "  AWG_DC_PREPARE=1 AWG_DC_AUTOSTART=1  # при повторной установке с сохраненной авторизацией\n"
 
 printf "\nПервичная проверка режима:\n"
 if [[ "$FINAL_MODE" == transit ]]; then
