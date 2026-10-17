@@ -8,6 +8,7 @@ Does not assert bare-metal recovery, media-image validity or live rollback.
 import argparse
 import gzip
 import os
+import re
 import zlib
 from pathlib import Path
 import stat
@@ -56,7 +57,23 @@ REQUIRE_NONEMPTY_SUBTREE = (
     "var/lib/awg-pbr/stage18-runtime/",
 )
 
-def evaluate(archive, *, enforce_owner=True):
+def inventory(archive_members, manifest_source, *, live_root=Path("/")):
+    """Compare each currently installed manifest target against the archive."""
+    try:
+        text = Path(manifest_source).read_text()
+        block = re.search(r"local -a backup_targets=\(\n(.*?)\n  \)", text, re.S)
+        if block is None:
+            return [], ["MANIFEST_SOURCE_INVALID"], 0
+        paths = re.findall(r"(?m)^    ((?:etc|usr|var)/[^\s\\]+)\s*\\$", block.group(1))
+        if len(paths) < 70 or len(paths) != len(set(paths)):
+            return [], ["MANIFEST_SOURCE_INVALID"], 0
+        present = [p for p in paths
+                   if (live_root / p).exists() or (live_root / p).is_symlink()]
+        return sorted(set(present) - archive_members), [], len(present)
+    except (OSError, UnicodeError):
+        return [], ["MANIFEST_SOURCE_UNREADABLE"], 0
+
+def evaluate(archive, *, enforce_owner=True, manifest_source=None, live_root=Path("/")):
     archive = Path(archive)
     error = []
     members = set()
@@ -104,16 +121,22 @@ def evaluate(archive, *, enforce_owner=True):
     except (OSError, EOFError, zlib.error, ValueError):
         error.append("ARCHIVE_STREAM_INTEGRITY")
     missing = sorted(REQUIRED - members)
+    inventory_missing, inventory_errors, inventory_total = (
+        inventory(members, manifest_source, live_root=live_root)
+        if manifest_source is not None else ([], [], 0))
+    error.extend(inventory_errors)
     subtrees = [
         prefix.rstrip("/") for prefix in REQUIRE_NONEMPTY_SUBTREE
         if not any(n.startswith(prefix) for n in members)
     ]
     return {"error": sorted(set(error)), "members": len(members),
             "files": files, "bytes": processed_bytes, "missing": missing,
-            "subtrees": subtrees}
+            "subtrees": subtrees, "inventory_missing": inventory_missing,
+            "inventory_total": inventory_total}
 
-def verify(archive, *, enforce_owner=True):
-    results = evaluate(archive, enforce_owner=enforce_owner)
+def verify(archive, *, enforce_owner=True, manifest_source=None, live_root=Path("/")):
+    results = evaluate(archive, enforce_owner=enforce_owner,
+                       manifest_source=manifest_source, live_root=live_root)
     print("BACKUP_ARCHIVE_STREAM=" + ("PASS" if "ARCHIVE_STREAM_INTEGRITY" not in results["error"] else "FAIL"))
     print("BACKUP_MEMBER_COUNT=" + str(results["members"]))
     print("BACKUP_FILE_COUNT=" + str(results["files"]))
@@ -122,10 +145,15 @@ def verify(archive, *, enforce_owner=True):
     print("BACKUP_REQUIRED_MANIFEST=" + ("PASS" if not results["missing"] else "FAIL"))
     print("BACKUP_CACHE_PAYLOAD=" + ("PASS" if not results["subtrees"] else "FAIL"))
     print("BACKUP_SECURITY=" + ("PASS" if not results["error"] else "FAIL"))
+    if manifest_source is not None:
+        print("BACKUP_INSTALLED_MANIFEST=" + ("PASS" if not results["inventory_missing"] and not any("MANIFEST_SOURCE" in x for x in results["error"]) else "FAIL"))
+        print("BACKUP_INSTALLED_TARGETS=" + str(results["inventory_total"]))
     for missing in results["missing"]:
         print("MISSING_REQUIRED_PATH=" + missing)
     for subtree in results["subtrees"]:
         print("MISSING_CACHE_PAYLOAD=" + subtree)
+    for item in results["inventory_missing"]:
+        print("MISSING_INSTALLED_TARGET=" + item)
     for issue in results["error"]:
         print("BACKUP_ERROR=" + issue)
     # The timer enabled/disabled state is saved as a sibling of gateway-state.tgz.
@@ -138,12 +166,14 @@ def verify(archive, *, enforce_owner=True):
     except (OSError, UnicodeError):
         ok = False
     print("BACKUP_HOT_POOL_TIMER_STATE=" + ("PASS" if ok else "FAIL"))
-    passed = not (results["missing"] or results["subtrees"] or results["error"]) and ok
+    passed = not (results["missing"] or results["subtrees"] or results["error"] or results["inventory_missing"]) and ok
     print("BACKUP_COMPLETE_COMPONENT_CHECK=" + ("PASS" if passed else "FAIL"))
     return 0 if passed else 1
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("archive", type=Path, help="Private gateway-state.tgz archive")
+    parser.add_argument("--manifest", type=Path, default=Path("/usr/local/sbin/awg-backup-review"),
+                        help="Root-owned pinned backup helper that generated the archive")
     args = parser.parse_args()
-    sys.exit(verify(args.archive))
+    sys.exit(verify(args.archive, manifest_source=args.manifest))
