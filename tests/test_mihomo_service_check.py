@@ -45,6 +45,21 @@ class ServiceGateTests(unittest.TestCase):
         self.assertEqual(result["status"], "PASS")
         self.assertEqual(result["checks"]["youtube_video"]["reason"], "youtube_video_media_range_header")
 
+    def test_stage18_gate_skips_legacy_youtube_http_request(self):
+        urls = []
+        def request(url, **kwargs):
+            urls.append(url)
+            if url == gate.OPENAI_API:
+                return 401, b'{"error":"missing bearer authentication"}', url
+            if url == gate.CHATGPT_WEB:
+                return 200, b"<html>ChatGPT</html>", url
+            raise AssertionError("YouTube HTTP request must be skipped")
+        result = gate.assess(request, include_youtube=False)
+        self.assertEqual(urls, [gate.OPENAI_API, gate.CHATGPT_WEB])
+        self.assertEqual(result["checks"]["youtube_video"]["reason"],
+                         "stage18_decoder_required")
+        self.assertNotEqual(result["status"], "PASS")
+
     def test_arbitrary_206_body_does_not_count_as_video(self):
         result = gate.assess(cases(media=(206, b"<html>blocked but 206</html>")))
         self.assertEqual(result["status"], "UNKNOWN")
