@@ -40,7 +40,13 @@ for path in awg-mihomo-ready-live-match awg-mihomo-ready-postcheck-tun; do
   n="$(grep -Fc "usr/local/sbin/$path" src/awg-update)"
   [[ "$n" == 2 ]] || { echo "READY_INSTALL_TEST=BACKUP_ROLLBACK_MISMATCH $path $n" >&2; exit 1; }
 done
-must src/awg-update '--ignore-failed-read'
+# The upgrade backup must fail on unreadable critical files rather than hide them.
+if grep -Fq -- '--ignore-failed-read' src/awg-update; then
+  echo "READY_INSTALL_TEST=BACKUP_MUST_FAIL_CLOSED" >&2
+  exit 1
+fi
+must src/awg-update 'GATEWAY_BACKUP_ERROR=ARCHIVE_CREATE_FAILED'
+must src/awg-update 'GATEWAY_BACKUP=VERIFIED'
 must src/awg-update 'tar -C / -xzf "$dir/gateway-state.tgz"'
 
 # No executable is auto-run, and a legacy upgrade never enables READY priority.
