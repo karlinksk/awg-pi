@@ -151,8 +151,12 @@ assert 'Рабочий профиль не меняется до выбора у
 assert 'mktemp /run/awg-pbr/mihomo-paste.XXXXXX' in menu
 assert '"$MIHOMO_CONFIGURE" provider stage-file "$PASTE_TMP" "$source_mode"' in menu
 
-# Manual transport switching exists only in the dedicated VPN-routing menu.
-assert menu.count('"$AWG_TRANSPORT" select mihomo') == 1
+# Manual switching stays in the VPN menu; a clean first-time Mihomo setup
+# may also activate its backend automatically when no transport exists.
+assert menu.count('"$AWG_TRANSPORT" select mihomo') == 2
+assert 'mihomo_candidate_auto_apply(){' in menu
+assert '"$MIHOMO_POOL" best candidate' in menu
+assert 'mihomo_candidate_auto_apply "$behavior"' in menu
 assert menu.count('"$AWG_TRANSPORT" select awg') == 1
 assert 'active_transport_menu' in menu
 assert 'mihomo_active_transport_menu' not in menu
