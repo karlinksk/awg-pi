@@ -743,6 +743,23 @@ install_project_python_helper src/awg-mihomo-ready-live-match "$MIHOMO_READY_GUA
 install_project_helper src/awg-mihomo-ready-postcheck-tun "$MIHOMO_READY_POSTCHECK"
 install_project_helper src/awg-mihomo-node-policy "$MIHOMO_NODE_POLICY_CLI"
 
+# A clean install ships BOTH VPN engines, independently of whether the operator
+# already has a Mihomo subscription or an AmneziaWG profile. The verified,
+# pinned Mihomo engine is installed before the first-transport wizard and does
+# not start any VPN service, modify policy routing, or select a node.
+if (( UPGRADE_EXISTING == 0 )); then
+  STAGE="установка Mihomo engine"
+  "$MIHOMO_INSTALL_SCRIPT" ensure --mode auto || die "Не удалось установить обязательный Mihomo engine"
+  "$MIHOMO_INSTALL_SCRIPT" status || die "Проверка версии Mihomo engine не пройдена"
+  [[ -x /usr/local/bin/mihomo ]] || die "Mihomo engine отсутствует после установки"
+  ok "Mihomo engine установлен заранее; VPN-подписку можно указать позже"
+else
+  # Do not replace a running engine as part of a production upgrade.
+  if ! "$MIHOMO_INSTALL_SCRIPT" status; then
+    warn "Mihomo engine требует отдельного безопасного обновления (активный транспорт не затронут)"
+  fi
+fi
+
 # Hot Pool is SHADOW_ONLY. On a new installation its guarded timer is armed
 # below; its service requires a configured provider and health pool. Existing
 # live shadow deployments are preserved during upgrade. Existing *active* shadow
