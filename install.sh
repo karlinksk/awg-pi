@@ -4,7 +4,7 @@ IFS=$'\n\t'
 
 AWG_PI_VERSION="1.3.0"
 PROJECT_REF="${AWG_PI_REF:-v${AWG_PI_VERSION}}"
-PROJECT_RAW_BASE="https://raw.githubusercontent.com/gatewayuserk/awg-pi/${PROJECT_REF}"
+PROJECT_RAW_BASE="https://raw.githubusercontent.com/karlinksk/awg-pi/${PROJECT_REF}"
 TTY=/dev/tty
 STAGE="preflight"
 
