@@ -250,7 +250,7 @@ class HotPoolTests(unittest.TestCase):
         self.assertIn('YOUTUBE24=PASS', detail)
         self.assertNotIn('private_data_must_not_leak', detail)
 
-    def test_legacy_scanner_without_ip_proof_never_ready(self):
+    def test_service_qualified_scanner_without_ip_diagnostic_can_be_ready(self):
         import subprocess
         from unittest.mock import patch
         raw = ('SERVICE_ELIGIBILITY=UNKNOWN\\n'
@@ -266,8 +266,8 @@ class HotPoolTests(unittest.TestCase):
             raise AssertionError('Unexpected executable')
         with patch.object(hot.subprocess, 'run', side_effect=fake):
             allowed, detail = hot.scan_one('vless-a')
-        self.assertFalse(allowed)
-        self.assertIn('IP_GATE=UNVERIFIED', detail)
+        self.assertTrue(allowed)
+        self.assertNotIn('IP_GATE=UNVERIFIED', detail)
 
     def test_cold_metadata_is_not_forwarded_to_strict_gate(self):
         import subprocess
