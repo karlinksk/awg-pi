@@ -12,7 +12,7 @@ Environment=HOME=/home/%i
 Environment=XDG_CACHE_HOME=/home/%i/.cache
 Environment=PATH=/usr/local/bin:/usr/bin:/bin
 UMask=0077
-ExecStart=/usr/bin/env npx --yes @wonderwhy-er/desktop-commander@latest remote
+ExecStart=/usr/bin/env npx --yes @wonderwhy-er/desktop-commander@0.2.52 remote
 Restart=on-failure
 RestartSec=15s
 TimeoutStopSec=15s
