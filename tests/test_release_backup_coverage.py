@@ -13,6 +13,7 @@ NEW_SCRIPTS = (
     "usr/local/sbin/awg-system-node",
     "usr/local/sbin/awg-mihomo-stage18-ram-runtime",
     "usr/local/sbin/awg-mihomo-tun-check",
+    "usr/local/sbin/awg-mihomo-pool",
     "usr/local/sbin/awg-mihomo-limits.py",
     "usr/local/sbin/awg-mihomo-service-check.py",
     "usr/local/sbin/awg-mihomo-video-decode.py",
@@ -51,6 +52,18 @@ class ReleaseBackupCoverage(unittest.TestCase):
         self.assertIn('== /usr/local/lib/awg-pi/node/*/node', RESTORE)
         self.assertNotIn("rm -f /usr/bin/node", RESTORE)
         self.assertNotIn("rm -rf /usr/local/bin", RESTORE)
+
+    def test_stage18_media_cache_is_saved_and_rollback_removes_stale_cache(self):
+        self.assertIn("var/lib/awg-pbr/stage18-runtime", BACKUP)
+        self.assertIn("rm -rf /var/lib/awg-pbr/stage18-runtime", RESTORE)
+        self.assertIn("var/lib/awg-pbr/hot-pool", BACKUP)
+        self.assertIn("var/lib/awg-pbr/mihomo", BACKUP)
+
+    def test_mihomo_health_pool_cli_backed_up(self):
+        self.assertIn('install_project_python_helper src/awg-mihomo-pool.py "$MIHOMO_POOL_CLI"', INSTALL)
+        self.assertIn('MIHOMO_POOL_CLI="/usr/local/sbin/awg-mihomo-pool"', INSTALL)
+        self.assertIn("usr/local/sbin/awg-mihomo-pool", BACKUP)
+        self.assertIn("/usr/local/sbin/awg-mihomo-pool", RESTORE)
 
     def test_device_secrets_never_backed_up_from_home(self):
         self.assertNotIn(".desktop-commander-device/device.json", UPDATE)
