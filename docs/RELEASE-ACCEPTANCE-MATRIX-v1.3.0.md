@@ -211,3 +211,12 @@ This checklist supplements `docs/TESTING-v1.3.0.md`. Checkboxes below are delibe
 - **J03/J04 PARTIAL:** backup/restore path for user-scoped DC CLI/service, managed Node v22 symlink and binary, Stage18, Mihomo TUN checker and other installed helpers has been extended in `src/awg-update` (commit `a5df21a`). Static manifest comparison found all 16 newly inventoried runtime files/units represented; `tests/test_release_backup_coverage.py` added (commit `0bad3a9`). This does **not** prove an actual backup+rollback or symlink recovery.
 - **A08 BLOCKED:** `awg-upgrade-test` and `awg-upgrade` are both Offline in Desktop Commander as observed when beginning this step. No Pi, MikroTik, SSTP, VPN, DNS, or routing changes made. Reconnect test Pi before live/system-level checks.
 - PR #115 must remain DRAFT. No full case is marked PASS until its acceptance evidence is complete.
+
+## DC persistence implementation — 2026-10-17 (source/cached-runtime checks)
+
+- Non-root **system** service `awg-dc-remote@.service` now uses `Restart=always` (20s backoff), `multi-user.target` and a saved-user-session condition. It runs independently of SSH/linger and does not open inbound ports or touch AWG/Mihomo/MikroTik.
+- The version-pinned agent is prefetched into `karlinks`'s user npm cache and its **offline** launch path was proven from a live user session: `npm exec --offline --yes --package=node@22 --package=@wonderwhy-er/desktop-commander@0.2.52 -- sh -c 'node --version && node -p "typeof WebSocket" && desktop-commander remote --help'` returned Node `v22.23.3`, native WebSocket and valid agent help.
+- Installer opt-in `AWG_DC_PREPARE=1 AWG_DC_AUTOSTART=1 AWG_DC_USER=karlinks` prefetches/checks cache and enables the daemon **only if** that user's previously authorized private `0600` session exists. Upgrades preserve existing service enablement. A first-time OAuth pairing remains interactive/explicit.
+- From **GitHub head `bb3a73331a1a`**, source-only Pi checks: 10/10 DC installer tests + 6/6 Node tests + 6/6 release-backup tests PASS, `bash -n` PASS. `systemd-analyze verify` found the service binary not installed at the system path — expected until the user performs the one-time privileged install; **boot/reconnect tests are PENDING**. The current OS Node stays `v20.19.2` pending the separately controlled system Node migration.
+- Do not mark J07/J08/J09/B13 as PASS until system service is installed, connected without the foreground terminal, verified after reboot and same-instance OAuth reuse confirmed.
+
