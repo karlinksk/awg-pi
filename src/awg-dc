@@ -3,7 +3,7 @@
 # Do not pair a device or start a remotely controllable service without consent.
 set -Eeuo pipefail
 umask 077
-DC_PACKAGE='@wonderwhy-er/desktop-commander@latest'
+DC_PACKAGE='@wonderwhy-er/desktop-commander@0.2.52'
 UNIT_PREFIX='awg-dc-remote@'
 fail(){ printf 'AWG_DC_ERROR=%s\n' "$1" >&2; exit 2; }
 usage(){
