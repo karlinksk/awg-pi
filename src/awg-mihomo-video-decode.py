@@ -76,17 +76,26 @@ def verified_runtime(root: Path = RAM_RUNTIME) -> bool:
     except OSError:
         return False
 
+def ffmpeg_ready(executable: Path = Path("/usr/bin/ffmpeg")) -> bool:
+    """Stage18 is optional; do not silently install heavy multimedia packages."""
+    return (executable.is_file() and not executable.is_symlink()
+            and os.access(executable, os.X_OK))
+
+
 def _limits():
     resource.setrlimit(resource.RLIMIT_FSIZE, (MAX_SAMPLE_BYTES, MAX_SAMPLE_BYTES))
     resource.setrlimit(resource.RLIMIT_CPU, (20, 20))
 
 def decode_24_frames(proxy_port: int, *, root: Path = RAM_RUNTIME,
-                     runner=subprocess.run, check_runtime=verified_runtime) -> tuple[str, str]:
+                     runner=subprocess.run, check_runtime=verified_runtime,
+                     ffmpeg_check=None) -> tuple[str, str]:
     """Return (PASS|UNKNOWN, code). Fail-safe and diagnostic-only."""
     if not isinstance(proxy_port, int) or not 1 <= proxy_port <= 65535:
         return "UNKNOWN", "stage18_invalid_proxy"
     if os.geteuid() != 0 or not check_runtime(root):
         return "UNKNOWN", "stage18_verified_ram_runtime_unavailable"
+    if not (ffmpeg_check or ffmpeg_ready)():
+        return "UNKNOWN", "stage18_ffmpeg_unavailable"
     try:
         with tempfile.TemporaryDirectory(prefix="awg-stage18-video-", dir="/dev/shm") as temp:
             output = Path(temp) / "probe.%(ext)s"
