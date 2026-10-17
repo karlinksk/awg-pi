@@ -59,6 +59,11 @@ class ReleaseBackupCoverage(unittest.TestCase):
         self.assertIn("var/lib/awg-pbr/hot-pool", BACKUP)
         self.assertIn("var/lib/awg-pbr/mihomo", BACKUP)
 
+    def test_optional_system_watchdog_is_part_of_rollback_snapshot(self):
+        self.assertIn("etc/systemd/system.conf.d/99-awg-gateway-watchdog.conf", BACKUP)
+        self.assertIn("/etc/systemd/system.conf.d/99-awg-gateway-watchdog.conf", RESTORE)
+        self.assertIn('WATCHDOG_DROPIN="/etc/systemd/system.conf.d/99-awg-gateway-watchdog.conf"', INSTALL)
+
     def test_mihomo_health_pool_cli_backed_up(self):
         self.assertIn('install -m 755 "$_mihomo_pool_tmp" "$MIHOMO_POOL_CLI"', INSTALL)
         self.assertIn('MIHOMO_POOL_CLI="/usr/local/sbin/awg-mihomo-pool"', INSTALL)
