@@ -23,7 +23,7 @@ jobs:
           # intermittently return 403 and block apt-get update. CI does not use it.
           sudo find /etc/apt/sources.list.d -maxdepth 1 -type f -iname '*microsoft*' -delete
           sudo apt-get update
-          sudo apt-get install -y nftables python3-yaml
+          sudo apt-get install -y nftables python3-yaml tzdata
       - name: Bash syntax
         run: |
           bash -n install.sh
@@ -168,6 +168,7 @@ jobs:
           python3 -B tests/test_ready_auto_persistence.py
           python3 -B tests/test_system_node_runtime.py
           python3 -B tests/test_release_backup_coverage.py
+          python3 -B tests/test_installer_timezone.py
 
   awg-v31:
     runs-on: ubuntu-latest
