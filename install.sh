@@ -47,6 +47,7 @@ MIHOMO_READY_GUARD="/usr/local/sbin/awg-mihomo-ready-live-match"
 MIHOMO_READY_POSTCHECK="/usr/local/sbin/awg-mihomo-ready-postcheck-tun"
 MIHOMO_TUN_CHECK="/usr/local/sbin/awg-mihomo-tun-check"
 DC_CLI="/usr/local/bin/awg-dc"
+SYSTEM_NODE_SCRIPT="/usr/local/sbin/awg-system-node"
 DC_UNIT="/etc/systemd/system/awg-dc-remote@.service"
 UPDATE_SCRIPT="/usr/local/sbin/awg-update"
 TRAFFIC_CLI="/usr/local/sbin/awg-traffic"
@@ -745,12 +746,29 @@ install_project_python_helper src/awg-mihomo-video-decode.py /usr/local/sbin/awg
 # Stage18's pinned Node.js and yt-dlp binaries are then automatically prepared
 # in RAM by the guarded timer after a Mihomo subscription is configured.
 install_project_helper scripts/awg-mihomo-stage18-ram-runtime.sh /usr/local/sbin/awg-mihomo-stage18-ram-runtime
+install_project_helper scripts/awg-system-node.sh "$SYSTEM_NODE_SCRIPT"
 # Store the hash-verified decoder toolchain once during clean installation.
 # Each boot copies verified binaries to RAM, even when GitHub is unavailable.
 # This is provisioning only: no proxy, routes or active transport are changed.
 if (( UPGRADE_EXISTING == 0 )); then
   STAGE="установка видеодекодера Stage18"
   /usr/local/sbin/awg-mihomo-stage18-ram-runtime prefetch || die "Не удалось подготовить обязательные Node.js/yt-dlp для проверки YouTube"
+# Fresh Debian 13 ships Node.js 20 (no global WebSocket); DC needs Node 22+.
+# Reuse the exact independently SHA256-verified Stage18 Node.js 22.16 binary.
+# Preserve APT-owned /usr/bin/node, and NEVER replace active system runtime
+# automatically during an upgrade without an explicit operator opt-in.
+if (( UPGRADE_EXISTING == 0 )); then
+  "$SYSTEM_NODE_SCRIPT" apply || die "Не удалось установить проверенный системный Node.js 22.16"
+  ok "Системный Node.js 22.16 (WebSocket): проверен для DC и Stage18"
+elif [[ "${AWG_SYSTEM_NODE_UPGRADE:-0}" == 1 ]]; then
+  "$SYSTEM_NODE_SCRIPT" apply || die "Не удалось безопасно обновить системный Node.js"
+  ok "Системный Node.js 22.16 установлен после явного разрешения обновления"
+elif "$SYSTEM_NODE_SCRIPT" status >/dev/null 2>&1; then
+  ok "Системный Node.js уже соответствует проверенному runtime"
+else
+  warn "Системный Node.js не соответствует эталону 22.16. При upgrade не меняем его автоматически."
+  warn "После проверки совместимости: sudo awg-system-node apply"
+fi
 fi
 install_project_python_helper src/awg-mihomo-service-eligibility.py /usr/local/sbin/awg-mihomo-service-eligibility.py
 install_project_python_helper src/awg-mihomo-network-eligibility.py /usr/local/sbin/awg-mihomo-network-eligibility.py
@@ -937,6 +955,8 @@ bash -n "$MIHOMO_READY_POSTCHECK" || die "READY postcheck: синтаксиче�
 bash -n "$MIHOMO_TUN_CHECK" || die "TUN diagnostic: синтаксическая ошибка"
 [[ -x "$DC_CLI" ]] || die "Не установлен optional DC helper: $DC_CLI"
 bash -n "$DC_CLI" || die "DC helper: синтаксическая ошибка"
+[[ -x "$SYSTEM_NODE_SCRIPT" ]] || die "Не установлен Node.js runtime installer: $SYSTEM_NODE_SCRIPT"
+bash -n "$SYSTEM_NODE_SCRIPT" || die "Node.js runtime installer: синтаксическая ошибка"
 [[ -f "$DC_UNIT" ]] || die "Не установлен optional DC unit template: $DC_UNIT"
 [[ -x "$MIHOMO_POOL_CLI" ]] || die "Не установлен исполняемый компонент: $MIHOMO_POOL_CLI"
 python3 -m py_compile "$MIHOMO_POOL_CLI" || die "Синтаксическая проверка компонента не пройдена: $MIHOMO_POOL_CLI"
@@ -1206,6 +1226,7 @@ printf "  sudo awg-menu\n"
 printf "  sudo awg-update status\n"
 printf "  sudo awg-update gateway\n"
 printf "  sudo awg-update core\n"
+printf "  sudo awg-system-node status  # проверка системного Node.js 22\n"
 printf "  sudo awg-dc doctor USER      # диагностика Remote DC\n"
 printf "  sudo awg-dc prepare USER     # опциональная установка Node/npm/агента\n"
 printf "  awg-dc pair                 # OAuth от обычного пользователя\n"
