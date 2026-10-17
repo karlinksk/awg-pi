@@ -58,14 +58,40 @@ class VideoStage18(unittest.TestCase):
             return CompletedProcess(argv, 1, "", "ERROR: HTTP Error 403: https://SECRET")
         with patch.object(vid.os, "geteuid", return_value=0):
             state, reason = vid.decode_24_frames(
-                17891, runner=runner, check_runtime=lambda root: True)
+                17891, runner=runner, check_runtime=lambda root: True,
+                ffmpeg_check=lambda: True)
         self.assertEqual((state, reason), ("UNKNOWN", "stage18_ytdlp_http_denied"))
         self.assertEqual(len(calls), 1)
+
+    def test_missing_ffmpeg_fails_before_network_or_download(self):
+        def must_not_run(*args, **kwargs):
+            self.fail("Missing FFmpeg must not invoke yt-dlp")
+        with patch.object(vid.os, "geteuid", return_value=0):
+            state, reason = vid.decode_24_frames(
+                17891, runner=must_not_run,
+                check_runtime=lambda root: True,
+                ffmpeg_check=lambda: False)
+        self.assertEqual((state, reason), ("UNKNOWN", "stage18_ffmpeg_unavailable"))
+
+    def test_ffmpeg_presence_requires_executable_regular_file(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            ffmpeg = Path(d) / "ffmpeg"
+            self.assertFalse(vid.ffmpeg_ready(ffmpeg))
+            ffmpeg.write_text("fixture")
+            ffmpeg.chmod(0o600)
+            self.assertFalse(vid.ffmpeg_ready(ffmpeg))
+            ffmpeg.chmod(0o700)
+            self.assertTrue(vid.ffmpeg_ready(ffmpeg))
+            alias = Path(d) / "alias"
+            alias.symlink_to(ffmpeg)
+            self.assertFalse(vid.ffmpeg_ready(alias))
 
     def test_twenty_four_frames_are_pass(self):
         runner,calls=self.mock_subprocess()
         with patch.object(vid.os,"geteuid",return_value=0):
-            state,reason=vid.decode_24_frames(17891,runner=runner,check_runtime=lambda root:True)
+            state,reason=vid.decode_24_frames(17891,runner=runner,check_runtime=lambda root:True,
+                ffmpeg_check=lambda: True)
         self.assertEqual((state,reason),("PASS","youtube_24_video_frames_decoded"))
         self.assertEqual(len(calls),2)
         self.assertIn("--proxy",calls[0])
@@ -77,20 +103,23 @@ class VideoStage18(unittest.TestCase):
     def test_twenty_three_frames_do_not_pass(self):
         runner,_=self.mock_subprocess(frames=23)
         with patch.object(vid.os,"geteuid",return_value=0):
-            result=vid.decode_24_frames(17891,runner=runner,check_runtime=lambda root:True)
+            result=vid.decode_24_frames(17891,runner=runner,check_runtime=lambda root:True,
+                ffmpeg_check=lambda: True)
         self.assertEqual(result[0],"UNKNOWN")
         self.assertEqual(result[1],"stage18_insufficient_frames")
 
     def test_failed_download_does_not_pass(self):
         runner,_=self.mock_subprocess(ok=False)
         with patch.object(vid.os,"geteuid",return_value=0):
-            result=vid.decode_24_frames(17891,runner=runner,check_runtime=lambda root:True)
+            result=vid.decode_24_frames(17891,runner=runner,check_runtime=lambda root:True,
+                ffmpeg_check=lambda: True)
         self.assertEqual(result[1],"stage18_ytdlp_extract_or_download_failed")
 
     def test_oversized_download_does_not_pass(self):
         runner,_=self.mock_subprocess(size=vid.MAX_SAMPLE_BYTES+1500)
         with patch.object(vid.os,"geteuid",return_value=0):
-            result=vid.decode_24_frames(17891,runner=runner,check_runtime=lambda root:True)
+            result=vid.decode_24_frames(17891,runner=runner,check_runtime=lambda root:True,
+                ffmpeg_check=lambda: True)
         self.assertEqual(result[1],"stage18_media_sample_invalid")
 
     def test_insecure_or_missing_runtime_fails_closed(self):
