@@ -510,19 +510,56 @@ exists and directs live search/filter/statistics to the live-node menu.
 
 ### Still required before stable v1.3.0
 
-The multi-transport implementation and real Pi runtime validation are now
-substantially complete, but stable tagging must still wait for the remaining
-release gates that require a separate environment or planned interruption:
+**Important scope correction (2026-10-17):** Sections above include historical
+passing hardware tests from an earlier configured installation. On the **current
+test installation** (`awg-upgrade-test`), AWG has **not yet been connected**
+and the MikroTik Transit forwarding path has **not yet been accepted**.
+Historical AWG/Transit/failover PASS results must **not** be carried over as
+evidence that this installation is ready.
 
-1. one destructive clean install from a fresh Debian image using the current
-   v1.3 head (the first-run logic is regression-tested, but the working Pi was
-   not wiped for this test);
-2. one live non-Citadel provider specifically using the plain VLESS URI or
-   Base64 VLESS adapter path. The public Clash YAML provider validates a
-   non-Citadel native Mihomo source, but does not replace this adapter-specific
-   gate;
-3. a deliberate post-v1.3 reboot/persistence hardware check after scheduling an
-   acceptable gateway interruption.
+The stable release is blocked by **all five** of these gates (plus the
+feature-specific pending Mihomo READY/TUN/LAN checks):
 
-Until those three gates pass, `main` / the latest stable GitHub release should
-remain v1.2.0 and the stable updater target must not move to v1.3.0.
+1. **Current test Pi: configure and accept AWG as a real transport.** Keep the
+   existing Mihomo selection and DIRECT control plane intact; back up before
+   changing `awg0.conf`. Check compatibility and endpoint DIRECT, secure
+   configuration permissions, interface up, fresh handshake, routed external
+   HTTPS and service availability, health classification, service restart and
+   failback. Use an operator-approved profile only. Do not claim AWG standby
+   is configured/healthy merely because its binary or unit is installed.
+2. **Current test Pi: end-to-end MikroTik Transit hardware gate.** After taking a
+   baseline and confirming the SSTP management route, route **one designated**
+   LAN test client through MikroTik -> Pi -> Mihomo and verify the actual client
+   egress, HTTPS to YouTube/ChatGPT, correct DNS behavior, NAT, policy table,
+   DIRECT exemptions and Transit guard. Repeat with active AWG once its
+   handshake/data path is confirmed. Deliberately simulate loss of the active
+   transport: selected Transit traffic must remain FAIL-CLOSED, while
+   SSH/router/SSTP management survives. Restore baseline after each scenario.
+   Do not alter the MikroTik's global routing or disable the priority SSTP
+   management connection during a trial.
+3. **One destructive fresh install** from a clean Debian 13 ARM64 image using
+   the current v1.3 installer head (on a **separate SD/SSD**, retaining the
+   old card read-only). Validate system Node.js 22.16 / native WebSocket,
+   Stage18, optional DC onboarding, AWG/Mihomo, first-run policies, timers and
+   fresh install versus existing-state upgrade/rollback paths. Include
+   normal-user DC remote execution and safe autostart.
+4. **One live non-Citadel provider** using the plain VLESS URI or Base64 VLESS
+   adapter path. The earlier live Clash YAML test does not close this gate.
+5. **Reboot/persistence acceptance** on the newly configured test installation:
+   AWG/Mihomo services, DNS, Selective/Transit mode, standby health, exact
+   selected node, Hot Pool/Stage18 timers, system Node 22, DC pairing and
+   non-root service, policy routes and direct management path must survive.
+   Confirm service and client networking after reboot.
+
+**Additional blockers before shipping `ready-auto` as unattended behavior:**
+active proxy-health must not stand in for actual Pi TUN success, tested
+`mihomo0` numeric-IP HTTPS must be distinguished from real forwarded LAN
+traffic, recovery must wait boundedly for `fwmark 0x100` table 100 after
+Mihomo restarts, and the real node-failover chain must proceed to a **healthy
+AWG standby** when exhausted. Test a safe, independent rollback timer and
+no unrequested auto-return. Both transports should be tested in Selective
+and Transit, with actual LAN clients where each mode requires them.
+
+Until all required current-install hardware gates and CI/upgrade/rollback
+checks pass, keep PR #115 **DRAFT**, and keep `main` / the stable release
+updater target at v1.2.0. No speculative PASS entries.
