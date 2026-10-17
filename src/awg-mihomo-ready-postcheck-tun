@@ -2,6 +2,7 @@
 # Read-only verification of PI-bound mihomo TUN. This does not prove LAN forwarding.
 # Transit health monitoring restores table 100 asynchronously after Mihomo restarts.
 # Wait for that route separately; NEVER treat backend-only "healthy" as TUN proof.
+# Disallow inherited HTTP proxy settings and curlrc: test the actual TUN.
 set -Eeuo pipefail
 [[ $# == 1 && -n "$1" ]] || exit 2
 NODE_FILE="${MIHOMO_READY_NODE_FILE:-/etc/awg-pbr/transports/mihomo/node-name}"
@@ -66,14 +67,14 @@ for (( attempt=1; attempt<=ATTEMPTS; attempt++ )); do
     echo READY_TUN_CHECK=NODE_CHANGED
     exit 1
   fi
-  if ! ip_out="$("$CURL" -4 --interface "$TUN" --connect-timeout 3 --max-time 8 -fsS https://api.ipify.org 2>/dev/null)"; then
+  if ! ip_out="$("$CURL" -q -4 --noproxy '*' --interface "$TUN" --connect-timeout 3 --max-time 8 -fsS https://api.ipify.org 2>/dev/null)"; then
     reason=EGRESS_FAILED
   elif ! is_valid_public_ipv4 "$ip_out"; then
     reason=EGRESS_INVALID
   elif ! same_node "$1"; then
     echo READY_TUN_CHECK=NODE_CHANGED
     exit 1
-  elif ! code="$("$CURL" -4 --interface "$TUN" --connect-timeout 3 --max-time 8 -sS -o /dev/null -w '%{http_code}' https://api.openai.com/v1/models 2>/dev/null)"; then
+  elif ! code="$("$CURL" -q -4 --noproxy '*' --interface "$TUN" --connect-timeout 3 --max-time 8 -sS -o /dev/null -w '%{http_code}' https://api.openai.com/v1/models 2>/dev/null)"; then
     reason=OPENAI_NETWORK_FAILED
   elif [[ "$code" != 401 ]]; then
     reason=OPENAI_NOT_QUALIFIED
