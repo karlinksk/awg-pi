@@ -40,6 +40,7 @@ class RuntimeBootSafety(unittest.TestCase):
         self.assertIn("ffmpeg xz-utils",s)
         self.assertIn('for media_bin in /usr/bin/ffmpeg /usr/bin/ffprobe /usr/bin/xz',s)
         self.assertIn("install_project_helper scripts/awg-mihomo-stage18-ram-runtime.sh",s)
+        self.assertIn("/usr/local/sbin/awg-mihomo-stage18-ram-runtime prefetch",s)
         self.assertIn("install_project_unit units/awg-mihomo-stage18-ram-runtime.service",s)
         self.assertIn("install_project_unit units/awg-mihomo-stage18-ram-runtime.timer",s)
         self.assertIn("if (( UPGRADE_EXISTING == 0 )); then",s)
@@ -55,6 +56,15 @@ class RuntimeBootSafety(unittest.TestCase):
         self.assertIn("TAR_SHA=eab80cb88f8fda1",s)
         self.assertIn('R=/dev/shm/awg-stage18-service-runtime',s)
         self.assertIn("sha256sum -c --status",s)
+
+    def test_verified_persistent_cache_restores_ram_without_network(self):
+        s=BOOT.read_text()
+        self.assertIn("CACHE=/var/lib/awg-pbr/stage18-runtime",s)
+        self.assertIn('if [[ "$MODE" == prefetch ]]; then',s)
+        self.assertIn('copy_verified "$CACHE/node" "$R/node" "$NODE_SHA"',s)
+        self.assertIn('copy_verified "$CACHE/yt-dlp" "$R/yt-dlp" "$YT_SHA"',s)
+        self.assertIn('secure_dir "$CACHE" 1',s)
+        self.assertIn('STAGE18_CACHE_VERIFIED=YES',s)
 
     def test_download_is_once_per_missing_pin(self):
         s=BOOT.read_text()
