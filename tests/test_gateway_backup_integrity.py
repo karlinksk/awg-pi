@@ -24,6 +24,9 @@ MOCK_BACKUP = (
     .replace('tar -C / -czf', 'tar -C "$MOCK_ROOT" -czf')
     .replace('install -d -o root -g root -m 0700',
              'install -d -m 0700')
+    .replace('[[ ! -e "/$target" ]]', '[[ ! -e "$MOCK_ROOT/$target" ]]')
+    .replace('[[ -e "/$target" || -L "/$target" ]]',
+             '[[ -e "$MOCK_ROOT/$target" || -L "$MOCK_ROOT/$target" ]]')
 )
 MOCK_FUNCTIONS = r"""
 systemctl(){ printf 'disabled\n'; return 1; }
