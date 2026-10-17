@@ -276,9 +276,20 @@ def shortlist(nodes: list[dict], state: dict, current: str,
     """
     if now is None:
         now = int(time.time())
-    active_endpoints = {endpoint(n) for n in nodes if n['name'] == current}
+    # Block the entire active server, including aliases on different ports.
+    # The live endpoint file is authoritative even if the selected node was
+    # removed from a refreshed healthy pool.
+    active_hosts = {str(n['server']).strip().casefold()
+                    for n in nodes if n['name'] == current}
+    try:
+        if Path('/etc/awg-pbr/transport').read_text().strip() == 'mihomo':
+            active_ip = Path('/etc/awg-pbr/transports/mihomo/endpoint-ip').read_text().strip()
+            if literal_public_ipv4(active_ip):
+                active_hosts.add(active_ip.casefold())
+    except OSError:
+        pass  # Scanner still independently fails closed on missing live data.
     candidates = [n for n in nodes if n['name'] != current
-                  and endpoint(n) not in active_endpoints
+                  and str(n['server']).strip().casefold() not in active_hosts
                   and endpoint(n) not in state['quarantine']]
     # Sorting before dedupe means a proven alias wins over an unproven,
     # lower-latency alias sharing the same actual host:port.
