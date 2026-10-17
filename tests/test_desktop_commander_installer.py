@@ -28,6 +28,7 @@ class DesktopCommanderInstaller(unittest.TestCase):
     def test_cli_always_staged_on_fresh_and_upgrade(self):
         install = INSTALL.read_text()
         self.assertIn('DC_CLI="/usr/local/bin/awg-dc"', install)
+        self.assertIn("https://raw.githubusercontent.com/karlinksk/awg-pi/", install)
         self.assertIn('install_project_helper src/awg-dc "$DC_CLI"', install)
         self.assertIn(
             'install_project_unit units/awg-dc-remote@.service "$DC_UNIT"', install
@@ -70,6 +71,15 @@ class DesktopCommanderInstaller(unittest.TestCase):
         self.assertNotIn("ExecStartPre=sudo", unit)
         self.assertNotIn("iptables", unit)
         self.assertNotIn("nft", unit)
+
+    def test_version_pinned_to_avoid_unreviewed_updates(self):
+        source = CLI.read_text()
+        unit = UNIT.read_text()
+        pinned = "@wonderwhy-er/desktop-commander@0.2.52"
+        self.assertIn(pinned, source)
+        self.assertIn(pinned, unit)
+        self.assertNotIn("@latest", source)
+        self.assertNotIn("@latest", unit)
 
     def test_status_is_read_only(self):
         src = CLI.read_text()
