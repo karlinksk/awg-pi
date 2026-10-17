@@ -130,11 +130,18 @@ def load_video_decode_code():
 def assess_services_with_stage18(gate, proxy_port: int, *, force_media=False,
                                  video_module=None) -> dict:
     result = gate.assess(
-        lambda url, **kw: gate.fetch(proxy_port, url, timeout=6, **kw))
+        lambda url, **kw: gate.fetch(proxy_port, url, timeout=6, **kw),
+        include_youtube=False)
     checks = result["checks"]
-    if (checks["youtube_video"]["state"] != "UNKNOWN"
-            or checks["openai_api"]["state"] != "PASS"
+    # Never let an HTTP header or a fixture's stale PASS count as playback.
+    # Stage18 requires an actual 24-frame decode (one video request path).
+    checks["youtube_video"] = {
+        "state": "UNKNOWN", "reason": "stage18_decoder_required"}
+    if (checks["openai_api"]["state"] != "PASS"
             or (checks["chatgpt_web"]["state"] != "PASS" and not force_media)):
+        result["status"] = ("FAIL" if any(
+            checks[k]["state"] == "FAIL" for k in ("openai_api", "chatgpt_web"))
+            else "UNKNOWN")
         return result
     module = video_module if video_module is not None else load_video_decode_code()
     if module is None:
