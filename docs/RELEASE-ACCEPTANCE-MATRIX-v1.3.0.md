@@ -204,3 +204,10 @@ This checklist supplements `docs/TESTING-v1.3.0.md`. Checkboxes below are delibe
 6. Current Pi is in Selective, Mihomo active; its system Node remains Debian 20; AWG is not configured and current-install Transit is not accepted. Historical successes from October 9/16 belong to prior configurations and are useful but not replacement current-install evidence.
 
 **Out of this release scope unless explicitly added to v1.3 installer:** IPTV/Lampa playlist content and monitoring, separately scheduled MikroTik NAS backup job, experimental browser/Stage20 tests, and unrelated VPS procurement. Preserve existing operation; do not attach their unrelated acceptance requirements to the core gateway release.
+
+## Execution log — Step 1, 2026-10-17 (source-only)
+
+- **A03/A04 PARTIAL:** CI candidate now explicitly includes previously omitted 16 Python regression modules and five new Bash syntax-check targets, plus one new backup-coverage module; evidence in `.github/workflows/ci.yml` commits `9e31ba3`, `efc0def`. **CI result on final HEAD has not been observed**, so these are not PASS.
+- **J03/J04 PARTIAL:** backup/restore path for user-scoped DC CLI/service, managed Node v22 symlink and binary, Stage18, Mihomo TUN checker and other installed helpers has been extended in `src/awg-update` (commit `a5df21a`). Static manifest comparison found all 16 newly inventoried runtime files/units represented; `tests/test_release_backup_coverage.py` added (commit `0bad3a9`). This does **not** prove an actual backup+rollback or symlink recovery.
+- **A08 BLOCKED:** `awg-upgrade-test` and `awg-upgrade` are both Offline in Desktop Commander as observed when beginning this step. No Pi, MikroTik, SSTP, VPN, DNS, or routing changes made. Reconnect test Pi before live/system-level checks.
+- PR #115 must remain DRAFT. No full case is marked PASS until its acceptance evidence is complete.
