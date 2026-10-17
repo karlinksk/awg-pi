@@ -44,14 +44,8 @@ version_gt(){
   [[ "$top" == "$a" ]]
 }
 backup_gateway(){
-  local dir="$1"
-  mkdir -p "$dir"
-  chmod 700 "$dir"
-  # Preserve opt-in timer state separately; the tar archive stores only files.
-  systemctl is-enabled awg-mihomo-hot-pool.timer 2>/dev/null >"$dir/hot-pool-timer-state" || true
-  chmod 600 "$dir/hot-pool-timer-state"
-  tar -C / -czf "$dir/gateway-state.tgz" \
-    --ignore-failed-read \
+  local dir="$1" target archive_tmp
+  local -a backup_targets=(
     etc/awg-pbr \
     etc/amnezia/amneziawg \
     etc/dnsmasq.d/99-awg-pbr.conf \
@@ -126,12 +120,45 @@ backup_gateway(){
     usr/local/sbin/awg-mihomo-install \
     usr/local/sbin/awg-mihomo-prepare \
     usr/local/sbin/awg-mihomo-configure \
-    2>/dev/null || true
-  chmod 600 "$dir/gateway-state.tgz"
-  tar -tzf "$dir/gateway-state.tgz" >/dev/null || {
-    echo "Не удалось проверить backup archive" >&2
+  )
+  local -a selected=()
+  local -a required=(etc/awg-pbr usr/local/sbin/awg-route usr/local/sbin/awg-update)
+  umask 077
+  install -d -o root -g root -m 0700 "$dir" || return 1
+  # Never silently certify an incomplete or unreadable gateway snapshot.
+  for target in "${required[@]}"; do
+    if [[ ! -e "/$target" ]]; then
+      echo "GATEWAY_BACKUP_ERROR=REQUIRED_PATH_MISSING" >&2
+      return 1
+    fi
+  done
+  for target in "${backup_targets[@]}"; do
+    if [[ -e "/$target" || -L "/$target" ]]; then
+      selected+=("$target")
+    fi
+  done
+  # Only the backup manifest is dynamic. Files from earlier releases may
+  # legitimately be absent; a present but unreadable file must FAIL the backup.
+  systemctl is-enabled awg-mihomo-hot-pool.timer 2>/dev/null >"$dir/hot-pool-timer-state" || true
+  chmod 600 "$dir/hot-pool-timer-state"
+  archive_tmp="$(mktemp "$dir/.gateway-state.XXXXXXXX")" || return 1
+  if ! tar -C / -czf "$archive_tmp" "${selected[@]}" 2>/dev/null; then
+    rm -f -- "$archive_tmp"
+    echo "GATEWAY_BACKUP_ERROR=ARCHIVE_CREATE_FAILED" >&2
+    return 1
+  fi
+  if ! tar -tzf "$archive_tmp" >/dev/null 2>&1; then
+    rm -f -- "$archive_tmp"
+    echo "GATEWAY_BACKUP_ERROR=ARCHIVE_INTEGRITY_FAILED" >&2
+    return 1
+  fi
+  mv -fT -- "$archive_tmp" "$dir/gateway-state.tgz" || {
+    rm -f -- "$archive_tmp"
+    echo "GATEWAY_BACKUP_ERROR=ARCHIVE_PUBLISH_FAILED" >&2
     return 1
   }
+  chmod 600 "$dir/gateway-state.tgz"
+  echo "GATEWAY_BACKUP=VERIFIED"
 }
 restore_gateway(){
   local dir="$1"
@@ -351,6 +378,18 @@ case "$cmd" in
   status)
     show_status
     ;;
+  backup)
+    umask 077
+    install -d -o root -g root -m 0700 "$BACKUP_ROOT"
+    manual_backup="$(mktemp -d "$BACKUP_ROOT/gateway-manual-$(date +%Y%m%d-%H%M%S)-XXXXXXXX")"
+    if backup_gateway "$manual_backup"; then
+      printf "GATEWAY_BACKUP_ARCHIVE=%s\n" "$manual_backup/gateway-state.tgz"
+      printf "GATEWAY_BACKUP_BYTES=%s\n" "$(stat -c %s "$manual_backup/gateway-state.tgz")"
+    else
+      rm -rf -- "$manual_backup"
+      exit 1
+    fi
+    ;;
   gateway)
     gateway_update
     ;;
@@ -387,7 +426,7 @@ case "$cmd" in
     esac
     ;;
   *)
-    echo "Использование: awg-update [--yes] {status|gateway|core|mihomo|all}" >&2
+    echo "Использование: awg-update [--yes] {status|backup|gateway|core|mihomo|all}" >&2
     exit 2
     ;;
 esac
