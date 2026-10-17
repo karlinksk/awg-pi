@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Opt-in reboot-safe RAM runtime: no implicit production enablement."""
+"""Reboot-safe Stage18 runtime bootstrap, automatically provisioned with Mihomo."""
 from pathlib import Path
 import re
 import unittest
@@ -11,11 +11,11 @@ BOOT=ROOT/"scripts/awg-mihomo-stage18-ram-runtime.sh"
 INSTALL=ROOT/"install.sh"
 
 class RuntimeBootSafety(unittest.TestCase):
-    def test_unit_is_conditioned_on_exact_balanced_mode(self):
+    def test_unit_is_conditioned_on_provider_not_balanced_gate(self):
         text=UNIT.read_text()
-        self.assertIn("ExecCondition=/usr/bin/grep -qx balanced",text)
-        self.assertIn("/etc/awg-pbr/transports/mihomo/service-eligibility.mode",text)
         self.assertIn("ConditionPathExists=/var/lib/awg-pbr/mihomo/providers/subscription.yaml",text)
+        self.assertNotIn("ExecCondition=/usr/bin/grep",text)
+        self.assertNotIn("awg-transport",text)
 
     def test_unit_must_be_ram_only(self):
         text=UNIT.read_text()
@@ -32,15 +32,20 @@ class RuntimeBootSafety(unittest.TestCase):
     def test_timer_not_persistent_or_high_frequency(self):
         text=TIMER.read_text()
         self.assertIn("OnBootSec=2min",text)
-        self.assertIn("OnUnitInactiveSec=1h",text)
+        self.assertIn("OnUnitActiveSec=1h",text)
         self.assertIn("Persistent=false",text)
 
-    def test_install_is_passive_and_contains_files(self):
+    def test_install_is_complete_and_guarded(self):
         s=INSTALL.read_text()
+        self.assertIn("ffmpeg xz-utils",s)
+        self.assertIn('for media_bin in /usr/bin/ffmpeg /usr/bin/ffprobe /usr/bin/xz',s)
         self.assertIn("install_project_helper scripts/awg-mihomo-stage18-ram-runtime.sh",s)
         self.assertIn("install_project_unit units/awg-mihomo-stage18-ram-runtime.service",s)
         self.assertIn("install_project_unit units/awg-mihomo-stage18-ram-runtime.timer",s)
-        self.assertNotRegex(s,r"systemctl\s+(?:enable|start|restart|enable\s+--now|start\s+--now)\s+awg-mihomo-stage18-ram-runtime.timer")
+        self.assertIn("if (( UPGRADE_EXISTING == 0 )); then",s)
+        self.assertIn("for unit in awg-mihomo-pool-refresh.timer awg-mihomo-stage18-ram-runtime.timer awg-mihomo-hot-pool.timer",s)
+        self.assertIn('systemctl enable --now "$unit"',s)
+        self.assertNotIn("Stage18 video decode unavailable: FFmpeg missing",s)
 
     def test_script_enforces_exact_production_pins(self):
         s=BOOT.read_text()
