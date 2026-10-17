@@ -1,7 +1,9 @@
 [Unit]
 Description=AWG Pi Gateway Mihomo continuity-aware service reserve (shadow only)
-Wants=network-online.target
-After=network-online.target awg-mihomo-pool-refresh.service
+Wants=network-online.target awg-mihomo-stage18-ram-runtime.service
+# The Stage18 verifier must finish (including RAM restoration) before Hot Pool
+# can service-qualify YouTube; no live routing or tunnel is touched.
+After=network-online.target awg-mihomo-pool-refresh.service awg-mihomo-stage18-ram-runtime.service
 ConditionPathExists=/var/lib/awg-pbr/mihomo/providers/subscription.yaml
 ConditionPathExists=/run/awg-pbr/mihomo-pool/live.json
 
