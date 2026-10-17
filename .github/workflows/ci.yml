@@ -76,6 +76,7 @@ jobs:
           bash -n tests/test-transit-apply.sh
           bash -n tests/test-transit-routing.sh
           bash -n tests/test-health-mode.sh
+          python3 -m py_compile tests/test_health_systemd_recovery.py
           bash -n tests/test-mode-switch.sh
           bash -n tests/test-upgrade-mode.sh
           bash -n tests/test-ready-install-integration.sh
@@ -114,6 +115,7 @@ jobs:
           bash tests/test-transit-apply.sh
           bash tests/test-transit-routing.sh
           bash tests/test-health-mode.sh
+          python3 -B tests/test_health_systemd_recovery.py
           bash tests/test-mode-switch.sh
           bash tests/test-upgrade-mode.sh
           bash tests/test-ready-install-integration.sh
