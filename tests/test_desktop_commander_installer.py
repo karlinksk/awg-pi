@@ -43,7 +43,6 @@ class DesktopCommanderInstaller(unittest.TestCase):
         self.assertIn('case "${AWG_DC_PREPARE:-0}" in', install)
         self.assertIn('"$DC_CLI" prepare "$_dc_user"', install)
         self.assertIn('AWG_DC_USER', install)
-        self.assertIn("Польз", "Польз")
         self.assertNotIn('systemctl enable --now awg-dc-remote@', install)
         self.assertIn('warn "DC runtime не подготовлен;', install)
 
