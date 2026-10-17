@@ -31,7 +31,7 @@ MOCK_BACKUP = (
 MOCK_FUNCTIONS = r"""
 systemctl(){ printf 'disabled\n'; return 1; }
 tar(){
-  if [[ "$MOCK_TAR_FAIL" == 1 && "$1" == -czf ]]; then
+  if [[ "$MOCK_TAR_FAIL" == 1 && "$1" == -C ]]; then
     return 2
   fi
   if [[ "$MOCK_VERIFY_FAIL" == 1 && "$1" == -tzf ]]; then
