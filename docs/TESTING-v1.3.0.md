@@ -32,6 +32,13 @@ Before any RC is installed on hardware, the target commit must pass:
 The installer itself must contain AWG_PI_VERSION="1.3.0", and the release tag
 must match that internal version.
 
+### Fresh install timezone gate
+
+- Fresh Debian 13 ARM64 install defaults to **`Asia/Novosibirsk`** using `timedatectl` and installed `tzdata`; verify `timedatectl show -p Timezone --value` and `date` output.
+- Explicit `AWG_PI_TIMEZONE=Etc/UTC` (or another valid IANA zone) overrides only the fresh-install default. Invalid or absent zones fail clearly, without changing timezone or silently continuing.
+- Existing gateway upgrades preserve their previously selected timezone, including `Asia/Bangkok` or any other zone. The TUI's timezone change function stays available.
+- Automated isolated tests in `tests/test_installer_timezone.py` must pass in CI, plus one real fresh-install system-level check before stable release.
+
 ## 2. Existing v1.2.0 Pi upgrade gate
 
 Target hardware:
