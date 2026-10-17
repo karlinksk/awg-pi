@@ -346,7 +346,26 @@ service_candidate_allowed(){
       # and a NEW actual 24-frame Stage18 video decode for this exact node.
       [[ -x "$MIHOMO_SERVICE_QUICKCHECK_BIN" && -x "$MIHOMO_NETWORK_GATE_BIN" ]] || return 1
       response="$("$MIHOMO_SERVICE_QUICKCHECK_BIN" service-scan --node "$candidate" 2>/dev/null)" || true
-      printf '%s\n' "$response" | "$MIHOMO_NETWORK_GATE_BIN" >/dev/null 2>&1
+      # service-scan also emits safe diagnostic metadata such as
+      # SERVICE_IP_CONNECT_STATE / SERVICE_REASON_YOUTUBE_VIDEO. The strict
+      # network gate accepts EXACTLY five service-evidence fields and rejects
+      # unknown fields. Feed ONLY those five, preserving their original
+      # values and duplicate lines so the gate still rejects malformed input.
+      # Hot Pool scan_one() already follows this same verified contract.
+      local gate_output gate_reason
+      if gate_output="$(printf '%s\n' "$response" | awk -F= '
+        $1 == "SERVICE_ELIGIBILITY" ||
+        $1 == "SERVICE_CHECK_OPENAI_API" ||
+        $1 == "SERVICE_CHECK_CHATGPT_WEB" ||
+        $1 == "SERVICE_CHECK_YOUTUBE_VIDEO" ||
+        $1 == "SERVICE_REASON_CHATGPT_WEB" { print }
+      ' | "$MIHOMO_NETWORK_GATE_BIN" 2>/dev/null)"; then
+        return 0
+      fi
+      gate_reason="$(sed -nE 's/^NETWORK_REASON=([A-Z0-9_]{1,64})$/\1/p' <<<"$gate_output" | head -1)"
+      [[ -n "$gate_reason" ]] || gate_reason=UNKNOWN
+      printf 'READY_AUTO=CANDIDATE_SERVICE_REJECTED REASON=%s\n' "$gate_reason" >&2
+      return 1
       ;;
     require)
       [[ -x "$MIHOMO_SERVICE_GATE_BIN" ]] || return 1
