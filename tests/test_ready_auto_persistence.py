@@ -65,11 +65,15 @@ class ReadyAutoPersistence(unittest.TestCase):
                     text=True, capture_output=True, timeout=5,
                 )
 
+            def read_private() -> str:
+                return subprocess.check_output(
+                    ["sudo", "-n", "cat", str(ready)], text=True, timeout=5)
+
             self.assertIn("MIHOMO_READY_AUTO=disabled", run("ready-auto", "status").stdout)
             enabled = run("ready-auto", "enable")
             self.assertEqual(enabled.returncode, 0, enabled.stderr)
-            self.assertEqual(ready.read_text(), "1\n")
-            self.assertEqual(ready.stat().st_mode & 0o777, 0o600)
+            self.assertEqual(read_private(), "1\n")
+            self.assertIn("600", subprocess.check_output(["sudo", "-n", "stat", "-c", "%a", str(ready)], text=True))
             status = run("status")
             self.assertEqual(status.returncode, 0, status.stderr)
             self.assertIn("Hot Pool READY priority: enabled", status.stdout)
@@ -77,7 +81,7 @@ class ReadyAutoPersistence(unittest.TestCase):
             self.assertIn("Hot Pool READY-priority AUTO", status.stdout)
             disabled = run("ready-auto", "disable")
             self.assertEqual(disabled.returncode, 0, disabled.stderr)
-            self.assertEqual(ready.read_text(), "0\n")
+            self.assertEqual(read_private(), "0\n")
             status = run("status")
             self.assertIn("Hot Pool READY priority: disabled", status.stdout)
             self.assertIn("Service eligibility gate: off", status.stdout)
@@ -87,7 +91,7 @@ class ReadyAutoPersistence(unittest.TestCase):
                           override={"MIHOMO_READY_POSTCHECK_BIN": str(p / "missing")})
             self.assertNotEqual(refused.returncode, 0)
             self.assertIn("READY_AUTO=REJECTED_MISSING_GUARD", refused.stderr)
-            self.assertEqual(ready.read_text(), "0\n")
+            self.assertEqual(read_private(), "0\n")
 
 
 if __name__ == "__main__":
