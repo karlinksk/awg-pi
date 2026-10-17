@@ -3,7 +3,7 @@ HERE=pathlib.Path(__file__).resolve().parent
 SCRIPT=str(HERE/'awg-mihomo-node-policy' if (HERE/'awg-mihomo-node-policy').exists() else HERE.parent/'src/awg-mihomo-node-policy')
 GUARD=str(HERE/'ready_live_match.py' if (HERE/'ready_live_match.py').exists() else HERE.parent/'src/awg-mihomo-ready-live-match')
 class ReadyAutoV2(unittest.TestCase):
- def case(self, ready='1', guard='1', activate='1', post='1', rollback='1', gate='balanced', checker='1',canary='1',post_reason='EGRESS_FAILED'):
+ def case(self, ready='1', guard='1', activate='1', post='1', rollback='1', gate='balanced', checker='1',canary='1',post_reason='EGRESS_FAILED',strict_gate='0',api_state='PASS'):
   with tempfile.TemporaryDirectory(prefix='ready-v2-') as d:
    p=pathlib.Path(d)
    (p/'mode').write_text('auto\n')
@@ -40,9 +40,25 @@ if [[ "$1" == standby && "$POST_OK" != 1 ]]; then echo "READY_TUN_CHECK=$POST_RE
 ''',
     'scan': '''#!/bin/bash
 echo "scan:$*" >> "$LOG"
-[[ "$CHECKER_OK" == 1 ]] && echo PASS
+if [[ "$STRICT_GATE" == 1 ]]; then
+ cat <<EOF
+SERVICE_IP_CONNECT_STATE=PASS
+SERVICE_IP_CONNECT_REASON=ALL_CHECKED_IPV4_HTTPS_OK
+SERVICE_ELIGIBILITY=UNKNOWN
+SERVICE_CHECK_OPENAI_API=$API_STATE
+SERVICE_CHECK_CHATGPT_WEB=UNKNOWN
+SERVICE_CHECK_YOUTUBE_VIDEO=PASS
+SERVICE_REASON_CHATGPT_WEB=chatgpt_web_http_403
+SERVICE_REASON_YOUTUBE_VIDEO=youtube_24_video_frames_decoded
+EOF
+else
+ [[ "$CHECKER_OK" == 1 ]] && echo PASS
+fi
 ''',
     'network': '''#!/bin/bash
+if [[ "$STRICT_GATE" == 1 ]]; then
+ exec /usr/bin/python3 -B "$NETWORK_GATE"
+fi
 cat >/dev/null
 [[ "$CHECKER_OK" == 1 ]]
 '''
@@ -56,7 +72,9 @@ cat >/dev/null
            'MIHOMO_SERVICE_QUICKCHECK_BIN':str(p/'scan'),'MIHOMO_NETWORK_GATE_BIN':str(p/'network'),
            'MIHOMO_READY_AUTO_CANARY':canary,'MIHOMO_SERVICE_GATE_MODE':gate,
            'READY':ready,'GUARD_OK':guard,'ACTIVATE_OK':activate,'POST_OK':post,'POST_REASON':post_reason,
-           'ROLLBACK_OK':rollback,'CHECKER_OK':checker,'LOG':str(p/'events'),'NODE_FILE':str(p/'node')}
+           'ROLLBACK_OK':rollback,'CHECKER_OK':checker,'LOG':str(p/'events'),'NODE_FILE':str(p/'node'),
+           'STRICT_GATE':strict_gate,'API_STATE':api_state,
+           'NETWORK_GATE':str(HERE.parent/'src/awg-mihomo-network-eligibility.py')}
    if canary is None:
     (p/'ready-auto.mode').write_text('1\n')
     params.pop('MIHOMO_READY_AUTO_CANARY')
@@ -68,6 +86,21 @@ cat >/dev/null
    return r,(p/'events').read_text(),(p/'node').read_text().strip()
  def test_ready_first(self):
   r,log,node=self.case();self.assertEqual(r.returncode,0,r.stderr);self.assertEqual(node,'standby');self.assertNotIn('config:node select-auto ordinary',log);self.assertEqual(r.stdout.strip(),'MIHOMO_NODE_FAILOVER=original->standby')
+ def test_real_network_gate_filters_extra_service_diagnostics(self):
+  # A real service scan contains diagnostic lines, rejected by the strict
+  # medium-confidence parser if they are passed without field filtering.
+  r,log,node=self.case(canary=None,gate=None,strict_gate='1')
+  self.assertEqual(r.returncode,0,r.stderr)
+  self.assertEqual(node,'standby')
+  self.assertIn('scan:service-scan --node standby',log)
+  self.assertIn('post:standby',log)
+  self.assertNotIn('READY_AUTO=CANDIDATE_SERVICE_REJECTED',r.stderr)
+ def test_real_network_gate_rejects_missing_openai_api(self):
+  r,log,node=self.case(canary=None,gate=None,strict_gate='1',api_state='UNKNOWN')
+  self.assertNotEqual(r.returncode,0)
+  self.assertEqual(node,'original')
+  self.assertNotIn('config:node select-auto',log)
+  self.assertIn('REASON=OPENAI_API_NOT_CONFIRMED',r.stderr)
  def test_persistent_ready_first_with_balanced_fallback(self):
   r,log,node=self.case(canary=None,gate=None)
   self.assertEqual(r.returncode,0,r.stderr)
