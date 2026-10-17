@@ -34,6 +34,9 @@ POOL_PY = Path('/usr/local/sbin/awg-mihomo-pool')
 POOL_JSON = Path('/run/awg-pbr/mihomo-pool/live.json')
 PROVIDER = Path('/var/lib/awg-pbr/mihomo/providers/subscription.yaml')
 NODE_NAME = Path('/etc/awg-pbr/transports/mihomo/node-name')
+LIVE_TRANSPORT = Path('/etc/awg-pbr/transport')
+LIVE_ENDPOINT = Path('/etc/awg-pbr/transports/mihomo/endpoint-ip')
+LIVE_HEALTH = Path('/run/awg-pbr/health.state')
 STATE_DIR = Path('/run/awg-pbr/mihomo-smart')
 MIHOMO = '/usr/local/bin/mihomo'
 CURL = '/usr/bin/curl'
@@ -150,6 +153,58 @@ def current_name():
         return NODE_NAME.read_text(encoding='utf-8').strip()
     except OSError:
         return ''
+
+
+def shadow_guard_reason(node: dict, provider_nodes: list[dict] | None = None,
+                        *, transport_file: Path = LIVE_TRANSPORT,
+                        node_file: Path = NODE_NAME,
+                        endpoint_file: Path = LIVE_ENDPOINT,
+                        health_file: Path = LIVE_HEALTH) -> str | None:
+    """Reject a Shadow run that could share the active Mihomo server.
+
+    Compare the whole server host, not just credentials or transport port.
+    Fail closed when the live identity or health cannot be verified.
+    """
+    try:
+        transport = transport_file.read_text().strip()
+    except OSError:
+        return 'LIVE_TRANSPORT_UNKNOWN'
+    if transport in ('awg', 'unconfigured'):
+        return None
+    if transport != 'mihomo':
+        return 'LIVE_TRANSPORT_UNKNOWN'
+    try:
+        if health_file.read_text().strip() != 'up':
+            return 'LIVE_NOT_HEALTHY'
+        active = node_file.read_text().strip()
+        selected_endpoint = endpoint_file.read_text().strip().casefold()
+    except OSError:
+        return 'LIVE_IDENTITY_UNKNOWN'
+    if not active or not selected_endpoint:
+        return 'LIVE_IDENTITY_UNKNOWN'
+    if node.get('name') == active:
+        return 'ACTIVE_NODE'
+    candidate_host = str(node.get('server') or '').strip().casefold()
+    if not candidate_host:
+        return 'CANDIDATE_HOST_UNKNOWN'
+    if candidate_host == selected_endpoint:
+        return 'ACTIVE_ENDPOINT'
+    matches = [x for x in (provider_nodes or [])
+               if isinstance(x, dict) and x.get('name') == active]
+    if len(matches) != 1:
+        return 'LIVE_IDENTITY_UNKNOWN'
+    live_host = str(matches[0].get('server') or '').strip().casefold()
+    if not live_host:
+        return 'LIVE_IDENTITY_UNKNOWN'
+    if candidate_host == live_host:
+        return 'ACTIVE_ENDPOINT'
+    return None
+
+
+def require_shadow_safe(node: dict, provider_nodes: list[dict] | None = None) -> None:
+    reason = shadow_guard_reason(node, provider_nodes)
+    if reason:
+        raise RuntimeError('shadow_live_guard_' + reason)
 
 
 def eligible(pool: dict, *, region='all', protocol='all', cooldown=None) -> list[dict]:
@@ -436,10 +491,12 @@ def service_scan(args):
     matched = [item for item in raw if isinstance(item, dict) and item.get("name") == args.node]
     if len(matched) != 1:
         raise RuntimeError("service candidate missing or ambiguous")
+    require_shadow_safe(matched[0], raw)
     verify_candidate_direct(matched[0])
     STATE_DIR.mkdir(mode=0o700, parents=True, exist_ok=True)
     with (STATE_DIR / "lock").open("a+") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        require_shadow_safe(matched[0], raw)
         mixed = helper.choose_free_port()
         controller = helper.choose_free_port()
         while mixed == controller:
@@ -470,10 +527,12 @@ def service_scan(args):
                     time.sleep(0.2)
                 else:
                     raise RuntimeError("isolated service candidate unavailable")
+                require_shadow_safe(matched[0], raw)
                 helper.select_probe(controller, entries[0]["probe_name"])
                 # Candidate eligibility is IP-based in Selective Gateway.
                 # Reject broken numeric-IP CONNECT *before* costly video decode.
                 ip_state, ip_reason = ip_connect_shadow_probe(mixed)
+                require_shadow_safe(matched[0], raw)
                 if ip_state != 'PASS':
                     print('SERVICE_ELIGIBILITY=UNKNOWN')
                     print('SERVICE_CHECK_OPENAI_API=UNKNOWN')
@@ -603,9 +662,14 @@ def shadow_scan(args):
         for item in raw:
             if isinstance(item, dict) and isinstance(item.get('name'), str):
                 by_name[item['name']].append(item)
-        chosen = [n for n in candidates if len(by_name.get(n['name'], [])) == 1]
+        # Exclude active node and aliases before constructing the second Mihomo.
+        chosen = []
+        for n in candidates:
+            matches = by_name.get(n['name'], [])
+            if len(matches) == 1 and shadow_guard_reason(matches[0], raw) is None:
+                chosen.append(n)
         if not chosen:
-            raise RuntimeError('no unambiguous provider names')
+            raise RuntimeError('no safe shadow candidates')
         mixed_port = helper.choose_free_port()
         controller_port = helper.choose_free_port()
         while controller_port == mixed_port:
@@ -655,6 +719,7 @@ def shadow_scan(args):
                          'confirmed':False, 'reason':'', 'score':0.0,
                          'reliability':0.0, 'service_ok':False, 'service_state':'UNKNOWN', 'service_checks':{}}
                     try:
+                        require_shadow_safe(by_name[node['name']][0], raw)
                         helper.select_probe(controller_port, lookup[node['name']]['probe_name'])
                         ok, value, reason = probe_http(
                             mixed_port, DOWN_ENDPOINT.format(args.download_bytes)+'&calib='+str(time.time_ns()),
@@ -665,6 +730,7 @@ def shadow_scan(args):
                         if ok:
                             # The selected probe proxy, NOT the live TUN, must
                             # pass all three checks before a sustained benchmark.
+                            require_shadow_safe(by_name[node['name']][0], raw)
                             service = assess_services_with_stage18(
                                 service_gate, mixed_port)
                             row['service_state'] = service['status']
@@ -680,6 +746,7 @@ def shadow_scan(args):
                 finalists=calibration_finalists(results,current,min(getattr(args,'finalists',LIMITS.SUSTAINED),len(chosen)), rotation=int(time.time() // 28800))
                 for ix,row in enumerate(finalists,1):
                     try:
+                        require_shadow_safe(by_name[row['name']][0], raw)
                         helper.select_probe(controller_port, lookup[row['name']]['probe_name'])
                         ok, value, reason=probe_http(mixed_port,
                             DOWN_ENDPOINT.format(args.sustained_bytes)+'&calib='+str(time.time_ns()),
@@ -706,6 +773,7 @@ def shadow_scan(args):
                 confirmed=calibration_confirmed(results,current,LIMITS.CONFIRMED)
                 for ix,row in enumerate(confirmed,1):
                     try:
+                        require_shadow_safe(by_name[row['name']][0], raw)
                         helper.select_probe(controller_port, lookup[row['name']]['probe_name'])
                         ok, value, reason=probe_http(mixed_port,
                             DOWN_ENDPOINT.format(args.confirm_bytes)+'&calib='+str(time.time_ns()),
