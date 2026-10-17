@@ -972,7 +972,13 @@ fi
 # the monitor remains passive while both backends are unconfigured.
 if (( UPGRADE_EXISTING == 0 )); then
   "$SELECTION_CLI" mode auto mihomo awg >/dev/null || die "Не удалось настроить безопасное автоматическое резервирование"
+  # New clean installs get a persistent, service-qualified READY-first node
+  # selection policy. No node is switched now; the isolated Hot Pool gathers
+  # two independent successful proofs after a subscription is configured.
+  # Rollback remains available through: awg-mihomo-node-policy ready-auto disable
+  "$MIHOMO_NODE_POLICY_CLI" ready-auto enable >/dev/null || die "Не удалось настроить Hot Pool READY-priority AUTO"
   ok "Резервирование транспортов: AUTO Mihomo → AWG (без автоматического возврата ради скорости)"
+  ok "Mihomo AUTO: Hot Pool READY сначала; остальные ноды только после сервисной проверки и postcheck"
 fi
 
 ACTIVE_TRANSPORT="$(cat "$TRANSPORT_FILE" 2>/dev/null || echo unconfigured)"
