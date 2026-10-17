@@ -24,6 +24,10 @@ class EagerMihomoInstaller(unittest.TestCase):
         self.assertIn('"$MIHOMO_INSTALL_SCRIPT" ensure --mode auto', region)
         self.assertNotIn('"$MIHOMO_INSTALL_SCRIPT" ensure --mode auto', region.split('else\n  # Do not replace a running engine')[1])
 
+    def test_fresh_install_enables_conservative_transport_failover(self):
+        self.assertIn('"$SELECTION_CLI" mode auto mihomo awg', INSTALL)
+        self.assertIn('if (( UPGRADE_EXISTING == 0 )); then', INSTALL)
+
     def test_install_is_independent_of_subscription(self):
         start = INSTALL.index('if (( UPGRADE_EXISTING == 0 )); then', INSTALL.index('# A clean install ships BOTH VPN engines'))
         end = INSTALL.index('install_project_python_helper', start)
