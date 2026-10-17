@@ -6,7 +6,9 @@ prints archive content, subscribed node names, keys, URLs or credentials.
 Does not assert bare-metal recovery, media-image validity or live rollback.
 """
 import argparse
+import gzip
 import os
+import zlib
 from pathlib import Path
 import stat
 import sys
@@ -91,6 +93,15 @@ def evaluate(archive, *, enforce_owner=True):
                             processed_bytes += len(block)
         # Reading each file and exhausting the stream validates gzip checksum.
     except (OSError, EOFError, tarfile.TarError, ValueError):
+        error.append("ARCHIVE_STREAM_INTEGRITY")
+    # A tar reader may stop at the two end-of-archive blocks *before* the gzip
+    # trailer. Drain the entire gzip stream to independently verify the CRC32
+    # and uncompressed size; truncated/corrupt archives must fail closed.
+    try:
+        with gzip.open(archive, "rb") as stream:
+            while stream.read(1024 * 1024):
+                pass
+    except (OSError, EOFError, zlib.error, ValueError):
         error.append("ARCHIVE_STREAM_INTEGRITY")
     missing = sorted(REQUIRED - members)
     subtrees = [
