@@ -42,6 +42,19 @@ node_ok(){
 deps_ok(){
   node_ok && command -v npm >/dev/null 2>&1 && command -v npx >/dev/null 2>&1
 }
+system_node_ok(){
+  deps_ok || return 1
+  node -e 'if (+process.versions.node.split(".")[0] < 22 || typeof WebSocket !== "function") process.exit(1)' >/dev/null 2>&1
+}
+run_agent(){
+  # A verified system-wide Node 22+ takes priority. Existing upgrades with
+  # Debian Node 20 retain the isolated node@22 fallback until migration.
+  if system_node_ok; then
+    exec npx --yes "$DC_PACKAGE" remote
+  else
+    exec npm exec --yes --package="$DC_NODE_PACKAGE" --package="$DC_PACKAGE" -- desktop-commander remote
+  fi
+}
 session_ok(){
   local session="$DC_HOME/.desktop-commander-device/device.json" owner mode
   [[ -f "$session" && ! -L "$session" ]] || return 1
@@ -55,7 +68,11 @@ show_status(){
   if deps_ok; then
     printf 'AWG_DC_SYSTEM_NODE=%s\n' "$(node --version)"
     echo 'AWG_DC_NPM=READY'
-    echo 'AWG_DC_NODE22_STATUS=CHECK_BY_PREPARE_OR_AGENT'
+    if system_node_ok; then
+      echo 'AWG_DC_SYSTEM_WEBSOCKET=AVAILABLE'
+    else
+      echo 'AWG_DC_SYSTEM_WEBSOCKET=NOT_AVAILABLE_ISOLATED_FALLBACK_REQUIRED'
+    fi
   else
     echo 'AWG_DC_BOOTSTRAP=MISSING_NODE18_OR_NPM'
   fi
@@ -98,16 +115,20 @@ case "${1:-}" in
     deps_ok || fail BOOTSTRAP_NODE18_NPM_NOT_READY
     echo "AWG_DC_SYSTEM_NODE=$(node --version)"
     echo 'AWG_DC_AGENT_PACKAGE=PREFETCH_START'
-    # Debian 13 may provide Node.js 20: that can bootstrap npm, but remote DC
-    # REQUIRES the global WebSocket supplied by Node.js 22+. Keep it in the
-    # ordinary user's npm cache so AWG/Stage18/system Node stay untouched.
-    runuser -u "$DC_USER" -- env \
-      HOME="$DC_HOME" XDG_CACHE_HOME="$DC_HOME/.cache" \
-      npm_config_yes=true \
-      npm exec --yes --package="$DC_NODE_PACKAGE" --package="$DC_PACKAGE" -- \
-      sh -c 'node -e '\''if (+process.versions.node.split(".")[0] < 22 || typeof WebSocket !== "function") process.exit(2)'\'' && desktop-commander remote --help' >/dev/null ||
-      fail NODE22_WEBSOCKET_OR_AGENT_PREFETCH_FAILED
-    echo 'AWG_DC_AGENT_PACKAGE=PREFETCHED_NODE22_WEBSOCKET_OK'
+    # On fresh installs Node 22.16 is system-wide; the isolated npm node@22
+    # stays only as a fallback for upgrades not yet migrated.
+    if system_node_ok; then
+      runuser -u "$DC_USER" -- env \
+        HOME="$DC_HOME" XDG_CACHE_HOME="$DC_HOME/.cache" npm_config_yes=true \
+        npx --yes "$DC_PACKAGE" remote --help >/dev/null || fail AGENT_PREFETCH_FAILED
+      echo 'AWG_DC_AGENT_PACKAGE=PREFETCHED_SYSTEM_NODE22_WEBSOCKET_OK'
+    else
+      runuser -u "$DC_USER" -- env \
+        HOME="$DC_HOME" XDG_CACHE_HOME="$DC_HOME/.cache" npm_config_yes=true \
+        npm exec --yes --package="$DC_NODE_PACKAGE" --package="$DC_PACKAGE" -- \
+        sh -c 'node -e '\''if (+process.versions.node.split(".")[0] < 22 || typeof WebSocket !== "function") process.exit(2)'\'' && desktop-commander remote --help' >/dev/null || fail NODE22_WEBSOCKET_OR_AGENT_PREFETCH_FAILED
+      echo 'AWG_DC_AGENT_PACKAGE=PREFETCHED_ISOLATED_NODE22_WEBSOCKET_OK'
+    fi
     echo 'AWG_DC_PAIRING=REQUIRES_USER_ACTION'
     echo 'AWG_DC_AUTOSTART=NOT_CHANGED'
     ;;
@@ -117,7 +138,13 @@ case "${1:-}" in
     deps_ok || fail BOOTSTRAP_NODE18_NPM_NOT_READY
     echo 'AWG_DC_PAIRING=INTERACTIVE_OAUTH'
     echo 'AWG_DC_NOTICE=VERIFY_BROWSER_DEVICE_CODE_THEN_STOP_WITH_CTRL_C'
-    exec npm exec --yes --package="$DC_NODE_PACKAGE" --package="$DC_PACKAGE" -- desktop-commander remote
+    run_agent
+    ;;
+  agent)
+    (( EUID != 0 )) || fail AGENT_AS_NONROOT_USER
+    validate_user "$(id -un)"
+    deps_ok || fail BOOTSTRAP_NODE18_NPM_NOT_READY
+    run_agent
     ;;
   enable)
     require_root
