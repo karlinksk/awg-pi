@@ -50,6 +50,8 @@ explicit ref and rollback plan.
 
 Release/hardware gate: [TESTING-v1.3.0.md](docs/TESTING-v1.3.0.md)
 
+Maintenance rule: [Installer-first change policy](docs/INSTALLER-CHANGE-POLICY.md) — every confirmed test-stand fix must be included in the installer/upgrade source, regression tests and documentation before it is considered closed.
+
 Real Raspberry Pi validation now includes live VLESS, Trojan, Hysteria2,
 Shadowsocks and VMess transports, plus all-protocol AUTO failover across protocol
 types. Stable v1.3.0 tagging is still intentionally blocked on the remaining
