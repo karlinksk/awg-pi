@@ -75,14 +75,14 @@ case "$MODE" in
       [[ ! -L "$BIN" && -f "$BIN" && "$(stat -c %u "$BIN")" == 0 ]] || fail UNTRUSTED_RUNTIME_BINARY
     fi
     tmp="$(mktemp "$VERSION_DIR/.node-XXXXXXXX")"
-    trap 'rm -f -- "${tmp:-}" "${newlink:-}"' EXIT
+    # Directory from mktemp is root-owned 0700; no predictable link staging.
+    staging="$(mktemp -d "$RUNTIME_DIR/.node-link-XXXXXXXX")"
+    trap 'rm -f -- "${tmp:-}"; if [[ -n "${staging:-}" ]]; then rm -rf -- "$staging"; fi' EXIT
     install -o root -g root -m 0755 "$SOURCE" "$tmp"
     hash_ok "$tmp" && version_ok "$tmp" || fail STAGED_BINARY_FAILED_VALIDATION
     mv -fT -- "$tmp" "$BIN"
-    newlink="$(mktemp -u /usr/local/bin/.awg-node-link-XXXXXXXX)"
-    [[ ! -e "$newlink" && ! -L "$newlink" ]] || fail LINK_STAGING_CONFLICT
-    ln -s -- "$BIN" "$newlink" || fail LINK_STAGING_FAILED
-    mv -fT -- "$newlink" "$LINK"
+    ln -s -- "$BIN" "$staging/node" || fail LINK_STAGING_FAILED
+    mv -fT -- "$staging/node" "$LINK"
     path_ok || fail POSTINSTALL_VERIFICATION_FAILED
     # Explicit PATH means interactive shell and systemd have the same contract.
     env PATH=/usr/local/bin:/usr/bin:/bin node -e \
