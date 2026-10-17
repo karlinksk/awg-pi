@@ -304,7 +304,7 @@ status(){
         printf 'Automatic Mihomo node switching: Hot Pool READY-priority AUTO\n'
         printf 'Fallback candidates: fresh service scan mandatory\n'
       else
-        printf 'Automatic Mihomo node switching: health-pool AUTO (legacy)\n'
+        printf 'Automatic Mihomo node switching: health-pool AUTO\n'
       fi
       printf 'Automatic trigger: repeated active-Mihomo health failure\n'
       if [[ -x "$MIHOMO_POOL_CLI" ]]; then
@@ -317,7 +317,7 @@ status(){
       ;;
   esac
   printf 'Hot Pool READY priority: %s\n' "$([[ "$MIHOMO_READY_AUTO_CANARY" == 1 ]] && echo enabled || echo disabled)"
-  printf 'Candidate service gate: %s\n' "$MIHOMO_SERVICE_GATE_MODE"
+  printf 'Service eligibility gate: %s\n' "$MIHOMO_SERVICE_GATE_MODE"
   printf 'Country inference from node names: disabled\n'
 }
 
