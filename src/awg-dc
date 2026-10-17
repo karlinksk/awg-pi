@@ -172,10 +172,12 @@ case "${1:-}" in
     validate_user "${2:-}"
     deps_ok || fail BOOTSTRAP_NODE18_NPM_NOT_READY
     session_ok || fail PAIRING_REQUIRED_OR_UNSAFE_SESSION_PERMISSIONS
+    # A one-time installer may have just placed the unit file on disk.
+    # Load the new template before checking it with systemctl cat.
+    systemctl daemon-reload || fail SYSTEMD_RELOAD_FAILED
     systemctl cat "$UNIT_PREFIX$DC_USER.service" >/dev/null 2>&1 || fail AGENT_UNIT_NOT_INSTALLED
     # Non-root SYSTEM service (multi-user.target), not a user-session unit:
     # no open SSH terminal and no loginctl linger are required.
-    systemctl daemon-reload || fail SYSTEMD_RELOAD_FAILED
     systemctl enable --now "$UNIT_PREFIX$DC_USER.service" >/dev/null || fail SERVICE_START_FAILED
     systemctl is-enabled --quiet "$UNIT_PREFIX$DC_USER.service" || fail SERVICE_ENABLE_NOT_PERSISTENT
     systemctl is-active --quiet "$UNIT_PREFIX$DC_USER.service" || fail SERVICE_DID_NOT_START
