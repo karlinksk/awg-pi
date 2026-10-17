@@ -2,6 +2,7 @@
 """Offline read-only IP-CONNECT preflight gate; no network or root required."""
 import importlib.machinery
 import importlib.util
+import inspect
 from pathlib import Path
 import subprocess
 import tempfile
@@ -48,6 +49,22 @@ class IpConnectCandidateGateTests(unittest.TestCase):
                   "IP_CONNECT_SCOPE=LOOPBACK_PROXY\n")
         result, _ = self.run_gate(exitcode=1, stdout=output)
         self.assertEqual(result, ('UNKNOWN', 'TLS_FAILED'))
+
+    def test_scan_reports_validated_ip_connect_reason(self):
+        # The scan must surface the structured verifier result, not stderr
+        # or a provider URL, before returning UNKNOWN.
+        output = ("IP_CONNECT_MODE=PROXY\nIP_CONNECT_STATE=UNKNOWN\n"
+                  "IP_CONNECT_REASON=TLS_FAILED\nIP_CONNECT_CHECKED_IPV4=1\n"
+                  "IP_CONNECT_SCOPE=LOOPBACK_PROXY\n")
+        result, _ = self.run_gate(exitcode=1, stdout=output)
+        self.assertEqual(result, ('UNKNOWN', 'TLS_FAILED'))
+        source = inspect.getsource(smart.service_scan)
+        self.assertIn("print('SERVICE_IP_CONNECT_STATE=' + ip_state)", source)
+        self.assertIn("print('SERVICE_IP_CONNECT_REASON=' + ip_reason", source)
+        self.assertLess(
+            source.index("print('SERVICE_IP_CONNECT_REASON=' + ip_reason"),
+            source.index("if ip_state != 'PASS':")
+        )
 
     def test_domain_only_pass_with_missing_ip_verifier_is_rejected(self):
         result = smart.ip_connect_shadow_probe(17891, probe=Path('/no/such/program'))
