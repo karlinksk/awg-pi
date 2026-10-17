@@ -12,9 +12,9 @@ Environment=HOME=/home/%i
 Environment=XDG_CACHE_HOME=/home/%i/.cache
 Environment=PATH=/usr/local/bin:/usr/bin:/bin
 UMask=0077
-# Force Node.js 22 under this user's npm cache, not Debian's system Node 20.
-# PATH inside npm exec points the agent's #!/usr/bin/env node to Node.js 22.
-ExecStart=/usr/bin/env npm exec --yes --package=node@22 --package=@wonderwhy-er/desktop-commander@0.2.52 -- desktop-commander remote
+# Use verified system-wide Node 22 if installed; otherwise isolated npm Node 22.
+# The wrapper rejects root and does not change gateway network configuration.
+ExecStart=/usr/local/bin/awg-dc agent
 Restart=on-failure
 RestartSec=15s
 TimeoutStopSec=15s
