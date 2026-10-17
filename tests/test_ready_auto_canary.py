@@ -57,10 +57,36 @@ cat >/dev/null
            'MIHOMO_READY_AUTO_CANARY':canary,'MIHOMO_SERVICE_GATE_MODE':gate,
            'READY':ready,'GUARD_OK':guard,'ACTIVATE_OK':activate,'POST_OK':post,'POST_REASON':post_reason,
            'ROLLBACK_OK':rollback,'CHECKER_OK':checker,'LOG':str(p/'events'),'NODE_FILE':str(p/'node')}
+   if canary is None:
+    (p/'ready-auto.mode').write_text('1\n')
+    params.pop('MIHOMO_READY_AUTO_CANARY')
+    params['MIHOMO_READY_AUTO_MODE_FILE']=str(p/'ready-auto.mode')
+   if gate is None:
+    params.pop('MIHOMO_SERVICE_GATE_MODE')
+    params['MIHOMO_SERVICE_GATE_MODE_FILE']=str(p/'absent-service-mode')
    r=subprocess.run(['sudo','-n','env',*(f'{k}={v}' for k,v in params.items()),'bash',SCRIPT,'failover'],text=True,capture_output=True,timeout=7)
    return r,(p/'events').read_text(),(p/'node').read_text().strip()
  def test_ready_first(self):
   r,log,node=self.case();self.assertEqual(r.returncode,0,r.stderr);self.assertEqual(node,'standby');self.assertNotIn('config:node select-auto ordinary',log);self.assertEqual(r.stdout.strip(),'MIHOMO_NODE_FAILOVER=original->standby')
+ def test_persistent_ready_first_with_balanced_fallback(self):
+  r,log,node=self.case(canary=None,gate=None)
+  self.assertEqual(r.returncode,0,r.stderr)
+  self.assertEqual(node,'standby')
+  self.assertIn('hot:',log)
+  self.assertIn('scan:service-scan --node standby',log)
+  self.assertIn('post:standby',log)
+  self.assertNotIn('config:node select-auto ordinary',log)
+ def test_persistent_no_ready_requires_new_service_proof(self):
+  r,log,node=self.case(ready='0',canary=None,gate=None)
+  self.assertEqual(r.returncode,0,r.stderr)
+  self.assertEqual(node,'ordinary')
+  self.assertIn('scan:service-scan --node ordinary',log)
+  self.assertIn('post:ordinary',log)
+ def test_persistent_no_ready_rejects_unverified_candidate(self):
+  r,log,node=self.case(ready='0',checker='0',canary=None,gate=None)
+  self.assertNotEqual(r.returncode,0)
+  self.assertEqual(node,'original')
+  self.assertNotIn('config:node select-auto ordinary',log)
  def test_canary_off_preserves_existing_auto(self):
   r,log,node=self.case(canary='0',gate='off');self.assertEqual(r.returncode,0,r.stderr);self.assertEqual(node,'ordinary');self.assertNotIn('hot:',log);self.assertEqual(r.stdout.strip(),'MIHOMO_NODE_FAILOVER=original->ordinary')
  def test_no_ready_fallback(self):
