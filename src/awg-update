@@ -52,6 +52,7 @@ backup_gateway(){
     etc/dnsmasq.d/99-awg-pbr-domains.conf \
     etc/nftables.d/99-awg-pbr.nft \
     etc/sysctl.d/99-awg-pbr.conf \
+    etc/systemd/system.conf.d/99-awg-gateway-watchdog.conf \
     etc/profile.d/awg-menu.sh \
     etc/systemd/system/awg-pbr-setup.service \
     etc/systemd/system/awg-pbr-health.service \
@@ -250,6 +251,7 @@ restore_gateway(){
     /etc/systemd/system/awg-mihomo-stage18-ram-runtime.timer \
     /etc/systemd/system/awg-mihomo-stage18-ram-runtime.path \
     /etc/systemd/system/awg-dc-remote@.service \
+    /etc/systemd/system.conf.d/99-awg-gateway-watchdog.conf \
     /etc/profile.d/awg-menu.sh
 
   tar -C / -xzf "$dir/gateway-state.tgz"
