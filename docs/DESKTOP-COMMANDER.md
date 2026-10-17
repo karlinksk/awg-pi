@@ -8,7 +8,7 @@ Official setup: https://github.com/wonderwhy-er/DesktopCommanderMCP/blob/main/sr
 
 Versioned in this repository and deployed to fresh installs **and upgrades**:
 
-- `src/awg-dc` → `/usr/local/sbin/awg-dc`: safe onboarding/diagnostics CLI.
+- `src/awg-dc` → `/usr/local/bin/awg-dc`: safe onboarding/diagnostics CLI.
 - `units/awg-dc-remote@.service` → `/etc/systemd/system/awg-dc-remote@.service`: **disabled** systemd template; runs under a normal user, not root.
 - `install.sh` stages both files; it does not pair a device, copy credentials, change network routing, alter SSH, or start DC automatically.
 - With explicit environment variables `AWG_DC_PREPARE=1` and `AWG_DC_USER=<your-Linux-user>` on installation, `awg-dc prepare` installs Debian `nodejs`, `npm`, `ca-certificates` (only if required) and prefetches the officially documented DC agent through `npx`, **as the non-root user**. A preparation failure produces a warning and does not roll back the gateway. The default is `AWG_DC_PREPARE=0`.
