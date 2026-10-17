@@ -1,0 +1,21 @@
+[Unit]
+Description=AWG Pi optional Remote Desktop Commander agent for %i (user-authorized)
+Documentation=https://github.com/wonderwhy-er/DesktopCommanderMCP/blob/main/src/remote-device/README.md
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=%i
+WorkingDirectory=/home/%i
+Environment=HOME=/home/%i
+Environment=XDG_CACHE_HOME=/home/%i/.cache
+Environment=PATH=/usr/local/bin:/usr/bin:/bin
+UMask=0077
+ExecStart=/usr/bin/env npx --yes @wonderwhy-er/desktop-commander@latest remote
+Restart=on-failure
+RestartSec=15s
+TimeoutStopSec=15s
+
+[Install]
+WantedBy=multi-user.target
