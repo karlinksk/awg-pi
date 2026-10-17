@@ -81,6 +81,53 @@ class PackagedSystemdUnitTests(unittest.TestCase):
         self.assertNotIn("awg-transport select", source)
         self.assertNotIn("awg-mihomo-node-policy", source)
 
+    def test_inline_generated_units_are_verified_too(self):
+        # Four services/timers are written as heredocs in install.sh rather
+        # than shipped in units/. Validate the *actual rendered text* in CI.
+        inline = {
+            "awg-pbr-setup.service": "cat >\"$SETUP_SERVICE\" <<'EOF'\n",
+            "awg-pbr-health.service": "cat >\"$HEALTH_SERVICE\" <<'EOF'\n",
+            "awg-opencck-update.service":
+                "cat >/etc/systemd/system/awg-opencck-update.service <<'EOF'\n",
+            "awg-opencck-update.timer":
+                "cat >/etc/systemd/system/awg-opencck-update.timer <<'EOF'\n",
+        }
+        rendered = {}
+        for name, marker in inline.items():
+            self.assertEqual(INSTALLER.count(marker), 1)
+            rendered[name] = INSTALLER.split(marker, 1)[1].split("\nEOF", 1)[0] + "\n"
+            self.assertIn("[Unit]", rendered[name])
+        with tempfile.TemporaryDirectory(prefix="awg-v13-generated-unit-audit-") as d:
+            sandbox = Path(d)
+            target = sandbox / "etc/systemd/system"
+            target.mkdir(parents=True)
+            system_units = Path("/usr/lib/systemd/system")
+            if not system_units.is_dir():
+                system_units = Path("/lib/systemd/system")
+            shutil.copytree(system_units, sandbox / "usr/lib/systemd/system", symlinks=True)
+            for name, body in rendered.items():
+                (target / name).write_text(body)
+                for m in EXEC_RE.finditer(body):
+                    exe = m.group(1)
+                    self.assertIn(exe, INSTALLER, "Generated service binary missing from installer")
+                    stub = sandbox / exe.lstrip("/")
+                    stub.parent.mkdir(parents=True, exist_ok=True)
+                    stub.write_text("#!/bin/sh\nexit 0\n")
+                    stub.chmod(0o755)
+            # AWG's upstream package provides the awg-quick@.service template
+            # on the real Pi; stub only that external dependency for CI.
+            (target / "awg-quick@.service").write_text(
+                "[Unit]\nDescription=AmneziaWG external template\n"
+                "[Service]\nType=oneshot\nExecStart=/bin/true\n"
+            )
+            result = subprocess.run(
+                ["systemd-analyze", "verify", f"--root={sandbox}",
+                 *(str(target / name) for name in rendered)],
+                capture_output=True, text=True, timeout=35,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+            self.assertFalse(result.stderr.strip(), result.stderr)
+
     def test_systemd_verify_all_units_in_private_root(self):
         systemd_analyze = shutil.which("systemd-analyze")
         self.assertIsNotNone(systemd_analyze, "systemd-analyze missing from CI")
