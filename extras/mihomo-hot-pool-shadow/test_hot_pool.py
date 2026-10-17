@@ -29,6 +29,25 @@ class HotPoolTests(unittest.TestCase):
         rows = hot.shortlist(self.nodes, self.state, 'ss-a')
         self.assertEqual([n['name'] for n in rows], ['hy-a', 'vless-a', 'vless-b'])
 
+    def test_live_alias_different_port_not_in_reserve(self):
+        alias = dict(self.nodes[3], name='active-alias', port=8443)
+        nodes = self.nodes + [alias]
+        shortlist = hot.shortlist(nodes, self.state, 'vless-a')
+        self.assertNotIn('active-alias', [n['name'] for n in shortlist])
+        self.assertIn('vless-b', [n['name'] for n in shortlist])
+
+    def test_live_endpoint_excluded_even_if_active_absent_from_pool(self):
+        from unittest.mock import patch
+        with tempfile.TemporaryDirectory() as d:
+            transport, endpoint = Path(d) / 'transport', Path(d) / 'endpoint'
+            transport.write_text('mihomo\\n')
+            endpoint.write_text('1.2.3.4\\n')
+            with patch.object(hot, 'LIVE_TRANSPORT', transport), patch.object(
+                    hot, 'LIVE_ENDPOINT', endpoint):
+                shortlist = hot.shortlist(self.nodes, self.state, 'removed-live-name')
+        self.assertNotIn('vless-a', [n['name'] for n in shortlist])
+        self.assertIn('vless-b', [n['name'] for n in shortlist])
+
     def test_two_passes_temporally_separated(self):
         n = self.nodes[0]
         hot.record_scan(self.state, n, True, self.now)
