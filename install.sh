@@ -4,7 +4,7 @@ IFS=$'\n\t'
 
 AWG_PI_VERSION="1.3.0"
 PROJECT_REF="${AWG_PI_REF:-v${AWG_PI_VERSION}}"
-PROJECT_RAW_BASE="https://raw.githubusercontent.com/karlinksk/awg-pi/${PROJECT_REF}"
+PROJECT_RAW_BASE="https://raw.githubusercontent.com/gatewayuserk/awg-pi/${PROJECT_REF}"
 TTY=/dev/tty
 STAGE="preflight"
 
@@ -1107,7 +1107,7 @@ fi
 # Optional Remote Desktop Commander prerequisites. Never auto-pair or expose
 # device credentials. A package install problem must NOT roll back the gateway.
 # On existing hosts, preserve any already-paired agent and systemd enablement.
-# Invocation: sudo env AWG_DC_PREPARE=1 AWG_DC_USER=karlinks bash install.sh
+# Invocation: sudo env AWG_DC_PREPARE=1 AWG_DC_USER=gatewayuser bash install.sh
 # After installation, owner must run: awg-dc pair ; sudo awg-dc enable USER
 # -----------------------------------------------------------------------------
 case "${AWG_DC_PREPARE:-0}" in
