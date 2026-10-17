@@ -29,7 +29,7 @@ This checklist supplements `docs/TESTING-v1.3.0.md`. Checkboxes below are delibe
 ## B. Fresh installation, provisioning and onboarding (B01–B16)
 
 - [ ] B01. Destructive fresh Debian 13 ARM64 install on separate boot media; retain original SD for verified restoration.
-- [ ] B02. Preflight CPU architecture, Debian version, IPv4 interface/router/static IP/DHCP conflict, connected route and sufficient disk/free RAM; reject unsupported IPv6-default architecture safely.
+- [ ] B02. Preflight CPU architecture, Debian version, IPv4 interface/router/static IP/DHCP conflict, connected route and sufficient disk/free RAM; reject unsupported IPv6-default architecture safely. Confirm **fresh** installer sets `Asia/Novosibirsk` after installing `tzdata`, accepts an explicit alternative IANA timezone, rejects invalid zones, and **upgrades preserve** the existing zone.
 - [ ] B03. Fresh installer builds AWG and installs verified Mihomo engine even when no subscription/profile supplied.
 - [ ] B04. Choose AWG first from existing config file; validate format, file permissions, profile compatibility, endpoint DIRECT, handshake and HTTPS.
 - [ ] B05. Choose AWG first from pasted config; protect entered data and rollback invalid profiles without replacing good ones.
