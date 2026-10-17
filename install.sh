@@ -947,6 +947,15 @@ if (( UPGRADE_EXISTING == 0 )); then
   fi
 fi
 
+# Fresh installs are availability-AUTO from the outset. The selector keeps a
+# healthy active transport sticky, lets Mihomo change nodes first, and falls
+# back to AWG after repeated failures. Neither profile has to be supplied now;
+# the monitor remains passive while both backends are unconfigured.
+if (( UPGRADE_EXISTING == 0 )); then
+  "$SELECTION_CLI" mode auto mihomo awg >/dev/null || die "Не удалось настроить безопасное автоматическое резервирование"
+  ok "Резервирование транспортов: AUTO Mihomo → AWG (без автоматического возврата ради скорости)"
+fi
+
 ACTIVE_TRANSPORT="$(cat "$TRANSPORT_FILE" 2>/dev/null || echo unconfigured)"
 case "$ACTIVE_TRANSPORT" in
   awg)
