@@ -11,7 +11,7 @@ import tempfile
 
 ROOT = Path(__file__).resolve().parent.parent
 SOURCE = (ROOT / "install.sh").read_text(encoding="utf-8")
-start = SOURCE.index('# Hot Pool is packaged passively and is SHADOW_ONLY.')
+start = SOURCE.index('# Hot Pool is SHADOW_ONLY. On a new installation its guarded timer is armed')
 end = SOURCE.index('unset _hot_pool_timer_state', start) + len('unset _hot_pool_timer_state')
 decision = SOURCE[start:end]
 
@@ -55,7 +55,7 @@ def check(state, rc, *, service=False, timer=False, expected_install):
         operations = log.read_text().splitlines() if log.exists() else []
         if expected_install:
             assert operations == ["PYTHON"]*3 + ["BASH"] + ["UNIT"]*2 + ["PRIVATE_DIRECTORY"], (state, operations)
-            assert "SHADOW_ONLY установлен пассивно" in p.stdout
+            assert "Hot Pool continuity SHADOW_ONLY установлен; таймер включается на чистой установке" in p.stdout
         else:
             assert operations == [], (state, operations)
             assert "сохраняем установленную версию" in p.stdout
