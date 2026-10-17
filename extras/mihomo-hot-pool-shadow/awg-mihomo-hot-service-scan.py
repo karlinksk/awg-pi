@@ -286,12 +286,8 @@ def inspect_node(name: str, provider: Path | None = None) -> int:
                 result = smart.assess_services_with_stage18(
                     gate, mixed, force_media=True)
                 smart.require_shadow_safe(matched[0], raw)
-                diagnostic = diagnose_first_fail(result, smart, mixed)
-                if diagnostic is not None:
-                    print('SERVICE_DIAG_AFTER_FIRST_FAIL_24=' + diagnostic[0])
-                    print('SERVICE_DIAG_AFTER_FIRST_FAIL_REASON=' + diagnostic[1],
-                          flush=True)
-                smart.require_shadow_safe(matched[0], raw)
+                # Stage18 already made the sole decoded-video attempt. Never
+                # launch a second diagnostic decode for the same candidate.
                 # Geo is telemetry only. It MUST NOT influence the balanced gate.
                 geo_ip, geo_country, geo_state, geo_reason = isolated_egress(
                     helper, controller, mixed, entries[0])
