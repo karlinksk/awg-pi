@@ -380,9 +380,16 @@ if grep -Eq 'systemctl[[:space:]]+(enable|restart)([[:space:]]+--now)?[[:space:]
   echo 'FAIL: installer enables/restarts the Mihomo transport as an implicit default' >&2
   exit 1
 fi
-grep -Fq 'if [[ -r /var/lib/awg-pbr/mihomo/providers/subscription.yaml ]]; then' "$repo_root/install.sh"
-grep -Fq 'systemctl enable --now awg-mihomo-pool-refresh.timer' "$repo_root/install.sh"
+# v1.3 fresh installation stages provider-guarded scanner timers even when
+# no subscription is supplied. This must NOT activate the Mihomo transport.
+# Existing-upgrade timer enablement is preserved rather than overwritten.
+grep -Fq 'if (( UPGRADE_EXISTING == 0 )); then' "$repo_root/install.sh"
+grep -Fq 'for unit in awg-mihomo-pool-refresh.timer awg-mihomo-stage18-ram-runtime.timer awg-mihomo-stage18-ram-runtime.path awg-mihomo-hot-pool.timer; do' "$repo_root/install.sh"
+grep -Fq 'systemctl enable --now "$unit"' "$repo_root/install.sh"
+grep -Fq 'Существующая политика Mihomo-таймеров сохранена при обновлении' "$repo_root/install.sh"
 grep -Fq 'ACTIVE_TRANSPORT="$(cat "$TRANSPORT_FILE" 2>/dev/null || echo unconfigured)"' "$repo_root/install.sh"
+grep -Fq 'case "$ACTIVE_TRANSPORT" in' "$repo_root/install.sh"
+grep -Fq '[[ "$ACTIVE_TRANSPORT" == mihomo ]]' "$repo_root/install.sh"
 grep -Fq 'systemctl start awg-mihomo.service' "$repo_root/install.sh"
 grep -Fq 'install_project_helper src/awg-mihomo-config' "$repo_root/install.sh"
 grep -Fq 'install_project_unit units/awg-mihomo.service' "$repo_root/install.sh"
