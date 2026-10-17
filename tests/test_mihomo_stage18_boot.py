@@ -7,6 +7,7 @@ import unittest
 ROOT=Path(__file__).resolve().parents[1]
 UNIT=ROOT/"units/awg-mihomo-stage18-ram-runtime.service"
 TIMER=ROOT/"units/awg-mihomo-stage18-ram-runtime.timer"
+PATH_UNIT=ROOT/"units/awg-mihomo-stage18-ram-runtime.path"
 BOOT=ROOT/"scripts/awg-mihomo-stage18-ram-runtime.sh"
 INSTALL=ROOT/"install.sh"
 
@@ -32,8 +33,15 @@ class RuntimeBootSafety(unittest.TestCase):
     def test_timer_not_persistent_or_high_frequency(self):
         text=TIMER.read_text()
         self.assertIn("OnBootSec=2min",text)
+        self.assertIn("OnActiveSec=2min",text)
         self.assertIn("OnUnitActiveSec=1h",text)
         self.assertIn("Persistent=false",text)
+
+    def test_provider_change_triggers_ram_runtime(self):
+        p=PATH_UNIT.read_text()
+        self.assertIn("PathChanged=/var/lib/awg-pbr/mihomo/providers/subscription.yaml",p)
+        self.assertIn("Unit=awg-mihomo-stage18-ram-runtime.service",p)
+        self.assertIn("WantedBy=multi-user.target",p)
 
     def test_install_is_complete_and_guarded(self):
         s=INSTALL.read_text()
@@ -43,8 +51,9 @@ class RuntimeBootSafety(unittest.TestCase):
         self.assertIn("/usr/local/sbin/awg-mihomo-stage18-ram-runtime prefetch",s)
         self.assertIn("install_project_unit units/awg-mihomo-stage18-ram-runtime.service",s)
         self.assertIn("install_project_unit units/awg-mihomo-stage18-ram-runtime.timer",s)
+        self.assertIn("install_project_unit units/awg-mihomo-stage18-ram-runtime.path",s)
         self.assertIn("if (( UPGRADE_EXISTING == 0 )); then",s)
-        self.assertIn("for unit in awg-mihomo-pool-refresh.timer awg-mihomo-stage18-ram-runtime.timer awg-mihomo-hot-pool.timer",s)
+        self.assertIn("for unit in awg-mihomo-pool-refresh.timer awg-mihomo-stage18-ram-runtime.timer awg-mihomo-stage18-ram-runtime.path awg-mihomo-hot-pool.timer",s)
         self.assertIn('systemctl enable --now "$unit"',s)
         self.assertNotIn("Stage18 video decode unavailable: FFmpeg missing",s)
 
