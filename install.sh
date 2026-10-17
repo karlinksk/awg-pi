@@ -283,7 +283,7 @@ apt-get update
 apt-get install -y --no-install-recommends \
   ca-certificates curl git jq build-essential make pkg-config \
   iproute2 iputils-ping iputils-arping dnsutils nftables dnsmasq procps \
-  python3-minimal python3-yaml openssl dialog ffmpeg xz-utils
+  python3-minimal python3-yaml openssl dialog ffmpeg xz-utils tzdata
 
 command -v nft >/dev/null || die "nft не установлен"
 command -v dnsmasq >/dev/null || die "dnsmasq не установлен"
@@ -294,6 +294,35 @@ for media_bin in /usr/bin/ffmpeg /usr/bin/ffprobe /usr/bin/xz; do
 done
 dnsmasq --version | grep -qi nftset || die "Установленный dnsmasq собран без поддержки nftset"
 ok "dnsmasq поддерживает nftset"
+
+# BEGIN_FIRST_INSTALL_TIMEZONE
+# Fresh installations default to the correct Novosibirsk IANA zone, not an
+# arbitrary UTC+7 alias (e.g. Asia/Bangkok). Do not surprise existing
+# installations with a timezone change during an upgrade.
+# The operator can override this on a clean install with AWG_PI_TIMEZONE.
+if (( UPGRADE_EXISTING == 0 )); then
+  STAGE="настройка часового пояса"
+  TARGET_TIMEZONE="${AWG_PI_TIMEZONE:-Asia/Novosibirsk}"
+  [[ "$TARGET_TIMEZONE" =~ ^[A-Za-z0-9_+-]+(/[A-Za-z0-9_+.-]+)*$ &&
+     "$TARGET_TIMEZONE" != *".."* ]] ||
+    die "Недопустимый формат AWG_PI_TIMEZONE: используйте IANA-имя (например, Asia/Novosibirsk)"
+  [[ -r "/usr/share/zoneinfo/$TARGET_TIMEZONE" ]] ||
+    die "Часовой пояс отсутствует в tzdata: $TARGET_TIMEZONE"
+  command -v timedatectl >/dev/null || die "Не найден timedatectl для установки часового пояса"
+  CURRENT_TIMEZONE="$(timedatectl show -p Timezone --value 2>/dev/null)" ||
+    die "Не удалось определить текущий системный часовой пояс"
+  if [[ "$CURRENT_TIMEZONE" != "$TARGET_TIMEZONE" ]]; then
+    timedatectl set-timezone "$TARGET_TIMEZONE" ||
+      die "Не удалось установить часовой пояс $TARGET_TIMEZONE"
+  fi
+  [[ "$(timedatectl show -p Timezone --value 2>/dev/null)" == "$TARGET_TIMEZONE" ]] ||
+    die "Проверка системного часового пояса после установки не прошла"
+  ok "Часовой пояс новой системы: $TARGET_TIMEZONE (можно изменить через awg-menu)"
+else
+  CURRENT_TIMEZONE="$(timedatectl show -p Timezone --value 2>/dev/null || echo неизвестно)"
+  ok "Часовой пояс существующей системы сохранён: $CURRENT_TIMEZONE"
+fi
+# END_FIRST_INSTALL_TIMEZONE
 
 # -----------------------------------------------------------------------------
 # 3. Go
@@ -1250,6 +1279,7 @@ printf "  sudo awg-update status\n"
 printf "  sudo awg-update gateway\n"
 printf "  sudo awg-update core\n"
 printf "  sudo awg-system-node status  # проверка системного Node.js 22\n"
+printf "  timedatectl                  # часовой пояс (fresh: Asia/Novosibirsk)\n"
 printf "  sudo awg-dc doctor USER      # диагностика Remote DC\n"
 printf "  sudo awg-dc prepare USER     # опциональная установка Node/npm/агента\n"
 printf "  awg-dc pair                 # OAuth от обычного пользователя\n"
