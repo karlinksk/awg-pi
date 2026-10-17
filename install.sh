@@ -268,11 +268,15 @@ apt-get update
 apt-get install -y --no-install-recommends \
   ca-certificates curl git jq build-essential make pkg-config \
   iproute2 iputils-ping iputils-arping dnsutils nftables dnsmasq procps \
-  python3-minimal python3-yaml openssl dialog
+  python3-minimal python3-yaml openssl dialog ffmpeg xz-utils
 
 command -v nft >/dev/null || die "nft не установлен"
 command -v dnsmasq >/dev/null || die "dnsmasq не установлен"
 command -v dig >/dev/null || die "dig не установлен"
+# Required for the verified 24-frame YouTube media check (Stage18).
+for media_bin in /usr/bin/ffmpeg /usr/bin/ffprobe /usr/bin/xz; do
+  [[ -x "$media_bin" ]] || die "Не установлена обязательная зависимость Stage18: $media_bin"
+done
 dnsmasq --version | grep -qi nftset || die "Установленный dnsmasq собран без поддержки nftset"
 ok "dnsmasq поддерживает nftset"
 
@@ -723,11 +727,9 @@ install_project_helper src/awg-selection-monitor "$SELECTION_MONITOR"
 install_project_python_helper src/awg-mihomo-limits.py /usr/local/sbin/awg-mihomo-limits.py
 install_project_python_helper src/awg-mihomo-service-check.py /usr/local/sbin/awg-mihomo-service-check.py
 install_project_python_helper src/awg-mihomo-video-decode.py /usr/local/sbin/awg-mihomo-video-decode.py
-# Optional Stage18 24-frame verification requires FFmpeg. Do not silently
-# install its substantial multimedia dependency tree on an existing gateway.
-if [[ ! -x /usr/bin/ffmpeg ]]; then
-  warn "Stage18 video decode unavailable: FFmpeg missing. Optional: apt-get -s install --no-install-recommends ffmpeg"
-fi
+# FFmpeg/FFprobe and XZ are required system dependencies, installed above.
+# Stage18's pinned Node.js and yt-dlp binaries are then automatically prepared
+# in RAM by the guarded timer after a Mihomo subscription is configured.
 install_project_helper scripts/awg-mihomo-stage18-ram-runtime.sh /usr/local/sbin/awg-mihomo-stage18-ram-runtime
 install_project_python_helper src/awg-mihomo-service-eligibility.py /usr/local/sbin/awg-mihomo-service-eligibility.py
 install_project_python_helper src/awg-mihomo-network-eligibility.py /usr/local/sbin/awg-mihomo-network-eligibility.py
@@ -741,8 +743,9 @@ install_project_python_helper src/awg-mihomo-ready-live-match "$MIHOMO_READY_GUA
 install_project_helper src/awg-mihomo-ready-postcheck-tun "$MIHOMO_READY_POSTCHECK"
 install_project_helper src/awg-mihomo-node-policy "$MIHOMO_NODE_POLICY_CLI"
 
-# Hot Pool is packaged passively and is SHADOW_ONLY. Never enable/start its
-# timer or run its scanner during installation. Existing *active* shadow
+# Hot Pool is SHADOW_ONLY. On a new installation its guarded timer is armed
+# below; its service requires a configured provider and health pool. Existing
+# live shadow deployments are preserved during upgrade. Existing *active* shadow
 # deployments are managed independently: preserve their executables and units
 # rather than replacing files beneath a running service.
 # systemctl may print "not-found" AND exit nonzero. Never append a second
@@ -761,7 +764,7 @@ else
   install_project_unit extras/mihomo-hot-pool-shadow/awg-mihomo-hot-pool.service /etc/systemd/system/awg-mihomo-hot-pool.service
   install_project_unit extras/mihomo-hot-pool-shadow/awg-mihomo-hot-pool.timer /etc/systemd/system/awg-mihomo-hot-pool.timer
   install -d -o root -g root -m 0700 /var/lib/awg-pbr/hot-pool/continuity /run/awg-pbr/hot-pool/continuity
-  ok "Hot Pool continuity SHADOW_ONLY установлен пассивно; timer NOT ENABLED"
+  ok "Hot Pool continuity SHADOW_ONLY установлен; таймер включается на чистой установке"
 fi
 unset _hot_pool_timer_state
 install_project_helper src/awg-pbr-setup "$SETUP_SCRIPT"
@@ -968,13 +971,18 @@ systemctl is-active --quiet awg-traffic.service || warn "traffic accounting не
 systemctl start awg-opencck-update.timer
 systemctl is-active --quiet awg-opencck-update.timer || warn "OpenCCK timer не активен; ручное обновление останется доступно"
 
-# The health-pool timer is useful only after a Mihomo provider exists. Keep a
-# fresh AWG-only installation completely passive with respect to Mihomo.
-if [[ -r /var/lib/awg-pbr/mihomo/providers/subscription.yaml ]]; then
-  systemctl enable --now awg-mihomo-pool-refresh.timer >/dev/null
-  systemctl is-active --quiet awg-mihomo-pool-refresh.timer || warn "Mihomo health-pool timer не активен; ручная проверка останется доступна"
+# Install-once, automatic-after-profile: the units themselves require a
+# configured Mihomo provider. Timers can be armed on a fresh AWG-only install
+# without initiating any VPN/route change or trying to select a node.
+# Upgrades preserve the existing operator's enabled/disabled policy.
+if (( UPGRADE_EXISTING == 0 )); then
+  for unit in awg-mihomo-pool-refresh.timer awg-mihomo-stage18-ram-runtime.timer awg-mihomo-hot-pool.timer; do
+    systemctl enable --now "$unit" >/dev/null || die "Не удалось включить $unit"
+    systemctl is-active --quiet "$unit" || die "Не запущен обязательный таймер $unit"
+  done
+  ok "Mihomo Hot Pool, health pool и Stage18 автоматически активируются после настройки подписки (SHADOW_ONLY)"
 else
-  systemctl disable --now awg-mihomo-pool-refresh.timer >/dev/null 2>&1 || true
+  ok "Существующая политика Mihomo-таймеров сохранена при обновлении"
 fi
 
 ACTIVE_TRANSPORT="$(cat "$TRANSPORT_FILE" 2>/dev/null || echo unconfigured)"
