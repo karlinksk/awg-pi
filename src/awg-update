@@ -72,6 +72,7 @@ backup_gateway(){
     etc/systemd/system/awg-dc-remote@.service \
     var/lib/awg-pbr/mihomo \
     var/lib/awg-pbr/hot-pool \
+    var/lib/awg-pbr/stage18-runtime \
     var/lib/awg-pbr/traffic \
     usr/local/lib/awg-pi \
     usr/share/awg-pbr \
@@ -97,6 +98,7 @@ backup_gateway(){
     usr/local/sbin/awg-mihomo-ready-live-match \
     usr/local/sbin/awg-mihomo-ready-postcheck-tun \
     usr/local/sbin/awg-mihomo-hot-pool \
+    usr/local/sbin/awg-mihomo-pool \
     usr/local/sbin/awg-mihomo-hot-service-scan \
     usr/local/sbin/awg-mihomo-ip-connect-probe \
     usr/local/sbin/awg-hot-pool-continuity.py \
@@ -183,6 +185,7 @@ restore_gateway(){
     fi
   fi
   rm -rf /etc/awg-pbr /var/lib/awg-pbr/mihomo /var/lib/awg-pbr/hot-pool /var/lib/awg-pbr/traffic /usr/local/lib/awg-pi /usr/share/awg-pbr
+  rm -rf /var/lib/awg-pbr/stage18-runtime
   rm -f \
     /usr/local/bin/mihomo \
     /usr/local/bin/awg-dc \
@@ -205,6 +208,7 @@ restore_gateway(){
     /usr/local/sbin/awg-mihomo-ready-live-match \
     /usr/local/sbin/awg-mihomo-ready-postcheck-tun \
     /usr/local/sbin/awg-mihomo-hot-pool \
+    /usr/local/sbin/awg-mihomo-pool \
     /usr/local/sbin/awg-mihomo-hot-service-scan \
     /usr/local/sbin/awg-mihomo-ip-connect-probe \
     /usr/local/sbin/awg-hot-pool-continuity.py \
