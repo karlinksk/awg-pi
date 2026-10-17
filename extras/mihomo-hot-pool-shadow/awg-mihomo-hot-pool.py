@@ -516,14 +516,8 @@ def scan_one(name: str, provider: Path | None = None) -> tuple[bool, str]:
                         status('SERVICE_DIAG_AFTER_FIRST_FAIL_24') +
                         ' AFTER_FIRST_FAIL_REASON=' +
                         status('SERVICE_DIAG_AFTER_FIRST_FAIL_REASON'))
-        # An older or forged scanner response without IP-CONNECT evidence
-        # cannot confer READY, even if its service gate otherwise passes.
-        ip_verified = (
-            fields.get('SERVICE_IP_CONNECT_STATE') == 'PASS'
-            and fields.get('SERVICE_IP_CONNECT_REASON') == 'ALL_CHECKED_IPV4_HTTPS_OK'
-        )
-        if not ip_verified:
-            return False, summary + ' IP_GATE=UNVERIFIED'
+        # Numeric-IP HTTPS is telemetry, never a service eligibility gate.
+        # The verified old policy is OpenAI + ChatGPT + decoded YouTube 24.
         return gate.returncode == 0, summary
     except subprocess.TimeoutExpired:
         return False, 'REASON=SCANNER_OR_GATE_TIMEOUT'

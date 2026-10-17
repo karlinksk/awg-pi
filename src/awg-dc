@@ -1,0 +1,200 @@
+#!/usr/bin/env bash
+# Optional Remote Desktop Commander companion for AWG Pi Gateway.
+# Do not pair a device or start a remotely controllable service without consent.
+set -Eeuo pipefail
+umask 077
+DC_PACKAGE='@wonderwhy-er/desktop-commander@0.2.52'
+DC_NODE_PACKAGE='node@22'
+UNIT_PREFIX='awg-dc-remote@'
+fail(){ printf 'AWG_DC_ERROR=%s\n' "$1" >&2; exit 2; }
+usage(){
+  cat <<'HELP'
+Usage:
+  awg-dc doctor [USER]       Read-only runtime/pairing/service diagnosis
+  sudo awg-dc prepare USER   Bootstrap isolated Node.js 22 + DC agent in user npm cache
+  awg-dc pair                Interactive device authorization, never as root
+  sudo awg-dc enable USER    Persistent boot-time service AFTER pairing
+  sudo awg-dc disable USER   Disable service without deleting authorization
+  sudo awg-dc status USER    Safe status (no private credentials)
+No routing, SSTP, firewall, DNS or subscription changes.
+HELP
+}
+require_root(){ (( EUID == 0 )) || fail ROOT_REQUIRED; }
+validate_user(){
+  local name="${1:-}" entry home shell uid
+  [[ "$name" =~ ^[a-z_][a-z0-9_-]{0,31}$ && "$name" != root ]] || fail INVALID_USERNAME
+  entry="$(getent passwd "$name")" || fail UNKNOWN_USER
+  IFS=: read -r _ _ uid _ _ home shell <<< "$entry"
+  [[ "$uid" =~ ^[0-9]+$ && "$uid" -ge 1000 ]] || fail SERVICE_ACCOUNT_NOT_ALLOWED
+  [[ "$home" == "/home/$name" && -d "$home" && ! -L "$home" ]] || fail NONSTANDARD_HOME_REFUSED
+  [[ "$shell" != */false && "$shell" != */nologin ]] || fail NONLOGIN_ACCOUNT
+  DC_USER="$name"
+  DC_HOME="$home"
+  DC_UID="$uid"
+}
+node_ok(){
+  local major
+  command -v node >/dev/null 2>&1 || return 1
+  major="$(node --version 2>/dev/null)" || return 1
+  major="${major#v}"; major="${major%%.*}"
+  [[ "$major" =~ ^[0-9]+$ && "$major" -ge 18 ]]
+}
+deps_ok(){
+  node_ok && command -v npm >/dev/null 2>&1 && command -v npx >/dev/null 2>&1
+}
+system_node_ok(){
+  deps_ok || return 1
+  node -e 'if (+process.versions.node.split(".")[0] < 22 || typeof WebSocket !== "function") process.exit(1)' >/dev/null 2>&1
+}
+run_agent(){
+  local launch_mode="${1:-interactive}"
+  local -a npm_args=(--yes)
+  # For boot-time service launches use packages already pre-fetched into the
+  # user's npm cache. The DC cloud connection needs Internet, but a temporary
+  # npm registry outage must NOT prevent the agent from starting.
+  if [[ "$launch_mode" == service ]]; then
+    npm_args=(--offline --yes)
+  fi
+  # A verified system-wide Node 22+ takes priority. Existing upgrades with
+  # Debian Node 20 retain the isolated node@22 fallback until migration.
+  if system_node_ok; then
+    exec npx "${npm_args[@]}" "$DC_PACKAGE" remote
+  else
+    exec npm exec "${npm_args[@]}" --package="$DC_NODE_PACKAGE" --package="$DC_PACKAGE" -- desktop-commander remote
+  fi
+}
+session_ok(){
+  local session="$DC_HOME/.desktop-commander-device/device.json" owner mode
+  [[ -f "$session" && ! -L "$session" ]] || return 1
+  owner="$(stat -c '%u' "$session" 2>/dev/null)" || return 1
+  mode="$(stat -c '%a' "$session" 2>/dev/null)" || return 1
+  [[ "$owner" == "$DC_UID" && "$mode" == 600 ]]
+}
+show_status(){
+  local unit="$UNIT_PREFIX$DC_USER.service"
+  printf 'AWG_DC_USER=%s\n' "$DC_USER"
+  if deps_ok; then
+    printf 'AWG_DC_SYSTEM_NODE=%s\n' "$(node --version)"
+    echo 'AWG_DC_NPM=READY'
+    if system_node_ok; then
+      echo 'AWG_DC_SYSTEM_WEBSOCKET=AVAILABLE'
+    else
+      echo 'AWG_DC_SYSTEM_WEBSOCKET=NOT_AVAILABLE_ISOLATED_FALLBACK_REQUIRED'
+    fi
+  else
+    echo 'AWG_DC_BOOTSTRAP=MISSING_NODE18_OR_NPM'
+  fi
+  if session_ok; then
+    echo 'AWG_DC_PAIRING=LOCAL_SESSION_PRESENT'
+  else
+    echo 'AWG_DC_PAIRING=NOT_VERIFIED'
+  fi
+  if systemctl is-enabled --quiet "$unit" 2>/dev/null; then
+    echo 'AWG_DC_AUTOSTART=ENABLED'
+  else
+    echo 'AWG_DC_AUTOSTART=DISABLED'
+  fi
+  if systemctl is-active --quiet "$unit" 2>/dev/null; then
+    echo 'AWG_DC_AGENT_SERVICE=ACTIVE'
+  else
+    echo 'AWG_DC_AGENT_SERVICE=INACTIVE'
+  fi
+  echo 'AWG_DC_REMOTE_CONNECTIVITY=CHECK_DASHBOARD'
+}
+case "${1:-}" in
+  help|-h|--help) usage ;;
+  doctor|status)
+    who="${2:-${SUDO_USER:-${USER:-}}}"
+    validate_user "$who"
+    show_status
+    ;;
+  prepare)
+    require_root
+    validate_user "${2:-}"
+    [[ -r /etc/os-release ]] || fail OS_NOT_IDENTIFIED
+    . /etc/os-release
+    [[ "${ID:-}" == debian ]] || fail UNSUPPORTED_OS
+    if ! deps_ok; then
+      echo 'AWG_DC_RUNTIME=INSTALLING_DEBIAN_PACKAGES'
+      export DEBIAN_FRONTEND=noninteractive
+      apt-get update -qq || fail APT_UPDATE_FAILED
+      apt-get install -y --no-install-recommends nodejs npm ca-certificates || fail APT_INSTALL_FAILED
+    fi
+    deps_ok || fail BOOTSTRAP_NODE18_NPM_NOT_READY
+    echo "AWG_DC_SYSTEM_NODE=$(node --version)"
+    echo 'AWG_DC_AGENT_PACKAGE=PREFETCH_START'
+    # On fresh installs Node 22.16 is system-wide; the isolated npm node@22
+    # stays only as a fallback for upgrades not yet migrated.
+    if system_node_ok; then
+      runuser -u "$DC_USER" -- env \
+        HOME="$DC_HOME" XDG_CACHE_HOME="$DC_HOME/.cache" npm_config_yes=true \
+        npx --yes "$DC_PACKAGE" remote --help >/dev/null || fail AGENT_PREFETCH_FAILED
+      echo 'AWG_DC_AGENT_PACKAGE=PREFETCHED_SYSTEM_NODE22_WEBSOCKET_OK'
+    else
+      runuser -u "$DC_USER" -- env \
+        HOME="$DC_HOME" XDG_CACHE_HOME="$DC_HOME/.cache" npm_config_yes=true \
+        npm exec --yes --package="$DC_NODE_PACKAGE" --package="$DC_PACKAGE" -- \
+        sh -c 'node -e '\''if (+process.versions.node.split(".")[0] < 22 || typeof WebSocket !== "function") process.exit(2)'\'' && desktop-commander remote --help' >/dev/null || fail NODE22_WEBSOCKET_OR_AGENT_PREFETCH_FAILED
+      echo 'AWG_DC_AGENT_PACKAGE=PREFETCHED_ISOLATED_NODE22_WEBSOCKET_OK'
+    fi
+    # Confirm boot-time startup can resolve from the verified local cache.
+    if system_node_ok; then
+      runuser -u "$DC_USER" -- env HOME="$DC_HOME" XDG_CACHE_HOME="$DC_HOME/.cache" \
+        npx --offline --yes "$DC_PACKAGE" remote --help >/dev/null ||
+        fail OFFLINE_SYSTEM_NODE_AGENT_CACHE_MISSING
+    else
+      runuser -u "$DC_USER" -- env HOME="$DC_HOME" XDG_CACHE_HOME="$DC_HOME/.cache" \
+        npm exec --offline --yes --package="$DC_NODE_PACKAGE" --package="$DC_PACKAGE" -- \
+        sh -c 'node -e '\''if (typeof WebSocket !== "function") process.exit(2)'\'' && desktop-commander remote --help' >/dev/null ||
+        fail OFFLINE_ISOLATED_NODE_AGENT_CACHE_MISSING
+    fi
+    echo 'AWG_DC_BOOT_CACHE=READY'
+    echo 'AWG_DC_PAIRING=REQUIRES_USER_ACTION'
+    echo 'AWG_DC_AUTOSTART=NOT_CHANGED'
+    ;;
+  pair)
+    (( EUID != 0 )) || fail PAIR_AS_NONROOT_USER
+    validate_user "$(id -un)"
+    deps_ok || fail BOOTSTRAP_NODE18_NPM_NOT_READY
+    echo 'AWG_DC_PAIRING=INTERACTIVE_OAUTH'
+    echo 'AWG_DC_NOTICE=VERIFY_BROWSER_DEVICE_CODE_THEN_STOP_WITH_CTRL_C'
+    run_agent
+    ;;
+  agent)
+    (( EUID != 0 )) || fail AGENT_AS_NONROOT_USER
+    validate_user "$(id -un)"
+    deps_ok || fail BOOTSTRAP_NODE18_NPM_NOT_READY
+    session_ok || fail PAIRING_REQUIRED_OR_UNSAFE_SESSION_PERMISSIONS
+    run_agent service
+    ;;
+  enable)
+    require_root
+    validate_user "${2:-}"
+    deps_ok || fail BOOTSTRAP_NODE18_NPM_NOT_READY
+    session_ok || fail PAIRING_REQUIRED_OR_UNSAFE_SESSION_PERMISSIONS
+    # A one-time installer may have just placed the unit file on disk.
+    # Load the new template before checking it with systemctl cat.
+    systemctl daemon-reload || fail SYSTEMD_RELOAD_FAILED
+    systemctl cat "$UNIT_PREFIX$DC_USER.service" >/dev/null 2>&1 || fail AGENT_UNIT_NOT_INSTALLED
+    # Non-root SYSTEM service (multi-user.target), not a user-session unit:
+    # no open SSH terminal and no loginctl linger are required.
+    systemctl enable --now "$UNIT_PREFIX$DC_USER.service" >/dev/null || fail SERVICE_START_FAILED
+    systemctl is-enabled --quiet "$UNIT_PREFIX$DC_USER.service" || fail SERVICE_ENABLE_NOT_PERSISTENT
+    systemctl is-active --quiet "$UNIT_PREFIX$DC_USER.service" || fail SERVICE_DID_NOT_START
+    echo 'AWG_DC_AUTOSTART=ENABLED'
+    echo 'AWG_DC_SERVICE_RUNS_AS=NONROOT_USER'
+    echo 'AWG_DC_REMOTE_CONNECTIVITY=CHECK_DASHBOARD'
+    ;;
+  disable)
+    require_root
+    validate_user "${2:-}"
+    systemctl disable --now "$UNIT_PREFIX$DC_USER.service" >/dev/null 2>&1 ||
+      fail SERVICE_STOP_FAILED
+    echo 'AWG_DC_AUTOSTART=DISABLED'
+    echo 'AWG_DC_PAIRING=UNCHANGED'
+    ;;
+  *)
+    usage >&2
+    exit 2
+    ;;
+esac

@@ -44,20 +44,15 @@ version_gt(){
   [[ "$top" == "$a" ]]
 }
 backup_gateway(){
-  local dir="$1"
-  mkdir -p "$dir"
-  chmod 700 "$dir"
-  # Preserve opt-in timer state separately; the tar archive stores only files.
-  systemctl is-enabled awg-mihomo-hot-pool.timer 2>/dev/null >"$dir/hot-pool-timer-state" || true
-  chmod 600 "$dir/hot-pool-timer-state"
-  tar -C / -czf "$dir/gateway-state.tgz" \
-    --ignore-failed-read \
+  local dir="$1" target archive_tmp
+  local -a backup_targets=(
     etc/awg-pbr \
     etc/amnezia/amneziawg \
     etc/dnsmasq.d/99-awg-pbr.conf \
     etc/dnsmasq.d/99-awg-pbr-domains.conf \
     etc/nftables.d/99-awg-pbr.nft \
     etc/sysctl.d/99-awg-pbr.conf \
+    etc/systemd/system.conf.d/99-awg-gateway-watchdog.conf \
     etc/profile.d/awg-menu.sh \
     etc/systemd/system/awg-pbr-setup.service \
     etc/systemd/system/awg-pbr-health.service \
@@ -70,12 +65,30 @@ backup_gateway(){
     etc/systemd/system/awg-mihomo-hot-pool.timer \
     etc/systemd/system/awg-selection-monitor.service \
     etc/systemd/system/awg-traffic.service \
+    etc/systemd/system/awg-mihomo-pool-refresh.service \
+    etc/systemd/system/awg-mihomo-pool-refresh.timer \
+    etc/systemd/system/awg-mihomo-stage18-ram-runtime.service \
+    etc/systemd/system/awg-mihomo-stage18-ram-runtime.timer \
+    etc/systemd/system/awg-mihomo-stage18-ram-runtime.path \
+    etc/systemd/system/awg-dc-remote@.service \
     var/lib/awg-pbr/mihomo \
     var/lib/awg-pbr/hot-pool \
+    var/lib/awg-pbr/stage18-runtime \
     var/lib/awg-pbr/traffic \
     usr/local/lib/awg-pi \
     usr/share/awg-pbr \
     usr/local/bin/mihomo \
+    usr/local/bin/node \
+    usr/local/bin/awg-dc \
+    usr/local/sbin/awg-mihomo-limits.py \
+    usr/local/sbin/awg-mihomo-service-check.py \
+    usr/local/sbin/awg-mihomo-video-decode.py \
+    usr/local/sbin/awg-mihomo-stage18-ram-runtime \
+    usr/local/sbin/awg-system-node \
+    usr/local/sbin/awg-mihomo-service-eligibility.py \
+    usr/local/sbin/awg-mihomo-network-eligibility.py \
+    usr/local/sbin/awg-mihomo-smart \
+    usr/local/sbin/awg-mihomo-tun-check \
     usr/local/sbin/awg-route \
     usr/local/sbin/awg-transport \
     usr/local/sbin/awg-fetch \
@@ -86,6 +99,7 @@ backup_gateway(){
     usr/local/sbin/awg-mihomo-ready-live-match \
     usr/local/sbin/awg-mihomo-ready-postcheck-tun \
     usr/local/sbin/awg-mihomo-hot-pool \
+    usr/local/sbin/awg-mihomo-pool \
     usr/local/sbin/awg-mihomo-hot-service-scan \
     usr/local/sbin/awg-mihomo-ip-connect-probe \
     usr/local/sbin/awg-hot-pool-continuity.py \
@@ -109,12 +123,45 @@ backup_gateway(){
     usr/local/sbin/awg-mihomo-install \
     usr/local/sbin/awg-mihomo-prepare \
     usr/local/sbin/awg-mihomo-configure \
-    2>/dev/null || true
-  chmod 600 "$dir/gateway-state.tgz"
-  tar -tzf "$dir/gateway-state.tgz" >/dev/null || {
-    echo "Не удалось проверить backup archive" >&2
+  )
+  local -a selected=()
+  local -a required=(etc/awg-pbr usr/local/sbin/awg-route usr/local/sbin/awg-update)
+  umask 077
+  install -d -o root -g root -m 0700 "$dir" || return 1
+  # Never silently certify an incomplete or unreadable gateway snapshot.
+  for target in "${required[@]}"; do
+    if [[ ! -e "/$target" ]]; then
+      echo "GATEWAY_BACKUP_ERROR=REQUIRED_PATH_MISSING" >&2
+      return 1
+    fi
+  done
+  for target in "${backup_targets[@]}"; do
+    if [[ -e "/$target" || -L "/$target" ]]; then
+      selected+=("$target")
+    fi
+  done
+  # Only the backup manifest is dynamic. Files from earlier releases may
+  # legitimately be absent; a present but unreadable file must FAIL the backup.
+  systemctl is-enabled awg-mihomo-hot-pool.timer 2>/dev/null >"$dir/hot-pool-timer-state" || true
+  chmod 600 "$dir/hot-pool-timer-state"
+  archive_tmp="$(mktemp "$dir/.gateway-state.XXXXXXXX")" || return 1
+  if ! tar -C / -czf "$archive_tmp" "${selected[@]}" 2>/dev/null; then
+    rm -f -- "$archive_tmp"
+    echo "GATEWAY_BACKUP_ERROR=ARCHIVE_CREATE_FAILED" >&2
+    return 1
+  fi
+  if ! tar -tzf "$archive_tmp" >/dev/null 2>&1; then
+    rm -f -- "$archive_tmp"
+    echo "GATEWAY_BACKUP_ERROR=ARCHIVE_INTEGRITY_FAILED" >&2
+    return 1
+  fi
+  mv -fT -- "$archive_tmp" "$dir/gateway-state.tgz" || {
+    rm -f -- "$archive_tmp"
+    echo "GATEWAY_BACKUP_ERROR=ARCHIVE_PUBLISH_FAILED" >&2
     return 1
   }
+  chmod 600 "$dir/gateway-state.tgz"
+  echo "GATEWAY_BACKUP=VERIFIED"
 }
 restore_gateway(){
   local dir="$1"
@@ -130,9 +177,28 @@ restore_gateway(){
     awg-pbr-health.service \
     2>/dev/null || true
 
+  # Only remove the Node.js link when this gateway itself manages it. Never
+  # overwrite/delete an unrelated system-level Node.js installation.
+  if [[ -L /usr/local/bin/node ]]; then
+    _node_target="$(readlink -- /usr/local/bin/node)"
+    if [[ "$_node_target" == /usr/local/lib/awg-pi/node/*/node ]]; then
+      rm -f -- /usr/local/bin/node
+    fi
+  fi
   rm -rf /etc/awg-pbr /var/lib/awg-pbr/mihomo /var/lib/awg-pbr/hot-pool /var/lib/awg-pbr/traffic /usr/local/lib/awg-pi /usr/share/awg-pbr
+  rm -rf /var/lib/awg-pbr/stage18-runtime
   rm -f \
     /usr/local/bin/mihomo \
+    /usr/local/bin/awg-dc \
+    /usr/local/sbin/awg-mihomo-limits.py \
+    /usr/local/sbin/awg-mihomo-service-check.py \
+    /usr/local/sbin/awg-mihomo-video-decode.py \
+    /usr/local/sbin/awg-mihomo-stage18-ram-runtime \
+    /usr/local/sbin/awg-system-node \
+    /usr/local/sbin/awg-mihomo-service-eligibility.py \
+    /usr/local/sbin/awg-mihomo-network-eligibility.py \
+    /usr/local/sbin/awg-mihomo-smart \
+    /usr/local/sbin/awg-mihomo-tun-check \
     /usr/local/sbin/awg-route \
     /usr/local/sbin/awg-transport \
     /usr/local/sbin/awg-fetch \
@@ -143,6 +209,7 @@ restore_gateway(){
     /usr/local/sbin/awg-mihomo-ready-live-match \
     /usr/local/sbin/awg-mihomo-ready-postcheck-tun \
     /usr/local/sbin/awg-mihomo-hot-pool \
+    /usr/local/sbin/awg-mihomo-pool \
     /usr/local/sbin/awg-mihomo-hot-service-scan \
     /usr/local/sbin/awg-mihomo-ip-connect-probe \
     /usr/local/sbin/awg-hot-pool-continuity.py \
@@ -178,6 +245,13 @@ restore_gateway(){
     /etc/systemd/system/awg-mihomo-hot-pool.timer \
     /etc/systemd/system/awg-selection-monitor.service \
     /etc/systemd/system/awg-traffic.service \
+    /etc/systemd/system/awg-mihomo-pool-refresh.service \
+    /etc/systemd/system/awg-mihomo-pool-refresh.timer \
+    /etc/systemd/system/awg-mihomo-stage18-ram-runtime.service \
+    /etc/systemd/system/awg-mihomo-stage18-ram-runtime.timer \
+    /etc/systemd/system/awg-mihomo-stage18-ram-runtime.path \
+    /etc/systemd/system/awg-dc-remote@.service \
+    /etc/systemd/system.conf.d/99-awg-gateway-watchdog.conf \
     /etc/profile.d/awg-menu.sh
 
   tar -C / -xzf "$dir/gateway-state.tgz"
@@ -310,6 +384,18 @@ case "$cmd" in
   status)
     show_status
     ;;
+  backup)
+    umask 077
+    install -d -o root -g root -m 0700 "$BACKUP_ROOT"
+    manual_backup="$(mktemp -d "$BACKUP_ROOT/gateway-manual-$(date +%Y%m%d-%H%M%S)-XXXXXXXX")"
+    if backup_gateway "$manual_backup"; then
+      printf "GATEWAY_BACKUP_ARCHIVE=%s\n" "$manual_backup/gateway-state.tgz"
+      printf "GATEWAY_BACKUP_BYTES=%s\n" "$(stat -c %s "$manual_backup/gateway-state.tgz")"
+    else
+      rm -rf -- "$manual_backup"
+      exit 1
+    fi
+    ;;
   gateway)
     gateway_update
     ;;
@@ -346,7 +432,7 @@ case "$cmd" in
     esac
     ;;
   *)
-    echo "Использование: awg-update [--yes] {status|gateway|core|mihomo|all}" >&2
+    echo "Использование: awg-update [--yes] {status|backup|gateway|core|mihomo|all}" >&2
     exit 2
     ;;
 esac

@@ -1,4 +1,6 @@
-# READY-priority AUTO canary (v1.3.0 — review only)
+# READY-priority AUTO canary (v1.3.0 — historical review)
+
+> **Updated 17 October 2026:** The paragraphs below chronicle the earlier standalone, opt-in canary (#111). They are **not the current PR #115 fresh-install defaults**. The current installer enables persisted `ready-auto` priority on a **fresh installation** and auto-arms Hot Pool/Stage18 timers while keeping Hot Pool scanning **SHADOW_ONLY**. Existing gateway upgrades preserve their prior operator-selected state. A fresh install does not automatically choose a READY node until a provider is configured, eligibility proofs exist and a real post-switch TUN check passes. Do not use the earlier “default OFF” wording to evaluate the new installer; see `HOT-POOL-READY-AUTO.md` and `RC1-INTEGRATION-REVIEW.md`. Complete hardware validation is still pending.
 
 This is an opt-in prototype, **not enabled by installation**. This code is **not enabled by the installer**. The actual live AUTO selector remains unchanged. A manually initiated, supervised trial on 2026-10-16 temporarily switched the Mihomo node and rolled it back; MikroTik/SSTP were not altered.
 

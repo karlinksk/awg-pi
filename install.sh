@@ -45,6 +45,10 @@ MIHOMO_NODE_POLICY_CLI="/usr/local/sbin/awg-mihomo-node-policy"
 # READY AUTO is installed as *passive* opt-in only; no activation on upgrade.
 MIHOMO_READY_GUARD="/usr/local/sbin/awg-mihomo-ready-live-match"
 MIHOMO_READY_POSTCHECK="/usr/local/sbin/awg-mihomo-ready-postcheck-tun"
+MIHOMO_TUN_CHECK="/usr/local/sbin/awg-mihomo-tun-check"
+DC_CLI="/usr/local/bin/awg-dc"
+SYSTEM_NODE_SCRIPT="/usr/local/sbin/awg-system-node"
+DC_UNIT="/etc/systemd/system/awg-dc-remote@.service"
 UPDATE_SCRIPT="/usr/local/sbin/awg-update"
 TRAFFIC_CLI="/usr/local/sbin/awg-traffic"
 SETUP_SERVICE="/etc/systemd/system/awg-pbr-setup.service"
@@ -98,17 +102,28 @@ ask(){
 confirm_yes(){
   local v="$1"
   v="$(printf '%s' "$v" | tr -d '\\015' | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
+  # Cyrillic у is easily confused with Latin y on Russian SSH terminals.
   case "$v" in
-    Y|y|YES|Yes|yes|Д|д|ДА|Да|да) return 0 ;;
+    Y|y|YES|Yes|yes|У|у|Д|д|ДА|Да|да) return 0 ;;
     *) return 1 ;;
   esac
 }
 confirm(){
-  local p="$1" d="${2:-N}" v s
+  local p="$1" d="${2:-N}" v s attempt
   [[ "$d" =~ ^[YyДд]$ ]] && s="Y/n" || s="y/N"
-  read -r -p "$p [$s]: " v <"$TTY"
-  v="${v:-$d}"
-  confirm_yes "$v"
+  for attempt in 1 2 3; do
+    # Read directly from /dev/tty; never expose entered text in logs.
+    IFS= read -r -p "$p [$s]: " v <"$TTY" || return 1
+    v="${v:-$d}"
+    if confirm_yes "$v"; then
+      return 0
+    fi
+    case "$v" in
+      N|n|NO|No|no|Н|н|НЕТ|Нет|нет) return 1 ;;
+    esac
+    printf 'Ответ не распознан. Используйте y/у/да или n/нет.\n' >"$TTY"
+  done
+  return 1
 }
 valid_ipv4(){
   local IFS=. a b c d
@@ -268,13 +283,46 @@ apt-get update
 apt-get install -y --no-install-recommends \
   ca-certificates curl git jq build-essential make pkg-config \
   iproute2 iputils-ping iputils-arping dnsutils nftables dnsmasq procps \
-  python3-minimal python3-yaml openssl dialog
+  python3-minimal python3-yaml openssl dialog ffmpeg xz-utils tzdata
 
 command -v nft >/dev/null || die "nft не установлен"
 command -v dnsmasq >/dev/null || die "dnsmasq не установлен"
 command -v dig >/dev/null || die "dig не установлен"
+# Required for the verified 24-frame YouTube media check (Stage18).
+for media_bin in /usr/bin/ffmpeg /usr/bin/ffprobe /usr/bin/xz; do
+  [[ -x "$media_bin" ]] || die "Не установлена обязательная зависимость Stage18: $media_bin"
+done
 dnsmasq --version | grep -qi nftset || die "Установленный dnsmasq собран без поддержки nftset"
 ok "dnsmasq поддерживает nftset"
+
+# BEGIN_FIRST_INSTALL_TIMEZONE
+# Fresh installations default to the correct Novosibirsk IANA zone, not an
+# arbitrary UTC+7 alias (e.g. Asia/Bangkok). Do not surprise existing
+# installations with a timezone change during an upgrade.
+# The operator can override this on a clean install with AWG_PI_TIMEZONE.
+if (( UPGRADE_EXISTING == 0 )); then
+  STAGE="настройка часового пояса"
+  TARGET_TIMEZONE="${AWG_PI_TIMEZONE:-Asia/Novosibirsk}"
+  [[ "$TARGET_TIMEZONE" =~ ^[A-Za-z0-9_+-]+(/[A-Za-z0-9_+.-]+)*$ &&
+     "$TARGET_TIMEZONE" != *".."* ]] ||
+    die "Недопустимый формат AWG_PI_TIMEZONE: используйте IANA-имя (например, Asia/Novosibirsk)"
+  [[ -r "/usr/share/zoneinfo/$TARGET_TIMEZONE" ]] ||
+    die "Часовой пояс отсутствует в tzdata: $TARGET_TIMEZONE"
+  command -v timedatectl >/dev/null || die "Не найден timedatectl для установки часового пояса"
+  CURRENT_TIMEZONE="$(timedatectl show -p Timezone --value 2>/dev/null)" ||
+    die "Не удалось определить текущий системный часовой пояс"
+  if [[ "$CURRENT_TIMEZONE" != "$TARGET_TIMEZONE" ]]; then
+    timedatectl set-timezone "$TARGET_TIMEZONE" ||
+      die "Не удалось установить часовой пояс $TARGET_TIMEZONE"
+  fi
+  [[ "$(timedatectl show -p Timezone --value 2>/dev/null)" == "$TARGET_TIMEZONE" ]] ||
+    die "Проверка системного часового пояса после установки не прошла"
+  ok "Часовой пояс новой системы: $TARGET_TIMEZONE (можно изменить через awg-menu)"
+else
+  CURRENT_TIMEZONE="$(timedatectl show -p Timezone --value 2>/dev/null || echo неизвестно)"
+  ok "Часовой пояс существующей системы сохранён: $CURRENT_TIMEZONE"
+fi
+# END_FIRST_INSTALL_TIMEZONE
 
 # -----------------------------------------------------------------------------
 # 3. Go
@@ -723,12 +771,34 @@ install_project_helper src/awg-selection-monitor "$SELECTION_MONITOR"
 install_project_python_helper src/awg-mihomo-limits.py /usr/local/sbin/awg-mihomo-limits.py
 install_project_python_helper src/awg-mihomo-service-check.py /usr/local/sbin/awg-mihomo-service-check.py
 install_project_python_helper src/awg-mihomo-video-decode.py /usr/local/sbin/awg-mihomo-video-decode.py
-# Optional Stage18 24-frame verification requires FFmpeg. Do not silently
-# install its substantial multimedia dependency tree on an existing gateway.
-if [[ ! -x /usr/bin/ffmpeg ]]; then
-  warn "Stage18 video decode unavailable: FFmpeg missing. Optional: apt-get -s install --no-install-recommends ffmpeg"
-fi
+# FFmpeg/FFprobe and XZ are required system dependencies, installed above.
+# Stage18's pinned Node.js and yt-dlp binaries are then automatically prepared
+# in RAM by the guarded timer after a Mihomo subscription is configured.
 install_project_helper scripts/awg-mihomo-stage18-ram-runtime.sh /usr/local/sbin/awg-mihomo-stage18-ram-runtime
+install_project_helper scripts/awg-system-node.sh "$SYSTEM_NODE_SCRIPT"
+# Store the hash-verified decoder toolchain once during clean installation.
+# Each boot copies verified binaries to RAM, even when GitHub is unavailable.
+# This is provisioning only: no proxy, routes or active transport are changed.
+if (( UPGRADE_EXISTING == 0 )); then
+  STAGE="установка видеодекодера Stage18"
+  /usr/local/sbin/awg-mihomo-stage18-ram-runtime prefetch || die "Не удалось подготовить обязательные Node.js/yt-dlp для проверки YouTube"
+# Fresh Debian 13 ships Node.js 20 (no global WebSocket); DC needs Node 22+.
+# Reuse the exact independently SHA256-verified Stage18 Node.js 22.16 binary.
+# Preserve APT-owned /usr/bin/node, and NEVER replace active system runtime
+# automatically during an upgrade without an explicit operator opt-in.
+if (( UPGRADE_EXISTING == 0 )); then
+  "$SYSTEM_NODE_SCRIPT" apply || die "Не удалось установить проверенный системный Node.js 22.16"
+  ok "Системный Node.js 22.16 (WebSocket): проверен для DC и Stage18"
+elif [[ "${AWG_SYSTEM_NODE_UPGRADE:-0}" == 1 ]]; then
+  "$SYSTEM_NODE_SCRIPT" apply || die "Не удалось безопасно обновить системный Node.js"
+  ok "Системный Node.js 22.16 установлен после явного разрешения обновления"
+elif "$SYSTEM_NODE_SCRIPT" status >/dev/null 2>&1; then
+  ok "Системный Node.js уже соответствует проверенному runtime"
+else
+  warn "Системный Node.js не соответствует эталону 22.16. При upgrade не меняем его автоматически."
+  warn "После проверки совместимости: sudo awg-system-node apply"
+fi
+fi
 install_project_python_helper src/awg-mihomo-service-eligibility.py /usr/local/sbin/awg-mihomo-service-eligibility.py
 install_project_python_helper src/awg-mihomo-network-eligibility.py /usr/local/sbin/awg-mihomo-network-eligibility.py
 # Passive bounded numeric-IP HTTPS probe; not scheduled or run during install.
@@ -739,10 +809,32 @@ install_project_python_helper src/awg-mihomo-smart /usr/local/sbin/awg-mihomo-sm
 # The installer never sets MIHOMO_READY_AUTO_CANARY=1.
 install_project_python_helper src/awg-mihomo-ready-live-match "$MIHOMO_READY_GUARD"
 install_project_helper src/awg-mihomo-ready-postcheck-tun "$MIHOMO_READY_POSTCHECK"
+install_project_helper src/awg-mihomo-tun-check "$MIHOMO_TUN_CHECK"
+# DC is optional: stage the commands and an INACTIVE service template only.
+install_project_helper src/awg-dc "$DC_CLI"
+install_project_unit units/awg-dc-remote@.service "$DC_UNIT"
 install_project_helper src/awg-mihomo-node-policy "$MIHOMO_NODE_POLICY_CLI"
 
-# Hot Pool is packaged passively and is SHADOW_ONLY. Never enable/start its
-# timer or run its scanner during installation. Existing *active* shadow
+# A clean install ships BOTH VPN engines, independently of whether the operator
+# already has a Mihomo subscription or an AmneziaWG profile. The verified,
+# pinned Mihomo engine is installed before the first-transport wizard and does
+# not start any VPN service, modify policy routing, or select a node.
+if (( UPGRADE_EXISTING == 0 )); then
+  STAGE="установка Mihomo engine"
+  "$MIHOMO_INSTALL_SCRIPT" ensure --mode auto || die "Не удалось установить обязательный Mihomo engine"
+  "$MIHOMO_INSTALL_SCRIPT" status || die "Проверка версии Mihomo engine не пройдена"
+  [[ -x /usr/local/bin/mihomo ]] || die "Mihomo engine отсутствует после установки"
+  ok "Mihomo engine установлен заранее; VPN-подписку можно указать позже"
+else
+  # Do not replace a running engine as part of a production upgrade.
+  if ! "$MIHOMO_INSTALL_SCRIPT" status; then
+    warn "Mihomo engine требует отдельного безопасного обновления (активный транспорт не затронут)"
+  fi
+fi
+
+# Hot Pool is SHADOW_ONLY. On a new installation its guarded timer is armed
+# below; its service requires a configured provider and health pool. Existing
+# live shadow deployments are preserved during upgrade. Existing *active* shadow
 # deployments are managed independently: preserve their executables and units
 # rather than replacing files beneath a running service.
 # systemctl may print "not-found" AND exit nonzero. Never append a second
@@ -761,7 +853,7 @@ else
   install_project_unit extras/mihomo-hot-pool-shadow/awg-mihomo-hot-pool.service /etc/systemd/system/awg-mihomo-hot-pool.service
   install_project_unit extras/mihomo-hot-pool-shadow/awg-mihomo-hot-pool.timer /etc/systemd/system/awg-mihomo-hot-pool.timer
   install -d -o root -g root -m 0700 /var/lib/awg-pbr/hot-pool/continuity /run/awg-pbr/hot-pool/continuity
-  ok "Hot Pool continuity SHADOW_ONLY установлен пассивно; timer NOT ENABLED"
+  ok "Hot Pool continuity SHADOW_ONLY установлен; таймер включается на чистой установке"
 fi
 unset _hot_pool_timer_state
 install_project_helper src/awg-pbr-setup "$SETUP_SCRIPT"
@@ -804,10 +896,11 @@ install_project_unit units/awg-mihomo-update.timer /etc/systemd/system/awg-mihom
 install_project_unit units/awg-mihomo-pool-refresh.service /etc/systemd/system/awg-mihomo-pool-refresh.service
 install_project_unit units/awg-mihomo-pool-refresh.timer /etc/systemd/system/awg-mihomo-pool-refresh.timer
 install_project_unit units/awg-selection-monitor.service /etc/systemd/system/awg-selection-monitor.service
-# Do not enable this opt-in timer here; default installs avoid downloads
-# and CPU overhead for the pinned decoder runtime.
+# Stage18 is provider-guarded: automatic boot and provider-change recovery,
+# without running an isolated media test during bare installation.
 install_project_unit units/awg-mihomo-stage18-ram-runtime.service /etc/systemd/system/awg-mihomo-stage18-ram-runtime.service
 install_project_unit units/awg-mihomo-stage18-ram-runtime.timer /etc/systemd/system/awg-mihomo-stage18-ram-runtime.timer
+install_project_unit units/awg-mihomo-stage18-ram-runtime.path /etc/systemd/system/awg-mihomo-stage18-ram-runtime.path
 install_project_unit units/awg-traffic.service /etc/systemd/system/awg-traffic.service
 cat >/etc/systemd/system/awg-opencck-update.service <<'EOF'
 [Unit]
@@ -887,6 +980,13 @@ python3 -B -c 'import ast,sys; ast.parse(open(sys.argv[1],encoding="utf-8").read
   || die "READY guard: синтаксическая ошибка"
 [[ -x "$MIHOMO_READY_POSTCHECK" ]] || die "Не установлен READY postcheck: $MIHOMO_READY_POSTCHECK"
 bash -n "$MIHOMO_READY_POSTCHECK" || die "READY postcheck: синтаксическая ошибка"
+[[ -x "$MIHOMO_TUN_CHECK" ]] || die "Не установлен TUN diagnostic: $MIHOMO_TUN_CHECK"
+bash -n "$MIHOMO_TUN_CHECK" || die "TUN diagnostic: синтаксическая ошибка"
+[[ -x "$DC_CLI" ]] || die "Не установлен optional DC helper: $DC_CLI"
+bash -n "$DC_CLI" || die "DC helper: синтаксическая ошибка"
+[[ -x "$SYSTEM_NODE_SCRIPT" ]] || die "Не установлен Node.js runtime installer: $SYSTEM_NODE_SCRIPT"
+bash -n "$SYSTEM_NODE_SCRIPT" || die "Node.js runtime installer: синтаксическая ошибка"
+[[ -f "$DC_UNIT" ]] || die "Не установлен optional DC unit template: $DC_UNIT"
 [[ -x "$MIHOMO_POOL_CLI" ]] || die "Не установлен исполняемый компонент: $MIHOMO_POOL_CLI"
 python3 -m py_compile "$MIHOMO_POOL_CLI" || die "Синтаксическая проверка компонента не пройдена: $MIHOMO_POOL_CLI"
 ok "Компоненты управления v$AWG_PI_VERSION установлены"
@@ -927,6 +1027,21 @@ if (( UPGRADE_EXISTING == 0 )); then
   fi
 fi
 
+# Fresh installs are availability-AUTO from the outset. The selector keeps a
+# healthy active transport sticky, lets Mihomo change nodes first, and falls
+# back to AWG after repeated failures. Neither profile has to be supplied now;
+# the monitor remains passive while both backends are unconfigured.
+if (( UPGRADE_EXISTING == 0 )); then
+  "$SELECTION_CLI" mode auto mihomo awg >/dev/null || die "Не удалось настроить безопасное автоматическое резервирование"
+  # New clean installs get a persistent, service-qualified READY-first node
+  # selection policy. No node is switched now; the isolated Hot Pool gathers
+  # two independent successful proofs after a subscription is configured.
+  # Rollback remains available through: awg-mihomo-node-policy ready-auto disable
+  "$MIHOMO_NODE_POLICY_CLI" ready-auto enable >/dev/null || die "Не удалось настроить Hot Pool READY-priority AUTO"
+  ok "Резервирование транспортов: AUTO Mihomo → AWG (без автоматического возврата ради скорости)"
+  ok "Mihomo AUTO: Hot Pool READY сначала; остальные ноды только после сервисной проверки и postcheck"
+fi
+
 ACTIVE_TRANSPORT="$(cat "$TRANSPORT_FILE" 2>/dev/null || echo unconfigured)"
 case "$ACTIVE_TRANSPORT" in
   awg)
@@ -963,18 +1078,33 @@ systemctl restart awg-pbr-health.service
 systemctl is-active --quiet awg-pbr-health.service || die "health monitor не запустился"
 systemctl restart awg-selection-monitor.service
 systemctl is-active --quiet awg-selection-monitor.service || die "selection monitor не запустился"
+# Proxy/backend health is not proof of actual Pi-bound TUN HTTPS.
+# Warning-only: a bad provider must never trigger installer rollback or SSH loss.
+if [[ "$ACTIVE_TRANSPORT" == mihomo ]]; then
+  if "$MIHOMO_TUN_CHECK" >/dev/null 2>&1; then
+    ok "Mihomo: HTTPS через настоящий TUN подтверждён (только Pi; не LAN-клиент)"
+  else
+    warn "Mihomo backend может работать через локальный прокси, но TUN HTTPS не подтверждён."
+    warn "Проверьте выбранную ноду: sudo awg-mihomo-tun-check."
+  fi
+fi
 systemctl restart awg-traffic.service
 systemctl is-active --quiet awg-traffic.service || warn "traffic accounting не запустился; маршрутизация продолжит работу"
 systemctl start awg-opencck-update.timer
 systemctl is-active --quiet awg-opencck-update.timer || warn "OpenCCK timer не активен; ручное обновление останется доступно"
 
-# The health-pool timer is useful only after a Mihomo provider exists. Keep a
-# fresh AWG-only installation completely passive with respect to Mihomo.
-if [[ -r /var/lib/awg-pbr/mihomo/providers/subscription.yaml ]]; then
-  systemctl enable --now awg-mihomo-pool-refresh.timer >/dev/null
-  systemctl is-active --quiet awg-mihomo-pool-refresh.timer || warn "Mihomo health-pool timer не активен; ручная проверка останется доступна"
+# Install-once, automatic-after-profile: the units themselves require a
+# configured Mihomo provider. Timers can be armed on a fresh AWG-only install
+# without initiating any VPN/route change or trying to select a node.
+# Upgrades preserve the existing operator's enabled/disabled policy.
+if (( UPGRADE_EXISTING == 0 )); then
+  for unit in awg-mihomo-pool-refresh.timer awg-mihomo-stage18-ram-runtime.timer awg-mihomo-stage18-ram-runtime.path awg-mihomo-hot-pool.timer; do
+    systemctl enable --now "$unit" >/dev/null || die "Не удалось включить $unit"
+    systemctl is-active --quiet "$unit" || die "Не запущен обязательный таймер $unit"
+  done
+  ok "Mihomo Hot Pool, health pool и Stage18 автоматически активируются после настройки подписки (SHADOW_ONLY)"
 else
-  systemctl disable --now awg-mihomo-pool-refresh.timer >/dev/null 2>&1 || true
+  ok "Существующая политика Mihomo-таймеров сохранена при обновлении"
 fi
 
 ACTIVE_TRANSPORT="$(cat "$TRANSPORT_FILE" 2>/dev/null || echo unconfigured)"
@@ -1021,6 +1151,51 @@ elif (( ACTIVATE_TRANSIT_AFTER_INSTALL == 1 )); then
     "$ROUTE_CLI" mode selective >/dev/null 2>&1 || true
   fi
 fi
+
+# -----------------------------------------------------------------------------
+# Optional Remote Desktop Commander: installed as a non-root, boot-persistent
+# systemd service, independent of SSH sessions, gateway routing and SSTP.
+# NEVER silently enable remote administration before the owner authorized
+# their device and explicitly opted in to persistent remote access.
+#
+# Fresh install, then one-time authorization:
+# sudo env AWG_DC_PREPARE=1 AWG_DC_USER=karlinks bash install.sh
+# awg-dc pair (ordinary user) ; sudo awg-dc enable karlinks
+#
+# Reinstall with already-restored owner-only DC session:
+# sudo env AWG_DC_PREPARE=1 AWG_DC_AUTOSTART=1 AWG_DC_USER=karlinks bash install.sh
+# Existing upgrades preserve the enabled/disabled service state by default.
+# -----------------------------------------------------------------------------
+case "${AWG_DC_PREPARE:-0}" in
+  0) : ;;
+  1)
+    _dc_user="${AWG_DC_USER:-${SUDO_USER:-}}"
+    if [[ -z "$_dc_user" || "$_dc_user" == root ]]; then
+      warn "DC runtime: укажите обычного пользователя через AWG_DC_USER (без активации DC)."
+    elif "$DC_CLI" prepare "$_dc_user"; then
+      ok "DC runtime подготовлен для $_dc_user, включая автономный старт из локального npm cache."
+    else
+      warn "DC runtime не подготовлен; VPN/DNS/SSH не изменены. Повторите: sudo awg-dc prepare USER."
+    fi
+    ;;
+  *) die "AWG_DC_PREPARE должен быть 0 или 1" ;;
+esac
+
+case "${AWG_DC_AUTOSTART:-0}" in
+  0) : ;; # Preserve existing systemd enablement during upgrades.
+  1)
+    _dc_user="${AWG_DC_USER:-${SUDO_USER:-}}"
+    if [[ -z "$_dc_user" || "$_dc_user" == root ]]; then
+      warn "DC autostart: укажите AWG_DC_USER; служба осталась без изменений."
+    elif "$DC_CLI" enable "$_dc_user"; then
+      ok "DC работает независимо от SSH, systemd восстановит его после reboot."
+    else
+      warn "DC autostart не включён: сначала требуется однократная OAuth-авторизация, root-owned systemd unit и кэш агента."
+      warn "После awg-dc pair выполните: sudo awg-dc enable $_dc_user"
+    fi
+    ;;
+  *) die "AWG_DC_AUTOSTART должен быть 0 или 1" ;;
+esac
 
 # -----------------------------------------------------------------------------
 # 12. Deep diagnostics + summary
@@ -1103,6 +1278,13 @@ printf "  sudo awg-menu\n"
 printf "  sudo awg-update status\n"
 printf "  sudo awg-update gateway\n"
 printf "  sudo awg-update core\n"
+printf "  sudo awg-system-node status  # проверка системного Node.js 22\n"
+printf "  timedatectl                  # часовой пояс (fresh: Asia/Novosibirsk)\n"
+printf "  sudo awg-dc doctor USER      # диагностика Remote DC\n"
+printf "  sudo awg-dc prepare USER     # опциональная установка Node/npm/агента\n"
+printf "  awg-dc pair                 # OAuth от обычного пользователя\n"
+printf "  sudo awg-dc enable USER     # постоянно через systemd, без открытого SSH; после OAuth\n"
+printf "  AWG_DC_PREPARE=1 AWG_DC_AUTOSTART=1  # при повторной установке с сохраненной авторизацией\n"
 
 printf "\nПервичная проверка режима:\n"
 if [[ "$FINAL_MODE" == transit ]]; then

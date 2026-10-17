@@ -147,43 +147,69 @@ class ColdConnectTests(unittest.TestCase):
         self.assertEqual(family, 'HTTP_INVALID')
 
 
-class FirstFailDiagnosticTests(unittest.TestCase):
-    def test_http403_forces_24frames_but_original_fail_stands(self):
-        import copy
+class TestedServiceChainTests(unittest.TestCase):
+    class Verdict:
+        def __init__(self, state, reason):
+            self.state, self.reason = state, reason
+
+    def test_real_24frames_are_authoritative_without_http_range_gate(self):
+        calls = []
+        class Gate:
+            def fetch(self, port, url, **kw):
+                calls.append(('fetch', port))
+                return (200, b'fixture', url)
+            def openai_probe(self, req):
+                calls.append(('api',))
+                return TestedServiceChainTests.Verdict('PASS', 'api_verified')
+            def chatgpt_web_probe(self, req):
+                calls.append(('web',))
+                return TestedServiceChainTests.Verdict('PASS', 'web_verified')
+            def assess(self, *args):
+                raise AssertionError('HTTP range video gate must not execute')
         class Video:
             def decode_24_frames(self, port):
-                assert port == 18998
+                calls.append(('video', port))
                 return 'PASS', 'youtube_24_video_frames_decoded'
         class Smart:
             def load_video_decode_code(self):
                 return Video()
-        gate = {'status': 'FAIL', 'checks': {
-            'openai_api': {'state': 'PASS'},
-            'youtube_video': {'state': 'FAIL', 'reason': 'youtube_media_http_403'}}}
-        before = copy.deepcopy(gate)
-        self.assertEqual(scan.diagnose_first_fail(gate, Smart(), 18998),
-                         ('PASS', 'youtube_24_video_frames_decoded'))
-        self.assertEqual(gate, before)
+        result = scan.assess_hot_pool_24(Gate(), Smart(), 18998)
+        self.assertEqual(result['status'], 'PASS')
+        self.assertEqual(result['checks']['youtube_video']['state'], 'PASS')
+        self.assertEqual(calls, [('api',), ('web',), ('video', 18998)])
 
-    def test_unknown_does_not_trigger_extra_decode(self):
+    def test_openai_unknown_skips_decode(self):
+        class Gate:
+            def openai_probe(self, request):
+                return TestedServiceChainTests.Verdict('UNKNOWN', 'no_api')
+            def chatgpt_web_probe(self, request):
+                return TestedServiceChainTests.Verdict('PASS', 'web')
         class Smart:
             def load_video_decode_code(self):
-                self.fail('Must not launch video')
-        gate = {'status': 'UNKNOWN', 'checks': {
-            'openai_api': {'state': 'PASS'},
-            'youtube_video': {'state': 'UNKNOWN',
-                              'reason': 'youtube_sabr_stream_unvalidated'}}}
-        self.assertIsNone(scan.diagnose_first_fail(gate, Smart(), 18998))
+                raise AssertionError('video should be skipped')
+        result = scan.assess_hot_pool_24(Gate(), Smart(), 18998)
+        self.assertEqual(result['status'], 'UNKNOWN')
+        self.assertEqual(result['checks']['youtube_video']['state'], 'UNKNOWN')
 
-    def test_openai_not_pass_skips_expensive_diagnostic(self):
+    def test_openai_fail_skips_decode_and_fails(self):
+        class Gate:
+            def openai_probe(self, request):
+                return TestedServiceChainTests.Verdict('FAIL', 'api_denied')
+            def chatgpt_web_probe(self, request):
+                return TestedServiceChainTests.Verdict('PASS', 'web')
         class Smart:
             def load_video_decode_code(self):
-                self.fail('Must not launch video')
-        gate = {'status': 'FAIL', 'checks': {
-            'openai_api': {'state': 'FAIL'},
-            'youtube_video': {'state': 'FAIL',
-                              'reason': 'youtube_media_http_403'}}}
-        self.assertIsNone(scan.diagnose_first_fail(gate, Smart(), 18998))
+                raise AssertionError('video should be skipped')
+        result = scan.assess_hot_pool_24(Gate(), Smart(), 18998)
+        self.assertEqual(result['status'], 'FAIL')
+        self.assertEqual(result['checks']['youtube_video']['state'], 'UNKNOWN')
+
+    def test_ip_connect_is_not_a_required_service_gate(self):
+        import inspect
+        source = inspect.getsource(scan.inspect_node)
+        self.assertNotIn('ip_connect_shadow_probe', source)
+        self.assertNotIn('assess_services_with_stage18', source)
+        self.assertIn('assess_hot_pool_24(gate, smart, mixed)', source)
 
 
 if __name__ == '__main__':

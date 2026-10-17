@@ -7,7 +7,7 @@ ConditionPathExists=/var/lib/awg-pbr/mihomo/providers/subscription.yaml
 
 [Service]
 Type=oneshot
-ExecCondition=/usr/bin/grep -qx balanced /etc/awg-pbr/transports/mihomo/service-eligibility.mode
+# Guarded by ConditionPathExists: available to Hot Pool even when service-gate is off.
 ExecStart=/usr/local/sbin/awg-mihomo-stage18-ram-runtime
 TimeoutStartSec=180
 UMask=0077

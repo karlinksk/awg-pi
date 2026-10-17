@@ -9,6 +9,7 @@ AWG_TRANSPORT="${AWG_TRANSPORT_BIN:-/usr/local/sbin/awg-transport}"
 MIHOMO_CONFIGURE="${MIHOMO_CONFIGURE_BIN:-/usr/local/sbin/awg-mihomo-configure}"
 MIHOMO_INSTALLER="${MIHOMO_INSTALLER_BIN:-/usr/local/sbin/awg-mihomo-install}"
 MIHOMO_NODE_POLICY="${MIHOMO_NODE_POLICY_BIN:-/usr/local/sbin/awg-mihomo-node-policy}"
+MIHOMO_POOL="${MIHOMO_POOL_BIN:-/usr/local/sbin/awg-mihomo-pool}"
 MIHOMO_ENV_FILE="${MIHOMO_ENV_FILE:-/etc/awg-pbr/transports/mihomo/provider.env}"
 MIHOMO_BIN="${MIHOMO_BIN:-/usr/local/bin/mihomo}"
 export MIHOMO_ENV_FILE MIHOMO_BIN
@@ -106,20 +107,23 @@ resolve_node_choice(){
 configure_mihomo_node_chain(){
   local primary="$1" answer next chain node existing listing
   local -a nodes=("$primary")
-  [[ "${AWG_FIRST_RUN_INTERACTIVE:-0}" == 1 ]] || return 0
+  if [[ "${AWG_FIRST_RUN_INTERACTIVE:-0}" != 1 ]]; then
+    "$MIHOMO_NODE_POLICY" mode auto >/dev/null
+    return 0
+  fi
 
-  ask "Настроить резервную цепочку узлов Mihomo сейчас? (y/N)" "N"
+  ask "Задать фиксированную резервную цепочку вместо автоматического подбора? (y/N)" "N"
   answer="$REPLY"
   if [[ ! "$answer" =~ ^([Yy]|[Дд][Аа]?)$ ]]; then
-    "$MIHOMO_NODE_POLICY" mode manual >/dev/null
-    ui_print "Резервирование узлов Mihomo: MANUAL"
+    "$MIHOMO_NODE_POLICY" mode auto >/dev/null
+    ui_print "Резервирование узлов Mihomo: AUTO (по доступным проверенным узлам)"
     return 0
   fi
 
   while true; do
     if ! listing="$("$MIHOMO_CONFIGURE" node list)"; then
-      "$MIHOMO_NODE_POLICY" mode manual >/dev/null 2>&1 || true
-      ui_print "Список узлов сейчас недоступен; первый транспорт Mihomo сохранён, политика узлов = MANUAL."
+      "$MIHOMO_NODE_POLICY" mode auto >/dev/null 2>&1 || true
+      ui_print "Список узлов сейчас недоступен; первый транспорт Mihomo сохранён, политика узлов = AUTO."
       return 0
     fi
     ui_print "$(printf '\n=== Доступные узлы Mihomo ===\n%s\n' "$listing")"
@@ -147,16 +151,16 @@ configure_mihomo_node_chain(){
   done
 
   if (( ${#nodes[@]} < 2 )); then
-    "$MIHOMO_NODE_POLICY" mode manual >/dev/null
-    ui_print "Резервные узлы не добавлены; политика узлов Mihomo остаётся MANUAL."
+    "$MIHOMO_NODE_POLICY" mode auto >/dev/null
+    ui_print "Резервные узлы не добавлены; политика узлов Mihomo = AUTO."
     return 0
   fi
 
   chain="$(printf ' -> %s' "${nodes[@]}")"
   ui_print "Итоговая цепочка узлов: ${chain# -> }"
   if ! "$MIHOMO_NODE_POLICY" mode fixed "${nodes[@]}"; then
-    "$MIHOMO_NODE_POLICY" mode manual >/dev/null 2>&1 || true
-    ui_print "Резервная цепочка не применена; первый транспорт Mihomo остаётся рабочим, политика узлов = MANUAL."
+    "$MIHOMO_NODE_POLICY" mode auto >/dev/null 2>&1 || true
+    ui_print "Резервная цепочка не применена; первый транспорт Mihomo остаётся рабочим, политика узлов = AUTO."
   fi
 }
 
@@ -176,7 +180,13 @@ choose_mihomo_node(){
   ui_print "$(printf '\n=== Доступные узлы Mihomo ===\n%s\n' "$nodes")"
   name="${AWG_FIRST_RUN_NODE:-}"
   if [[ -z "$name" ]]; then
-    ask "Введите номер или точное имя первого узла Mihomo"
+    # The provider was scanned by init/stage-file: automatically choose its
+    # current best healthy node. Avoid asking a user to understand 2k proxies.
+    name="$("$MIHOMO_POOL" best "$source" 2>/dev/null || true)"
+    [[ -z "$name" ]] || ui_print "Автоматически выбран доступный узел: $name"
+  fi
+  if [[ -z "$name" && "${AWG_FIRST_RUN_INTERACTIVE:-0}" == 1 ]]; then
+    ask "Автовыбор не нашёл доступных узлов. Введите номер или имя вручную (пусто = отмена)" ""
     name="$REPLY"
   fi
   name="$(resolve_node_choice "$nodes" "$name")"

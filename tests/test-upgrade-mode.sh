@@ -12,7 +12,7 @@ grep -Fq 'MIHOMO_INSTALLER=/usr/local/sbin/awg-mihomo-install' src/awg-update
 grep -Fq '"$MIHOMO_INSTALLER" status || true' src/awg-update
 grep -Fq '"$MIHOMO_INSTALLER" ensure' src/awg-update
 grep -Fq 'mihomo)' src/awg-update
-grep -Fq 'Использование: awg-update [--yes] {status|gateway|core|mihomo|all}' src/awg-update
+grep -Fq 'Использование: awg-update [--yes] {status|backup|gateway|core|mihomo|all}' src/awg-update
 grep -Fq '"$ROUTE_CLI" mode transit' install.sh
 grep -Fq '"$ROUTE_CLI" mode selective' install.sh
 grep -Fq 'TRANSPORT_FILE="$PBR_DIR/transport"' install.sh
@@ -38,7 +38,7 @@ grep -Fq 'usr/share/awg-pbr' src/awg-update
 confirm_parser="$(awk '/^confirm_yes\(\)\{/{capture=1} capture{print} capture && /^}$/{exit}' install.sh)"
 eval "$confirm_parser"
 cr="$(printf '\r')"
-for answer in y Y yes Yes YES д Д да Да ДА "y${cr}" ' y ' "да${cr}"; do
+for answer in y Y yes Yes YES у У д Д да Да ДА "y${cr}" "у${cr}" ' y ' ' у ' "да${cr}"; do
   confirm_yes "$answer" || { echo "FAIL: affirmative confirmation rejected: [$answer]" >&2; exit 1; }
 done
 for answer in n N no No NO нет Нет '' '   '; do
