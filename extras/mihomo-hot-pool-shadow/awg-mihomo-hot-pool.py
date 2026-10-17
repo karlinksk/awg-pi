@@ -37,6 +37,8 @@ TARGET_READY = 4
 # bounded sequential diagnostic probes. Be conservative about expiry.
 NEXT_PROBE_SAFETY = 1260
 CURRENT_FILE = Path('/etc/awg-pbr/transports/mihomo/node-name')
+LIVE_TRANSPORT = Path('/etc/awg-pbr/transport')
+LIVE_ENDPOINT = Path('/etc/awg-pbr/transports/mihomo/endpoint-ip')
 PROBE_TIMEOUT = 135  # prior 125s plus <=6s Cloudflare Trace geo check
 GEO_HISTORY_TTL = 86400
 GEO_HISTORY_LIMIT = 256  # max 2 probes per 12min cycle -> <=240/day
@@ -282,8 +284,8 @@ def shortlist(nodes: list[dict], state: dict, current: str,
     active_hosts = {str(n['server']).strip().casefold()
                     for n in nodes if n['name'] == current}
     try:
-        if Path('/etc/awg-pbr/transport').read_text().strip() == 'mihomo':
-            active_ip = Path('/etc/awg-pbr/transports/mihomo/endpoint-ip').read_text().strip()
+        if LIVE_TRANSPORT.read_text().strip() == 'mihomo':
+            active_ip = LIVE_ENDPOINT.read_text().strip()
             if literal_public_ipv4(active_ip):
                 active_hosts.add(active_ip.casefold())
     except OSError:
