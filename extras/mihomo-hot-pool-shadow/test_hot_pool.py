@@ -40,8 +40,8 @@ class HotPoolTests(unittest.TestCase):
         from unittest.mock import patch
         with tempfile.TemporaryDirectory() as d:
             transport, endpoint = Path(d) / 'transport', Path(d) / 'endpoint'
-            transport.write_text('mihomo\\n')
-            endpoint.write_text('1.2.3.4\\n')
+            transport.write_text('mihomo\n')
+            endpoint.write_text('1.2.3.4\n')
             with patch.object(hot, 'LIVE_TRANSPORT', transport), patch.object(
                     hot, 'LIVE_ENDPOINT', endpoint):
                 shortlist = hot.shortlist(self.nodes, self.state, 'removed-live-name')
