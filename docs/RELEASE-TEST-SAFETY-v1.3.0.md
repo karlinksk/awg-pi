@@ -58,4 +58,12 @@ A07: PARTIAL (source tests and file permission checks PASS; full sudo audit PEND
 A08: PARTIAL (LAN and DC paths PASS; actual remote SSTP path not tested here).
 A09: PENDING (root-owned verified backup, timed rescue arm/trigger and restore test).
 
+### Gateway backup hardening (2026-10-17)
+
+- The operator's read-only check for `gateway-state.tgz` under `/var/backups/awg-gateway` (maximum depth 2) produced **zero paths**. This does not prove absence of other differently named backups or an external whole-media image.
+- Candidate `src/awg-update` now offers an explicit `backup` subcommand that writes an archive to a new root-only `gateway-manual-*` directory without running an update. Its backup function refuses missing required gateway paths, skips only genuinely absent optional release-version assets, fails on GNU tar errors, checks compressed archive structure and atomically publishes with 0600 permissions.
+- Isolated synthetic fixture suite `tests/test_gateway_backup_integrity.py` tests eight scenarios, including missing required path, unreadable existing profile, truncated/bad tar and secret-free command output. These checks do **not** prove the running host archive can be restored. Do not run the new candidate backup as root until it is pinned and root-installed separately from the live updater and source CI on that commit passes.
+- For hardware gate A09, after creating the private snapshot, check the actual archive against an expected manifest, verify full-media imaging, and independently test a restore and local timed-failsafe without affecting SSTP or the production router.
+
+
 Hardware failover tests must remain BLOCKED until A08 and A09 gates pass.
