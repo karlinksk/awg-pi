@@ -3,7 +3,38 @@
 **Scope: NOT a production selector.** This module creates a separate eligibility
 record for nodes of the existing healthy pool. No TUN, transport, policy,
 SSTP/MikroTik, DNS, nftables or forwarding changes. `best` is reporting only.
-On the Pi test stand the diagnostic unit is installed and its timer enabled for SHADOW-only observation. It never selects or changes a live node.
+A prior test deployment enabled SHADOW-only observation on 2026-10-14; on the current `awg-upgrade-test` test microSD the Hot Pool timer was **inactive** at the 2026-10-17 audit. Do not assume it is enabled on any host. It never selects a live node by itself.
+
+## 2026-10-17 safety review: live-proxy isolation
+
+**Default remains manual, no Hot Pool timer and no AUTO activation.**
+A separate TUN-disabled Mihomo still shares the remote VPN server, bandwidth
+and possible provider connection limits with the live service. Two failures of
+the live VLESS observed during Stage18 Shadow checks are correlated, not
+proven caused by those checks. To avoid repeating the risk:
+
+- Refuse a Shadow probe of the selected Mihomo node or **any candidate on
+  the same physical server IP/host**, even with a different name or port.
+- If the active Mihomo health is not `up` or its selected identity cannot be
+  verified, stop before issuing candidate network requests. Re-check before
+  each major probe phase, with secure cleanup of the short-lived process.
+- Hot Pool shortlists exclude aliases of the active server; successful historical
+  proofs alone cannot override the independent live guard.
+- The root-owned, opt-in Stage18 runtime in `/dev/shm` requires FFmpeg
+  at `/usr/bin/ffmpeg` **in addition** to pinned Node.js and yt-dlp. Missing
+  FFmpeg yields `stage18_ffmpeg_unavailable` and never a YouTube PASS.
+- On a minimal Debian 13 Pi, preview installation first with
+  `sudo apt-get -s install --no-install-recommends ffmpeg`. Install deliberately
+  with `sudo apt-get install --no-install-recommends ffmpeg`; it can add a large
+  multimedia library tree. Do not automatically install it on a VPN gateway.
+- A Stage18 `UNKNOWN` never qualifies READY. Active traffic health may recover
+  later independently of a Shadow scan; do not conflate timing with causation.
+- If the active transport fails in **Selective** mode, the documented
+  FAIL-OPEN/DIRECT policy can expose traffic to the ISP. Transit is fail-closed.
+  A missing `awg0.conf` means there is **no AWG fallback** on that test card.
+  Never enable automatic selection without a validated independent backup.
+
+No live gateway, MikroTik or SSTP change is performed by these GitHub edits.
 
 ## Semantics
 

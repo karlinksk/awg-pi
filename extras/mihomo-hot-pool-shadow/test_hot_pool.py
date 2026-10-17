@@ -29,6 +29,25 @@ class HotPoolTests(unittest.TestCase):
         rows = hot.shortlist(self.nodes, self.state, 'ss-a')
         self.assertEqual([n['name'] for n in rows], ['hy-a', 'vless-a', 'vless-b'])
 
+    def test_live_alias_different_port_not_in_reserve(self):
+        alias = dict(self.nodes[3], name='active-alias', port=8443)
+        nodes = self.nodes + [alias]
+        shortlist = hot.shortlist(nodes, self.state, 'vless-a')
+        self.assertNotIn('active-alias', [n['name'] for n in shortlist])
+        self.assertIn('vless-b', [n['name'] for n in shortlist])
+
+    def test_live_endpoint_excluded_even_if_active_absent_from_pool(self):
+        from unittest.mock import patch
+        with tempfile.TemporaryDirectory() as d:
+            transport, endpoint = Path(d) / 'transport', Path(d) / 'endpoint'
+            transport.write_text('mihomo\n')
+            endpoint.write_text('1.2.3.4\n')
+            with patch.object(hot, 'LIVE_TRANSPORT', transport), patch.object(
+                    hot, 'LIVE_ENDPOINT', endpoint):
+                shortlist = hot.shortlist(self.nodes, self.state, 'removed-live-name')
+        self.assertNotIn('vless-a', [n['name'] for n in shortlist])
+        self.assertIn('vless-b', [n['name'] for n in shortlist])
+
     def test_two_passes_temporally_separated(self):
         n = self.nodes[0]
         hot.record_scan(self.state, n, True, self.now)
@@ -208,7 +227,9 @@ class HotPoolTests(unittest.TestCase):
     def test_diagnostic_pass_sanitizes_output(self):
         import subprocess
         from unittest.mock import patch
-        raw = ('SERVICE_ELIGIBILITY=UNKNOWN\n'
+        raw = ('SERVICE_IP_CONNECT_STATE=PASS\n'
+               'SERVICE_IP_CONNECT_REASON=ALL_CHECKED_IPV4_HTTPS_OK\n'
+               'SERVICE_ELIGIBILITY=UNKNOWN\n'
                'SERVICE_CHECK_OPENAI_API=PASS\n'
                'SERVICE_CHECK_CHATGPT_WEB=UNKNOWN\n'
                'SERVICE_CHECK_YOUTUBE_VIDEO=PASS\n'
@@ -229,6 +250,25 @@ class HotPoolTests(unittest.TestCase):
         self.assertIn('YOUTUBE24=PASS', detail)
         self.assertNotIn('private_data_must_not_leak', detail)
 
+    def test_legacy_scanner_without_ip_proof_never_ready(self):
+        import subprocess
+        from unittest.mock import patch
+        raw = ('SERVICE_ELIGIBILITY=UNKNOWN\\n'
+               'SERVICE_CHECK_OPENAI_API=PASS\\n'
+               'SERVICE_CHECK_CHATGPT_WEB=UNKNOWN\\n'
+               'SERVICE_CHECK_YOUTUBE_VIDEO=PASS\\n'
+               'SERVICE_REASON_CHATGPT_WEB=chatgpt_web_http_403\\n')
+        def fake(argv, **kwargs):
+            if argv[0] == hot.SCAN:
+                return subprocess.CompletedProcess(argv, 1, raw, '')
+            if argv[0] == hot.GATE:
+                return subprocess.CompletedProcess(argv, 0, 'NETWORK_ELIGIBILITY=ELIGIBLE\\n', '')
+            raise AssertionError('Unexpected executable')
+        with patch.object(hot.subprocess, 'run', side_effect=fake):
+            allowed, detail = hot.scan_one('vless-a')
+        self.assertFalse(allowed)
+        self.assertIn('IP_GATE=UNVERIFIED', detail)
+
     def test_cold_metadata_is_not_forwarded_to_strict_gate(self):
         import subprocess
         from unittest.mock import patch
@@ -238,6 +278,8 @@ class HotPoolTests(unittest.TestCase):
                'SERVICE_CONNECT_ATTEMPTS=2\n'
                'SERVICE_CONNECT_FAMILY=HTTPS_OK\n'
                'SERVICE_REASON_YOUTUBE_VIDEO=youtube_24_video_frames_decoded\n'
+               'SERVICE_IP_CONNECT_STATE=PASS\n'
+               'SERVICE_IP_CONNECT_REASON=ALL_CHECKED_IPV4_HTTPS_OK\n'
                'SERVICE_ELIGIBILITY=UNKNOWN\n'
                'SERVICE_CHECK_OPENAI_API=PASS\n'
                'SERVICE_CHECK_CHATGPT_WEB=UNKNOWN\n'
@@ -266,7 +308,9 @@ class HotPoolTests(unittest.TestCase):
     def test_geo_fields_are_collected_but_not_passed_to_balanced_gate(self):
         import subprocess
         from unittest.mock import patch
-        raw = ('SERVICE_ELIGIBILITY=UNKNOWN\n'
+        raw = ('SERVICE_IP_CONNECT_STATE=PASS\n'
+               'SERVICE_IP_CONNECT_REASON=ALL_CHECKED_IPV4_HTTPS_OK\n'
+               'SERVICE_ELIGIBILITY=UNKNOWN\n'
                'SERVICE_CHECK_OPENAI_API=PASS\n'
                'SERVICE_CHECK_CHATGPT_WEB=UNKNOWN\n'
                'SERVICE_CHECK_YOUTUBE_VIDEO=PASS\n'
@@ -386,7 +430,9 @@ class HotPoolTests(unittest.TestCase):
     def test_strict_gate_still_rejects_missing_or_duplicate_checks(self):
         import subprocess
         from unittest.mock import patch
-        raw = ('SERVICE_ELIGIBILITY=UNKNOWN\n'
+        raw = ('SERVICE_IP_CONNECT_STATE=PASS\n'
+               'SERVICE_IP_CONNECT_REASON=ALL_CHECKED_IPV4_HTTPS_OK\n'
+               'SERVICE_ELIGIBILITY=UNKNOWN\n'
                'SERVICE_CHECK_OPENAI_API=PASS\n'
                'SERVICE_CHECK_OPENAI_API=PASS\n'
                'SERVICE_CHECK_CHATGPT_WEB=UNKNOWN\n'
@@ -417,7 +463,9 @@ class HotPoolTests(unittest.TestCase):
     def test_diagnostic_gate_rejects_missing_video(self):
         import subprocess
         from unittest.mock import patch
-        raw = ('SERVICE_ELIGIBILITY=UNKNOWN\n'
+        raw = ('SERVICE_IP_CONNECT_STATE=PASS\n'
+               'SERVICE_IP_CONNECT_REASON=ALL_CHECKED_IPV4_HTTPS_OK\n'
+               'SERVICE_ELIGIBILITY=UNKNOWN\n'
                'SERVICE_CHECK_OPENAI_API=PASS\n'
                'SERVICE_CHECK_CHATGPT_WEB=UNKNOWN\n'
                'SERVICE_CHECK_YOUTUBE_VIDEO=UNKNOWN\n'

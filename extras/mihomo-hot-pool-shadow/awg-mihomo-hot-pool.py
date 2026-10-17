@@ -37,6 +37,8 @@ TARGET_READY = 4
 # bounded sequential diagnostic probes. Be conservative about expiry.
 NEXT_PROBE_SAFETY = 1260
 CURRENT_FILE = Path('/etc/awg-pbr/transports/mihomo/node-name')
+LIVE_TRANSPORT = Path('/etc/awg-pbr/transport')
+LIVE_ENDPOINT = Path('/etc/awg-pbr/transports/mihomo/endpoint-ip')
 PROBE_TIMEOUT = 135  # prior 125s plus <=6s Cloudflare Trace geo check
 GEO_HISTORY_TTL = 86400
 GEO_HISTORY_LIMIT = 256  # max 2 probes per 12min cycle -> <=240/day
@@ -276,9 +278,20 @@ def shortlist(nodes: list[dict], state: dict, current: str,
     """
     if now is None:
         now = int(time.time())
-    active_endpoints = {endpoint(n) for n in nodes if n['name'] == current}
+    # Block the entire active server, including aliases on different ports.
+    # The live endpoint file is authoritative even if the selected node was
+    # removed from a refreshed healthy pool.
+    active_hosts = {str(n['server']).strip().casefold()
+                    for n in nodes if n['name'] == current}
+    try:
+        if LIVE_TRANSPORT.read_text().strip() == 'mihomo':
+            active_ip = LIVE_ENDPOINT.read_text().strip()
+            if literal_public_ipv4(active_ip):
+                active_hosts.add(active_ip.casefold())
+    except OSError:
+        pass  # Scanner still independently fails closed on missing live data.
     candidates = [n for n in nodes if n['name'] != current
-                  and endpoint(n) not in active_endpoints
+                  and str(n['server']).strip().casefold() not in active_hosts
                   and endpoint(n) not in state['quarantine']]
     # Sorting before dedupe means a proven alias wins over an unproven,
     # lower-latency alias sharing the same actual host:port.
@@ -446,7 +459,8 @@ def scan_one(name: str, provider: Path | None = None) -> tuple[bool, str]:
                    'SERVICE_REASON_YOUTUBE_VIDEO', 'SERVICE_CONNECT_STATE',
                    'SERVICE_COLD_READY_MS', 'SERVICE_CONTROLLER_READY_MS',
                    'SERVICE_CONNECT_WAIT_MS', 'SERVICE_CONNECT_ATTEMPTS',
-                   'SERVICE_CONNECT_FAMILY', 'SERVICE_GEO_EGRESS_IPV4',
+                   'SERVICE_CONNECT_FAMILY', 'SERVICE_IP_CONNECT_STATE',
+                   'SERVICE_IP_CONNECT_REASON', 'SERVICE_GEO_EGRESS_IPV4',
                    'SERVICE_GEO_COUNTRY', 'SERVICE_GEO_STATE',
                    'SERVICE_GEO_REASON', 'SERVICE_DIAG_AFTER_FIRST_FAIL_24',
                    'SERVICE_DIAG_AFTER_FIRST_FAIL_REASON'}
@@ -490,6 +504,8 @@ def scan_one(name: str, provider: Path | None = None) -> tuple[bool, str]:
                    ' WAIT_MS=' + status('SERVICE_CONNECT_WAIT_MS') +
                    ' ATTEMPTS=' + status('SERVICE_CONNECT_ATTEMPTS') +
                    ' CONNECT_FAMILY=' + status('SERVICE_CONNECT_FAMILY') +
+                   ' IP_CONNECT=' + status('SERVICE_IP_CONNECT_STATE') +
+                   ' IP_REASON=' + status('SERVICE_IP_CONNECT_REASON') +
                    ' EGRESS_IP=' + status('SERVICE_GEO_EGRESS_IPV4') +
                    ' COUNTRY=' + status('SERVICE_GEO_COUNTRY') +
                    ' GEO=' + status('SERVICE_GEO_STATE') +
@@ -500,6 +516,14 @@ def scan_one(name: str, provider: Path | None = None) -> tuple[bool, str]:
                         status('SERVICE_DIAG_AFTER_FIRST_FAIL_24') +
                         ' AFTER_FIRST_FAIL_REASON=' +
                         status('SERVICE_DIAG_AFTER_FIRST_FAIL_REASON'))
+        # An older or forged scanner response without IP-CONNECT evidence
+        # cannot confer READY, even if its service gate otherwise passes.
+        ip_verified = (
+            fields.get('SERVICE_IP_CONNECT_STATE') == 'PASS'
+            and fields.get('SERVICE_IP_CONNECT_REASON') == 'ALL_CHECKED_IPV4_HTTPS_OK'
+        )
+        if not ip_verified:
+            return False, summary + ' IP_GATE=UNVERIFIED'
         return gate.returncode == 0, summary
     except subprocess.TimeoutExpired:
         return False, 'REASON=SCANNER_OR_GATE_TIMEOUT'

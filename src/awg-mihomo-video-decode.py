@@ -25,6 +25,25 @@ YOUTUBE_URL = "https://www.youtube.com/watch?v=jNQXAC9IVRw"
 MAX_SAMPLE_BYTES = 2 * 1024 * 1024
 MIN_FRAMES = 24
 
+def _ytdlp_failure_reason(returncode: int, stderr: str) -> str:
+    """Classify only known stderr patterns; never print signed media URLs."""
+    raw = stderr[-12000:].lower()
+    if returncode == -25 or re.search(r"file size limit exceeded|\[errno 27\]|file too large", raw):
+        return "stage18_ytdlp_file_limit"
+    if re.search(r"confirm you.re not a bot|sign in to confirm|bot verification|use --cookies", raw):
+        return "stage18_ytdlp_bot_challenge"
+    if re.search(r"http error[ :]+(?:403|429|451)\b|status code[ :]+(?:403|429|451)\b", raw):
+        return "stage18_ytdlp_http_denied"
+    if re.search(r"requested format is not available|no video formats found|format is not available", raw):
+        return "stage18_ytdlp_format_unavailable"
+    if re.search(r"remote component|ejs|nsig|signature extraction|signature solving|javascript challenge", raw):
+        return "stage18_ytdlp_js_challenge"
+    if re.search(r"ffmpeg.*(?:error|failed|exited|not found)|(?:error|failed).*ffmpeg", raw):
+        return "stage18_ytdlp_ffmpeg_error"
+    if re.search(r"timed out|timeout|connection reset|network is unreachable", raw):
+        return "stage18_ytdlp_network_error"
+    return "stage18_ytdlp_extract_or_download_failed"
+
 def _verified_file(path: Path, expected: str) -> bool:
     if path.is_symlink() or not path.is_file():
         return False
@@ -57,17 +76,26 @@ def verified_runtime(root: Path = RAM_RUNTIME) -> bool:
     except OSError:
         return False
 
+def ffmpeg_ready(executable: Path = Path("/usr/bin/ffmpeg")) -> bool:
+    """Stage18 is optional; do not silently install heavy multimedia packages."""
+    return (executable.is_file() and not executable.is_symlink()
+            and os.access(executable, os.X_OK))
+
+
 def _limits():
     resource.setrlimit(resource.RLIMIT_FSIZE, (MAX_SAMPLE_BYTES, MAX_SAMPLE_BYTES))
     resource.setrlimit(resource.RLIMIT_CPU, (20, 20))
 
 def decode_24_frames(proxy_port: int, *, root: Path = RAM_RUNTIME,
-                     runner=subprocess.run, check_runtime=verified_runtime) -> tuple[str, str]:
+                     runner=subprocess.run, check_runtime=verified_runtime,
+                     ffmpeg_check=None) -> tuple[str, str]:
     """Return (PASS|UNKNOWN, code). Fail-safe and diagnostic-only."""
     if not isinstance(proxy_port, int) or not 1 <= proxy_port <= 65535:
         return "UNKNOWN", "stage18_invalid_proxy"
     if os.geteuid() != 0 or not check_runtime(root):
         return "UNKNOWN", "stage18_verified_ram_runtime_unavailable"
+    if not (ffmpeg_check or ffmpeg_ready)():
+        return "UNKNOWN", "stage18_ffmpeg_unavailable"
     try:
         with tempfile.TemporaryDirectory(prefix="awg-stage18-video-", dir="/dev/shm") as temp:
             output = Path(temp) / "probe.%(ext)s"
@@ -90,7 +118,7 @@ def decode_24_frames(proxy_port: int, *, root: Path = RAM_RUNTIME,
             job = runner(argv, capture_output=True, text=True, timeout=55,
                          env=env, preexec_fn=_limits)
             if job.returncode != 0:
-                return "UNKNOWN", "stage18_ytdlp_extract_or_download_failed"
+                return "UNKNOWN", _ytdlp_failure_reason(job.returncode, job.stderr or "")
             files = [p for p in Path(temp).glob("probe.*") if p.is_file() and not p.is_symlink()]
             if len(files) != 1 or not 0 < files[0].stat().st_size <= MAX_SAMPLE_BYTES:
                 return "UNKNOWN", "stage18_media_sample_invalid"

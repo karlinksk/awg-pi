@@ -723,9 +723,16 @@ install_project_helper src/awg-selection-monitor "$SELECTION_MONITOR"
 install_project_python_helper src/awg-mihomo-limits.py /usr/local/sbin/awg-mihomo-limits.py
 install_project_python_helper src/awg-mihomo-service-check.py /usr/local/sbin/awg-mihomo-service-check.py
 install_project_python_helper src/awg-mihomo-video-decode.py /usr/local/sbin/awg-mihomo-video-decode.py
+# Optional Stage18 24-frame verification requires FFmpeg. Do not silently
+# install its substantial multimedia dependency tree on an existing gateway.
+if [[ ! -x /usr/bin/ffmpeg ]]; then
+  warn "Stage18 video decode unavailable: FFmpeg missing. Optional: apt-get -s install --no-install-recommends ffmpeg"
+fi
 install_project_helper scripts/awg-mihomo-stage18-ram-runtime.sh /usr/local/sbin/awg-mihomo-stage18-ram-runtime
 install_project_python_helper src/awg-mihomo-service-eligibility.py /usr/local/sbin/awg-mihomo-service-eligibility.py
 install_project_python_helper src/awg-mihomo-network-eligibility.py /usr/local/sbin/awg-mihomo-network-eligibility.py
+# Passive bounded numeric-IP HTTPS probe; not scheduled or run during install.
+install_project_python_helper extras/mihomo-hot-pool-shadow/awg-mihomo-ip-connect-probe.py /usr/local/sbin/awg-mihomo-ip-connect-probe
 install_project_python_helper src/awg-mihomo-smart /usr/local/sbin/awg-mihomo-smart
 # Install optional READY dependencies BEFORE the live selector, minimizing
 # the upgrade window if an operator explicitly enabled the canary elsewhere.

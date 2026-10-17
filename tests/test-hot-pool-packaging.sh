@@ -7,14 +7,14 @@ python3 -B - <<'PY'
 import ast
 from pathlib import Path
 root=Path('extras/mihomo-hot-pool-shadow')
-for name in ('awg-mihomo-hot-pool.py','awg-mihomo-hot-service-scan.py','awg-hot-pool-continuity.py'):
+for name in ('awg-mihomo-hot-pool.py','awg-mihomo-hot-service-scan.py','awg-mihomo-ip-connect-probe.py','awg-hot-pool-continuity.py'):
     ast.parse((root/name).read_text())
 ins=Path('install.sh').read_text()
 upd=Path('src/awg-update').read_text()
 unit=(root/'awg-mihomo-hot-pool.service').read_text()
 timer=(root/'awg-mihomo-hot-pool.timer').read_text()
 standalone=(root/'install-shadow.sh').read_text()
-files=('awg-mihomo-hot-pool','awg-mihomo-hot-service-scan','awg-hot-pool-continuity.py','awg-mihomo-hot-continuity-run')
+files=('awg-mihomo-hot-pool','awg-mihomo-hot-service-scan','awg-mihomo-ip-connect-probe','awg-hot-pool-continuity.py','awg-mihomo-hot-continuity-run')
 for file in files:
     assert ins.count('/usr/local/sbin/'+file)>=1, 'not installed '+file
     assert upd.count('usr/local/sbin/'+file)==2, 'backup/rollback missing '+file
@@ -37,7 +37,7 @@ assert 'Unit=awg-mihomo-hot-pool.service' in timer
 assert 'systemctl enable awg-mihomo-hot-pool.timer' not in ins
 assert 'systemctl start awg-mihomo-hot-pool.service' not in ins
 assert 'systemctl enable --now awg-mihomo-hot-pool.timer' not in ins
-for name in ('awg-mihomo-hot-pool.py','awg-mihomo-hot-service-scan.py','awg-hot-pool-continuity.py','awg-mihomo-hot-continuity-run'):
+for name in ('awg-mihomo-hot-pool.py','awg-mihomo-hot-service-scan.py','awg-mihomo-ip-connect-probe.py','awg-hot-pool-continuity.py','awg-mihomo-hot-continuity-run'):
     assert 'install -m 0755 "$source_dir/'+name+'"' in standalone, 'incomplete standalone shadow install '+name
 assert '/var/lib/awg-pbr/hot-pool/continuity' in standalone
 assert 'test_hot_pool_continuity.py' in standalone

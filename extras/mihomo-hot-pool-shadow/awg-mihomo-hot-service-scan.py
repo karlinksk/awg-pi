@@ -204,11 +204,16 @@ def inspect_node(name: str, provider: Path | None = None) -> int:
     if len(matched) != 1:
         print('SERVICE_SHADOW_ERROR=NODE_NOT_UNIQUE')
         return 2
+    guard = smart.shadow_guard_reason(matched[0], raw)
+    if guard:
+        print('SERVICE_SHADOW_ERROR=LIVE_GUARD_' + guard)
+        return 2
     smart.verify_candidate_direct(matched[0])
     smart.STATE_DIR.mkdir(mode=0o700, parents=True, exist_ok=True)
     print('SERVICE_DIAG_MODE=ISOLATED_SHADOW_ONLY', flush=True)
     with (smart.STATE_DIR / 'lock').open('a+') as lock:
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        smart.require_shadow_safe(matched[0], raw)
         mixed = helper.choose_free_port()
         controller = helper.choose_free_port()
         while mixed == controller:
@@ -244,6 +249,7 @@ def inspect_node(name: str, provider: Path | None = None) -> int:
                     print('SERVICE_SHADOW_ERROR=CONTROLLER_START_TIMEOUT')
                     return 2
                 controller_ms = round((time.monotonic() - start) * 1000)
+                smart.require_shadow_safe(matched[0], raw)
                 helper.select_probe(controller, entries[0]['probe_name'])
                 ok, wait_ms, attempts, family = cold_connect(gate.fetch, mixed)
                 print('SERVICE_CONNECT_STATE=' + ('PASS' if ok else 'UNKNOWN'))
@@ -260,13 +266,28 @@ def inspect_node(name: str, provider: Path | None = None) -> int:
                     print('SERVICE_REASON_CHATGPT_WEB=connect_not_ready')
                     print_geo('UNKNOWN', 'UNKNOWN', 'UNKNOWN', 'CONNECT_NOT_READY')
                     return 1
+                smart.require_shadow_safe(matched[0], raw)
+                # Numeric-IP HTTPS is mandatory for selective forwarding.
+                # Reuse the bounded shared probe before expensive media decode.
+                if not callable(getattr(smart, 'ip_connect_shadow_probe', None)):
+                    ip_state, ip_reason = 'UNKNOWN', 'HELPER_MISSING'
+                else:
+                    ip_state, ip_reason = smart.ip_connect_shadow_probe(mixed)
+                print('SERVICE_IP_CONNECT_STATE=' + ip_state)
+                print('SERVICE_IP_CONNECT_REASON=' + ip_reason, flush=True)
+                if ip_state != 'PASS':
+                    print('SERVICE_ELIGIBILITY=UNKNOWN')
+                    for key in ('OPENAI_API', 'CHATGPT_WEB', 'YOUTUBE_VIDEO'):
+                        print('SERVICE_CHECK_' + key + '=UNKNOWN')
+                    print('SERVICE_REASON_CHATGPT_WEB=ip_connect_unverified')
+                    print_geo('UNKNOWN', 'UNKNOWN', 'UNKNOWN', 'IP_CONNECT_UNVERIFIED')
+                    return 1
+                smart.require_shadow_safe(matched[0], raw)
                 result = smart.assess_services_with_stage18(
                     gate, mixed, force_media=True)
-                diagnostic = diagnose_first_fail(result, smart, mixed)
-                if diagnostic is not None:
-                    print('SERVICE_DIAG_AFTER_FIRST_FAIL_24=' + diagnostic[0])
-                    print('SERVICE_DIAG_AFTER_FIRST_FAIL_REASON=' + diagnostic[1],
-                          flush=True)
+                smart.require_shadow_safe(matched[0], raw)
+                # Stage18 already made the sole decoded-video attempt. Never
+                # launch a second diagnostic decode for the same candidate.
                 # Geo is telemetry only. It MUST NOT influence the balanced gate.
                 geo_ip, geo_country, geo_state, geo_reason = isolated_egress(
                     helper, controller, mixed, entries[0])

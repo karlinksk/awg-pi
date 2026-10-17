@@ -87,6 +87,7 @@ backup_gateway(){
     usr/local/sbin/awg-mihomo-ready-postcheck-tun \
     usr/local/sbin/awg-mihomo-hot-pool \
     usr/local/sbin/awg-mihomo-hot-service-scan \
+    usr/local/sbin/awg-mihomo-ip-connect-probe \
     usr/local/sbin/awg-hot-pool-continuity.py \
     usr/local/sbin/awg-mihomo-hot-continuity-run \
     usr/local/sbin/awg-menu \
@@ -143,6 +144,7 @@ restore_gateway(){
     /usr/local/sbin/awg-mihomo-ready-postcheck-tun \
     /usr/local/sbin/awg-mihomo-hot-pool \
     /usr/local/sbin/awg-mihomo-hot-service-scan \
+    /usr/local/sbin/awg-mihomo-ip-connect-probe \
     /usr/local/sbin/awg-hot-pool-continuity.py \
     /usr/local/sbin/awg-mihomo-hot-continuity-run \
     /usr/local/sbin/awg-menu \
