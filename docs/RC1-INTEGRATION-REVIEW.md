@@ -2,6 +2,8 @@
 
 **Status: DRAFT. Not an RC1 release or production migration.**
 
+> **Current release contract (updated 17 October 2026 for PR #115):** This document originally described an earlier **passive** Hot Pool/READY canary. Its historical acceptance results remain useful, but the latest `install.sh` behavior is different: fresh installs now **auto-arm provider-guarded Hot Pool/Stage18 timers** and persistently enable `ready-auto` node priority. The Hot Pool scanner itself remains **SHADOW_ONLY** and cannot alter the live transport. Existing-install upgrades preserve the operator's prior timer and ready-auto policy. A fresh system **without a configured subscription** cannot promote a candidate; a candidate must pass the two-pass eligibility and real Pi-bound TUN postcheck, and forwarded LAN validation is a separate release gate. For the authoritative current behavior see `docs/HOT-POOL-READY-AUTO.md`, `install.sh`, and the 150-case release matrix.
+
 This integration branch combines, by ancestry, PR #106 (ChatGPT/YouTube eligibility),
 PRs #108/#110 (Hot Pool shadow and continuity), PR #109 (staged-only periodic
 subscription update), and PR #111 (READY-first AUTO canary). None of the
@@ -9,11 +11,17 @@ upstream draft PRs were merged into `develop/v1.3.0` or `main`.
 
 ## Safety defaults
 
-- `MIHOMO_READY_AUTO_CANARY=0` remains the default. No unattended READY
-  selection is enabled by the installer.
-- Hot Pool binaries and its continuity wrapper are installed **passively**
-  on a fresh installation. The systemd timer is not enabled/started. The
-  Hot Pool itself always runs in **SHADOW_ONLY**.
+- Historical (16 Oct) canary used `MIHOMO_READY_AUTO_CANARY=0` as the
+  default. **Current PR #115 differs for fresh installs:** it writes
+  `ready-auto.mode=1` via `awg-mihomo-node-policy ready-auto enable`;
+  therefore the runtime reads READY priority as enabled even without an
+  exported environment variable. Existing upgrades do not overwrite the
+  operator's persisted READY policy.
+- Fresh installs stage the Hot Pool/continuity binaries and **enable the
+  guarded Hot Pool, health-pool and Stage18 timers**. The Hot Pool worker
+  remains **SHADOW_ONLY**; enabling its timer does not select an active VPN
+  node or change routes, and without a configured provider it must remain
+  inert. Enabled/disabled states on existing upgrades are preserved.
 - If a separate Hot Pool deployment already has an active service or enabled
   timer, the gateway installer **preserves it untouched**, instead of replacing
   a running scanner. Such deployments require a separately reviewed upgrade.
@@ -30,7 +38,7 @@ upstream draft PRs were merged into `develop/v1.3.0` or `main`.
 
 ## Components
 
-Installed (passive Hot Pool only):
+Installed (Hot Pool **SHADOW_ONLY**; provider-guarded timer auto-armed only on a clean installation):
 `awg-mihomo-hot-pool`, `awg-mihomo-hot-service-scan`,
 `awg-hot-pool-continuity.py`, `awg-mihomo-hot-continuity-run`,
 `awg-mihomo-hot-pool.service`, `awg-mihomo-hot-pool.timer`.
@@ -82,7 +90,10 @@ constitute production acceptance of this new bundled installer**.
 3. Verify a truly fresh isolated install/upgrade/rollback (prefer disposable
    Debian 13 VM or Pi test partition) before tagging RC1. Source fixture tests
    and systemd static validation do not replace that system-level test.
-4. Keep service enablement explicitly opt-in and preserve SSTP management.
+4. Validate the fresh-install default timers/READY priority separately from
+   the opt-in historical canary. No unexpected live switch during onboarding,
+   no switching of a healthy active node merely for speed, and no change to
+   SSTP management. Existing-install policies must be preserved.
 5. After code review, resolve or merge the existing draft PR dependency stack
    in a reviewed sequence. Only then prepare/tag `v1.3.0-rc1`.
 
