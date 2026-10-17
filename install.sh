@@ -46,6 +46,8 @@ MIHOMO_NODE_POLICY_CLI="/usr/local/sbin/awg-mihomo-node-policy"
 MIHOMO_READY_GUARD="/usr/local/sbin/awg-mihomo-ready-live-match"
 MIHOMO_READY_POSTCHECK="/usr/local/sbin/awg-mihomo-ready-postcheck-tun"
 MIHOMO_TUN_CHECK="/usr/local/sbin/awg-mihomo-tun-check"
+DC_CLI="/usr/local/sbin/awg-dc"
+DC_UNIT="/etc/systemd/system/awg-dc-remote@.service"
 UPDATE_SCRIPT="/usr/local/sbin/awg-update"
 TRAFFIC_CLI="/usr/local/sbin/awg-traffic"
 SETUP_SERVICE="/etc/systemd/system/awg-pbr-setup.service"
@@ -761,6 +763,9 @@ install_project_python_helper src/awg-mihomo-smart /usr/local/sbin/awg-mihomo-sm
 install_project_python_helper src/awg-mihomo-ready-live-match "$MIHOMO_READY_GUARD"
 install_project_helper src/awg-mihomo-ready-postcheck-tun "$MIHOMO_READY_POSTCHECK"
 install_project_helper src/awg-mihomo-tun-check "$MIHOMO_TUN_CHECK"
+# DC is optional: stage the commands and an INACTIVE service template only.
+install_project_helper src/awg-dc "$DC_CLI"
+install_project_unit units/awg-dc-remote@.service "$DC_UNIT"
 install_project_helper src/awg-mihomo-node-policy "$MIHOMO_NODE_POLICY_CLI"
 
 # A clean install ships BOTH VPN engines, independently of whether the operator
@@ -930,6 +935,9 @@ python3 -B -c 'import ast,sys; ast.parse(open(sys.argv[1],encoding="utf-8").read
 bash -n "$MIHOMO_READY_POSTCHECK" || die "READY postcheck: синтаксическая ошибка"
 [[ -x "$MIHOMO_TUN_CHECK" ]] || die "Не установлен TUN diagnostic: $MIHOMO_TUN_CHECK"
 bash -n "$MIHOMO_TUN_CHECK" || die "TUN diagnostic: синтаксическая ошибка"
+[[ -x "$DC_CLI" ]] || die "Не установлен optional DC helper: $DC_CLI"
+bash -n "$DC_CLI" || die "DC helper: синтаксическая ошибка"
+[[ -f "$DC_UNIT" ]] || die "Не установлен optional DC unit template: $DC_UNIT"
 [[ -x "$MIHOMO_POOL_CLI" ]] || die "Не установлен исполняемый компонент: $MIHOMO_POOL_CLI"
 python3 -m py_compile "$MIHOMO_POOL_CLI" || die "Синтаксическая проверка компонента не пройдена: $MIHOMO_POOL_CLI"
 ok "Компоненты управления v$AWG_PI_VERSION установлены"
@@ -1096,6 +1104,28 @@ elif (( ACTIVATE_TRANSIT_AFTER_INSTALL == 1 )); then
 fi
 
 # -----------------------------------------------------------------------------
+# Optional Remote Desktop Commander prerequisites. Never auto-pair or expose
+# device credentials. A package install problem must NOT roll back the gateway.
+# On existing hosts, preserve any already-paired agent and systemd enablement.
+# Invocation: sudo env AWG_DC_PREPARE=1 AWG_DC_USER=karlinks bash install.sh
+# After installation, owner must run: awg-dc pair ; sudo awg-dc enable USER
+# -----------------------------------------------------------------------------
+case "${AWG_DC_PREPARE:-0}" in
+  0) : ;;
+  1)
+    _dc_user="${AWG_DC_USER:-${SUDO_USER:-}}"
+    if [[ -z "$_dc_user" || "$_dc_user" == root ]]; then
+      warn "DC runtime: укажите обычного пользователя через AWG_DC_USER (без активации DC)."
+    elif "$DC_CLI" prepare "$_dc_user"; then
+      ok "DC runtime подготовлен для $_dc_user; авторизация и автозапуск отдельно."
+    else
+      warn "DC runtime не подготовлен; VPN/DNS/SSH не изменены. Повторите: sudo awg-dc prepare USER."
+    fi
+    ;;
+  *) die "AWG_DC_PREPARE должен быть 0 или 1" ;;
+esac
+
+# -----------------------------------------------------------------------------
 # 12. Deep diagnostics + summary
 # -----------------------------------------------------------------------------
 STAGE="финальная диагностика"
@@ -1176,6 +1206,10 @@ printf "  sudo awg-menu\n"
 printf "  sudo awg-update status\n"
 printf "  sudo awg-update gateway\n"
 printf "  sudo awg-update core\n"
+printf "  sudo awg-dc doctor USER      # диагностика Remote DC\n"
+printf "  sudo awg-dc prepare USER     # опциональная установка Node/npm/агента\n"
+printf "  awg-dc pair                 # OAuth от обычного пользователя\n"
+printf "  sudo awg-dc enable USER     # автозапуск только после привязки\n"
 
 printf "\nПервичная проверка режима:\n"
 if [[ "$FINAL_MODE" == transit ]]; then
