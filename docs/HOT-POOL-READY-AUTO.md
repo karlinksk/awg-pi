@@ -33,3 +33,23 @@ The candidate service gate is `balanced` only within the node-selector execution
 6. Periodic provider refresh currently **stages changed subscription data** pending review, not an unattended live promotion; do not confuse the running timer with fully autonomous subscription replacement.
 
 This feature's PR stays **draft** until live tests and upgrade/reboot acceptance are complete. Do not promote the branch to stable solely from static tests.
+
+## Installer acceptance: actual TUN is separate from local proxy health
+
+`awg-transport check mihomo` and the currently running transport health monitor check the **local Mihomo proxy** and API. A positive result is **not** proof that the current node can carry real IPv4 HTTPS through `mihomo0`. For the selected node use:
+
+```bash
+sudo awg-mihomo-tun-check
+```
+
+The command is installed by `install.sh`, makes no network configuration changes, and invokes the existing guarded `awg-mihomo-ready-postcheck-tun`: check table 100 and fwmark `0x100`, then public IPv4 HTTPS egress and OpenAI API through the bound TUN interface. The HTTPS probes explicitly ignore curlrc and inherited HTTP proxies. `MIHOMO_TUN_CHECK=PASS` confirms **Pi-bound TUN only**; the user must still prove **LAN-client forwarding** separately. It is correct for `awg-transport check mihomo` to succeed while this probe fails.
+
+For a newly configured active Mihomo transport, the installer performs the TUN acceptance check as a **warning-only** step after the selection monitor starts. This must not prevent fresh installation or rollback the network just because a provider or site is unavailable. An operator can rerun the command after selecting a different node. This distinction should be maintained in future status/TUI and health policies: `proxy healthy`, `Pi TUN PASS` and `LAN client PASS` are three different findings.
+
+### DNS/Selective/Transit and October 17 live findings
+
+In Selective, Raspberry Pi's `dnsmasq` answers client queries **when the client uses Pi DNS** and populates `nftset` with real IPv4 destinations, but does **not** feed an IP-to-name cache to Mihomo. The Pi OS itself may use MikroTik DNS; check each resolver path independently. In Transit, DNS may be handled on MikroTik/DoH and may not be visible to Pi. **Do not** silently move DNS into the VPN, turn on Fake-IP/DNS hijacking or enable TLS SNI sniffing by default as a speculative workaround.
+
+On the TEST Pi, active `shadowsocks-1827968609` successfully proxied domain-based HTTPS but failed numeric-IP CONNECT and real TUN TLS. Reserve `shadowsocks-1827145438` passed numeric-IP HTTPS **with and without SNI sniffing**, then passed both an independently guarded real `mihomo0` postcheck and Google HTTP 204; the original node was restored. No DNS/sniffing changes were needed. A subsequent one-off script's exact route comparison failed transiently just after restoration; later inspection confirmed `fwmark 0x100 → table 100 → mihomo0`. Use bounded recovery polling and route-semantic checks, not whitespace-sensitive string equality, for further canaries.
+
+Hot Pool's service `READY` currently qualifies hostname-based OpenAI/ChatGPT/decoded YouTube, **not** numeric-IP or TUN suitability. The separate `awg-mihomo-smart service-scan` requires numeric-IP HTTPS on candidates, and real node activation has a mandatory bound TUN postcheck. Do not confuse these levels of eligibility or reintroduce the rejected legacy YouTube HTTP prefilter. **Unattended failover, routed LAN client and healthy AWG fallback are still not accepted**; this PR remains draft.
