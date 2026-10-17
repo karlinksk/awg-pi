@@ -84,6 +84,28 @@ class FullComponentAuditTests(unittest.TestCase):
             self.assertNotEqual(code, 0)
             self.assertIn("BACKUP_ARCHIVE_STREAM=FAIL", out)
 
+    def test_every_present_installer_manifest_path_is_compared(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            for name in ("etc/awg-pbr", "usr/local/sbin/awg-route"):
+                target = root / name
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_text("fixture")
+            missing, errors, total = mod.inventory(
+                {"etc/awg-pbr"}, ROOT / "src/awg-update", live_root=root)
+            self.assertEqual(errors, [])
+            self.assertEqual(total, 2)
+            self.assertEqual(missing, ["usr/local/sbin/awg-route"])
+
+    def test_manifest_source_rejected_when_invalid(self):
+        with tempfile.TemporaryDirectory() as d:
+            source = Path(d) / "unknown"
+            source.write_text("not a backup manifest")
+            missing, errors, count = mod.inventory(set(), source)
+            self.assertEqual(missing, [])
+            self.assertEqual(errors, ["MANIFEST_SOURCE_INVALID"])
+            self.assertEqual(count, 0)
+
     def test_rootless_fixture_without_changing_system(self):
         with tempfile.TemporaryDirectory() as d:
             archive = self.make(d)
