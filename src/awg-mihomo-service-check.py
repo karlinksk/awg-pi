@@ -228,11 +228,14 @@ def youtube_probe(request: Callable) -> Result:
         return Result("UNKNOWN", "youtube_" + type(exc).__name__)
 
 
-def assess(request: Callable) -> dict:
+def assess(request: Callable, *, include_youtube: bool = True) -> dict:
     # Individual probes intentionally run even if the other already failed.
     api = openai_probe(request)
     web = chatgpt_web_probe(request)
-    video = youtube_probe(request)
+    # Stage18 uses the actual yt-dlp + FFmpeg 24-frame decoder, not the
+    # legacy HTTP media-header check. Keep HTTP mode for other callers.
+    video = (youtube_probe(request) if include_youtube
+             else Result("UNKNOWN", "stage18_decoder_required"))
     checks = {"openai_api": asdict(api), "chatgpt_web": asdict(web),
               "youtube_video": asdict(video)}
     states = [item.state for item in (api, web, video)]
