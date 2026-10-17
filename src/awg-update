@@ -70,12 +70,29 @@ backup_gateway(){
     etc/systemd/system/awg-mihomo-hot-pool.timer \
     etc/systemd/system/awg-selection-monitor.service \
     etc/systemd/system/awg-traffic.service \
+    etc/systemd/system/awg-mihomo-pool-refresh.service \
+    etc/systemd/system/awg-mihomo-pool-refresh.timer \
+    etc/systemd/system/awg-mihomo-stage18-ram-runtime.service \
+    etc/systemd/system/awg-mihomo-stage18-ram-runtime.timer \
+    etc/systemd/system/awg-mihomo-stage18-ram-runtime.path \
+    etc/systemd/system/awg-dc-remote@.service \
     var/lib/awg-pbr/mihomo \
     var/lib/awg-pbr/hot-pool \
     var/lib/awg-pbr/traffic \
     usr/local/lib/awg-pi \
     usr/share/awg-pbr \
     usr/local/bin/mihomo \
+    usr/local/bin/node \
+    usr/local/bin/awg-dc \
+    usr/local/sbin/awg-mihomo-limits.py \
+    usr/local/sbin/awg-mihomo-service-check.py \
+    usr/local/sbin/awg-mihomo-video-decode.py \
+    usr/local/sbin/awg-mihomo-stage18-ram-runtime \
+    usr/local/sbin/awg-system-node \
+    usr/local/sbin/awg-mihomo-service-eligibility.py \
+    usr/local/sbin/awg-mihomo-network-eligibility.py \
+    usr/local/sbin/awg-mihomo-smart \
+    usr/local/sbin/awg-mihomo-tun-check \
     usr/local/sbin/awg-route \
     usr/local/sbin/awg-transport \
     usr/local/sbin/awg-fetch \
@@ -130,9 +147,27 @@ restore_gateway(){
     awg-pbr-health.service \
     2>/dev/null || true
 
+  # Only remove the Node.js link when this gateway itself manages it. Never
+  # overwrite/delete an unrelated system-level Node.js installation.
+  if [[ -L /usr/local/bin/node ]]; then
+    _node_target="$(readlink -- /usr/local/bin/node)"
+    if [[ "$_node_target" == /usr/local/lib/awg-pi/node/*/node ]]; then
+      rm -f -- /usr/local/bin/node
+    fi
+  fi
   rm -rf /etc/awg-pbr /var/lib/awg-pbr/mihomo /var/lib/awg-pbr/hot-pool /var/lib/awg-pbr/traffic /usr/local/lib/awg-pi /usr/share/awg-pbr
   rm -f \
     /usr/local/bin/mihomo \
+    /usr/local/bin/awg-dc \
+    /usr/local/sbin/awg-mihomo-limits.py \
+    /usr/local/sbin/awg-mihomo-service-check.py \
+    /usr/local/sbin/awg-mihomo-video-decode.py \
+    /usr/local/sbin/awg-mihomo-stage18-ram-runtime \
+    /usr/local/sbin/awg-system-node \
+    /usr/local/sbin/awg-mihomo-service-eligibility.py \
+    /usr/local/sbin/awg-mihomo-network-eligibility.py \
+    /usr/local/sbin/awg-mihomo-smart \
+    /usr/local/sbin/awg-mihomo-tun-check \
     /usr/local/sbin/awg-route \
     /usr/local/sbin/awg-transport \
     /usr/local/sbin/awg-fetch \
@@ -178,6 +213,12 @@ restore_gateway(){
     /etc/systemd/system/awg-mihomo-hot-pool.timer \
     /etc/systemd/system/awg-selection-monitor.service \
     /etc/systemd/system/awg-traffic.service \
+    /etc/systemd/system/awg-mihomo-pool-refresh.service \
+    /etc/systemd/system/awg-mihomo-pool-refresh.timer \
+    /etc/systemd/system/awg-mihomo-stage18-ram-runtime.service \
+    /etc/systemd/system/awg-mihomo-stage18-ram-runtime.timer \
+    /etc/systemd/system/awg-mihomo-stage18-ram-runtime.path \
+    /etc/systemd/system/awg-dc-remote@.service \
     /etc/profile.d/awg-menu.sh
 
   tar -C / -xzf "$dir/gateway-state.tgz"
