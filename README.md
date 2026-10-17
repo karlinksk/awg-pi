@@ -17,6 +17,8 @@ unavailable.
 
 Current stable release: **v1.2.0**
 
+**Permanent maintenance policy:** [Installer-first change policy](docs/INSTALLER-CHANGE-POLICY.md). All verified fixes must be preserved in the installer/upgrade source, regression tests and documentation; see also [AGENTS.md](AGENTS.md). This policy is independent of unreleased v1.3.0 features.
+
 ## Install / upgrade
 
 Use the stable tag for both a fresh install and an upgrade from an existing
