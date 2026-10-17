@@ -13,7 +13,7 @@ Versioned in this repository and deployed to fresh installs **and upgrades**:
 - `install.sh` stages both files; it does not pair a device, copy credentials, change network routing, alter SSH, or start DC automatically.
 - With explicit environment variables `AWG_DC_PREPARE=1` and `AWG_DC_USER=<your-Linux-user>` on installation, `awg-dc prepare` installs Debian `nodejs`, `npm`, `ca-certificates` (only if required) and prefetches the officially documented DC agent through `npx`, **as the non-root user**. A preparation failure produces a warning and does not roll back the gateway. The default is `AWG_DC_PREPARE=0`.
 
-This is an official third-party npm dependency: the remote agent is obtained from the publisher, not vendored into the AWG repository. Only download and authorize software you trust. Upstream's recommended `@latest` is used for initial onboarding; changes to upstream versions still require compatibility testing before treating a new release as accepted on Debian 13 ARM64.
+This is an official third-party npm dependency: the remote agent is obtained from the publisher, not vendored into the AWG repository. Only download and authorize software you trust. The gateway candidate pins the npm package to `@wonderwhy-er/desktop-commander@0.2.52` (publisher's npm release observed on 2026-10-17) instead of auto-following `@latest`. This prevents unreviewed changes on reboot. Debian 13 ARM64 pairing, autostart and reboot acceptance are still pending; update the pinned version only after compatibility testing.
 
 ## First pairing on the Raspberry Pi
 
