@@ -12,7 +12,7 @@ grep -Fq 'MIHOMO_INSTALLER=/usr/local/sbin/awg-mihomo-install' src/awg-update
 grep -Fq '"$MIHOMO_INSTALLER" status || true' src/awg-update
 grep -Fq '"$MIHOMO_INSTALLER" ensure' src/awg-update
 grep -Fq 'mihomo)' src/awg-update
-grep -Fq 'Использование: awg-update [--yes] {status|gateway|core|mihomo|all}' src/awg-update
+grep -Fq 'Использование: awg-update [--yes] {status|backup|gateway|core|mihomo|all}' src/awg-update
 grep -Fq '"$ROUTE_CLI" mode transit' install.sh
 grep -Fq '"$ROUTE_CLI" mode selective' install.sh
 grep -Fq 'TRANSPORT_FILE="$PBR_DIR/transport"' install.sh
