@@ -731,6 +731,13 @@ install_project_python_helper src/awg-mihomo-video-decode.py /usr/local/sbin/awg
 # Stage18's pinned Node.js and yt-dlp binaries are then automatically prepared
 # in RAM by the guarded timer after a Mihomo subscription is configured.
 install_project_helper scripts/awg-mihomo-stage18-ram-runtime.sh /usr/local/sbin/awg-mihomo-stage18-ram-runtime
+# Store the hash-verified decoder toolchain once during clean installation.
+# Each boot copies verified binaries to RAM, even when GitHub is unavailable.
+# This is provisioning only: no proxy, routes or active transport are changed.
+if (( UPGRADE_EXISTING == 0 )); then
+  STAGE="установка видеодекодера Stage18"
+  /usr/local/sbin/awg-mihomo-stage18-ram-runtime prefetch || die "Не удалось подготовить обязательные Node.js/yt-dlp для проверки YouTube"
+fi
 install_project_python_helper src/awg-mihomo-service-eligibility.py /usr/local/sbin/awg-mihomo-service-eligibility.py
 install_project_python_helper src/awg-mihomo-network-eligibility.py /usr/local/sbin/awg-mihomo-network-eligibility.py
 # Passive bounded numeric-IP HTTPS probe; not scheduled or run during install.
