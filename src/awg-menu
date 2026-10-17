@@ -1176,7 +1176,7 @@ mihomo_candidate_menu(){
       if confirm "Резервирование узлов Mihomo" "Настроить резервную цепочку узлов сейчас?\n\nОсновной узел уже выбран: $node_name\nПри отказе переход будет выполняться только слева направо по явно добавленным узлам."; then
         mihomo_node_chain_editor
       else
-        "$MIHOMO_NODE_POLICY" mode manual >/dev/null 2>&1 || true
+        "$MIHOMO_NODE_POLICY" mode auto >/dev/null 2>&1 || true
       fi
     elif [[ "$current" != mihomo ]]; then
       msg "Профиль Mihomo" "Новый профиль и узел применены. Активный транспорт не изменён; переключение выполняется через «VPN-маршрутизация → Активный транспорт»."
@@ -1367,6 +1367,24 @@ mihomo_node_policy_menu(){
   done
 }
 
+# New provider onboarding is unattended after the user provides the URL.
+# Candidate commit is transactional and verifies the isolated backend first.
+# When no eligible candidate is found, keep the staged source and offer the
+# existing manual recovery UI instead of silently selecting an untested node.
+mihomo_candidate_auto_apply(){
+  local behavior="${1:-secondary}" node current
+  node="$("$MIHOMO_POOL" best candidate 2>/dev/null || true)"
+  [[ -n "$node" ]] || return 1
+  title="Автоматический выбор узла Mihomo"
+  capture "$MIHOMO_CONFIGURE" provider candidate commit-auto "$node" || return 1
+  "$MIHOMO_NODE_POLICY" mode auto >/dev/null || return 1
+  current="$("$AWG_TRANSPORT" get 2>/dev/null || echo unconfigured)"
+  if [[ "$current" == unconfigured ]]; then
+    capture "$AWG_TRANSPORT" select mihomo || return 1
+  fi
+  msg "Mihomo готов" "Подписка применена; выбран доступный узел, политика узлов AUTO. Основной работающий транспорт не переключается ради скорости. Hot Pool и резервирование продолжают работать автоматически."
+}
+
 mihomo_initial_setup_flow(){
   local behavior="${1:-secondary}" profile provider_format url init_tmp
 
@@ -1393,7 +1411,8 @@ mihomo_initial_setup_flow(){
   if capture "$MIHOMO_CONFIGURE" init "$init_tmp"; then
     rm -f "$init_tmp"
     init_tmp=""
-    if confirm "Профиль Mihomo подготовлен" "Источник успешно загружен и проверен. Перейти к выбору основного узла и применению профиля?"; then
+    if ! mihomo_candidate_auto_apply "$behavior"; then
+      msg "Mihomo: автоматический выбор" "Автоматическое применение не удалось. Подготовленная подписка сохранена; можно выбрать работоспособный узел вручную."
       mihomo_candidate_menu "$behavior"
     fi
   else
