@@ -45,6 +45,7 @@ MIHOMO_NODE_POLICY_CLI="/usr/local/sbin/awg-mihomo-node-policy"
 # READY AUTO is installed as *passive* opt-in only; no activation on upgrade.
 MIHOMO_READY_GUARD="/usr/local/sbin/awg-mihomo-ready-live-match"
 MIHOMO_READY_POSTCHECK="/usr/local/sbin/awg-mihomo-ready-postcheck-tun"
+MIHOMO_TUN_CHECK="/usr/local/sbin/awg-mihomo-tun-check"
 UPDATE_SCRIPT="/usr/local/sbin/awg-update"
 TRAFFIC_CLI="/usr/local/sbin/awg-traffic"
 SETUP_SERVICE="/etc/systemd/system/awg-pbr-setup.service"
@@ -759,6 +760,7 @@ install_project_python_helper src/awg-mihomo-smart /usr/local/sbin/awg-mihomo-sm
 # The installer never sets MIHOMO_READY_AUTO_CANARY=1.
 install_project_python_helper src/awg-mihomo-ready-live-match "$MIHOMO_READY_GUARD"
 install_project_helper src/awg-mihomo-ready-postcheck-tun "$MIHOMO_READY_POSTCHECK"
+install_project_helper src/awg-mihomo-tun-check "$MIHOMO_TUN_CHECK"
 install_project_helper src/awg-mihomo-node-policy "$MIHOMO_NODE_POLICY_CLI"
 
 # A clean install ships BOTH VPN engines, independently of whether the operator
@@ -926,6 +928,8 @@ python3 -B -c 'import ast,sys; ast.parse(open(sys.argv[1],encoding="utf-8").read
   || die "READY guard: синтаксическая ошибка"
 [[ -x "$MIHOMO_READY_POSTCHECK" ]] || die "Не установлен READY postcheck: $MIHOMO_READY_POSTCHECK"
 bash -n "$MIHOMO_READY_POSTCHECK" || die "READY postcheck: синтаксическая ошибка"
+[[ -x "$MIHOMO_TUN_CHECK" ]] || die "Не установлен TUN diagnostic: $MIHOMO_TUN_CHECK"
+bash -n "$MIHOMO_TUN_CHECK" || die "TUN diagnostic: синтаксическая ошибка"
 [[ -x "$MIHOMO_POOL_CLI" ]] || die "Не установлен исполняемый компонент: $MIHOMO_POOL_CLI"
 python3 -m py_compile "$MIHOMO_POOL_CLI" || die "Синтаксическая проверка компонента не пройдена: $MIHOMO_POOL_CLI"
 ok "Компоненты управления v$AWG_PI_VERSION установлены"
@@ -1017,6 +1021,16 @@ systemctl restart awg-pbr-health.service
 systemctl is-active --quiet awg-pbr-health.service || die "health monitor не запустился"
 systemctl restart awg-selection-monitor.service
 systemctl is-active --quiet awg-selection-monitor.service || die "selection monitor не запустился"
+# Proxy/backend health is not proof of actual Pi-bound TUN HTTPS.
+# Warning-only: a bad provider must never trigger installer rollback or SSH loss.
+if [[ "$ACTIVE_TRANSPORT" == mihomo ]]; then
+  if "$MIHOMO_TUN_CHECK" >/dev/null 2>&1; then
+    ok "Mihomo: HTTPS через настоящий TUN подтверждён (только Pi; не LAN-клиент)"
+  else
+    warn "Mihomo backend может работать через локальный прокси, но TUN HTTPS не подтверждён."
+    warn "Проверьте выбранную ноду: sudo awg-mihomo-tun-check."
+  fi
+fi
 systemctl restart awg-traffic.service
 systemctl is-active --quiet awg-traffic.service || warn "traffic accounting не запустился; маршрутизация продолжит работу"
 systemctl start awg-opencck-update.timer
