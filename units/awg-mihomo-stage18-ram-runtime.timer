@@ -3,6 +3,8 @@ Description=Retry-safe Stage18 RAM-only runtime bootstrap for Mihomo service che
 
 [Timer]
 OnBootSec=2min
+# OnActiveSec also covers enabling this timer after the boot deadline passed.
+OnActiveSec=2min
 OnUnitActiveSec=1h
 RandomizedDelaySec=2min
 Persistent=false
