@@ -60,7 +60,7 @@ class ReleaseBackupCoverage(unittest.TestCase):
         self.assertIn("var/lib/awg-pbr/mihomo", BACKUP)
 
     def test_mihomo_health_pool_cli_backed_up(self):
-        self.assertIn('install_project_python_helper src/awg-mihomo-pool.py "$MIHOMO_POOL_CLI"', INSTALL)
+        self.assertIn('install -m 755 "$_mihomo_pool_tmp" "$MIHOMO_POOL_CLI"', INSTALL)
         self.assertIn('MIHOMO_POOL_CLI="/usr/local/sbin/awg-mihomo-pool"', INSTALL)
         self.assertIn("usr/local/sbin/awg-mihomo-pool", BACKUP)
         self.assertIn("/usr/local/sbin/awg-mihomo-pool", RESTORE)
