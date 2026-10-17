@@ -137,7 +137,7 @@ class VideoStage18(unittest.TestCase):
         checks={k:{"state":v,"reason":"mock"} for k,v in
                 (("openai_api",api),("chatgpt_web",web),("youtube_video",youtube))}
         result={"status":"UNKNOWN","checks":checks}
-        return types.SimpleNamespace(assess=lambda f:result,fetch=lambda *x,**kw:None)
+        return types.SimpleNamespace(assess=lambda f, **kw:result,fetch=lambda *x,**kw:None)
 
     def test_sabr_fallback_promotes_only_actual_decoder_pass(self):
         gate=self.gate()
@@ -149,7 +149,7 @@ class VideoStage18(unittest.TestCase):
     def test_unknown_video_decoder_cannot_promote(self):
         gate=self.gate()
         video=types.SimpleNamespace(decode_24_frames=lambda port:("UNKNOWN","stage18_insufficient_frames"))
-        self.assertEqual(smart.assess_services_with_stage18(gate,17891,video_module=video)["status"],"UNKNOWN")
+        self.assertEqual(smart.assess_services_with_stage18(gate,17891,video_module=video)["status"],"FAIL")
 
     def test_api_region_failure_never_promoted(self):
         gate=self.gate(api="FAIL")
@@ -166,11 +166,31 @@ class VideoStage18(unittest.TestCase):
         self.assertEqual(state["checks"]["youtube_video"]["state"],"PASS")
         self.assertEqual(state["status"],"UNKNOWN")
 
-    def test_existing_direct_video_pass_skips_decoder(self):
+    def test_http_header_pass_cannot_bypass_24_frame_decoder(self):
         gate=self.gate(youtube="PASS")
-        video=types.SimpleNamespace(decode_24_frames=lambda port:(_ for _ in ()).throw(AssertionError("called")))
+        video=types.SimpleNamespace(
+            decode_24_frames=lambda port:("UNKNOWN", "stage18_insufficient_frames"))
         result=smart.assess_services_with_stage18(gate,17891,video_module=video)
-        self.assertEqual(result["checks"]["youtube_video"]["state"],"PASS")
+        self.assertEqual(result["checks"]["youtube_video"]["state"],"UNKNOWN")
+        self.assertEqual(result["status"],"UNKNOWN")
+
+    def test_stage18_does_not_call_legacy_youtube_http_probe(self):
+        called=[]
+        gate=types.SimpleNamespace(
+            fetch=lambda *args,**kwargs:None,
+            assess=lambda fn,**kwargs:(
+                called.append(kwargs.get("include_youtube")) or
+                {"status":"UNKNOWN","checks":{
+                    "openai_api":{"state":"PASS","reason":"fixture"},
+                    "chatgpt_web":{"state":"PASS","reason":"fixture"},
+                    "youtube_video":{"state":"PASS","reason":"unsafe_legacy_http_header"}}}))
+        video=types.SimpleNamespace(
+            decode_24_frames=lambda port:("PASS","youtube_24_video_frames_decoded"))
+        outcome=smart.assess_services_with_stage18(gate,17891,video_module=video)
+        self.assertEqual(called,[False])
+        self.assertEqual(outcome["status"],"PASS")
+        self.assertEqual(outcome["checks"]["youtube_video"]["reason"],
+                         "youtube_24_video_frames_decoded")
 
 if __name__=="__main__":
     unittest.main()
