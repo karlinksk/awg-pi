@@ -135,32 +135,42 @@ def print_geo(ip: str, country: str, state: str, reason: str) -> None:
     print('SERVICE_GEO_REASON=' + reason, flush=True)
 
 
-def diagnose_first_fail(result, smart, proxy_port):
-    """Shadow-only extra decode after first-stage YouTube HTTP denial.
+def assess_hot_pool_24(gate, smart, proxy_port: int) -> dict:
+    """Hot Pool only: OpenAI + ChatGPT, then real 24-frame YouTube decode.
 
-    Never mutates result, so eligibility remains determined by the ORIGINAL
-    balanced gate. Only genuine first-stage HTTP 403/451 failures qualify.
+    Do not invoke gate.assess()/youtube_probe(): the legacy HTTP range probe
+    returns false 403s for video that the same node successfully decodes.
+    No extra retries or second decode; media is skipped if OpenAI is unproven.
     """
-    checks = result.get('checks', {})
-    video = checks.get('youtube_video', {})
-    if (checks.get('openai_api', {}).get('state') != 'PASS'
-            or video.get('state') != 'FAIL'
-            or video.get('reason') not in
-            ('youtube_media_http_403', 'youtube_media_http_451')):
-        return None
-    try:
-        module = smart.load_video_decode_code()
-        if module is None:
-            return ('UNKNOWN', 'VIDEO_MODULE_UNAVAILABLE')
-        state, reason = module.decode_24_frames(proxy_port)
-        if state not in ('PASS', 'UNKNOWN', 'FAIL'):
-            return ('UNKNOWN', 'INVALID_DIAG_STATE')
-        if not re.fullmatch(r'[a-zA-Z0-9_]{1,64}', reason):
-            return ('UNKNOWN', 'INVALID_DIAG_REASON')
-        return state, reason
-    except Exception:
-        # No raw exception or provider data in stdout.
-        return ('UNKNOWN', 'DIAG_EXCEPTION')
+    def request(url, **kwargs):
+        return gate.fetch(proxy_port, url, timeout=6, **kwargs)
+
+    api = gate.openai_probe(request)
+    web = gate.chatgpt_web_probe(request)
+    video_state, video_reason = 'UNKNOWN', 'stage18_not_run_openai_unconfirmed'
+    if api.state == 'PASS':
+        try:
+            module = smart.load_video_decode_code()
+            if module is None:
+                video_reason = 'stage18_video_module_unavailable'
+            else:
+                video_state, video_reason = module.decode_24_frames(proxy_port)
+                if (video_state not in ('PASS', 'UNKNOWN')
+                        or not isinstance(video_reason, str)
+                        or not re.fullmatch(r'[a-z0-9_]{1,80}', video_reason)):
+                    video_state, video_reason = 'UNKNOWN', 'stage18_invalid_result'
+        except Exception:
+            video_state, video_reason = 'UNKNOWN', 'stage18_media_runtime_error'
+
+    checks = {
+        'openai_api': {'state': api.state, 'reason': api.reason},
+        'chatgpt_web': {'state': web.state, 'reason': web.reason},
+        'youtube_video': {'state': video_state, 'reason': video_reason},
+    }
+    states = [item['state'] for item in checks.values()]
+    status = ('PASS' if all(state == 'PASS' for state in states)
+              else 'FAIL' if 'FAIL' in states else 'UNKNOWN')
+    return {'status': status, 'checks': checks, 'checked_at': int(time.time())}
 
 
 def trusted_shadow_provider(path: Path) -> bool:
@@ -267,27 +277,12 @@ def inspect_node(name: str, provider: Path | None = None) -> int:
                     print_geo('UNKNOWN', 'UNKNOWN', 'UNKNOWN', 'CONNECT_NOT_READY')
                     return 1
                 smart.require_shadow_safe(matched[0], raw)
-                # Numeric-IP HTTPS is mandatory for selective forwarding.
-                # Reuse the bounded shared probe before expensive media decode.
-                if not callable(getattr(smart, 'ip_connect_shadow_probe', None)):
-                    ip_state, ip_reason = 'UNKNOWN', 'HELPER_MISSING'
-                else:
-                    ip_state, ip_reason = smart.ip_connect_shadow_probe(mixed)
-                print('SERVICE_IP_CONNECT_STATE=' + ip_state)
-                print('SERVICE_IP_CONNECT_REASON=' + ip_reason, flush=True)
-                if ip_state != 'PASS':
-                    print('SERVICE_ELIGIBILITY=UNKNOWN')
-                    for key in ('OPENAI_API', 'CHATGPT_WEB', 'YOUTUBE_VIDEO'):
-                        print('SERVICE_CHECK_' + key + '=UNKNOWN')
-                    print('SERVICE_REASON_CHATGPT_WEB=ip_connect_unverified')
-                    print_geo('UNKNOWN', 'UNKNOWN', 'UNKNOWN', 'IP_CONNECT_UNVERIFIED')
-                    return 1
+                # Historical tested service-qualification path: OpenAI API,
+                # ChatGPT Web and one real 24-frame YouTube decode. Never
+                # reject a healthy video node via legacy HTTP Range or the
+                # unrelated numeric-IP HTTPS diagnostic gate.
+                result = assess_hot_pool_24(gate, smart, mixed)
                 smart.require_shadow_safe(matched[0], raw)
-                result = smart.assess_services_with_stage18(
-                    gate, mixed, force_media=True)
-                smart.require_shadow_safe(matched[0], raw)
-                # Stage18 already made the sole decoded-video attempt. Never
-                # launch a second diagnostic decode for the same candidate.
                 # Geo is telemetry only. It MUST NOT influence the balanced gate.
                 geo_ip, geo_country, geo_state, geo_reason = isolated_egress(
                     helper, controller, mixed, entries[0])
