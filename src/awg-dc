@@ -13,7 +13,7 @@ Usage:
   awg-dc doctor [USER]       Read-only runtime/pairing/service diagnosis
   sudo awg-dc prepare USER   Bootstrap isolated Node.js 22 + DC agent in user npm cache
   awg-dc pair                Interactive device authorization, never as root
-  sudo awg-dc enable USER    Enable per-user service AFTER pairing
+  sudo awg-dc enable USER    Persistent boot-time service AFTER pairing
   sudo awg-dc disable USER   Disable service without deleting authorization
   sudo awg-dc status USER    Safe status (no private credentials)
 No routing, SSTP, firewall, DNS or subscription changes.
@@ -47,12 +47,20 @@ system_node_ok(){
   node -e 'if (+process.versions.node.split(".")[0] < 22 || typeof WebSocket !== "function") process.exit(1)' >/dev/null 2>&1
 }
 run_agent(){
+  local launch_mode="${1:-interactive}"
+  local -a npm_args=(--yes)
+  # For boot-time service launches use packages already pre-fetched into the
+  # user's npm cache. The DC cloud connection needs Internet, but a temporary
+  # npm registry outage must NOT prevent the agent from starting.
+  if [[ "$launch_mode" == service ]]; then
+    npm_args=(--offline --yes)
+  fi
   # A verified system-wide Node 22+ takes priority. Existing upgrades with
   # Debian Node 20 retain the isolated node@22 fallback until migration.
   if system_node_ok; then
-    exec npx --yes "$DC_PACKAGE" remote
+    exec npx "${npm_args[@]}" "$DC_PACKAGE" remote
   else
-    exec npm exec --yes --package="$DC_NODE_PACKAGE" --package="$DC_PACKAGE" -- desktop-commander remote
+    exec npm exec "${npm_args[@]}" --package="$DC_NODE_PACKAGE" --package="$DC_PACKAGE" -- desktop-commander remote
   fi
 }
 session_ok(){
@@ -129,6 +137,18 @@ case "${1:-}" in
         sh -c 'node -e '\''if (+process.versions.node.split(".")[0] < 22 || typeof WebSocket !== "function") process.exit(2)'\'' && desktop-commander remote --help' >/dev/null || fail NODE22_WEBSOCKET_OR_AGENT_PREFETCH_FAILED
       echo 'AWG_DC_AGENT_PACKAGE=PREFETCHED_ISOLATED_NODE22_WEBSOCKET_OK'
     fi
+    # Confirm boot-time startup can resolve from the verified local cache.
+    if system_node_ok; then
+      runuser -u "$DC_USER" -- env HOME="$DC_HOME" XDG_CACHE_HOME="$DC_HOME/.cache" \
+        npx --offline --yes "$DC_PACKAGE" remote --help >/dev/null ||
+        fail OFFLINE_SYSTEM_NODE_AGENT_CACHE_MISSING
+    else
+      runuser -u "$DC_USER" -- env HOME="$DC_HOME" XDG_CACHE_HOME="$DC_HOME/.cache" \
+        npm exec --offline --yes --package="$DC_NODE_PACKAGE" --package="$DC_PACKAGE" -- \
+        sh -c 'node -e '\''if (typeof WebSocket !== "function") process.exit(2)'\'' && desktop-commander remote --help' >/dev/null ||
+        fail OFFLINE_ISOLATED_NODE_AGENT_CACHE_MISSING
+    fi
+    echo 'AWG_DC_BOOT_CACHE=READY'
     echo 'AWG_DC_PAIRING=REQUIRES_USER_ACTION'
     echo 'AWG_DC_AUTOSTART=NOT_CHANGED'
     ;;
@@ -144,7 +164,8 @@ case "${1:-}" in
     (( EUID != 0 )) || fail AGENT_AS_NONROOT_USER
     validate_user "$(id -un)"
     deps_ok || fail BOOTSTRAP_NODE18_NPM_NOT_READY
-    run_agent
+    session_ok || fail PAIRING_REQUIRED_OR_UNSAFE_SESSION_PERMISSIONS
+    run_agent service
     ;;
   enable)
     require_root
@@ -152,7 +173,12 @@ case "${1:-}" in
     deps_ok || fail BOOTSTRAP_NODE18_NPM_NOT_READY
     session_ok || fail PAIRING_REQUIRED_OR_UNSAFE_SESSION_PERMISSIONS
     systemctl cat "$UNIT_PREFIX$DC_USER.service" >/dev/null 2>&1 || fail AGENT_UNIT_NOT_INSTALLED
+    # Non-root SYSTEM service (multi-user.target), not a user-session unit:
+    # no open SSH terminal and no loginctl linger are required.
+    systemctl daemon-reload || fail SYSTEMD_RELOAD_FAILED
     systemctl enable --now "$UNIT_PREFIX$DC_USER.service" >/dev/null || fail SERVICE_START_FAILED
+    systemctl is-enabled --quiet "$UNIT_PREFIX$DC_USER.service" || fail SERVICE_ENABLE_NOT_PERSISTENT
+    systemctl is-active --quiet "$UNIT_PREFIX$DC_USER.service" || fail SERVICE_DID_NOT_START
     echo 'AWG_DC_AUTOSTART=ENABLED'
     echo 'AWG_DC_SERVICE_RUNS_AS=NONROOT_USER'
     echo 'AWG_DC_REMOTE_CONNECTIVITY=CHECK_DASHBOARD'
