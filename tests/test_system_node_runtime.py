@@ -1,6 +1,8 @@
 """Shared system-wide Node.js policy, verified with Stage18 SHA256 pin."""
 from pathlib import Path
+import os
 import subprocess
+import tempfile
 import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -48,6 +50,53 @@ class SystemNodeRuntime(unittest.TestCase):
             INSTALL.index('if (( UPGRADE_EXISTING == 0 )); then\n  "$SYSTEM_NODE_SCRIPT" apply'),
         )
         self.assertIn('bash -n "$SYSTEM_NODE_SCRIPT"', INSTALL)
+
+    def test_system_node_upgrade_opt_in_reachable_when_not_fresh(self):
+        # Execute only the Node policy block with a mock helper. No root,
+        # network, package manager, or system runtime is touched.
+        first = INSTALL.index("# Fresh Debian 13 ships Node.js")
+        last = INSTALL.index(
+            "install_project_python_helper src/awg-mihomo-service-eligibility.py",
+            first,
+        )
+        node_policy = INSTALL[first:last]
+        with tempfile.TemporaryDirectory(prefix="awg-node-install-test-") as tmp:
+            helper = Path(tmp) / "mock-node"
+            log = Path(tmp) / "calls"
+            helper.write_text(
+                "#!/bin/sh\n"
+                "case \"$1\" in\n"
+                "  apply) printf 'APPLY\\n' >> \"$MOCK_NODE_LOG\" ;;\n"
+                "  status) exit 0 ;;\n"
+                "  *) exit 6 ;;\n"
+                "esac\n"
+            )
+            helper.chmod(0o755)
+            script = (
+                "set -Eeuo pipefail\n"
+                "SYSTEM_NODE_SCRIPT=\"$MOCK_NODE_HELPER\"\n"
+                "ok(){ :; }\nwarn(){ :; }\ndie(){ exit 7; }\n"
+                + node_policy
+            )
+            for fresh, opt_in, expected in (
+                ("0", "0", ["APPLY"]),
+                ("1", "1", ["APPLY"]),
+                ("1", "0", []),
+            ):
+                log.write_text("")
+                env = {
+                    **os.environ,
+                    "MOCK_NODE_HELPER": str(helper),
+                    "MOCK_NODE_LOG": str(log),
+                    "UPGRADE_EXISTING": fresh,
+                    "AWG_SYSTEM_NODE_UPGRADE": opt_in,
+                }
+                result = subprocess.run(
+                    ["bash", "-c", script],
+                    env=env, text=True, capture_output=True, timeout=5,
+                )
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(log.read_text().splitlines(), expected)
 
     def test_dc_system_node_preferred_and_old_upgrade_fallback(self):
         self.assertIn('system_node_ok(){', DC)
