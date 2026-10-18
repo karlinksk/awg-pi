@@ -106,6 +106,23 @@ class SystemNodeRuntime(unittest.TestCase):
         self.assertIn('User=%i', DC_SERVICE)
         self.assertNotIn('User=root', DC_SERVICE)
 
+    def test_pinned_npm_npx_on_fresh_install_without_second_apt_node(self):
+        self.assertIn("PIN_TAR_SHA=eab80cb88f8fda1e65f5e8d0420c9809bdb320b03fd34976ab7161b6e703b910", SYSTEM)
+        self.assertIn("TAR_SHA=eab80cb88f8fda1e65f5e8d0420c9809bdb320b03fd34976ab7161b6e703b910", STAGE18)
+        self.assertIn('NPM_LINK=/usr/local/bin/npm', SYSTEM)
+        self.assertIn('NPX_LINK=/usr/local/bin/npx', SYSTEM)
+        self.assertIn('path_ok || fail PINNED_SYSTEM_NODE_REQUIRED', SYSTEM)
+        self.assertIn('PINNED_NPM_ARCHIVE_CHECKSUM_FAILED', SYSTEM)
+        self.assertIn('NPM_NPX_POSTINSTALL_VERIFICATION_FAILED', SYSTEM)
+        self.assertIn('UNMANAGED_NPM_OR_NPX_REFUSED', SYSTEM)
+        self.assertIn('tar --no-same-owner -xJf', SYSTEM)
+        self.assertIn('  npm)\n    [[ $# == 1 ]] || fail BAD_ARGUMENTS', SYSTEM)
+        self.assertIn('if "$SYSTEM_NODE_SCRIPT" npm; then', INSTALL)
+        self.assertLess(INSTALL.index('"$SYSTEM_NODE_SCRIPT" apply || die'),
+                        INSTALL.index('if "$SYSTEM_NODE_SCRIPT" npm; then'))
+        self.assertNotIn('apt-get', SYSTEM)
+        self.assertNotIn('systemctl restart', SYSTEM)
+
     def test_status_command_does_not_install(self):
         p = subprocess.run(["bash", str(SCRIPT), "status"], capture_output=True, text=True, timeout=5)
         self.assertIn("SYSTEM_NODE_", p.stdout + p.stderr)
