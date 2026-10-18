@@ -58,16 +58,17 @@ install_pinned_npm(){
   [[ ! -e "$NPM_DIR" && ! -L "$NPM_DIR" ]] || fail NPM_DIRECTORY_EXISTS_NOT_VERIFIED
   # Same SHA256-pinned official Node.js v22.16.0 ARM64 bundle as Stage18.
   # Only npm/npx is extracted; the existing Node binary is not touched.
-  local archive stage extracted
-  archive="$(mktemp "$VERSION_DIR/.node-npm-tar-XXXXXXXX")"
-  stage="$(mktemp -d "$VERSION_DIR/.npm-stage-XXXXXXXX")"
-  trap 'rm -f -- "${archive:-}"; if [[ -n "${stage:-}" ]]; then rm -rf -- "$stage"; fi' EXIT
+  local extracted npm_archive npm_stage
+  npm_archive="$(mktemp "$VERSION_DIR/.node-npm-tar-XXXXXXXX")"
+  npm_stage="$(mktemp -d "$VERSION_DIR/.npm-stage-XXXXXXXX")"
+  # Capture paths at trap creation: Bash locals disappear on return.
+  trap "rm -f -- '$npm_archive'; rm -rf -- '$npm_stage'" EXIT
   curl -qfsSL --retry 2 --connect-timeout 8 --max-time 90 \
-    "https://nodejs.org/dist/v22.16.0/$PIN_TARBALL" -o "$archive" ||
+    "https://nodejs.org/dist/v22.16.0/$PIN_TARBALL" -o "$npm_archive" ||
     fail PINNED_NPM_DOWNLOAD_FAILED
-  printf '%s  %s\n' "$PIN_TAR_SHA" "$archive" | sha256sum -c --status ||
+  printf '%s  %s\n' "$PIN_TAR_SHA" "$npm_archive" | sha256sum -c --status ||
     fail PINNED_NPM_ARCHIVE_CHECKSUM_FAILED
-  tar --no-same-owner -xJf "$archive" -C "$stage" \
+  tar --no-same-owner -xJf "$npm_archive" -C "$npm_stage" \
     "node-v22.16.0-linux-arm64/lib/node_modules/npm" ||
     fail PINNED_NPM_EXTRACT_FAILED
   extracted="$stage/node-v22.16.0-linux-arm64/lib/node_modules/npm"
