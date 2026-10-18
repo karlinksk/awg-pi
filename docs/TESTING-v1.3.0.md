@@ -32,6 +32,12 @@ Before any RC is installed on hardware, the target commit must pass:
 The installer itself must contain AWG_PI_VERSION="1.3.0", and the release tag
 must match that internal version.
 
+### Hot Pool scanner skip: hardware result (2026-10-18 23:15 +07)
+
+- Test Pi only. Two source-pinned Hot Pool helper files from draft PR #115 were installed with a RAM rollback copy. In a controlled root lock-contention experiment, the actual systemd Hot Pool service completed and reported 2/2 candidates as `RESULT=SKIPPED`, `SCAN_RC=2`, `SCAN_ERROR=LOCK_BUSY`, and 0 false `FAIL` results. Rootless regression suite: 82/82 PASS. No rollback required.
+- After the test, AWG remained active in conservative AUTO, tables 100 and 101 both routed through awg0, DNS/SSH/DC/Mihomo and timer active, systemd failed units 0. This is an installed-on-test-stand partial fix, not a merged/released version.
+- The intentionally blocked cycle had READY 0/4; it did not test real OpenAI, ChatGPT, 24-frame YouTube decode, Pi TUN switching, LAN forwarding or failover. The ordinary unblocked Hot Pool cycle remains OPEN.
+
 ### A/B of isolated shadow Mihomo lifetime in RAM (2026-10-18 22:45–22:46 +07)
 
 - **Real test executed on clean-install test Pi `awg-upgrade`, no SD write or live transport change.** A one-shot root helper in `/dev/shm` used the same exact selected standby node in isolated loopback-only Mihomo instances: **COLD** launched 3 new processes for a single OpenAI API and YouTube HTTPS-page check each; **WARM** launched 1 process and ran the same checks 3 times with short pauses. Live Mihomo was checked before and after; no YouTube 24-frame decoding in this bounded comparative diagnostic. Main AWG was ACTIVE, Transit tables 100/101 stayed `default dev awg0`, SSH/DC/DNS healthy. The ephemeral configs were removed; exactly one main Mihomo process remained. A first attempted test hit a bug in the experimental helper's printing routine (no samples); corrected and retested with a function-level mock before the successful second run.
