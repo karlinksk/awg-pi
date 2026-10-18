@@ -402,7 +402,7 @@ mode_change_start = menu.index('capture_mode_change(){')
 mode_change_end = menu.index('localize_status_file(){', mode_change_start)
 mode_change_block = menu[mode_change_start:mode_change_end]
 assert 'refresh_backtitle' in mode_change_block
-assert 'dialog --backtitle "$BACKTITLE"' in mode_change_block
+assert 'show_operation_result "$rc" "$heading"' in mode_change_block
 
 # Mode indicators remain explicit technical IDs, but labels/help are Russian.
 for needle in (
