@@ -304,6 +304,14 @@ backend recovers.
 Exact-node recovery has priority while active transport is Mihomo. Only after
 the ordered node-chain is exhausted may transport-level failover run.
 
+### Current test Pi hardware transport-failover evidence (18 October 2026)
+
+- **Selective/FIXED, AWG → Mihomo:** on `awg-upgrade-test`, the normal selection monitor logged `Automatic failover: awg -> mihomo (mode=fixed)` at 13:24:08 +07, about 45 s after stopping AWG. Real `mihomo0` Pi-bound HTTPS and table 100 passed; the independent restore guard was disarmed after baseline recovery.
+- **Transit/AUTO, AWG → Mihomo:** temporary root-only guarded test stopped `awg-quick@awg0` at 13:53:04 +07. The normal monitor logged `Automatic failover: awg -> mihomo (mode=auto)` at **13:53:38** (34 s). With AWG down, the nft Transit forward guard retained its drop policy and did not contain an unrestricted DIRECT accept rule. After switchover, tables 100/101 used `mihomo0`; unauthenticated OpenAI API over the real TUN returned expected HTTP 401. After AWG restarted as standby, healthy Mihomo remained selected for 24 s (sticky AUTO). At 13:54:14 the originally selected **Transit/AUTO `awg,mihomo` with AWG active** was restored, no pending guard timer, and SSH/DC/DNS healthy.
+- **Installer integration:** the source selector, transport and Transit guard are already installed by `install.sh`; the two temporary root test harnesses are deliberately **not** shipped as runtime daemons. Upgrade now checks SHA256 of the operator's existing transport AUTO/FIXED order and Mihomo node/READY policies before and after installation; the new rootless test exercises the actual AUTO monitor with a cold Mihomo standby, and is part of CI.
+- **Still OPEN:** real marked MikroTik LAN-client attribution, actual packets blocked during *double transport* failure (Transit FAIL-CLOSED), reverse Mihomo-node exhaustion→AWG, clean Debian 13 ARM64 install, reboot and authenticated app/YouTube 24-frame service acceptance. Successful Pi-bound HTTPS and nft rule inspection are **not** a LAN PASS.
+
+
 ## 10. Provider outage/cache test
 
 With a valid cache already present, make the provider URL temporarily
