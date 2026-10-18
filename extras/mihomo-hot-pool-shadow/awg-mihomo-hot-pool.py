@@ -463,7 +463,8 @@ def scan_one(name: str, provider: Path | None = None) -> tuple[bool, str]:
                    'SERVICE_IP_CONNECT_REASON', 'SERVICE_GEO_EGRESS_IPV4',
                    'SERVICE_GEO_COUNTRY', 'SERVICE_GEO_STATE',
                    'SERVICE_GEO_REASON', 'SERVICE_DIAG_AFTER_FIRST_FAIL_24',
-                   'SERVICE_DIAG_AFTER_FIRST_FAIL_REASON'}
+                   'SERVICE_DIAG_AFTER_FIRST_FAIL_REASON',
+                    'SERVICE_SHADOW_ERROR'}
         for line in outcome.stdout.splitlines():
             if '=' not in line:
                 continue
@@ -492,7 +493,13 @@ def scan_one(name: str, provider: Path | None = None) -> tuple[bool, str]:
                 if re.fullmatch(r'[A-Z0-9_]{1,64}', candidate):
                     reason = candidate
         status = lambda key: fields.get(key, 'MISSING')
+        # Keep scanner/infrastructure failure visible and secret-free. It is
+        # telemetry only and is never forwarded to the strict service gate.
+        shadow_error = status('SERVICE_SHADOW_ERROR')
+        if not re.fullmatch(r'[A-Z0-9_]{1,48}', shadow_error):
+            shadow_error = 'UNCLASSIFIED'
         summary = ('SCAN_RC=' + str(outcome.returncode) +
+                   ' SCAN_ERROR=' + shadow_error +
                    ' OPENAI=' + status('SERVICE_CHECK_OPENAI_API') +
                    ' CHATGPT=' + status('SERVICE_CHECK_CHATGPT_WEB') +
                    ' YOUTUBE24=' + status('SERVICE_CHECK_YOUTUBE_VIDEO') +
