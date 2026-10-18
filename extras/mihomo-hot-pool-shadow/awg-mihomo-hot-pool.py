@@ -720,6 +720,15 @@ def main() -> int:
                                        args.provider if args.provider != PROVIDER else None)
                 metric = re.search(r'(?:^| )COLD_MS=([0-9]{1,6})(?: |$)', details)
                 elapsed = int(metric.group(1)) if metric else None
+                # Scanner exit 2 represents an operational/infrastructure
+                # failure (e.g. one-shot lock collision), NOT a failed
+                # service-eligibility proof. No OpenAI/YouTube test ran.
+                # Preserve previous PASSes, retry history and READY state;
+                # never promote it to PASS or penalize a node for our tooling.
+                if re.search(r'(?:^| )SCAN_RC=2(?: |$)', details):
+                    previous = state['checks'].get(identity(n), {}).get('last_result', 'NONE')
+                    print(f'HOT_POOL_PROBE={n["name"]} RESULT=SKIPPED STATE_UNCHANGED={previous} PROTOCOL={n["type"]} {details}', flush=True)
+                    continue
                 checked = int(time.time()) if not args.now else now
                 record_scan(state, n, ok, checked, connect_ms=elapsed)
                 append_geo_observation(state, n, ok, details, checked)
