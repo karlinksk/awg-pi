@@ -222,6 +222,36 @@ if [[ -f "$ENV_FILE" && "$PARTIAL_FRESH_RESUME" == 0 ]]; then
   fi
 fi
 
+# Snapshot operator-selected transport/node priorities on an UPGRADE, before
+# replacing any binaries or refreshing the control plane. In particular,
+# Transit AUTO "awg,mihomo", READY_AUTO and FIXED chains survive installer runs.
+# An absent policy stays absent (legacy v1.2 MANUAL); new installs are handled
+# separately below. Never log policy contents or private profile credentials.
+upgrade_policy_fingerprint(){
+  local file="$1"
+  if [[ -f "$file" ]]; then
+    sha256sum -- "$file" | cut -d ' ' -f1
+  elif [[ ! -e "$file" && ! -L "$file" ]]; then
+    printf 'ABSENT\n'
+  else
+    return 1
+  fi
+}
+UPGRADE_POLICY_FILES=(
+  "$PBR_DIR/selection.env"
+  "$PBR_DIR/transports/mihomo/node-policy.mode"
+  "$PBR_DIR/transports/mihomo/node-policy.nodes"
+  "$PBR_DIR/transports/mihomo/ready-auto.mode"
+)
+UPGRADE_POLICY_HASHES=()
+if (( UPGRADE_EXISTING == 1 )); then
+  for _policy_file in "${UPGRADE_POLICY_FILES[@]}"; do
+    _policy_sha="$(upgrade_policy_fingerprint "$_policy_file")" ||
+      die "Не удалось сохранить контрольную сумму существующей политики перед upgrade"
+    UPGRADE_POLICY_HASHES+=("$_policy_sha")
+  done
+fi
+
 # -----------------------------------------------------------------------------
 # 1. Preflight
 # -----------------------------------------------------------------------------
@@ -1196,6 +1226,19 @@ case "${AWG_DC_AUTOSTART:-0}" in
     ;;
   *) die "AWG_DC_AUTOSTART должен быть 0 или 1" ;;
 esac
+
+# An upgrade must preserve explicit manual/FIXED/AUTO transport priority and
+# Mihomo READY policy. Verify AFTER all service/installer stages; fail the
+# transaction rather than silently replacing an operator's tested priorities.
+if (( UPGRADE_EXISTING == 1 )); then
+  for _policy_index in "${!UPGRADE_POLICY_FILES[@]}"; do
+    _policy_sha="$(upgrade_policy_fingerprint "${UPGRADE_POLICY_FILES[_policy_index]}")" ||
+      die "Не удалось проверить состояние политик после upgrade"
+    [[ "$_policy_sha" == "${UPGRADE_POLICY_HASHES[_policy_index]}" ]] ||
+      die "Upgrade изменил сохранённую политику AUTO/FIXED/READY; требуется rollback"
+  done
+  ok "Upgrade: настройки transport AUTO/FIXED и Mihomo READY_AUTO сохранены"
+fi
 
 # -----------------------------------------------------------------------------
 # 12. Deep diagnostics + summary
