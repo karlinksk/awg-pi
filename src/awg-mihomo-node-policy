@@ -33,6 +33,10 @@ MIHOMO_AUTO_TRANSIT_ROUTING="${MIHOMO_AUTO_TRANSIT_ROUTING:-/usr/local/sbin/awg-
 MIHOMO_AUTO_FAILOPEN="${MIHOMO_AUTO_FAILOPEN:-/usr/local/sbin/awg-pbr-failopen}"
 MIHOMO_AUTO_SYSTEMCTL="${MIHOMO_AUTO_SYSTEMCTL:-systemctl}"
 MIHOMO_AUTO_SERVICE="${MIHOMO_AUTO_SERVICE:-awg-mihomo.service}"
+# Explicit one-shot standby repair MUST NOT alter a healthy AWG transport.
+MIHOMO_AUTO_TRANSPORT_CLI="${MIHOMO_AUTO_TRANSPORT_CLI:-/usr/local/sbin/awg-transport}"
+MIHOMO_STANDBY_CURL_BIN="${MIHOMO_STANDBY_CURL_BIN:-curl}"
+MIHOMO_STANDBY_TUN_IF="${MIHOMO_STANDBY_TUN_IF:-mihomo0}"
 
 # OFF preserves the pre-existing live policy until service gating is explicitly
 # enabled, tested and approved. REQUIRE rejects stale/missing/UNKNOWN results.
@@ -60,6 +64,7 @@ Usage:
   awg-mihomo-node-policy mode fixed NODE [FALLBACK_NODE...]
   awg-mihomo-node-policy mode auto
   awg-mihomo-node-policy ready-auto enable|disable|status
+  awg-mihomo-node-policy standby-repair  # AWG must be healthy and active; no route change
   awg-mihomo-node-policy manual-selection preview NODE
   awg-mihomo-node-policy manual-selection apply NODE
 
@@ -419,6 +424,80 @@ failover_fixed(){
   return 1
 }
 
+# In conservative AUTO, AWG can be the healthy active transport while Mihomo
+# standby's formerly selected endpoint has gone offline. Requalify at most the
+# existing READY/fresh fallback bound WITHOUT changing active transport/rules.
+standby_routes_safe(){
+  local tbl route
+  [[ "$("$MIHOMO_AUTO_TRANSPORT_CLI" get 2>/dev/null)" == awg ]] || return 1
+  for tbl in 100 101; do
+    route="$(ip -4 route show table "$tbl" 2>/dev/null)" || return 1
+    awk '$1 == "default" && $2 == "dev" && $3 == "awg0" {ok=1} END {exit !ok}' <<<"$route" || return 1
+  done
+  "$MIHOMO_AUTO_TRANSPORT_CLI" check awg >/dev/null 2>&1
+}
+standby_postcheck(){
+  local node="$1" code addr
+  [[ "$(cat "$MIHOMO_NODE_NAME_FILE" 2>/dev/null || true)" == "$node" ]] || {
+    echo 'READY_TUN_CHECK=NODE_CHANGED'
+    return 1
+  }
+  standby_routes_safe || { echo 'READY_TUN_CHECK=ROUTE_MISSING'; return 1; }
+  ip link show dev "$MIHOMO_STANDBY_TUN_IF" >/dev/null 2>&1 || {
+    echo 'READY_TUN_CHECK=IF_DOWN'; return 1
+  }
+  # No HTTP_PROXY inheritance and no global routing change. This validates
+  # the actual Pi-bound TUN, independently of the localhost proxy preflight.
+  code="$("$MIHOMO_STANDBY_CURL_BIN" -q -4 -sS --noproxy '*' \
+    --interface "$MIHOMO_STANDBY_TUN_IF" --connect-timeout 5 --max-time 12 \
+    -o /dev/null -w '%{http_code}' https://api.openai.com/v1/models 2>/dev/null)" || {
+      echo 'READY_TUN_CHECK=OPENAI_NETWORK_FAILED'; return 1
+    }
+  [[ "$code" == 401 ]] || { echo 'READY_TUN_CHECK=OPENAI_NOT_QUALIFIED'; return 1; }
+  addr="$("$MIHOMO_STANDBY_CURL_BIN" -q -4 -fsS --noproxy '*' \
+    --interface "$MIHOMO_STANDBY_TUN_IF" --connect-timeout 5 --max-time 12 \
+    https://api.ipify.org 2>/dev/null)" || {
+      echo 'READY_TUN_CHECK=EGRESS_FAILED'; return 1
+    }
+  python3 -c 'import ipaddress,sys
+try:
+ a=ipaddress.IPv4Address(sys.stdin.read().strip())
+ sys.exit(0 if a.is_global else 1)
+except ValueError:
+ sys.exit(1)' <<<"$addr" || { echo 'READY_TUN_CHECK=EGRESS_INVALID'; return 1; }
+  standby_routes_safe || { echo 'READY_TUN_CHECK=MARK_MISMATCH'; return 1; }
+  echo READY_TUN_CHECK=PASS
+}
+standby_repair(){
+  local previous
+  standby_routes_safe || {
+    echo 'STANDBY_REPAIR=REFUSED_AWG_NOT_HEALTHY_OR_ROUTE_NOT_SAFE' >&2
+    return 1
+  }
+  [[ "$(cat "$MIHOMO_AUTO_MODE_FILE" 2>/dev/null || true)" == transit ||
+     "$(cat "$MIHOMO_AUTO_MODE_FILE" 2>/dev/null || true)" == selective ]] || {
+    echo 'STANDBY_REPAIR=INVALID_MODE' >&2; return 1
+  }
+  [[ "$(mode_get 2>/dev/null)" == auto ]] || {
+    echo 'STANDBY_REPAIR=REQUIRES_NODE_AUTO_POLICY' >&2; return 1
+  }
+  previous="$(cat "$MIHOMO_NODE_NAME_FILE" 2>/dev/null || true)"
+  [[ -n "$previous" ]] || { echo 'STANDBY_REPAIR=NO_SELECTED_NODE' >&2; return 1; }
+  # No background task and no performance-based switching: explicit one-shot.
+  if MIHOMO_STANDBY_REPAIR=1 failover_auto "$previous"; then
+    standby_routes_safe || {
+      echo 'STANDBY_REPAIR=AWG_ROUTE_CHANGED' >&2; return 1
+    }
+    echo 'STANDBY_REPAIR=PASS_AWG_STILL_ACTIVE'
+    return 0
+  fi
+  standby_routes_safe || {
+    echo 'STANDBY_REPAIR=AWG_ROUTE_CHANGED' >&2; return 1
+  }
+  echo 'STANDBY_REPAIR=NO_VERIFIED_NODE_AWG_UNCHANGED' >&2
+  return 1
+}
+
 # On an exhausted recovery path, stop the unverified backend instead of
 # returning to the originally failed node. Do not touch router, DNS or SSH.
 # In Transit, remove the policy rule under the existing nftables drop guard
@@ -542,7 +621,12 @@ failover_auto(){
       fi
       local post_summary="" post_reason="NODE_CHANGED"
       if [[ "$(cat "$MIHOMO_NODE_NAME_FILE" 2>/dev/null || true)" == "$candidate" ]]; then
-        if post_summary="$("$MIHOMO_READY_POSTCHECK_BIN" "$candidate" 2>&1)"; then
+        if [[ "${MIHOMO_STANDBY_REPAIR:-0}" == 1 ]]; then
+          post_summary="$(standby_postcheck "$candidate" 2>&1)" && post_rc=0 || post_rc=$?
+        else
+          post_summary="$("$MIHOMO_READY_POSTCHECK_BIN" "$candidate" 2>&1)" && post_rc=0 || post_rc=$?
+        fi
+        if (( post_rc == 0 )); then
           printf 'READY_AUTO_POSTCHECK=PASS\n' >&2
           printf 'MIHOMO_NODE_FAILOVER=%s->%s\n' "$current" "$candidate"
           return 0
@@ -590,6 +674,14 @@ failover_auto(){
   # original node has failed and no candidate could be committed), do not
   # leave that unverified transport serving forwarded traffic. The transport
   # monitor can now activate a configured AWG, otherwise Transit stays closed.
+  if [[ "${MIHOMO_STANDBY_REPAIR:-0}" == 1 ]]; then
+    # The active transport is AWG. Never disable AWG Transit routing or
+    # fail-open the healthy dataplane when repairing an unused standby.
+    standby_routes_safe || { echo 'STANDBY_REPAIR=AWG_ROUTE_CHANGED' >&2; return 1; }
+    "$MIHOMO_AUTO_SYSTEMCTL" stop "$MIHOMO_AUTO_SERVICE" >/dev/null || return 1
+    echo 'STANDBY_REPAIR=UNVERIFIED_STANDBY_STOPPED' >&2
+    return 1
+  fi
   if [[ "$MIHOMO_READY_AUTO_CANARY" == 1 ]]; then
     quiesce_failed_mihomo || {
       echo 'READY_AUTO=QUIESCE_FAILED' >&2
@@ -612,6 +704,10 @@ failover(){
 }
 
 case "${1:-status}" in
+  standby-repair)
+    [[ $# -eq 1 ]] || { usage >&2; exit 2; }
+    standby_repair
+    ;;
   ready-auto)
     [[ $# -eq 2 ]] || { usage >&2; exit 2; }
     case "$2" in
