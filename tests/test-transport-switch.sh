@@ -47,6 +47,10 @@ case "$*" in
     [[ "${MOCK_MIHOMO_HEALTH:-up}" == up ]] || exit 1
     echo '45.86.66.170'
     ;;
+  *api.openai.com*)
+    [[ "${MOCK_MIHOMO_TUN_HEALTH:-up}" == up ]] || exit 35
+    echo 401
+    ;;
   *)
     exit 1
     ;;
@@ -121,6 +125,7 @@ run_select(){
     MOCK_MIHOMO_ACTIVE_FILE="$tmp/mihomo.active" \
     MOCK_AWG_ACTIVE_FILE="$tmp/awg.active" \
     MOCK_MIHOMO_HEALTH="${MOCK_MIHOMO_HEALTH:-up}" \
+    MOCK_MIHOMO_TUN_HEALTH="${MOCK_MIHOMO_TUN_HEALTH:-up}" \
     MOCK_PREFLIGHT_LOG="$tmp/preflight.log" \
     MOCK_PREFLIGHT_FAIL="${MOCK_PREFLIGHT_FAIL:-0}" \
     MOCK_RELOAD_FAIL_ONCE="${MOCK_RELOAD_FAIL_ONCE:-0}" \
@@ -174,6 +179,17 @@ sudo grep -Fqx awg "$tmp/transport"
 [[ ! -s "$tmp/route.log" ]]
 [[ ! -e "$tmp/mihomo.active" ]]
 grep -Fq 'Target transport is unhealthy; state unchanged: mihomo' "$tmp/err"
+
+echo "=== proxy healthy but Pi-bound TUN HTTPS fails: AWG stays active ==="
+: >"$tmp/systemctl.log"; : >"$tmp/route.log"; rm -f "$tmp/mihomo.active"
+if MOCK_MIHOMO_TUN_HEALTH=down run_select mihomo >"$tmp/out" 2>"$tmp/err"; then
+  echo 'FAIL: Mihomo was selected without Pi-bound TUN HTTPS' >&2
+  exit 1
+fi
+sudo grep -Fqx awg "$tmp/transport"
+[[ ! -s "$tmp/route.log" ]]
+[[ ! -e "$tmp/mihomo.active" ]]
+grep -Fq 'Pi-bound TUN HTTPS failed' "$tmp/err"
 
 echo "=== Transit preflight failure leaves state unchanged ==="
 : >"$tmp/systemctl.log"; : >"$tmp/route.log"; : >"$tmp/preflight.log"; rm -f "$tmp/mihomo.active"
