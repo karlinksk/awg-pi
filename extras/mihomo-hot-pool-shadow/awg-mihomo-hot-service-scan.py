@@ -37,6 +37,8 @@ REASON = re.compile(r'^[A-Z0-9_]{1,48}$')
 def error_family(exc: Exception) -> str:
     """Never print raw exceptions: they can contain URLs or provider secrets."""
     obj = exc.reason if isinstance(exc, urllib.error.URLError) else exc
+    if isinstance(obj, BlockingIOError):
+        return 'LOCK_BUSY'
     if isinstance(obj, (TimeoutError, socket.timeout)):
         return 'TIMEOUT'
     if isinstance(obj, socket.gaierror):
