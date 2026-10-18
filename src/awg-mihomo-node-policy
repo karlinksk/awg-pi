@@ -444,7 +444,10 @@ quiesce_failed_mihomo(){
 
 failover_auto(){
   local current="$1" candidate item attempts=0 from_ready=0
-  local max_checks=6
+  # Keep the legacy non-READY AUTO bound unchanged. READY AUTO may inspect
+  # all four prepared reserves before a small fresh-qualified fallback.
+  local max_checks=3
+  [[ "$MIHOMO_READY_AUTO_CANARY" == 1 ]] && max_checks=6
   local -a excludes=("$current") best_args=() hot_args=()
   local -a union_args=(--provider "$MIHOMO_READY_UNION_PROVIDER"
      --pool "$MIHOMO_READY_UNION_POOL" --state "$MIHOMO_READY_UNION_STATE")
