@@ -75,7 +75,7 @@ quick_summary
             root = Path(td)
             mock = root / "dialog"
             out = root / "args"
-            mock.write_text('#!/bin/sh\nprintf "%s\\n" "$@" > "$AWG_MENU_CAPTURE"\n')
+            mock.write_text('#!/bin/sh\nprintf "%s\\0" "$@" > "$AWG_MENU_CAPTURE"\n')
             mock.chmod(0o700)
             master, slave = pty.openpty()
             try:
@@ -94,7 +94,7 @@ quick_summary
                 proc = subprocess.run(["bash", "-c", shell], stdin=slave,
                                       stdout=slave, stderr=slave, env=env,
                                       preexec_fn=term_session, timeout=5)
-                args = out.read_text().splitlines() if out.exists() else []
+                args = [chunk.decode() for chunk in out.read_bytes().split(b"\x00") if chunk] if out.exists() else []
                 return proc.returncode, args
             finally:
                 os.close(slave)
