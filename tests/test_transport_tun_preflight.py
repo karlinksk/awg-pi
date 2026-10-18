@@ -71,6 +71,10 @@ mihomo_tun_https_ok
   self.assertIn('if [[ "$target" == mihomo ]]; then mihomo_tun_https_ok; fi',select)
   self.assertIn("trap rollback ERR",select)
   self.assertIn("active transport unchanged.",select)
+ def test_normal_runtime_health_checks_tun_once(self):
+  func=SOURCE[SOURCE.index("check_mihomo(){"):SOURCE.index("\ncheck_transport(){")]
+  self.assertIn("mihomo_tun_https_ok 1",func)
+  self.assertIn("for ((attempt=1;attempt<=attempts;attempt++))",func)
  def test_recover_selected_mihomo_also_requires_tun(self):
   f=SOURCE[SOURCE.index("recover_selected_transport(){"):
            SOURCE.index("\nselect_transport(){")]
