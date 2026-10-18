@@ -59,6 +59,10 @@ echo ROUTING_CHANGED >> "$EVENTS"
 echo ROUTING_CHANGED >> "$EVENTS"
 '''
    }
+   mocks['guard']='''#!/usr/bin/env python3
+import sys
+sys.exit(0)
+'''
    for name,code in mocks.items():
     f=p/name;f.write_text(code);f.chmod(0o755)
    env=dict(os.environ,PATH=str(p)+':'+os.environ['PATH'],
@@ -66,7 +70,7 @@ echo ROUTING_CHANGED >> "$EVENTS"
     MIHOMO_AUTO_MODE_FILE=str(p/'opmode'),MIHOMO_AUTO_TRANSPORT_CLI=str(p/'transport'),
     MIHOMO_AUTO_SYSTEMCTL=str(p/'systemctl'),MIHOMO_POOL_CLI=str(p/'pool'),
     MIHOMO_HOT_POOL_CLI=str(p/'hot'),MIHOMO_CONFIGURE_BIN=str(p/'configure'),
-    MIHOMO_READY_GUARD_BIN='/bin/true',MIHOMO_READY_POSTCHECK_BIN=str(p/'post'),
+    MIHOMO_READY_GUARD_BIN=str(p/'guard'),MIHOMO_READY_POSTCHECK_BIN=str(p/'post'),
     MIHOMO_READY_AUTO_CANARY=canary,MIHOMO_SERVICE_GATE_MODE='balanced',
     MIHOMO_STANDBY_CURL_BIN=str(p/'curl'),MIHOMO_AUTO_TRANSIT_ROUTING=str(p/'transit'),
     MIHOMO_AUTO_FAILOPEN=str(p/'failopen'),EVENTS=str(p/'events'),
