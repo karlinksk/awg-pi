@@ -11,10 +11,24 @@ Versioned in this repository and deployed to fresh installs **and upgrades**:
 - `src/awg-dc` → `/usr/local/bin/awg-dc`: safe onboarding/diagnostics CLI.
 - `units/awg-dc-remote@.service` → `/etc/systemd/system/awg-dc-remote@.service`: **disabled** systemd template; runs under a normal user, not root.
 - `install.sh` stages both files and does not copy credentials, touch routing/SSTP, or authorize a device. After explicit `AWG_DC_AUTOSTART=1`, it **enables the persistent service only for an already-authorized ordinary user**. Otherwise the service remains inactive; existing enabled/disabled state is preserved during an upgrade.
-- On a **fresh installation**, the installer uses Stage18's SHA256-verified Node.js `v22.16.0` and exposes it as the machine-wide `node` command at `/usr/local/bin/node`. Debian's APT-managed `/usr/bin/node` is retained, but no longer takes precedence for normal PATH resolution. DC runs with this verified system Node and native `WebSocket`; Stage18 keeps its separate pinned cache/RAM copy. `npm` itself is installed only when needed for DC or other npm tools. On **existing installations**, changing the Node runtime is gated behind explicit `AWG_SYSTEM_NODE_UPGRADE=1`, preserving live services and existing Node binaries by default.
-- With explicit `AWG_DC_PREPARE=1` and `AWG_DC_USER=<your-Linux-user>`, `awg-dc prepare` checks Debian npm, prefetches the pinned DC agent into the ordinary user's **persistent local npm cache**, and verifies that an **offline/cache-only** launch can locate it. If the host has not yet migrated system Node 20, isolated `node@22` remains the compatibility fallback. Preparation failure warns and does not roll back the gateway.
+- On a **fresh installation**, the installer uses Stage18's SHA256-verified Node.js `v22.16.0` and exposes it as the machine-wide `node` command at `/usr/local/bin/node`. It also attempts to install `npm` and `npx` from the **same checksum-verified official Node.js 22.16.0 ARM64 archive**; it never substitutes Debian's Node.js 20 over the working pinned runtime. Missing npm/npx is a **warning, not a VPN installation failure**, because DC is optional. If the Node.js archive was temporarily unavailable, recover with `sudo awg-system-node npm`, then `sudo awg-dc prepare USER`. Existing-install upgrades keep the previously selected Node/runtime unless explicitly authorized, preserving VPN, media tooling and live administration.
+- With explicit `AWG_DC_PREPARE=1` and `AWG_DC_USER=<your-Linux-user>`, `awg-dc prepare` first prefers the same SHA256-pinned Node.js 22/npm bundle when a verified system Node22 is present (avoiding installing Debian Node20), then prefetches the pinned DC agent into the ordinary user's **persistent local npm cache**, and verifies that an **offline/cache-only** launch can locate it. If the host has not yet migrated system Node 20, isolated `node@22` remains the compatibility fallback. Preparation failure warns and does not roll back the gateway.
 
 DC is an official third-party npm dependency, not vendored into AWG. It requires a Node.js runtime with native `WebSocket`. The verified preferred runtime is the machine-wide pinned `v22.16.0` copied from Stage18's SHA256-checked cache; older existing installations can still temporarily use isolated npm `node@22`. Debian 13's Node.js 20 cannot start the tested DC 0.2.52 remote agent: it fails with `native WebSocket not found`. The gateway candidate pins the npm package to `@wonderwhy-er/desktop-commander@0.2.52` (publisher's npm release observed on 2026-10-17) instead of auto-following `@latest`. This prevents unreviewed changes on reboot. Debian 13 ARM64 pairing, autostart and reboot acceptance are still pending; update the pinned version only after compatibility testing.
+
+### Clean-install DC recovery: `node` exists but `npm` / `npx` missing
+
+This can occur on a freshly installed **old v1.3 test candidate** because the Stage18/System Node installer deployed the standalone Node.js executable but did not unpack its bundled npm/npx. It does **not** imply Node.js or the VPN gateway failed. Do **not** install an unrelated Node20 just to make `npx` available, and do not run the agent as root.
+
+On the **updated test candidate**, first run the separately shipped, checksum-verified helper from the same audited commit:
+
+```bash
+sudo awg-system-node npm
+node --version && npm --version && npx --version
+sudo awg-dc prepare karlinks
+```
+
+The user-local pairing command is `awg-dc pair` (it uses the reviewed pinned DC package), not `npx @wonderwhy-er/desktop-commander@latest remote`. After user-approved OAuth, `sudo awg-dc enable karlinks` enables boot-persistent connection. A clean installation never enrolls or enables the agent without authorization. The above helper is available after installing the corrected candidate, not retroactively from an older installed version. The old `awg-dc prepare` could install Debian's Node20 as an additional APT dependency while `/usr/local/bin/node` remained Node22; the updated helper avoids this duplication on freshly provisioned Node22 systems.
 
 ## First pairing on the Raspberry Pi
 
@@ -62,7 +76,7 @@ To **revoke authorization**, use the Desktop Commander device dashboard. Disabli
 ## Acceptance before release
 
 - [ ] Syntax and installer regression tests pass.
-- [ ] Fresh Debian 13 ARM64 clean install installs verified machine-wide Node.js v22.16.0, confirms `node -v` and native WebSocket, and stages DC CLI and inactive unit without npm unless opted in.
+- [ ] Fresh Debian 13 ARM64 clean install installs verified machine-wide Node.js v22.16.0 **plus bundled npm/npx** (or logs an explicit optional-DC warning on archive fetch failure), confirms versions/WebSocket, and stages DC CLI and inactive service; no pairing without explicit consent.
 - [ ] Explicit prepare uses the preferred system Node.js 22 runtime when present; on an older, unmodified upgrade it verifies an isolated Node.js 22 fallback and prefetches DC without a root-owned user cache.
 - [ ] Normal-user browser-based OAuth pairing works with Node.js 22 and an existing device session is reused; secret file is owner-only `0600`.
 - [ ] Autostart is disabled before pairing, enabled after permission check, restarts after close of original SSH window and after full reboot with no interactive session and **no npm registry access**. Confirm device Online by a real remote command.
