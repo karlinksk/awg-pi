@@ -71,7 +71,7 @@ install_pinned_npm(){
   tar --no-same-owner -xJf "$npm_archive" -C "$npm_stage" \
     "node-v22.16.0-linux-arm64/lib/node_modules/npm" ||
     fail PINNED_NPM_EXTRACT_FAILED
-  extracted="$stage/node-v22.16.0-linux-arm64/lib/node_modules/npm"
+  extracted="$npm_stage/node-v22.16.0-linux-arm64/lib/node_modules/npm"
   [[ -f "$extracted/bin/npm-cli.js" && -f "$extracted/bin/npx-cli.js" ]] ||
     fail PINNED_NPM_INCOMPLETE
   "$BIN" "$extracted/bin/npm-cli.js" --version >/dev/null ||
