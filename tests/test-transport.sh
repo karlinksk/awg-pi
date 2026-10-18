@@ -29,6 +29,7 @@ cat >"$TMP/bin/curl" <<'MOCK'
 case "$*" in
   *127.0.0.1:9090/version*) echo '{}' ;;
   *api.ipify.org*) echo '45.86.66.170' ;;
+  *api.openai.com*) echo 401 ;;
   *) exit 1 ;;
 esac
 MOCK
