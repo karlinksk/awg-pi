@@ -531,7 +531,9 @@ failover_auto(){
       fi
     fi
 
-    if "$MIHOMO_CONFIGURE" node select-auto "$candidate" >/dev/null; then
+    # When recovering from an already FAILED live node, the configure
+    # transaction must not restart that old node if candidate activation fails.
+    if MIHOMO_NODE_FAILOVER_RECOVERY="$MIHOMO_READY_AUTO_CANARY"       "$MIHOMO_CONFIGURE" node select-auto "$candidate" >/dev/null; then
       # Only the canary adds this additional validation; the underlying
       # configure command already provides its own rollback on failure.
       if [[ "$MIHOMO_READY_AUTO_CANARY" != 1 ]]; then
