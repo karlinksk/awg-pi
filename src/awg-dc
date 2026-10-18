@@ -115,10 +115,18 @@ case "${1:-}" in
     . /etc/os-release
     [[ "${ID:-}" == debian ]] || fail UNSUPPORTED_OS
     if ! deps_ok; then
-      echo 'AWG_DC_RUNTIME=INSTALLING_DEBIAN_PACKAGES'
-      export DEBIAN_FRONTEND=noninteractive
-      apt-get update -qq || fail APT_UPDATE_FAILED
-      apt-get install -y --no-install-recommends nodejs npm ca-certificates || fail APT_INSTALL_FAILED
+      if [[ -x /usr/local/sbin/awg-system-node ]] &&
+         /usr/local/sbin/awg-system-node status >/dev/null 2>&1; then
+        echo 'AWG_DC_RUNTIME=INSTALLING_PINNED_NODE22_NPM'
+        /usr/local/sbin/awg-system-node npm || fail PINNED_NODE22_NPM_PREPARE_FAILED
+      else
+        # Legacy upgrades without the verified Node 22 runtime retain the
+        # Debian package bootstrap and isolated node@22 fallback.
+        echo 'AWG_DC_RUNTIME=INSTALLING_DEBIAN_PACKAGES_LEGACY'
+        export DEBIAN_FRONTEND=noninteractive
+        apt-get update -qq || fail APT_UPDATE_FAILED
+        apt-get install -y --no-install-recommends nodejs npm ca-certificates || fail APT_INSTALL_FAILED
+      fi
     fi
     deps_ok || fail BOOTSTRAP_NODE18_NPM_NOT_READY
     echo "AWG_DC_SYSTEM_NODE=$(node --version)"
