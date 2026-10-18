@@ -38,7 +38,7 @@ with open(os.environ['LOG'],'a') as f: f.write('guard')
 sys.exit(0 if os.environ.get('GUARD_OK') == '1' else 1)
 ''',
     'configure': '''#!/bin/bash
-echo "config:$*" >> "$LOG"
+echo "config:$* recovery=${MIHOMO_NODE_FAILOVER_RECOVERY:-unset}" >> "$LOG"
 [[ "$*" != "node select-auto standby" || "$ACTIVATE_OK" == 1 ]] || exit 1
 [[ "$*" != "node select-auto original" || "$ROLLBACK_OK" == 1 ]] || exit 1
 if [[ "$1" == node && "$2" == select-auto ]]; then printf '%s\n' "$3" > "$NODE_FILE"; fi
@@ -172,6 +172,19 @@ echo "systemctl:$*" >> "$LOG"
   self.assertEqual(r.returncode,0,r.stderr)
   self.assertEqual(node,'ordinary')
   self.assertIn('quarantine standby --reason active-health-failed',log)
+ def test_recovery_transaction_propagated_to_configure(self):
+  r,log,node=self.case(post='0',second_ready='1',fallback_available='0')
+  self.assertEqual(r.returncode,0,r.stderr)
+  self.assertIn('config:node select-auto standby recovery=1',log)
+  self.assertIn('config:node select-auto standby-second recovery=1',log)
+  self.assertNotIn('config:node select-auto original',log)
+ def test_activation_failure_does_not_restart_old_node(self):
+  r,log,node=self.case(activate='0',second_ready='1',fallback_available='0')
+  self.assertEqual(r.returncode,0,r.stderr)
+  self.assertEqual(node,'standby-second')
+  self.assertIn('config:node select-auto standby recovery=1',log)
+  self.assertNotIn('config:node select-auto original',log)
+ 
  def test_two_ready_candidates_first_fails_second_passes(self):
   r,log,node=self.case(post='0',second_ready='1',fallback_available='0')
   self.assertEqual(r.returncode,0,r.stderr)
