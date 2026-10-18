@@ -820,6 +820,15 @@ fi
 if (( UPGRADE_EXISTING == 0 )); then
   "$SYSTEM_NODE_SCRIPT" apply || die "Не удалось установить проверенный системный Node.js 22.16"
   ok "Системный Node.js 22.16 (WebSocket): проверен для DC и Stage18"
+  # npm/npx must accompany the pinned Node 22 on clean installations:
+  # DC pairing should not require installing a SECOND APT-managed Node 20.
+  # The optional DC agent remains uninstalled/unpaired until user opt-in.
+  if "$SYSTEM_NODE_SCRIPT" npm; then
+    ok "npm/npx: готовы из проверенного Node.js 22.16 (без Debian Node 20)"
+  else
+    warn "npm/npx не подготовлены; шлюз продолжит установку без удалённого DC."
+    warn "После восстановления доступа: sudo awg-system-node npm"
+  fi
 elif [[ "${AWG_SYSTEM_NODE_UPGRADE:-0}" == 1 ]]; then
   "$SYSTEM_NODE_SCRIPT" apply || die "Не удалось безопасно обновить системный Node.js"
   ok "Системный Node.js 22.16 установлен после явного разрешения обновления"
