@@ -29,8 +29,10 @@ class ReadyAutoPersistence(unittest.TestCase):
         self.assertIn('candidate="$("$MIHOMO_HOT_POOL_CLI"', s)
         self.assertIn('"$MIHOMO_READY_POSTCHECK_BIN" "$candidate"', s)
         self.assertIn('service_candidate_allowed "$candidate"', s)
-        self.assertIn('"$MIHOMO_CONFIGURE" node select-auto "$current"', s)
-        self.assertIn('READY_AUTO=ROLLBACK_COMPLETED', s)
+        self.assertIn('excludes+=("$candidate")', s)
+        self.assertIn('READY_AUTO=RETRY_NEXT_READY', s)
+        self.assertIn('quiesce_failed_mihomo', s)
+        self.assertNotIn('"$MIHOMO_CONFIGURE" node select-auto "$current"', s)
         self.assertIn('MIHOMO_NODE_FAILOVER=', s)
         # Active transport health monitoring should not begin treating random
         # Cloudflare 403 or HTTP-only YouTube checks as actual outages.
@@ -56,24 +58,29 @@ class ReadyAutoPersistence(unittest.TestCase):
                 "MIHOMO_SERVICE_GATE_MODE_FILE": str(p / "missing-gate"),
             }
 
+            # Mocked, isolated run: no real sudo or Pi runtime access.
+            script = POLICY.read_text()
+            root_guard = '[[ ${EUID:-$(id -u)} -eq 0 ]] || exec sudo "$0" "$@"'
+            self.assertEqual(script.count(root_guard), 1)
+            fixture = p / "node-policy-rootless"
+            fixture.write_text(script.replace(root_guard, ": # isolated rootless test"))
             def run(*args: str, override: dict[str, str] | None = None):
                 pairs = dict(env)
                 pairs.update(override or {})
                 return subprocess.run(
-                    ["sudo", "-n", "env", *(f"{k}={v}" for k, v in pairs.items()),
-                     "bash", str(POLICY), *args],
+                    ["bash", str(fixture), *args],
+                    env=dict(os.environ, **pairs),
                     text=True, capture_output=True, timeout=5,
                 )
 
             def read_private() -> str:
-                return subprocess.check_output(
-                    ["sudo", "-n", "cat", str(ready)], text=True, timeout=5)
+                return ready.read_text()
 
             self.assertIn("MIHOMO_READY_AUTO=disabled", run("ready-auto", "status").stdout)
             enabled = run("ready-auto", "enable")
             self.assertEqual(enabled.returncode, 0, enabled.stderr)
             self.assertEqual(read_private(), "1\n")
-            self.assertIn("600", subprocess.check_output(["sudo", "-n", "stat", "-c", "%a", str(ready)], text=True))
+            self.assertEqual(ready.stat().st_mode & 0o777, 0o600)
             status = run("status")
             self.assertEqual(status.returncode, 0, status.stderr)
             self.assertIn("Hot Pool READY priority: enabled", status.stdout)
