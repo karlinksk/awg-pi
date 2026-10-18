@@ -8,6 +8,7 @@ MIHOMO_PROXY="${MIHOMO_PROXY:-http://127.0.0.1:7890}"
 MIHOMO_PROBE_URL="${MIHOMO_PROBE_URL:-https://api.ipify.org}"
 MIHOMO_EXPECTED_EGRESS_IP_FILE="${MIHOMO_EXPECTED_EGRESS_IP_FILE:-${MIHOMO_EXPECTED_IP_FILE:-/etc/awg-pbr/transports/mihomo/expected-egress-ip}}"
 MIHOMO_TUN_IF="${MIHOMO_TUN_IF:-mihomo0}"
+MIHOMO_TUN_HTTPS_URL="${MIHOMO_TUN_HTTPS_URL:-https://api.openai.com/v1/models}"
 
 [[ -r "$AWG_ENV_FILE" ]] && source "$AWG_ENV_FILE"
 # shellcheck disable=SC1090
@@ -66,6 +67,21 @@ check_mihomo(){
     expected="$(tr -d '\r\n[:space:]' <"$MIHOMO_EXPECTED_EGRESS_IP_FILE")"
     [[ -n "$expected" && "$egress" == "$expected" ]] || return 1
   fi
+}
+
+# Local proxy success does not validate the selected node's Pi-bound TUN.
+# No policy route is touched until this HTTPS proof is positive.
+mihomo_tun_https_ok(){
+  local code attempt
+  "$IP_BIN" link show "$MIHOMO_TUN_IF" >/dev/null 2>&1 || return 1
+  for attempt in 1 2; do
+    code="$("$CURL_BIN" -q -4 -sS --noproxy '*' --interface "$MIHOMO_TUN_IF" \
+      --connect-timeout 4 --max-time 12 -o /dev/null -w '%{http_code}' \
+      "$MIHOMO_TUN_HTTPS_URL" 2>/dev/null)" || code=""
+    [[ "$code" == 401 ]] && return 0
+    (( attempt == 2 )) || "$SLEEP_BIN" 0.5
+  done
+  return 1
 }
 
 check_transport(){
@@ -155,6 +171,10 @@ recover_selected_transport(){
     printf 'Selected transport is unhealthy after restart attempt: %s\n' "$target" >&2
     return 1
   fi
+  if [[ "$target" == mihomo ]] && ! mihomo_tun_https_ok; then
+    printf 'Mihomo Pi-bound TUN HTTPS not qualified after restart; transport unchanged.\n' >&2
+    return 1
+  fi
   if ! preflight_target_transport "$target"; then
     printf 'Selected transport preflight failed during recovery: %s\n' "$target" >&2
     return 1
@@ -220,6 +240,13 @@ select_transport(){
     printf 'Target transport is unhealthy; state unchanged: %s\n' "$target" >&2
     return 1
   fi
+  # Before changing a single Transit route or active transport, require a
+  # genuine TUN-bound HTTPS proof. Proxy-only success is insufficient.
+  if [[ "$target" == mihomo ]] && ! mihomo_tun_https_ok; then
+    (( started_mihomo == 1 )) && "$SYSTEMCTL_BIN" stop "$MIHOMO_SERVICE" >/dev/null 2>&1 || true
+    echo 'Mihomo localhost proxy may work, but Pi-bound TUN HTTPS failed; active transport unchanged.' >&2
+    return 1
+  fi
 
   "$SYSTEMCTL_BIN" is-active --quiet "$HEALTH_SERVICE" 2>/dev/null && health_was_active=1 || true
   "$SYSTEMCTL_BIN" stop "$HEALTH_SERVICE" >/dev/null 2>&1 || true
@@ -251,6 +278,8 @@ select_transport(){
   atomic_transport_set "$target"
   AWG_MAINTENANCE=1 "$AWG_ROUTE_BIN" reload
   wait_transport_healthy "$target"
+  # After switching also prove TUN HTTPS; ERR trap restores prior AWG on loss.
+  if [[ "$target" == mihomo ]]; then mihomo_tun_https_ok; fi
   "$SYSTEMCTL_BIN" is-active --quiet "$HEALTH_SERVICE"
   "$SYSTEMCTL_BIN" enable "$target_service" >/dev/null
 
