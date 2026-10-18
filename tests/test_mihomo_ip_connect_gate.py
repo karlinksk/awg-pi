@@ -63,7 +63,7 @@ class IpConnectCandidateGateTests(unittest.TestCase):
         self.assertIn("print('SERVICE_IP_CONNECT_REASON=' + ip_reason", source)
         self.assertLess(
             source.index("print('SERVICE_IP_CONNECT_REASON=' + ip_reason"),
-            source.index("if ip_state != 'PASS' and strict_ip_connect_required():")
+            source.index("if ip_state != 'PASS' and strict_ip:")
         )
 
     def test_selective_rejects_unverified_numeric_ip_and_transit_records_it(self):
@@ -76,8 +76,10 @@ class IpConnectCandidateGateTests(unittest.TestCase):
             mode.unlink()
             self.assertTrue(smart.strict_ip_connect_required(mode))
         source = inspect.getsource(smart.service_scan)
-        self.assertIn("if ip_state != 'PASS' and strict_ip_connect_required():", source)
-        self.assertLess(source.index("if ip_state != 'PASS' and strict_ip_connect_required():"),
+        self.assertIn("if ip_state != 'PASS' and strict_ip:", source)
+        self.assertIn("'TRANSIT_TELEMETRY'", source)
+        self.assertIn("'STRICT_GATE'", source)
+        self.assertLess(source.index("if ip_state != 'PASS' and strict_ip:"),
                         source.index('result = assess_services_with_stage18('))
         self.assertIn('force_media=True', source)
 
