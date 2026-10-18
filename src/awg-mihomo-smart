@@ -600,8 +600,11 @@ def service_scan(args):
                 ip_state, ip_reason = ip_connect_shadow_probe(mixed)
                 require_shadow_safe(matched[0], raw)
                 print('SERVICE_IP_CONNECT_STATE=' + ip_state)
-                print('SERVICE_IP_CONNECT_REASON=' + ip_reason, flush=True)
-                if ip_state != 'PASS' and strict_ip_connect_required():
+                print('SERVICE_IP_CONNECT_REASON=' + ip_reason)
+                strict_ip = strict_ip_connect_required()
+                print('SERVICE_IP_CONNECT_POLICY=' +
+                      ('STRICT_GATE' if strict_ip else 'TRANSIT_TELEMETRY'), flush=True)
+                if ip_state != 'PASS' and strict_ip:
                     print('SERVICE_ELIGIBILITY=UNKNOWN')
                     print('SERVICE_CHECK_OPENAI_API=UNKNOWN')
                     print('SERVICE_CHECK_CHATGPT_WEB=UNKNOWN')
