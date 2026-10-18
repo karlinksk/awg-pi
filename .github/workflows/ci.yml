@@ -144,6 +144,7 @@ jobs:
           python3 tests/test-maintenance.py
           python3 tests/test-confirm.py
           python3 tests/test-menu.py
+          python3 -B tests/test_menu_ux.py
           python3 -B tests/test_ready_auto_canary.py
           python3 -B tests/test_ready_tun_postcheck.py
           python3 -B tests/test_mihomo_ip_connect_probe.py
