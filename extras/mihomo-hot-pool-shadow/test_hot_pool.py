@@ -58,6 +58,57 @@ class HotPoolTests(unittest.TestCase):
         self.assertTrue(hot.is_ready(n, self.state, self.now + 660))
         self.assertFalse(hot.is_ready(n, self.state, self.now + 4261))
 
+    def _run_synthetic_warm_scan(self, details):
+        """Run actual warm branch: an operational exit must not penalize proof."""
+        import contextlib
+        import io
+        import sys
+        from unittest.mock import patch
+
+        node = self.nodes[3]
+        hot.record_scan(self.state, node, True, self.now - 1300)
+        hot.record_scan(self.state, node, True, self.now - 650)
+        before = json.dumps(self.state, sort_keys=True)
+        output = io.StringIO()
+        with patch.object(hot, "pool_policy", return_value=("all", "all")), \
+             patch.object(hot, "load_nodes", return_value=("digest", [node])), \
+             patch.object(hot, "load_state", return_value=self.state), \
+             patch.object(hot, "shortlist", return_value=[node]), \
+             patch.object(hot, "select_probes", return_value=[("RENEW", node)]), \
+             patch.object(hot, "scan_one", return_value=(False, details)), \
+             patch.object(hot, "append_geo_observation") as geo, \
+             patch.object(hot, "save_state") as save, \
+             patch.object(hot, "CURRENT_FILE", Path("/nonexistent")), \
+             patch.object(sys, "argv",
+                          ["awg-mihomo-hot-pool", "--current", "different",
+                           "--now", str(self.now), "warm"]), \
+             contextlib.redirect_stdout(output):
+            status = hot.main()
+        return status, before, output.getvalue(), save.call_count, geo.call_count
+
+    def test_scanner_exit_2_during_lock_collision_skips_without_penalty(self):
+        status, before, output, saved, geo = self._run_synthetic_warm_scan(
+            "SCAN_RC=2 OPENAI=MISSING CHATGPT=MISSING "
+            "YOUTUBE24=MISSING GATE_REASON=BAD_CHECK_FORMAT")
+        self.assertEqual(status, 0)
+        self.assertEqual(json.dumps(self.state, sort_keys=True), before)
+        self.assertEqual(saved, 0)
+        self.assertEqual(geo, 0)
+        self.assertIn("RESULT=SKIPPED STATE_UNCHANGED=PASS", output)
+        self.assertNotIn("RESULT=NOT_CONFIRMED", output)
+        self.assertTrue(hot.is_ready(self.nodes[3], self.state, self.now))
+
+    def test_scanner_exit_1_still_preserves_conservative_unknown_policy(self):
+        status, before, output, saved, geo = self._run_synthetic_warm_scan(
+            "SCAN_RC=1 OPENAI=UNKNOWN CHATGPT=UNKNOWN "
+            "YOUTUBE24=UNKNOWN GATE_REASON=OPENAI_API_NOT_CONFIRMED")
+        self.assertEqual(status, 0)
+        self.assertNotEqual(json.dumps(self.state, sort_keys=True), before)
+        self.assertEqual(saved, 1)
+        self.assertEqual(geo, 1)
+        self.assertIn("RESULT=NOT_CONFIRMED STATE=SUSPECT", output)
+        self.assertFalse(hot.is_ready(self.nodes[3], self.state, self.now))
+
     def test_single_unknown_keeps_proof_but_never_selects_suspect(self):
         n = self.nodes[0]
         hot.record_scan(self.state, n, True, self.now)
