@@ -61,8 +61,8 @@ quick_summary
             self.assertEqual(r.returncode, 0, r.stderr)
             for required in (
                 "VPN: ожидает настройки",
-                "AWG: не настроен",
-                "Mihomo: не настроен",
+                "AWG: не настроено",
+                "Mihomo: не настроено",
                 "ГОРЯЧИЙ РЕЗЕРВ: ожидает подписку",
                 "DIRECT (FAIL-OPEN)",
             ):
