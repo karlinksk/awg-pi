@@ -93,6 +93,10 @@ run_monitor
 [[ ! -s "$TMP/log" ]]
 grep -Fqx unconfigured "$TMP/transport"
 
+# The remaining scenarios simulate a configured AWG standby, even when its
+# interface is deliberately stopped to test cold-standby activation.
+printf '%s\n' 'mock AWG standby profile' >"$TMP/no-awg-profile"
+
 echo "=== fixed policy validates explicit order ==="
 out="$(run_policy mode fixed awg mihomo)"
 grep -Fqx 'SELECTION_MODE=fixed' <<<"$out"
