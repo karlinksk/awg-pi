@@ -71,7 +71,7 @@ if [[ "$STRICT_GATE" == 1 ]]; then
 fi
 cat >/dev/null
 [[ "$CHECKER_OK" == 1 ]]
-'''
+''',
     'transit': '''#!/bin/bash
 echo "transit:$*" >> "$LOG"
 [[ "$1" == disable ]]
