@@ -84,6 +84,11 @@ class ColdConnectTests(unittest.TestCase):
             urllib.error.URLError(RuntimeError('https://secret'))),
             'CONNECTION_UNKNOWN')
 
+    def test_lock_collision_is_infrastructure_not_tls_failure(self):
+        self.assertEqual(scan.error_family(BlockingIOError(11, 'secret lock path')), 'LOCK_BUSY')
+        self.assertEqual(scan.error_family(
+            urllib.error.URLError(BlockingIOError(11, 'private-data'))), 'LOCK_BUSY')
+
     def test_http_403_is_only_connectivity_not_service_pass(self):
         clock = Clock()
         def fetch(port, url, **kwargs):
