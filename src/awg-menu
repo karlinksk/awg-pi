@@ -306,7 +306,7 @@ localize_status_file(){
     -e 's/^Last fetch path:/Последний канал загрузки:/' \
     -e 's/^Runtime config: ready$/Рабочая конфигурация: готова/' \
     -e 's/^Runtime config: missing$/Рабочая конфигурация: отсутствует/' \
-    -e 's/^Binary: missing$/Mihomo: не установлен/' \
+    -e 's/^Binary: missing$/Mihomo: не установлено/' \
     -e 's/^Runtime config: missing$/Рабочая конфигурация: не настроена/' \
     -e 's/^Selected node: unknown$/Выбранный узел: не задан/' \
     -e 's/^Service: inactive$/Служба: не запущена/' \
@@ -479,10 +479,10 @@ quick_summary(){
   fi
   if systemctl is-active --quiet dnsmasq.service; then dns="работает"; else dns="не запущен"; fi
   if ! command -v awg >/dev/null 2>&1; then
-    awg_state="не установлен"
+    awg_state="не установлено"
     hs="—"
   elif [[ ! -s /etc/amnezia/amneziawg/awg0.conf ]]; then
-    awg_state="не настроен"
+    awg_state="не настроено"
     hs="—"
   else
     if systemctl is-active --quiet awg-quick@awg0.service; then
@@ -494,9 +494,9 @@ quick_summary(){
     if [[ "$hs" -gt 0 ]]; then hs="$(( $(date +%s) - hs )) с"; else hs="нет"; fi
   fi
   if [[ ! -x /usr/local/bin/mihomo ]]; then
-    mihomo_state="не установлен"
+    mihomo_state="не установлено"
   elif [[ ! -s /etc/awg-pbr/transports/mihomo/node-name ]]; then
-    mihomo_state="не настроен"
+    mihomo_state="не настроено"
   elif systemctl is-active --quiet awg-mihomo.service; then
     mihomo_state="служба запущена"
   elif [[ "$transport" == AWG ]]; then
