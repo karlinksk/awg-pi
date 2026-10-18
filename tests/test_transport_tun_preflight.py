@@ -70,7 +70,7 @@ mihomo_tun_https_ok
   self.assertIn('atomic_transport_set "$target"',select)
   self.assertIn('if [[ "$target" == mihomo ]]; then mihomo_tun_https_ok; fi',select)
   self.assertIn("trap rollback ERR",select)
-  self.assertIn("state unchanged.",select)
+  self.assertIn("active transport unchanged.",select)
  def test_recover_selected_mihomo_also_requires_tun(self):
   f=SOURCE[SOURCE.index("recover_selected_transport(){"):
            SOURCE.index("\nselect_transport(){")]
