@@ -63,8 +63,60 @@ class IpConnectCandidateGateTests(unittest.TestCase):
         self.assertIn("print('SERVICE_IP_CONNECT_REASON=' + ip_reason", source)
         self.assertLess(
             source.index("print('SERVICE_IP_CONNECT_REASON=' + ip_reason"),
-            source.index("if ip_state != 'PASS':")
+            source.index("if ip_state != 'PASS' and strict_ip_connect_required():")
         )
+
+    def test_selective_rejects_unverified_numeric_ip_and_transit_records_it(self):
+        with tempfile.TemporaryDirectory(prefix="gateway-mode-test-") as td:
+            mode = Path(td) / 'mode'
+            for value, strict in (('selective', True), ('transit', False),
+                                  ('unknown', True), ('', True)):
+                mode.write_text(value)
+                self.assertEqual(smart.strict_ip_connect_required(mode), strict)
+            mode.unlink()
+            self.assertTrue(smart.strict_ip_connect_required(mode))
+        source = inspect.getsource(smart.service_scan)
+        self.assertIn("if ip_state != 'PASS' and strict_ip_connect_required():", source)
+        self.assertLess(source.index("if ip_state != 'PASS' and strict_ip_connect_required():"),
+                        source.index('result = assess_services_with_stage18('))
+        self.assertIn('force_media=True', source)
+
+    def test_shadow_warmup_recovers_from_cold_connection_before_ip_gate(self):
+        outcomes = [RuntimeError("cold"), RuntimeError("cold"), (401, {}, b"")]
+        calls = []
+        def fetch(port, url, **kw):
+            calls.append((port, url, kw))
+            entry = outcomes.pop(0)
+            if isinstance(entry, Exception):
+                raise entry
+            return entry
+        clock_ticks = iter([0.0, 0.0, 0.01, 0.02, 0.03, 0.04, 0.05, 0.06, 0.07])
+        clock = lambda: next(clock_ticks)
+        ok, attempts, ms = smart.isolated_shadow_ready(
+            fetch, 17891, clock=clock, pause=lambda sec: None)
+        self.assertTrue(ok)
+        self.assertEqual(attempts, 3)
+        self.assertEqual(len(calls), 3)
+        self.assertTrue(all(c[1] == 'https://api.openai.com/v1/models' for c in calls))
+        self.assertTrue(all(c[2]['timeout'] <= 6 for c in calls))
+
+    def test_warmup_never_converts_failures_or_403_into_service_pass(self):
+        clock = lambda: 0.0
+        fail = lambda *a, **kw: (_ for _ in ()).throw(TimeoutError())
+        ok, count, _ = smart.isolated_shadow_ready(fail, 7890, clock=clock,
+                                                  pause=lambda sec: None)
+        self.assertFalse(ok)
+        self.assertEqual(count, 4)
+        # HTTP 403 is transport-level HTTPS reachability, never logged-in chat.
+        ok, count, _ = smart.isolated_shadow_ready(
+            lambda *a, **kw: (403, {}, b""), 7890, clock=clock,
+            pause=lambda sec: None)
+        self.assertTrue(ok)
+        self.assertEqual(count, 1)
+        src = inspect.getsource(smart.service_scan)
+        self.assertIn('SERVICE_CONNECT_STATE=', src)
+        self.assertIn('SERVICE_CHECK_YOUTUBE_VIDEO=UNKNOWN', src)
+        self.assertIn('not_run_connect', src)
 
     def test_domain_only_pass_with_missing_ip_verifier_is_rejected(self):
         result = smart.ip_connect_shadow_probe(17891, probe=Path('/no/such/program'))
