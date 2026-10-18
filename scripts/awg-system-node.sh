@@ -11,6 +11,11 @@ RUNTIME_DIR=/usr/local/lib/awg-pi/node
 VERSION_DIR="$RUNTIME_DIR/$PIN_VERSION"
 BIN="$VERSION_DIR/node"
 LINK=/usr/local/bin/node
+PIN_TAR_SHA=eab80cb88f8fda1e65f5e8d0420c9809bdb320b03fd34976ab7161b6e703b910
+PIN_TARBALL="node-v22.16.0-linux-arm64.tar.xz"
+NPM_DIR="$VERSION_DIR/npm"
+NPM_LINK=/usr/local/bin/npm
+NPX_LINK=/usr/local/bin/npx
 MODE="${1:-status}"
 
 fail(){ printf 'SYSTEM_NODE_ERROR=%s\n' "$1" >&2; exit 2; }
@@ -26,6 +31,63 @@ hash_ok(){
 path_ok(){
   [[ -L "$LINK" && "$(readlink -- "$LINK")" == "$BIN" ]] || return 1
   hash_ok "$BIN" && version_ok "$BIN"
+}
+npm_ok(){
+  path_ok || return 1
+  [[ -f "$NPM_DIR/bin/npm-cli.js" && -f "$NPM_DIR/bin/npx-cli.js" ]] || return 1
+  [[ ! -L "$NPM_DIR/bin/npm-cli.js" && ! -L "$NPM_DIR/bin/npx-cli.js" ]] || return 1
+  [[ -L "$NPM_LINK" && "$(readlink -- "$NPM_LINK")" == "$NPM_DIR/bin/npm-cli.js" ]] || return 1
+  [[ -L "$NPX_LINK" && "$(readlink -- "$NPX_LINK")" == "$NPM_DIR/bin/npx-cli.js" ]] || return 1
+  env PATH=/usr/local/bin:/usr/bin:/bin npm --version >/dev/null 2>&1 &&
+    env PATH=/usr/local/bin:/usr/bin:/bin npx --version >/dev/null 2>&1
+}
+install_pinned_npm(){
+  (( EUID == 0 )) || fail ROOT_REQUIRED
+  [[ "$(uname -m)" == aarch64 ]] || fail UNSUPPORTED_ARCH
+  path_ok || fail PINNED_SYSTEM_NODE_REQUIRED
+  if npm_ok; then echo 'SYSTEM_NPM_INSTALL=ALREADY_VERIFIED'; return 0; fi
+  for pair in "$NPM_LINK:$NPM_DIR/bin/npm-cli.js" "$NPX_LINK:$NPM_DIR/bin/npx-cli.js"; do
+    local_dest="${pair%%:*}"; local_target="${pair#*:}"
+    if [[ -e "$local_dest" || -L "$local_dest" ]]; then
+      [[ -L "$local_dest" && "$(readlink -- "$local_dest")" == "$local_target" ]] ||
+        fail UNMANAGED_NPM_OR_NPX_REFUSED
+    fi
+  done
+  [[ ! -L "$VERSION_DIR" && -d "$VERSION_DIR" && "$(stat -c %u "$VERSION_DIR")" == 0 ]] ||
+    fail UNTRUSTED_RUNTIME_DIRECTORY
+  [[ ! -e "$NPM_DIR" && ! -L "$NPM_DIR" ]] || fail NPM_DIRECTORY_EXISTS_NOT_VERIFIED
+  # Same SHA256-pinned official Node.js v22.16.0 ARM64 bundle as Stage18.
+  # Only npm/npx is extracted; the existing Node binary is not touched.
+  local archive stage extracted
+  archive="$(mktemp "$VERSION_DIR/.node-npm-tar-XXXXXXXX")"
+  stage="$(mktemp -d "$VERSION_DIR/.npm-stage-XXXXXXXX")"
+  trap 'rm -f -- "${archive:-}"; if [[ -n "${stage:-}" ]]; then rm -rf -- "$stage"; fi' EXIT
+  curl -qfsSL --retry 2 --connect-timeout 8 --max-time 90 \
+    "https://nodejs.org/dist/v22.16.0/$PIN_TARBALL" -o "$archive" ||
+    fail PINNED_NPM_DOWNLOAD_FAILED
+  printf '%s  %s\n' "$PIN_TAR_SHA" "$archive" | sha256sum -c --status ||
+    fail PINNED_NPM_ARCHIVE_CHECKSUM_FAILED
+  tar --no-same-owner -xJf "$archive" -C "$stage" \
+    "node-v22.16.0-linux-arm64/lib/node_modules/npm" ||
+    fail PINNED_NPM_EXTRACT_FAILED
+  extracted="$stage/node-v22.16.0-linux-arm64/lib/node_modules/npm"
+  [[ -f "$extracted/bin/npm-cli.js" && -f "$extracted/bin/npx-cli.js" ]] ||
+    fail PINNED_NPM_INCOMPLETE
+  "$BIN" "$extracted/bin/npm-cli.js" --version >/dev/null ||
+    fail PINNED_NPM_RUNTIME_FAILED
+  "$BIN" "$extracted/bin/npx-cli.js" --version >/dev/null ||
+    fail PINNED_NPX_RUNTIME_FAILED
+  mv -T -- "$extracted" "$NPM_DIR"
+  ln -s -- "$NPM_DIR/bin/npm-cli.js" "$NPM_LINK" 2>/dev/null ||
+    [[ -L "$NPM_LINK" && "$(readlink -- "$NPM_LINK")" == "$NPM_DIR/bin/npm-cli.js" ]] ||
+    fail NPM_LINK_CREATE_FAILED
+  ln -s -- "$NPM_DIR/bin/npx-cli.js" "$NPX_LINK" 2>/dev/null ||
+    [[ -L "$NPX_LINK" && "$(readlink -- "$NPX_LINK")" == "$NPM_DIR/bin/npx-cli.js" ]] ||
+    fail NPX_LINK_CREATE_FAILED
+  npm_ok || fail NPM_NPX_POSTINSTALL_VERIFICATION_FAILED
+  echo SYSTEM_NPM_INSTALL=VERIFIED
+  echo PINNED_NODE_VERSION="$PIN_VERSION"
+  echo DEBIAN_APT_NODE_PRESERVED=YES
 }
 case "$MODE" in
   status)
@@ -43,6 +105,10 @@ case "$MODE" in
     fi
     echo 'SYSTEM_NODE_MANAGED=NO'
     exit 1
+    ;;
+  npm)
+    [[ $# == 1 ]] || fail BAD_ARGUMENTS
+    install_pinned_npm
     ;;
   apply)
     (( EUID == 0 )) || fail ROOT_REQUIRED
@@ -94,7 +160,7 @@ case "$MODE" in
     echo 'DEBIAN_APT_NODE_PRESERVED=YES'
     ;;
   *)
-    echo 'Usage: awg-system-node status|apply' >&2
+    echo 'Usage: awg-system-node status|apply|npm' >&2
     exit 2
     ;;
 esac
