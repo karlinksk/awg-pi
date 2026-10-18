@@ -67,19 +67,23 @@ check_mihomo(){
     expected="$(tr -d '\r\n[:space:]' <"$MIHOMO_EXPECTED_EGRESS_IP_FILE")"
     [[ -n "$expected" && "$egress" == "$expected" ]] || return 1
   fi
+  # The health monitor must not mistake a working loopback proxy for working
+  # forwarded client HTTPS. Check actual Pi-bound TUN once per normal cycle.
+  mihomo_tun_https_ok 1
 }
 
 # Local proxy success does not validate the selected node's Pi-bound TUN.
 # No policy route is touched until this HTTPS proof is positive.
 mihomo_tun_https_ok(){
-  local code attempt
+  local code attempt attempts="${1:-2}"
+  [[ "$attempts" == 1 || "$attempts" == 2 ]] || return 1
   "$IP_BIN" link show "$MIHOMO_TUN_IF" >/dev/null 2>&1 || return 1
-  for attempt in 1 2; do
+  for ((attempt=1;attempt<=attempts;attempt++)); do
     code="$("$CURL_BIN" -q -4 -sS --noproxy '*' --interface "$MIHOMO_TUN_IF" \
       --connect-timeout 4 --max-time 12 -o /dev/null -w '%{http_code}' \
       "$MIHOMO_TUN_HTTPS_URL" 2>/dev/null)" || code=""
     [[ "$code" == 401 ]] && return 0
-    (( attempt == 2 )) || "$SLEEP_BIN" 0.5
+    (( attempt == attempts )) || "$SLEEP_BIN" 0.5
   done
   return 1
 }
