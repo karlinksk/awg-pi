@@ -782,6 +782,7 @@ install_project_helper scripts/awg-system-node.sh "$SYSTEM_NODE_SCRIPT"
 if (( UPGRADE_EXISTING == 0 )); then
   STAGE="установка видеодекодера Stage18"
   /usr/local/sbin/awg-mihomo-stage18-ram-runtime prefetch || die "Не удалось подготовить обязательные Node.js/yt-dlp для проверки YouTube"
+fi
 # Fresh Debian 13 ships Node.js 20 (no global WebSocket); DC needs Node 22+.
 # Reuse the exact independently SHA256-verified Stage18 Node.js 22.16 binary.
 # Preserve APT-owned /usr/bin/node, and NEVER replace active system runtime
@@ -797,7 +798,6 @@ elif "$SYSTEM_NODE_SCRIPT" status >/dev/null 2>&1; then
 else
   warn "Системный Node.js не соответствует эталону 22.16. При upgrade не меняем его автоматически."
   warn "После проверки совместимости: sudo awg-system-node apply"
-fi
 fi
 install_project_python_helper src/awg-mihomo-service-eligibility.py /usr/local/sbin/awg-mihomo-service-eligibility.py
 install_project_python_helper src/awg-mihomo-network-eligibility.py /usr/local/sbin/awg-mihomo-network-eligibility.py
