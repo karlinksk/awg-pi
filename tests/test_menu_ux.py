@@ -156,6 +156,15 @@ show_operation_result 7 'Проверка подписки'
         self.assertIn('run_with_progress "$title" "$MIHOMO_CONFIGURE" node prepare', SOURCE)
         self.assertIn('run_with_progress "$title" "$MIHOMO_CONFIGURE" provider candidate prepare', SOURCE)
 
+    def test_utf8_local_menu_without_system_locale_mutation(self):
+        self.assertIn('locale charmap', SOURCE)
+        self.assertIn('export LC_ALL=C.UTF-8', SOURCE)
+        self.assertIn('locale -a', SOURCE)
+        self.assertIn('Для русского меню требуется окно SSH', SOURCE)
+        self.assertIn('exit 10', SOURCE)
+        self.assertNotIn('localectl set-locale', SOURCE)
+        self.assertNotIn('update-locale', SOURCE)
+
     def test_evidence_semantics_and_russian_auto(self):
         self.assertIn('hot_pool_summary(){', SOURCE)
         self.assertIn('awg-mihomo-hot-pool status', SOURCE)
