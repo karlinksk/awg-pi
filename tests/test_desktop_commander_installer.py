@@ -64,6 +64,16 @@ class DesktopCommanderInstaller(unittest.TestCase):
         self.assertNotIn('NOPASSWD:ALL', source)
         self.assertNotIn('device.json" >', source)
 
+    def test_verified_node22_bootstrap_avoids_debian_node20(self):
+        source = CLI.read_text()
+        install = INSTALL.read_text()
+        self.assertIn("AWG_DC_RUNTIME=INSTALLING_PINNED_NODE22_NPM", source)
+        self.assertIn('/usr/local/sbin/awg-system-node npm || fail', source)
+        self.assertIn('AWG_DC_RUNTIME=INSTALLING_DEBIAN_PACKAGES_LEGACY', source)
+        self.assertIn('if "$SYSTEM_NODE_SCRIPT" npm; then', install)
+        self.assertIn("npm/npx: готовы из проверенного Node.js 22.16", install)
+        self.assertNotIn('systemctl enable --now awg-dc-remote@', install)
+
     def test_service_runs_as_user_no_network_inbound(self):
         unit = UNIT.read_text()
         self.assertIn("User=%i", unit)
