@@ -513,12 +513,19 @@ failover_auto(){
       (( attempts < max_checks )) || break
       attempts=$((attempts + 1))
     fi
-    if ! service_candidate_allowed "$candidate"; then
-      if [[ "$MIHOMO_SERVICE_GATE_MODE" == balanced ]]; then
-        "$MIHOMO_POOL_CLI" cooldown add "$candidate" --seconds 180 >/dev/null 2>&1 || true
+    # READY already has TWO fresh isolated OpenAI/ChatGPT-network/YouTube24
+    # proofs, and its exact live credentials were matched above. Don't rerun
+    # the expensive media scan for that same READY proof during an outage.
+    # Freshly discovered non-READY candidates (and strict REQUIRE mode) still
+    # must pass an independent new service check before touching live traffic.
+    if (( from_ready == 0 )) || [[ "$MIHOMO_SERVICE_GATE_MODE" == require ]]; then
+      if ! service_candidate_allowed "$candidate"; then
+        if [[ "$MIHOMO_SERVICE_GATE_MODE" == balanced ]]; then
+          "$MIHOMO_POOL_CLI" cooldown add "$candidate" --seconds 180 >/dev/null 2>&1 || true
+        fi
+        excludes+=("$candidate")
+        continue
       fi
-      excludes+=("$candidate")
-      continue
     fi
 
     if "$MIHOMO_CONFIGURE" node select-auto "$candidate" >/dev/null; then
