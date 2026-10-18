@@ -86,6 +86,25 @@ class HotPoolTests(unittest.TestCase):
             status = hot.main()
         return status, before, output.getvalue(), save.call_count, geo.call_count
 
+    def test_operational_scanner_error_is_sanitized(self):
+        import subprocess
+        from unittest.mock import patch
+        def fake(argv, **kwargs):
+            if argv[0] == hot.SCAN:
+                return subprocess.CompletedProcess(
+                    argv, 2, 'SERVICE_SHADOW_ERROR=LOCK_BUSY\nSECRET=token-redacted\n', '')
+            if argv[0] == hot.GATE:
+                return subprocess.CompletedProcess(argv, 2,
+                    'NETWORK_ELIGIBILITY=UNKNOWN\nNETWORK_REASON=BAD_CHECK_FORMAT\n', '')
+            raise AssertionError('unexpected executable')
+        with patch.object(hot.subprocess, 'run', side_effect=fake):
+            ok, summary = hot.scan_one('vless-a')
+        self.assertFalse(ok)
+        self.assertIn('SCAN_RC=2', summary)
+        self.assertIn('SCAN_ERROR=LOCK_BUSY', summary)
+        self.assertNotIn('token-redacted', summary)
+        self.assertIn('GATE_REASON=BAD_CHECK_FORMAT', summary)
+
     def test_scanner_exit_2_during_lock_collision_skips_without_penalty(self):
         status, before, output, saved, geo = self._run_synthetic_warm_scan(
             "SCAN_RC=2 OPENAI=MISSING CHATGPT=MISSING "
