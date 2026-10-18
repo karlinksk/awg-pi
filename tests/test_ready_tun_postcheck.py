@@ -19,13 +19,26 @@ esac
    mockip.chmod(0o755)
    mockcurl=p/'curl'
    mockcurl.write_text('''#!/bin/bash
-case "$*" in
+# Every HTTP probe must bypass curlrc and all inherited HTTP(S)/ALL proxies.
+all_args="$*"
+[[ "${1:-}" == -q ]] || exit 91
+safe_proxy=0
+safe_tun=0
+while (( $# )); do
+  if [[ "$1" == --noproxy && "${2:-}" == '*' ]]; then safe_proxy=1; fi
+  if [[ "$1" == --interface && "${2:-}" == mihomo0 ]]; then safe_tun=1; fi
+  shift
+done
+[[ "$safe_proxy" == 1 && "$safe_tun" == 1 ]] || exit 92
+case "$all_args" in
  *api.ipify.org*) echo "$EGRESS";;
  *api.openai.com/v1/models*) if [[ "$API_RECOVER" == 1 ]]; then n=$(cat "$API_COUNTER"); n=$((n+1)); echo "$n" >"$API_COUNTER"; if (( n == 1 )); then printf 403; else printf 401; fi; else printf '%s' "$API_CODE"; fi;;
 esac
 ''')
    mockcurl.chmod(0o755)
-   env=dict(os.environ,MIHOMO_READY_NODE_FILE=str(p/'node'),MIHOMO_READY_IP_BIN=str(mockip),MIHOMO_READY_CURL_BIN=str(mockcurl),LINK_OK=link,MARK_OK=mark,EGRESS=ip,API_CODE=api,MIHOMO_READY_POSTCHECK_ATTEMPTS=attempts,MIHOMO_READY_POSTCHECK_DELAY='0',MARK_RECOVER=mark_recover,API_RECOVER=api_recover,MARK_COUNTER=str(p/'mark-counter'),API_COUNTER=str(p/'api-counter'),MIHOMO_READY_ROUTE_POLLS=route_polls,MIHOMO_READY_ROUTE_DELAY='0')
+   env=dict(os.environ,HTTP_PROXY='http://127.0.0.1:9',
+            HTTPS_PROXY='http://127.0.0.1:9',ALL_PROXY='http://127.0.0.1:9',
+            MIHOMO_READY_NODE_FILE=str(p/'node'),MIHOMO_READY_IP_BIN=str(mockip),MIHOMO_READY_CURL_BIN=str(mockcurl),LINK_OK=link,MARK_OK=mark,EGRESS=ip,API_CODE=api,MIHOMO_READY_POSTCHECK_ATTEMPTS=attempts,MIHOMO_READY_POSTCHECK_DELAY='0',MARK_RECOVER=mark_recover,API_RECOVER=api_recover,MARK_COUNTER=str(p/'mark-counter'),API_COUNTER=str(p/'api-counter'),MIHOMO_READY_ROUTE_POLLS=route_polls,MIHOMO_READY_ROUTE_DELAY='0')
    r=subprocess.run(['bash',SCRIPT,'candidate'],env=env,text=True,capture_output=True,timeout=4)
    return r
  def test_route_deadline_fails_closed(self):
