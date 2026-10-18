@@ -252,6 +252,14 @@ localize_status_file(){
     -e 's/^Health state:/Состояние:/' \
     -e 's/^Active transport:/Активный транспорт:/' \
     -e 's/^Transport ID:/ID транспорта:/' \
+    -e 's/^Health state: up$/Состояние: работает/' \
+    -e 's/^Health state: down$/Состояние: ошибка соединения/' \
+    -e 's/^Health state: unknown$/Состояние: не проверено/' \
+    -e 's/^Transport readiness: not-ready$/Транспорт: не настроен/' \
+    -e 's/^Transport health: not-ready$/Состояние транспорта: не настроен/' \
+    -e 's/^VPN policy requested: ON$/VPN-политика: включена/' \
+    -e 's/^VPN policy requested: OFF$/VPN-политика: выключена/' \
+    -e 's/^Policy rule: FAIL-OPEN\/DIRECT$/Правило маршрутизации: DIRECT (FAIL-OPEN)/' \
     -e 's/^Transport health: healthy$/Состояние транспорта: работоспособен/' \
     -e 's/^Transport health: down$/Состояние транспорта: недоступен/' \
     -e 's/^Transport health:/Состояние транспорта:/' \
@@ -290,6 +298,10 @@ localize_status_file(){
     -e 's/^Last fetch path:/Последний канал загрузки:/' \
     -e 's/^Runtime config: ready$/Рабочая конфигурация: готова/' \
     -e 's/^Runtime config: missing$/Рабочая конфигурация: отсутствует/' \
+    -e 's/^Binary: missing$/Mihomo: не установлен/' \
+    -e 's/^Runtime config: missing$/Рабочая конфигурация: не настроена/' \
+    -e 's/^Selected node: unknown$/Выбранный узел: не задан/' \
+    -e 's/^Service: inactive$/Служба: не запущена/' \
     -e 's/^Binary:/Версия Mihomo:/' \
     -e 's/^Service: active$/Служба: активна/' \
     -e 's/^Service: inactive$/Служба: неактивна/' \
@@ -394,10 +406,12 @@ disk_summary(){
   df -hP / 2>/dev/null | awk 'NR==2{printf "%s/%s (%s)",$3,$2,$5}'
 }
 
+# State is derived from installation + profile + service separately.
+# A missing profile on fresh install is not a failed VPN.
 quick_summary(){
-  local health policy dns awg_state hs oc pi router mode mode_label mode_badge transport
+  local health policy dns awg_state mihomo_state hs oc pi router mode mode_label mode_badge transport
   local now tz temp uptime load mem disk traffic
-  health="$(cat /run/awg-pbr/health.state 2>/dev/null || echo неизвестно)"
+  health="$(cat /run/awg-pbr/health.state 2>/dev/null || echo unknown)"
   mode="$(operating_mode_id)"
   mode_label="$(operating_mode_label "$mode")"
   mode_badge="$(operating_mode_badge "$mode")"
@@ -407,27 +421,50 @@ quick_summary(){
     mihomo) transport="Mihomo" ;;
     unconfigured) transport="не настроен" ;;
   esac
-  case "$health" in
-    up) health="норма" ;;
-    down) health="сбой" ;;
-    unknown|неизвестно) health="н/д" ;;
-  esac
+  if [[ "$transport" == "не настроен" ]]; then
+    health="ожидает настройки"
+  else
+    case "$health" in
+      up) health="норма" ;;
+      down) health="ошибка соединения" ;;
+      unknown|неизвестно) health="не проверено" ;;
+    esac
+  fi
   if ip -4 rule show 2>/dev/null | grep -Eq '(^| )100:.*fwmark (0x100|256).*lookup (100|awgvpn)'; then
-    policy=АКТИВНА
+    policy="активна"
   elif [[ "$mode" == transit ]]; then
-    policy=ЗАКРЫТА
+    policy="блокировка (FAIL-CLOSED)"
   else
-    policy=DIRECT
+    policy="DIRECT (FAIL-OPEN)"
   fi
-  systemctl is-active --quiet dnsmasq.service && dns=OK || dns=FAIL
-  systemctl is-active --quiet awg-quick@awg0.service && awg_state=ВКЛ || awg_state=ВЫКЛ
-  hs="$(awg show awg0 latest-handshakes 2>/dev/null | awk '$2>m{m=$2}END{print m+0}')"
-  if [[ "$hs" -gt 0 ]]; then
-    hs="$(( $(date +%s) - hs ))s"
+  if systemctl is-active --quiet dnsmasq.service; then dns="работает"; else dns="не запущен"; fi
+  if ! command -v awg >/dev/null 2>&1; then
+    awg_state="не установлен"
+    hs="—"
+  elif [[ ! -s /etc/amnezia/amneziawg/awg0.conf ]]; then
+    awg_state="не настроен"
+    hs="—"
   else
-    hs=нет
+    if systemctl is-active --quiet awg-quick@awg0.service; then
+      awg_state="служба запущена"
+    else
+      awg_state="не запущен"
+    fi
+    hs="$(awg show awg0 latest-handshakes 2>/dev/null | awk '$2>m{m=$2}END{print m+0}')"
+    if [[ "$hs" -gt 0 ]]; then hs="$(( $(date +%s) - hs )) с"; else hs="нет"; fi
   fi
-  systemctl is-active --quiet awg-opencck-update.timer && oc=OK || oc=ВЫКЛ
+  if [[ ! -x /usr/local/bin/mihomo ]]; then
+    mihomo_state="не установлен"
+  elif [[ ! -s /etc/awg-pbr/transports/mihomo/node-name ]]; then
+    mihomo_state="не настроен"
+  elif systemctl is-active --quiet awg-mihomo.service; then
+    mihomo_state="служба запущена"
+  elif [[ "$transport" == AWG ]]; then
+    mihomo_state="резерв, не запущен"
+  else
+    mihomo_state="не запущен"
+  fi
+  systemctl is-active --quiet awg-opencck-update.timer && oc="автообновление включено" || oc="автообновление выключено"
   pi="${PI_IP:-?}"
   router="${ROUTER_IP:-?}"
   now="$(date '+%Y-%m-%d %H:%M:%S')"
@@ -438,9 +475,10 @@ quick_summary(){
   mem="$(memory_summary)"
   disk="$(disk_summary)"
   traffic="$("$AWG_TRAFFIC" status compact 2>/dev/null || echo 'Сегодня: н/д | Месяц: н/д')"
-  printf 'ВРЕМЯ: %s | ЧАСОВОЙ ПОЯС: %s\nСИСТЕМА: работает %s | CPU %s | Нагрузка %s\nПАМЯТЬ: %s | Диск /: %s\nРЕЖИМ: [%s] %s | Транспорт: %s\nVPN: состояние %-7s Политика %-7s DNS: %-4s | awg0: %-4s Рукопожатие: %-8s OpenCCK: %s\nТРАФИК: %s\nPi: %-15s Роутер: %s' \
+  printf 'ВРЕМЯ: %s | ПОЯС: %s\nСИСТЕМА: %s | CPU %s | Нагрузка %s\nПАМЯТЬ: %s | Диск /: %s\nРЕЖИМ: [%s] %s\nVPN: %s | Транспорт: %s\nПолитика: %s | DNS: %s\nAWG: %s | Рукопожатие: %s\nMihomo: %s | OpenCCK: %s\nТРАФИК: %s\nPi: %s | Роутер: %s' \
     "$now" "$tz" "$uptime" "$temp" "$load" "$mem" "$disk" \
-    "$mode_badge" "$mode_label" "$transport" "$health" "$policy" "$dns" "$awg_state" "$hs" "$oc" "$traffic" "$pi" "$router"
+    "$mode_badge" "$mode_label" "$health" "$transport" "$policy" "$dns" \
+    "$awg_state" "$hs" "$mihomo_state" "$oc" "$traffic" "$pi" "$router"
 }
 
 status_screen(){
