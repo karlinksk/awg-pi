@@ -10,7 +10,38 @@ if [[ "${AWG_MENU_REEXEC:-0}" != 1 ]]; then
   export AWG_MENU_REEXEC=1
   exec "$_menu_tmp" "$@"
 fi
-command -v dialog >/dev/null 2>&1 || { echo "Не найден dialog" >&2; exit 1; }
+command -v dialog >/dev/null 2>&1 || { echo "Не установлен компонент интерфейса: dialog" >&2; exit 1; }
+
+# Shrink oversized dialogs to real SSH TTY; do not modify terminal settings.
+dialog(){
+  local -a args=("$@")
+  local rows cols i hi wi li
+  if [[ ! -t 0 || ! -t 1 ]]; then command dialog "${args[@]}"; return; fi
+  read -r rows cols < <(stty size </dev/tty 2>/dev/null) || { command dialog "${args[@]}"; return; }
+  [[ "$rows" =~ ^[0-9]+$ && "$cols" =~ ^[0-9]+$ ]] || { command dialog "${args[@]}"; return; }
+  if ((rows < 22 || cols < 78)); then
+    printf 'Увеличьте окно SSH минимум до 78×22 (сейчас %s×%s).\n' "$cols" "$rows" >&2
+    return 1
+  fi
+  for ((i=0;i<${#args[@]};i++)); do
+    case "${args[i]}" in
+      --menu|--msgbox|--yesno|--inputbox|--editbox|--textbox|--infobox)
+        hi=$((i+2)); wi=$((i+3))
+        if [[ "${args[hi]:-}" =~ ^[0-9]+$ && "${args[wi]:-}" =~ ^[0-9]+$ ]]; then
+          ((args[hi] > rows-2)) && args[hi]="$((rows-2))"
+          ((args[wi] > cols-2)) && args[wi]="$((cols-2))"
+          if [[ "${args[i]}" == --menu ]]; then
+            li=$((i+4))
+            if [[ "${args[li]:-}" =~ ^[0-9]+$ ]] && ((args[li] > args[hi]-8)); then
+              args[li]="$((args[hi]-8))"
+            fi
+          fi
+        fi
+        break;;
+    esac
+  done
+  command dialog "${args[@]}"
+}
 
 AWG_ROUTE=/usr/local/sbin/awg-route
 AWG_TRANSPORT=/usr/local/sbin/awg-transport
@@ -179,6 +210,14 @@ run_with_progress(){
   return "$rc"
 }
 
+show_operation_result(){
+  local rc="$1" heading="$2" label
+  if ((rc == 0)); then label="ВЫПОЛНЕНО"; else label="ОШИБКА (код $rc)"; fi
+  [[ -s "$TMP" ]] || printf '%s\n' "Дополнительных сообщений нет." >"$TMP"
+  sed -i "1iРезультат: $label\\nОперация: $heading\\n" "$TMP"
+  dialog --backtitle "$BACKTITLE" --title "$heading — $label" --textbox "$TMP" 30 110
+}
+
 capture(){
   local rc heading="${title:-Результат}"
   if run_with_progress "$heading" "$@"; then
@@ -186,8 +225,7 @@ capture(){
   else
     rc=$?
   fi
-  [[ -s "$TMP" ]] || printf '%s\n' "Операция завершена без дополнительного текстового вывода." >"$TMP"
-  dialog --backtitle "$BACKTITLE" --title "$heading" --textbox "$TMP" 30 110
+  show_operation_result "$rc" "$heading"
   return "$rc"
 }
 
@@ -199,8 +237,7 @@ capture_mode_change(){
     rc=$?
   fi
   refresh_backtitle
-  [[ -s "$TMP" ]] || printf '%s\n' "Операция завершена без дополнительного текстового вывода." >"$TMP"
-  dialog --backtitle "$BACKTITLE" --title "$heading" --textbox "$TMP" 30 110
+  show_operation_result "$rc" "$heading"
   return "$rc"
 }
 
@@ -301,8 +338,7 @@ capture_ru(){
     rc=$?
   fi
   localize_status_file
-  [[ -s "$TMP" ]] || printf '%s\n' "Операция завершена без дополнительного текстового вывода." >"$TMP"
-  dialog --backtitle "$BACKTITLE" --title "$heading" --textbox "$TMP" 30 110
+  show_operation_result "$rc" "$heading"
   return "$rc"
 }
 
