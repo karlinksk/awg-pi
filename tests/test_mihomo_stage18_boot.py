@@ -61,8 +61,11 @@ class RuntimeBootSafety(unittest.TestCase):
         self.assertIn("install_project_unit units/awg-mihomo-stage18-ram-runtime.timer",s)
         self.assertIn("install_project_unit units/awg-mihomo-stage18-ram-runtime.path",s)
         self.assertIn("if (( UPGRADE_EXISTING == 0 )); then",s)
-        self.assertIn("for unit in awg-mihomo-pool-refresh.timer awg-mihomo-stage18-ram-runtime.timer awg-mihomo-stage18-ram-runtime.path awg-mihomo-hot-pool.timer",s)
+        self.assertIn("for unit in awg-mihomo-pool-refresh.timer awg-mihomo-stage18-ram-runtime.timer awg-mihomo-stage18-ram-runtime.path; do",s)
         self.assertIn('systemctl enable --now "$unit"',s)
+        # Hot Pool is enabled separately after the base pool/Stage18 units.
+        self.assertIn("systemctl enable --now awg-mihomo-hot-pool.timer",s)
+        self.assertIn("systemctl is-active --quiet awg-mihomo-hot-pool.timer",s)
         self.assertNotIn("Stage18 video decode unavailable: FFmpeg missing",s)
 
     def test_script_enforces_exact_production_pins(self):

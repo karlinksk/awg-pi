@@ -24,6 +24,8 @@ PROVIDER=Path("/var/lib/awg-pbr/mihomo/providers/subscription.yaml")
 SELECTED=Path("/var/lib/awg-pbr/xray-vless/selected.json")
 MODE=Path("/etc/awg-pbr/mode")
 CURRENT=Path("/etc/awg-pbr/transports/mihomo/node-name")
+NODE_POLICY_MODE=Path("/etc/awg-pbr/transports/mihomo/node-policy.mode")
+NODE_POLICY_ORDER=Path("/etc/awg-pbr/transports/mihomo/node-policy.nodes")
 BRIDGE=Path("/etc/systemd/system/awg-mihomo.service.d/61-awg-xray-bridge.conf")
 RENDERER=Path("/usr/local/sbin/awg-mihomo-config")
 ADAPTER=Path("/usr/local/sbin/awg-xray-vless")
@@ -100,6 +102,18 @@ def failclosed():
     except Exception:
         return False
 
+def candidate_allowed_by_policy(failed, candidate):
+    try:
+        mode=NODE_POLICY_MODE.read_text().strip()
+        if mode=="auto":return True
+        if mode!="fixed":return False
+        chain=[line.strip() for line in NODE_POLICY_ORDER.read_text().splitlines() if line.strip()]
+        # Exact names and one-way order only; never infer countries or loop.
+        if len(chain)!=len(set(chain)) or failed not in chain or candidate not in chain:
+            return False
+        return chain.index(candidate)>chain.index(failed)
+    except (OSError,UnicodeError):return False
+
 def write_atomic(path, data,mode=0o600):
     path.parent.mkdir(parents=True,exist_ok=True,mode=0o700)
     tmp=path.with_name("."+path.name+".txn-"+str(os.getpid()))
@@ -124,6 +138,8 @@ class LinuxBackend:
             raise RuntimeError("ROOT_TRANSIT_REQUIRED")
         if CURRENT.read_text().strip()!=failed or failed==candidate:
             raise RuntimeError("FAILED_NODE_IDENTITY_CHANGED")
+        if not candidate_allowed_by_policy(failed,candidate):
+            raise RuntimeError("CANDIDATE_NOT_ALLOWED_BY_NODE_POLICY")
         if not active(MIHOMO) or active(XRAY) or not routes_ok():
             raise RuntimeError("LIVE_BASELINE_UNSAFE")
         if BRIDGE.exists() or SELECTED.exists() or not RENDERER.is_file() or not ADAPTER.is_file():
@@ -261,8 +277,18 @@ class LinuxBackend:
         except Exception:return False
     def commit(self):
         if not self.snapshot or not self.check_policy_routes():raise RuntimeError("NOT_VERIFIED")
+        if not self.verify_committed_node(self.candidate):
+            raise RuntimeError("LIVE_XRAY_SELECTION_MISMATCH")
         state=json.loads((self.snapshot/"state.json").read_text())
         if state.get("state")!="armed":raise RuntimeError("WATCHDOG_ALREADY_FIRED")
+        # Selection monitor shares the maintenance flock. Publish the new
+        # logical profile before releasing that lock so its next failover
+        # starts AFTER this VLESS, never from the already-dead HY2 profile.
+        if CURRENT.read_text().strip()!=self.failed:
+            raise RuntimeError("FAILED_NODE_IDENTITY_CHANGED_DURING_ACTIVATION")
+        write_atomic(CURRENT,(self.candidate+chr(10)).encode())
+        if CURRENT.read_text().strip()!=self.candidate:
+            raise RuntimeError("NODE_STATE_NOT_PERSISTED")
         state["state"]="committed"
         state["boot_tested"]=False
         write_atomic(self.snapshot/"state.json",json.dumps(state).encode())

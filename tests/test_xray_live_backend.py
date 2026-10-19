@@ -86,6 +86,50 @@ class LinuxBackendTests(unittest.TestCase):
                  mock.patch.object(m,"failclosed") as stop:
                 m.watchdog(path)
             stop.assert_not_called()
+    def test_fixed_policy_allows_only_later_explicit_nodes(self):
+        with tempfile.TemporaryDirectory() as d:
+            root=Path(d);mode=root/"mode";order=root/"order"
+            mode.write_text("fixed")
+            order.write_text("HY2-1"+chr(10)+"VLESS-2"+chr(10)+"HY2-3"+chr(10))
+            with (mock.patch.object(m,"NODE_POLICY_MODE",mode),
+                  mock.patch.object(m,"NODE_POLICY_ORDER",order)):
+                self.assertTrue(m.candidate_allowed_by_policy("HY2-1","VLESS-2"))
+                self.assertFalse(m.candidate_allowed_by_policy("HY2-3","VLESS-2"))
+                self.assertFalse(m.candidate_allowed_by_policy("HY2-1","UNLISTED"))
+                self.assertFalse(m.candidate_allowed_by_policy("HY2-1","HY2-1"))
+                mode.write_text("manual")
+                self.assertFalse(m.candidate_allowed_by_policy("HY2-1","VLESS-2"))
+                mode.write_text("auto")
+                self.assertTrue(m.candidate_allowed_by_policy("HY2-1","VLESS-2"))
+
+    def test_commit_persists_new_profile_identity_before_monitor_resumes(self):
+        with tempfile.TemporaryDirectory() as d:
+            root=Path(d);current=root/"node-name";current.write_text("dead" + chr(10))
+            state=root/"state.json";state.write_text(json.dumps({"state":"armed"}))
+            executor=m.LinuxBackend("dead","vless-fallback")
+            executor.snapshot=root
+            with (mock.patch.object(m,"CURRENT",current),
+                  mock.patch.object(executor,"check_policy_routes",return_value=True),
+                  mock.patch.object(executor,"verify_committed_node",return_value=True)):
+                executor.commit()
+            self.assertEqual(current.read_text().strip(),"vless-fallback")
+            self.assertEqual(json.loads(state.read_text())["state"],"committed")
+            self.assertFalse(json.loads(state.read_text())["boot_tested"])
+
+    def test_commit_refuses_changed_failed_identity(self):
+        with tempfile.TemporaryDirectory() as d:
+            root=Path(d);current=root/"node-name";current.write_text("different" + chr(10))
+            state=root/"state.json";state.write_text(json.dumps({"state":"armed"}))
+            executor=m.LinuxBackend("dead","vless-fallback")
+            executor.snapshot=root
+            with (mock.patch.object(m,"CURRENT",current),
+                  mock.patch.object(executor,"check_policy_routes",return_value=True),
+                  mock.patch.object(executor,"verify_committed_node",return_value=True)):
+                with self.assertRaisesRegex(RuntimeError,"IDENTITY_CHANGED"):
+                    executor.commit()
+            self.assertEqual(current.read_text().strip(),"different")
+            self.assertEqual(json.loads(state.read_text())["state"],"armed")
+
     def test_installer_and_backup_package_passive_executor(self):
         install=(ROOT/"install.sh").read_text()
         backup=(ROOT/"src/awg-update").read_text()
