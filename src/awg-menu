@@ -1881,6 +1881,8 @@ mihomo_xray_vless_menu(){
       3 "Выбрать VLESS для Xray" "Только сохраняет отпечаток VLESS; служба не запускается." \
       4 "Запустить локальный Xray" "Только loopback SOCKS5; не меняет TUN, DNS, ACTIVE и FIXED." \
       5 "Остановить локальный Xray" "Останавливает экспериментальный SOCKS5; текущий TUN не меняет." \
+      6 "Общий список Mihomo/Xray" "Все ноды активной подписки; базовая сеть, не Hot Pool READY." \
+      7 "Проверить VLESS Xray" "Изолированный HTTPS probe одной ноды, не меняет TUN/FIXED." \
       0 "Назад" "Не менять настройки." 3>&1 1>&2 2>&3)" || return 0
     case "$choice" in
       1)
@@ -1908,6 +1910,17 @@ mihomo_xray_vless_menu(){
         confirm "Остановка Xray VLESS" "Остановить локальную Xray-службу? Если она вручную выбрана в Mihomo, соединение по ней прервётся. Остальной шлюз не меняем." || continue
         title="Остановка Xray VLESS"
         capture systemctl stop awg-xray-vless.service || true
+        ;;
+      6)
+        title="Единый каталог нод Mihomo / Xray"
+        capture /usr/local/sbin/awg-mihomo-unified-nodes list || true
+        ;;
+      7)
+        index="$(input "Базовая проверка VLESS" "Номер VLESS в текущем общем списке. Только TCP HTTPS OpenAI через изолированный Xray. Это не READY и не меняет активный узел." "")" || continue
+        [[ "$index" =~ ^[0-9]{1,5}$ ]] || { msg "Xray" "Нужен номер ноды.";continue; }
+        confirm "Проверка Xray" "Проверить Xray/VLESS №$index через изолированный SOCKS5? До 25 секунд, без влияния на Mihomo TUN." || continue
+        title="Сетевая проверка Xray/VLESS"
+        capture /usr/local/sbin/awg-mihomo-unified-nodes probe "$index" || true
         ;;
       0) return 0 ;;
     esac
