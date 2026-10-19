@@ -38,6 +38,7 @@ class LinuxBackendTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             root=Path(d);mode=root/"mode";mode.write_text("transit")
             bridge=root/"bridge";bridge.write_text('[Service]\nEnvironment="MIHOMO_XRAY_VLESS_BRIDGE=1"\n')
+            ephemeral=root/"runtime";ephemeral.write_text(bridge.read_text())
             selected=root/"selected";selected.write_text("staged")
             events=[]
             def cmd(*args,**kw):
@@ -46,10 +47,10 @@ class LinuxBackendTests(unittest.TestCase):
                     return "Transit guard: SAFE\nTransit policy rule: INACTIVE"
                 return ""
             with mock.patch.object(m,"MODE",mode),mock.patch.object(m,"BRIDGE",bridge),\
-                 mock.patch.object(m,"SELECTED",selected),mock.patch.object(m,"run",side_effect=cmd),\
+                 mock.patch.object(m,"BRIDGE_RUNTIME",ephemeral),mock.patch.object(m,"SELECTED",selected),mock.patch.object(m,"run",side_effect=cmd),\
                  mock.patch.object(m,"active",return_value=False):
                 self.assertTrue(m.failclosed())
-            self.assertFalse(bridge.exists());self.assertFalse(selected.exists())
+            self.assertFalse(bridge.exists());self.assertFalse(ephemeral.exists());self.assertFalse(selected.exists())
             self.assertIn(("/usr/local/sbin/awg-transit-routing","disable"),events)
             self.assertIn(("systemctl","disable",m.XRAY),events)
     def test_quiesce_rejects_non_owned_override(self):
@@ -60,6 +61,59 @@ class LinuxBackendTests(unittest.TestCase):
                  mock.patch.object(m,"run",return_value=""):
                 self.assertFalse(m.failclosed())
             self.assertTrue(bridge.exists())
+    def test_bridge_stays_ephemeral_until_live_tun_verification(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as dirname:
+            root=Path(dirname)
+            runtime=root/"run"/"61-awg-xray-bridge.conf"
+            persisted=root/"etc"/"61-awg-xray-bridge.conf"
+            renderer=root/"renderer"
+            renderer.write_text("MIHOMO_XRAY_VLESS_BRIDGE")
+            template=chr(10).join(("proxies:","  - name: AWG-XRAY-VLESS-LOCAL","    type: socks5",""))
+            old_td=tempfile.TemporaryDirectory
+            events=[]
+            def temp_dir(**kwargs):
+                return old_td(dir=dirname,prefix="test-")
+            def fake_run(*args,**kwargs):
+                events.append(args)
+                if args[0]==str(renderer):
+                    return template
+                return ""
+            backend=m.LinuxBackend("dead","vless")
+            with (mock.patch.object(m,"BRIDGE_RUNTIME",runtime),
+                  mock.patch.object(m,"BRIDGE",persisted),
+                  mock.patch.object(m,"RENDERER",renderer),
+                  mock.patch.object(backend,"check_provider_unchanged",return_value=True),
+                  mock.patch.object(m,"run",side_effect=fake_run),
+                  mock.patch("tempfile.TemporaryDirectory",side_effect=temp_dir)):
+                backend.stage_mihomo_bridge()
+            self.assertTrue(runtime.is_file())
+            self.assertFalse(persisted.exists())
+            self.assertIn(b"Requires=awg-xray-vless.service",runtime.read_bytes())
+            self.assertIn(("systemctl","daemon-reload"),events)
+
+    def test_persist_override_only_after_tun_postcheck(self):
+        with tempfile.TemporaryDirectory() as dirname:
+            root=Path(dirname)
+            runtime=root/"run"/"61-awg-xray-bridge.conf"
+            persisted=root/"etc"/"61-awg-xray-bridge.conf"
+            backend=m.LinuxBackend("dead","vless")
+            events=[]
+            def command(*args,**kwargs):
+                events.append(args)
+                return ""
+            with (mock.patch.object(m,"BRIDGE_RUNTIME",runtime),
+                  mock.patch.object(m,"BRIDGE",persisted),
+                  mock.patch.object(m,"run",side_effect=command)):
+                with self.assertRaisesRegex(RuntimeError,"EPHEMERAL_BRIDGE_NOT_READY"):
+                    backend.install_boot_dependencies()
+                self.assertFalse(persisted.exists())
+                runtime.parent.mkdir(parents=True,exist_ok=True)
+                runtime.write_bytes(b'[Unit]\\nRequires=awg-xray-vless.service\\n[Service]\\nEnvironment="MIHOMO_XRAY_VLESS_BRIDGE=1"\\n')
+                backend.install_boot_dependencies()
+                self.assertEqual(persisted.read_bytes(),runtime.read_bytes())
+            self.assertIn(("systemctl","enable",m.XRAY),events)
+
     def test_cancelled_watchdog_never_quiesces_a_healthy_gateway(self):
         with tempfile.TemporaryDirectory() as d:
             base=Path(d);path=base/"xray-failover-1-2";path.mkdir()

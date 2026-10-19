@@ -27,6 +27,7 @@ CURRENT=Path("/etc/awg-pbr/transports/mihomo/node-name")
 NODE_POLICY_MODE=Path("/etc/awg-pbr/transports/mihomo/node-policy.mode")
 NODE_POLICY_ORDER=Path("/etc/awg-pbr/transports/mihomo/node-policy.nodes")
 BRIDGE=Path("/etc/systemd/system/awg-mihomo.service.d/61-awg-xray-bridge.conf")
+BRIDGE_RUNTIME=Path("/run/systemd/system/awg-mihomo.service.d/61-awg-xray-bridge.conf")
 RENDERER=Path("/usr/local/sbin/awg-mihomo-config")
 ADAPTER=Path("/usr/local/sbin/awg-xray-vless")
 CORE=Path("/usr/local/bin/mihomo")
@@ -88,10 +89,11 @@ def failclosed():
             run("systemctl","stop",service,timeout=20)
         # The live candidate was not certified. Do not leave a persistent
         # bridge pointing at its unverified sidecar on the next reboot.
-        if BRIDGE.exists():
-            if BRIDGE.is_symlink() or b"MIHOMO_XRAY_VLESS_BRIDGE=1" not in BRIDGE.read_bytes():
-                return False
-            BRIDGE.unlink()
+        for overlay in (BRIDGE_RUNTIME,BRIDGE):
+            if overlay.exists():
+                if overlay.is_symlink() or b"MIHOMO_XRAY_VLESS_BRIDGE=1" not in overlay.read_bytes():
+                    return False
+                overlay.unlink()
         run("systemctl","disable",XRAY,timeout=15)
         run("systemctl","daemon-reload",timeout=15)
         SELECTED.unlink(missing_ok=True)  # preflight requires it absent
@@ -142,7 +144,7 @@ class LinuxBackend:
             raise RuntimeError("CANDIDATE_NOT_ALLOWED_BY_NODE_POLICY")
         if not active(MIHOMO) or active(XRAY) or not routes_ok():
             raise RuntimeError("LIVE_BASELINE_UNSAFE")
-        if BRIDGE.exists() or SELECTED.exists() or not RENDERER.is_file() or not ADAPTER.is_file():
+        if BRIDGE.exists() or BRIDGE_RUNTIME.exists() or SELECTED.exists() or not RENDERER.is_file() or not ADAPTER.is_file():
             raise RuntimeError("BRIDGE_NOT_UNINSTALLED_OR_ADAPTER_MISSING")
         if not (EXECUTOR.is_file() and CORE.is_file()):raise RuntimeError("INSTALL_FIRST")
         raw=PROVIDER.read_bytes()
@@ -226,9 +228,10 @@ class LinuxBackend:
         result=yaml.safe_load(raw)
         if not any(p.get("name")==LOCAL for p in result.get("proxies",[])):
             raise RuntimeError("BRIDGE_NOT_PRESENT")
-        # Unit dependency ensures Xray starts before Mihomo on reboot.
+        # Do not persist this dependency until the live TUN passes.
+        # An interrupted reboot clears the /run override automatically.
         unit=b'[Unit]\nRequires=awg-xray-vless.service\nAfter=awg-xray-vless.service\n[Service]\nEnvironment="MIHOMO_XRAY_VLESS_BRIDGE=1"\n'
-        write_atomic(BRIDGE,unit)
+        write_atomic(BRIDGE_RUNTIME,unit)
         run("systemctl","daemon-reload",timeout=20)
     def restart_mihomo(self):
         run("systemctl","restart",MIHOMO,timeout=30)
@@ -265,10 +268,22 @@ class LinuxBackend:
                 "Transit policy rule: ACTIVE" in status and
                 "Transit VPN table: READY" in status)
     def install_boot_dependencies(self):
+        # Called strictly AFTER live TUN HTTPS + policy route postcheck.
+        # Up to this point an interrupted reboot discards /run overrides.
+        if not BRIDGE_RUNTIME.is_file() or BRIDGE_RUNTIME.is_symlink():
+            raise RuntimeError("EPHEMERAL_BRIDGE_NOT_READY")
+        unit=BRIDGE_RUNTIME.read_bytes()
+        if b"Requires=awg-xray-vless.service" not in unit or b"MIHOMO_XRAY_VLESS_BRIDGE=1" not in unit:
+            raise RuntimeError("EPHEMERAL_BRIDGE_INVALID")
+        write_atomic(BRIDGE,unit)
+        run("systemctl","daemon-reload",timeout=15)
         run("systemctl","enable",XRAY,timeout=15)
     def check_boot_dependencies(self):
         result=subprocess.run(["systemctl","is-enabled","--quiet",XRAY],timeout=5)
-        return result.returncode==0 and BRIDGE.is_file() and b"Requires=awg-xray-vless.service" in BRIDGE.read_bytes()
+        return (result.returncode==0 and BRIDGE.is_file() and not BRIDGE.is_symlink()
+                and BRIDGE_RUNTIME.is_file() and
+                BRIDGE.read_bytes()==BRIDGE_RUNTIME.read_bytes() and
+                b"Requires=awg-xray-vless.service" in BRIDGE.read_bytes())
     def verify_committed_node(self,candidate):
         if candidate!=self.candidate or not self.check_provider_unchanged():return False
         try:
