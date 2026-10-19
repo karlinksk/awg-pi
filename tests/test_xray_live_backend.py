@@ -132,6 +132,40 @@ class LinuxBackendTests(unittest.TestCase):
             with mock.patch.object(m,"BASE",base),mock.patch.object(m,"failclosed") as stop:
                 m.watchdog(path)
             stop.assert_not_called()
+    def test_watchdog_pending_expires_without_killing_healthy_mihomo(self):
+        with tempfile.TemporaryDirectory() as dirname:
+            base=Path(dirname);snap=base/"xray-failover-19-3";snap.mkdir()
+            (snap/"state.json").write_text(json.dumps({"state":"pending"}))
+            with mock.patch.object(m,"BASE",base),mock.patch.object(m,"failclosed") as stop:
+                m.watchdog(snap)
+            stop.assert_not_called()
+            self.assertEqual(json.loads((snap/"state.json").read_text())["state"],
+                             "expired_before_mutation")
+            with mock.patch.object(m,"BASE",base),mock.patch.object(m,"failclosed") as stop:
+                m.watchdog(snap)
+            stop.assert_not_called()
+
+    def test_expired_watchdog_blocks_any_subsequent_xray_stage(self):
+        with tempfile.TemporaryDirectory() as dirname:
+            snap=Path(dirname)
+            (snap/"state.json").write_text(json.dumps(
+                {"state":"expired_before_mutation"}))
+            backend=m.LinuxBackend("HY2","VLESS")
+            backend.snapshot=snap
+            with mock.patch.object(backend,"check_provider_unchanged",return_value=True):
+                with mock.patch.object(m,"run") as command:
+                    with self.assertRaisesRegex(RuntimeError,"WATCHDOG_EXPIRED_BEFORE_MUTATION"):
+                        backend.stage_xray("VLESS")
+            command.assert_not_called()
+
+    def test_pre_mutation_transition_is_serialized_with_watchdog(self):
+        with tempfile.TemporaryDirectory() as dirname:
+            snap=Path(dirname)
+            (snap/"state.json").write_text(json.dumps({"state":"pending"}))
+            self.assertTrue(m.snapshot_transition(snap,"pending","armed"))
+            self.assertFalse(m.snapshot_transition(snap,"pending","armed"))
+            self.assertEqual(json.loads((snap/"state.json").read_text())["state"],"armed")
+
     def test_watchdog_arm_state_quiesces_without_restoring_old_node(self):
         with tempfile.TemporaryDirectory() as d:
             base=Path(d);path=base/"xray-failover-1-2";path.mkdir()
@@ -194,6 +228,21 @@ class LinuxBackendTests(unittest.TestCase):
                     executor.commit()
             self.assertEqual(current.read_text().strip(),"different")
             self.assertEqual(json.loads(state.read_text())["state"],"armed")
+
+    def test_watchdog_safe_timer_script_scopes_actual_systemd_trigger(self):
+        script=ROOT/"scripts"/"awg-xray-testpi-watchdog-safe-trigger.py"
+        source=script.read_text()
+        self.assertIn('str(EXEC),"watchdog",str(folder)',source)
+        self.assertIn('"--on-active=5s"',source)
+        self.assertIn('current=="pending"',source)
+        self.assertIn('"expired_before_mutation"',source)
+        self.assertIn('baseline()==before',source)
+        self.assertIn('sha(EXEC)==sha(SRC)',source)
+        self.assertIn('TRANSIT_GUARD_UNSAFE',source)
+        self.assertIn('"FAIL_CLOSED_PATH","NOT_TESTED"',source)
+        self.assertNotIn('"ip","route","replace"',source)
+        self.assertNotIn('"systemctl","restart"',source)
+        self.assertNotIn('"systemctl","disable"',source)
 
     def test_installer_and_backup_package_passive_executor(self):
         install=(ROOT/"install.sh").read_text()

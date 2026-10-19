@@ -122,6 +122,22 @@ def candidate_allowed_by_policy(failed, candidate):
         return chain.index(candidate)>chain.index(failed)
     except (OSError,UnicodeError):return False
 
+def snapshot_transition(snapshot, expected, desired):
+    """Serialize watchdog and activation before touching the network.
+
+    The state is armed for fail-close ONLY once a network mutation begins.
+    If the timer expires during pre-mutation setup, it cannot quiesce a
+    healthy incumbent, and no mutation may start afterward.
+    """
+    with (snapshot/"watchdog-state.lock").open("a") as lock:
+        fcntl.flock(lock,fcntl.LOCK_EX)
+        record=json.loads((snapshot/"state.json").read_text())
+        if record.get("state")!=expected:
+            return False
+        record["state"]=desired
+        write_atomic(snapshot/"state.json",json.dumps(record).encode())
+        return True
+
 def write_atomic(path, data,mode=0o600):
     path.parent.mkdir(parents=True,exist_ok=True,mode=0o700)
     tmp=path.with_name("."+path.name+".txn-"+str(os.getpid()))
@@ -189,7 +205,7 @@ class LinuxBackend:
         if not self.provider_hash:raise RuntimeError("PREFLIGHT_NOT_COMPLETE")
         self.snapshot=BASE/("xray-failover-"+str(int(time.time()))+"-"+str(os.getpid()))
         self.snapshot.mkdir(mode=0o700)
-        state={"state":"armed","failed_sha256":hashlib.sha256(self.failed.encode()).hexdigest(),
+        state={"state":"pending","failed_sha256":hashlib.sha256(self.failed.encode()).hexdigest(),
                "candidate_fingerprint":self.fingerprint,"provider_sha256":self.provider_hash}
         write_atomic(self.snapshot/"state.json",json.dumps(state).encode())
         self.watchdog_unit="awg-xray-failover-"+str(os.getpid())
@@ -212,6 +228,8 @@ class LinuxBackend:
     def stage_xray(self,candidate):
         if candidate!=self.candidate or not self.check_provider_unchanged():
             raise RuntimeError("PROVIDER_OR_CANDIDATE_CHANGED")
+        if not self.snapshot or not snapshot_transition(self.snapshot,"pending","armed"):
+            raise RuntimeError("WATCHDOG_EXPIRED_BEFORE_MUTATION")
         run(str(ADAPTER),"select",str(self.index))
     def start_xray(self):
         run("systemctl","start",XRAY,timeout=25)
@@ -322,9 +340,17 @@ def watchdog(path):
     if path.parent!=BASE or not re.fullmatch(r"xray-failover-[0-9]+-[0-9]+",path.name):
         raise RuntimeError("INVALID_SNAPSHOT")
     if path.is_symlink():raise RuntimeError("SYMLINK_SNAPSHOT")
-    state=json.loads((path/"state.json").read_text())
-    if state.get("state")=="cancelled":
-        return  # no live mutation was made; never quiesce a healthy gateway
+    with (path/"watchdog-state.lock").open("a") as lock:
+        fcntl.flock(lock,fcntl.LOCK_EX)
+        state=json.loads((path/"state.json").read_text())
+        if state.get("state") in ("cancelled","expired_before_mutation","quiesced"):
+            return
+        if state.get("state")=="pending":
+            state["state"]="expired_before_mutation"
+            write_atomic(path/"state.json",json.dumps(state).encode())
+            return  # no Xray/route change yet; never stop a healthy Mihomo
+        if state.get("state") not in ("armed","committed"):
+            raise RuntimeError("UNEXPECTED_WATCHDOG_STATE")
     if state.get("state")=="committed":
         # If the watchdog fires just after commit, check live state anyway.
         try:
