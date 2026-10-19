@@ -162,7 +162,7 @@ printf "Журнал установки: %s\n\n" "$INSTALL_REPORT"
 
 UPGRADE_EXISTING=0
 # Fresh v1.3 installs stage safely in Selective + transport=unconfigured.
-# The user chooses Operating Mode only after the first transport/recovery step.
+# VPN profiles/subscriptions and Transit activation happen only AFTER install.
 ACTIVATE_TRANSIT_AFTER_INSTALL=0
 AUTO_UPGRADE="${AWG_PI_UPGRADE_AUTO:-0}"
 AUTO_TRANSIT="${AWG_PI_UPGRADE_TRANSIT:-}"
@@ -171,8 +171,8 @@ MODE_PREEXISTED=0
 [[ -f "$MODE_FILE" ]] && MODE_PREEXISTED=1
 # An interrupted fresh install may already have env/mode/transport files
 # from stage 6, but no installed version or live backend yet. Do not mistake
-# this for an existing production installation: it must still reach the
-# first-transport wizard, including the "configure nothing" recovery choice.
+# this for an existing production installation: it must still complete with
+# zero VPN profiles, independently of post-install onboarding.
 # Refuse this path whenever the installation is versioned or any backend/health
 # service is already running.
 PARTIAL_FRESH_RESUME=0
@@ -189,7 +189,7 @@ if (( PARTIAL_FRESH_RESUME == 1 )); then
   warn "Обнаружена незавершённая первоначальная установка (без VPN и версии)."
   confirm "Продолжить установку как fresh install с повторной проверкой LAN/DNS?" "N" ||
     die "Возобновление незавершённой установки отменено"
-  ok "PARTIAL_FRESH_RESUME=YES; first-transport wizard будет запущен"
+  ok "PARTIAL_FRESH_RESUME=YES; установка завершится без VPN-профилей"
 fi
 if [[ -f "$ENV_FILE" && "$PARTIAL_FRESH_RESUME" == 0 ]]; then
   printf "Обнаружена существующая AWG Pi Gateway: %s\n" "${EXISTING_VERSION:-версия до v1.1.0}"
@@ -220,6 +220,20 @@ if [[ -f "$ENV_FILE" && "$PARTIAL_FRESH_RESUME" == 0 ]]; then
   else
     die "Обновление отменено пользователем"
   fi
+fi
+
+# Clean-install contract: no VPN profile is allowed until installation ends.
+# If private profiles already exist on an otherwise unversioned host, require
+# the operator to resolve that state separately; never import, delete or use
+# those credentials inside fresh install.
+if (( UPGRADE_EXISTING == 0 )); then
+  for _existing_vpn_profile in "$CONF_FILE" \
+    "$PBR_DIR/transports/mihomo/provider.env" \
+    /var/lib/awg-pbr/mihomo/providers/subscription.yaml; do
+    if [[ -e "$_existing_vpn_profile" || -L "$_existing_vpn_profile" ]]; then
+      die "Обнаружена ранее настроенная VPN-конфигурация без установленной версии; это не чистая установка. Остановлено без изменения профиля."
+    fi
+  done
 fi
 
 # Snapshot operator-selected transport/node priorities on an UPGRADE, before
@@ -465,7 +479,7 @@ if [[ -f "$CONF_FILE" ]]; then
     fi
     ok "Существующий AWG backend сохранён"
   else
-    warn "На fresh install найден существующий $CONF_FILE; он не будет автоматически выбран. First-run wizard попросит явный выбор."
+    die "При чистой установке AWG-профиль отсутствует до её завершения; импорт доступен после установки через awg-menu."
   fi
 else
   if (( UPGRADE_EXISTING == 1 )); then
@@ -867,8 +881,8 @@ install_project_helper src/awg-mihomo-node-policy "$MIHOMO_NODE_POLICY_CLI"
 
 # A clean install ships BOTH VPN engines, independently of whether the operator
 # already has a Mihomo subscription or an AmneziaWG profile. The verified,
-# pinned Mihomo engine is installed before the first-transport wizard and does
-# not start any VPN service, modify policy routing, or select a node.
+# pinned Mihomo engine is installed before post-install profile onboarding and
+# does not start a VPN service, change routing, or select a node.
 if (( UPGRADE_EXISTING == 0 )); then
   STAGE="установка Mihomo engine"
   "$MIHOMO_INSTALL_SCRIPT" ensure --mode auto || die "Не удалось установить обязательный Mihomo engine"
@@ -1143,46 +1157,36 @@ fi
 ok "DNS Raspberry Pi работает"
 
 if (( UPGRADE_EXISTING == 0 )); then
-  STAGE="выбор первого transport"
-  log "[11a/12] First transport wizard"
-  if "$FIRST_RUN_CLI" wizard; then
-    ok "Первичная настройка transport завершена"
-  else
-    warn "Первичный transport не удалось настроить. Установка продолжится в recovery-state; повторите настройку через sudo awg-menu."
-    printf '%s\n' unconfigured >"$TRANSPORT_FILE"
-    chmod 600 "$TRANSPORT_FILE"
-  fi
+  STAGE="завершение установки без VPN-профилей"
+  log "[11a/12] No VPN onboarding during clean install"
+  # Never invoke the first-run wizard from install.sh. The installed menu
+  # owns all subsequent AWG and Mihomo onboarding after successful install.
+  [[ "$(cat "$TRANSPORT_FILE")" == unconfigured ]] ||
+    die "Чистая установка неожиданно активировала VPN-транспорт"
+  [[ "$(cat "$MODE_FILE")" == selective ]] ||
+    die "Чистая установка неожиданно активировала Transit"
+  [[ ! -e "$CONF_FILE" ]] ||
+    die "Чистая установка не должна устанавливать AWG-профиль"
+  [[ ! -e "$PBR_DIR/transports/mihomo/provider.env" &&
+     ! -e /var/lib/awg-pbr/mihomo/providers/subscription.yaml ]] ||
+    die "Чистая установка не должна добавлять Mihomo-подписку"
+  ok "Шлюз и оба движка установлены без VPN-профилей; первый транспорт выбирается позднее в sudo awg-menu"
 fi
 
-# Fresh installs are availability-AUTO from the outset. The selector keeps a
-# healthy active transport sticky, lets Mihomo change nodes first, and falls
+# Fresh installs PREPARE availability-AUTO only. The selector keeps a healthy
+# active transport sticky, lets Mihomo change nodes first, and falls
 # back to AWG after repeated failures. Neither profile has to be supplied now;
 # the monitor remains passive while both backends are unconfigured.
 if (( UPGRADE_EXISTING == 0 )); then
   "$SELECTION_CLI" mode auto mihomo awg >/dev/null || die "Не удалось настроить безопасное автоматическое резервирование"
-  # New clean installs get a persistent, service-qualified READY-first node
-  # selection policy. No node is switched now; the isolated Hot Pool gathers
-  # two independent successful proofs after a subscription is configured.
-  # The first-run Mihomo wizard can choose a FIXED chain. Do not override
-  # its operator choice by enabling an unrelated background READY scan.
-  # When no Mihomo profile exists yet, preserve the v1.3 default READY AUTO.
-  MIHOMO_FRESH_HOT_POOL_ENABLED=1
-  _initial_node_policy="$(cat "$PBR_DIR/transports/mihomo/node-policy.mode" 2>/dev/null || echo auto)"
-  case "$_initial_node_policy" in
-    fixed|manual)
-      MIHOMO_FRESH_HOT_POOL_ENABLED=0
-      "$MIHOMO_NODE_POLICY_CLI" ready-auto disable >/dev/null ||
-        die "Не удалось выключить READY для FIXED/MANUAL после первого запуска"
-      ok "Mihomo $_initial_node_policy: Hot Pool READY отключён; выбранная цепочка сохранена"
-      ;;
-    auto)
-      # Rollback remains available through: awg-mihomo-node-policy auto-strategy classic
-      "$MIHOMO_NODE_POLICY_CLI" ready-auto enable >/dev/null ||
-        die "Не удалось настроить Hot Pool READY-priority AUTO"
-      ok "Mihomo AUTO: Hot Pool READY сначала; остальные ноды только после сервисной проверки и postcheck"
-      ;;
-    *) die "Неподдерживаемая политика узлов Mihomo после первой настройки" ;;
-  esac
+  # On clean install the user has not configured any profiles or FIXED
+  # chain yet. Install the full READY/Hot Pool capabilities and arm the
+  # SHADOW timer, which remains passive without a provider subscription.
+  # The operator may later disable Hot Pool and choose a FIXED chain via
+  # awg-menu without rerunning install.sh.
+  "$MIHOMO_NODE_POLICY_CLI" ready-auto enable >/dev/null ||
+    die "Не удалось подготовить READY AUTO для настройки после установки"
+  ok "Mihomo READY/Hot Pool подготовлены; без подписки SHADOW-проверки не запускаются"
   ok "Резервирование транспортов: AUTO Mihomo → AWG (без автоматического возврата ради скорости)"
 fi
 
@@ -1246,21 +1250,11 @@ if (( UPGRADE_EXISTING == 0 )); then
     systemctl enable --now "$unit" >/dev/null || die "Не удалось включить $unit"
     systemctl is-active --quiet "$unit" || die "Не запущен обязательный таймер $unit"
   done
-  if (( MIHOMO_FRESH_HOT_POOL_ENABLED == 1 )); then
-    systemctl enable --now awg-mihomo-hot-pool.timer >/dev/null ||
-      die "Не удалось включить Hot Pool на чистой установке с AUTO"
-    systemctl is-active --quiet awg-mihomo-hot-pool.timer ||
-      die "Hot Pool timer не запущен после чистой установки"
-    ok "Mihomo Hot Pool READY: SHADOW_ONLY включён для AUTO (по умолчанию)"
-  else
-    systemctl disable --now awg-mihomo-hot-pool.timer >/dev/null ||
-      die "Не удалось отключить Hot Pool для выбранной FIXED/MANUAL политики"
-    if systemctl is-active --quiet awg-mihomo-hot-pool.timer ||
-       systemctl is-enabled --quiet awg-mihomo-hot-pool.timer; then
-      die "Hot Pool неожиданно активен при FIXED/MANUAL"
-    fi
-    ok "Mihomo Hot Pool: таймер выключен, FIXED/MANUAL останется без фоновых проверок"
-  fi
+  systemctl enable --now awg-mihomo-hot-pool.timer >/dev/null ||
+    die "Не удалось подготовить Hot Pool timer до ввода подписки"
+  systemctl is-active --quiet awg-mihomo-hot-pool.timer ||
+    die "Hot Pool timer не запущен после установки"
+  ok "Hot Pool SHADOW_ONLY ожидает подписку; READY-проверки начнутся только после её ввода"
   ok "Mihomo health pool и Stage18 установлены и готовы к подписке"
 else
   ok "Существующая политика Mihomo-таймеров сохранена при обновлении"
@@ -1276,30 +1270,12 @@ if [[ "$ACTIVE_TRANSPORT" != unconfigured ]]; then
 fi
 
 if (( UPGRADE_EXISTING == 0 )); then
-  STAGE="выбор Operating Mode"
-  log "[11b/12] Operating Mode selection"
-  printf "\nOperating Mode выбирается независимо от transport:\n"
-  printf "1) Selective Gateway — transport DOWN/not-ready => FAIL-OPEN DIRECT\n"
-  printf "2) MikroTik Transit / Backup VPN — transport DOWN/not-ready => FAIL-CLOSED/LOCKDOWN\n"
-  ask "Режим работы" "1"
-  case "$REPLY" in
-    1)
-      "$ROUTE_CLI" mode selective >/dev/null
-      ok "Operating Mode: Selective Gateway"
-      ;;
-    2)
-      if "$ROUTE_CLI" mode transit; then
-        ok "Operating Mode: MikroTik Transit / Backup VPN"
-      else
-        warn "Transit activation failed; installer restores Selective Gateway."
-        "$ROUTE_CLI" mode selective >/dev/null 2>&1 || true
-      fi
-      ;;
-    *)
-      warn "Неизвестный выбор Operating Mode; безопасно остаёмся в Selective Gateway."
-      "$ROUTE_CLI" mode selective >/dev/null 2>&1 || true
-      ;;
-  esac
+  STAGE="завершение безопасной установки"
+  log "[11b/12] Deferred VPN and Operating Mode configuration"
+  [[ "$(cat "$MODE_FILE")" == selective &&
+     "$(cat "$TRANSPORT_FILE")" == unconfigured ]] ||
+    die "Неверное конечное состояние: до ввода профилей нужен Selective + unconfigured"
+  ok "Operating Mode: Selective Gateway; смена на Transit только после настройки VPN через sudo awg-menu"
 elif (( ACTIVATE_TRANSIT_AFTER_INSTALL == 1 )); then
   STAGE="активация MikroTik Transit"
   log "[11b/12] Legacy upgrade Transit request"
@@ -1437,6 +1413,7 @@ printf "  DHCP остаётся на LAN router\n"
 printf "\nОсновные команды:\n"
 printf "  sudo awg-route status\n"
 printf "  sudo awg-transport status\n"
+printf "  sudo awg-menu  # после установки: настройка AWG/Mihomo, режим и резервирование\n"
 printf "  sudo awg-route mode status\n"
 printf "  sudo awg-route mode selective\n"
 printf "  sudo awg-route mode transit\n"

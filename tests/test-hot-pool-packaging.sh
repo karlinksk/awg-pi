@@ -54,12 +54,14 @@ assert 'ProtectSystem=strict' in unit and 'NoNewPrivileges=true' in unit
 assert 'Unit=awg-mihomo-hot-pool.service' in timer
 assert 'systemctl enable awg-mihomo-hot-pool.timer' not in ins
 assert 'systemctl start awg-mihomo-hot-pool.service' not in ins
-# Guarded fresh-install AUTO may enable the timer, but upgrade never does.
-assert 'MIHOMO_FRESH_HOT_POOL_ENABLED=1' in ins
-assert 'MIHOMO_FRESH_HOT_POOL_ENABLED=0' in ins
-assert 'if (( MIHOMO_FRESH_HOT_POOL_ENABLED == 1 )); then' in ins
+# On empty fresh-install the timer is armed but waits for a provider;
+# operator-set disabled state is preserved on an upgrade.
+assert 'No VPN onboarding during clean install' in ins
+assert 'Не удалось подготовить Hot Pool timer до ввода подписки' in ins
 assert 'systemctl enable --now awg-mihomo-hot-pool.timer' in ins
-assert 'systemctl disable --now awg-mihomo-hot-pool.timer' in ins
+assert 'UPGRADE_HOT_TIMER_ENABLEMENT=' in ins
+assert 'UPGRADE_HOT_TIMER_RUNTIME=' in ins
+assert 'if [[ "$UPGRADE_HOT_TIMER_ENABLEMENT" != absent ]]; then' in ins
 for name in ('awg-mihomo-hot-pool.py','awg-mihomo-hot-service-scan.py','awg-mihomo-ip-connect-probe.py','awg-hot-pool-continuity.py','awg-mihomo-hot-continuity-run'):
     assert 'install -m 0755 "$source_dir/'+name+'"' in standalone, 'incomplete standalone shadow install '+name
 assert '/var/lib/awg-pbr/hot-pool/continuity' in standalone

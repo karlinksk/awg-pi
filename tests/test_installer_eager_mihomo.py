@@ -10,8 +10,9 @@ INSTALL = (ROOT / 'install.sh').read_text()
 class EagerMihomoInstaller(unittest.TestCase):
     def test_pinned_engine_installed_before_first_run(self):
         install = INSTALL.index('"$MIHOMO_INSTALL_SCRIPT" ensure --mode auto')
-        wizard = INSTALL.index('"$FIRST_RUN_CLI" wizard')
-        self.assertLess(install, wizard)
+        defer = INSTALL.index('log "[11a/12] No VPN onboarding during clean install"')
+        self.assertLess(install, defer)
+        self.assertNotIn('"$FIRST_RUN_CLI" wizard', INSTALL)
         self.assertIn('"$MIHOMO_INSTALL_SCRIPT" status || die', INSTALL)
         self.assertIn('[[ -x /usr/local/bin/mihomo ]] || die', INSTALL)
 

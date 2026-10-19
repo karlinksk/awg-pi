@@ -155,9 +155,16 @@ usable on the previous transport.
 
 ## 4. Mihomo first-run onboarding
 
-On a fresh install the first transport is chosen before Operating Mode. The
-wizard must support either AWG or Mihomo as the first backend without assuming
-that the other one already exists.
+On a clean Debian 13 ARM64 install, **installation completes before VPN
+onboarding**: neither AWG .conf nor Mihomo subscription is present, and
+\`install.sh\` never launches a profile-input wizard. The completed installation
+must be \`Selective + transport=unconfigured\`, with both engines, Stage18,
+FFmpeg/FFprobe, yt-dlp and media dependencies installed. READY and Hot Pool
+SHADOW timers may be enabled, but run no provider-dependent network tests
+until a subscription is explicitly supplied. The menu must provide **post-install**
+first transport onboarding for either AWG or Mihomo and only then optional
+Transit mode activation. Existing-install upgrades still preserve configured
+nodes and transport priorities.
 
 For Mihomo first-run the interactive flow must support:
 
@@ -167,7 +174,8 @@ For Mihomo first-run the interactive flow must support:
 4. exact selection of the first node and one resolved IPv4 endpoint;
 5. optional ordered exact-node fallback chain (2+ explicit nodes);
 6. activation of Mihomo as the first transport;
-7. Operating Mode selection only afterward.
+7. Operating Mode selection only after a working profile has been supplied
+   (no Transit activation on an empty fresh install).
 
 For a provider that is not reachable DIRECT, AUTO bootstrap must be able to use
 an already healthy transport. AUTO bootstrap order is:
@@ -412,7 +420,9 @@ A v1.3.0 RC is acceptable only after all of the following are true:
 - CI is green.
 - existing v1.2.0 upgrade on the real Pi passes.
 - AWG remains unchanged immediately after upgrade.
-- fresh first-run can choose either AWG or Mihomo before Operating Mode.
+- blank clean-install completes without importing or asking for VPN profiles;
+  only afterward can first-run via \`awg-menu\` choose AWG or Mihomo,
+  then choose Transit if a working profile exists.
 - first-run Mihomo onboarding selects the initial exact node and can save a
   multi-node ordered fallback chain interactively.
 - blocked provider download succeeds through DIRECT-first AUTO bootstrap with
@@ -455,7 +465,7 @@ GitHub Actions run `37734894001` passed both jobs:
 
 The same Pi also passed the targeted local regression gate:
 
-- first-transport wizard (AWG and Mihomo onboarding);
+- post-install first-transport wizard (AWG and Mihomo onboarding);
 - existing transport is never silently replaced;
 - FIXED/AUTO transport-selection policy;
 - exact-node FIXED validation, no wrap-back and exhaustion behavior;
@@ -616,10 +626,15 @@ feature-specific pending Mihomo READY/TUN/LAN checks):
    management connection during a trial.
 3. **One destructive fresh install** from a clean Debian 13 ARM64 image using
    the current v1.3 installer head (on a **separate SD/SSD**, retaining the
-   old card read-only). Validate system Node.js 22.16 / native WebSocket,
-   Stage18, optional DC onboarding, AWG/Mihomo, first-run policies, timers and
-   fresh install versus existing-state upgrade/rollback paths. Include
-   normal-user DC remote execution and safe autostart.
+   old card read-only). Finish the full installer **without any AWG profile or
+   Mihomo subscription** and verify \`Selective + transport=unconfigured\`.
+   Verify both engines, Node.js 22.16 / native WebSocket, ffmpeg/ffprobe,
+   yt-dlp, Stage18, Hot Pool/READY (idle without provider), independent DNS,
+   optional DC onboarding and clean reboot. **Only after completion**, add
+   the first real AWG/Mihomo profile through \`awg-menu\`, then check
+   FIXED/AUTO, Transit activation and service-dependent Hot Pool gates.
+   Also test configured-state upgrade/rollback with the previous user
+   preferences and safe DC autostart.
 4. **One live non-Citadel provider** using the plain VLESS URI or Base64 VLESS
    adapter path. The earlier live Clash YAML test does not close this gate.
 5. **Reboot/persistence acceptance** on the newly configured test installation:

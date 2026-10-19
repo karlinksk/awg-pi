@@ -186,11 +186,11 @@ printf 'asset\n' >"$TMP/local-mihomo.gz"
 out="$(run_first mihomo-engine-file "$TMP/local-mihomo.gz")"
 grep -Fqx "mihomo-install:--file $TMP/local-mihomo.gz" "$TMP/log"
 
-echo "=== installer orders first transport before Operating Mode ==="
-first_line="$(grep -n -F '"$FIRST_RUN_CLI" wizard' "$ROOT/install.sh" | head -1 | cut -d: -f1)"
-mode_line="$(grep -n -F 'log "[11b/12] Operating Mode selection"' "$ROOT/install.sh" | head -1 | cut -d: -f1)"
-[[ -n "$first_line" && -n "$mode_line" ]]
-(( first_line < mode_line ))
+echo "=== installer keeps profile wizard for POST-install menu only ==="
+! grep -Fq '"$FIRST_RUN_CLI" wizard' "$ROOT/install.sh"
+grep -Fq 'log "[11a/12] No VPN onboarding during clean install"' "$ROOT/install.sh"
+grep -Fq 'log "[11b/12] Deferred VPN and Operating Mode configuration"' "$ROOT/install.sh"
+grep -Fq 'transport=unconfigured' "$ROOT/install.sh"
 
 grep -Fq '1) AmneziaWG / WireGuard .conf — файл' "$ROOT/src/awg-first-run"
 grep -Fq '2) AmneziaWG / WireGuard .conf — вставить текст' "$ROOT/src/awg-first-run"

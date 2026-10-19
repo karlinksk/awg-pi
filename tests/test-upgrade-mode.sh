@@ -18,7 +18,8 @@ grep -Fq '"$ROUTE_CLI" mode selective' install.sh
 grep -Fq 'TRANSPORT_FILE="$PBR_DIR/transport"' install.sh
 grep -Fq "printf '%s\\n' unconfigured >\"\$TRANSPORT_FILE\"" install.sh
 grep -Fq 'FIRST_RUN_CLI="/usr/local/sbin/awg-first-run"' install.sh
-grep -Fq '"$FIRST_RUN_CLI" wizard' install.sh
+! grep -Fq '"$FIRST_RUN_CLI" wizard' install.sh
+grep -Fq 'No VPN onboarding during clean install' install.sh
 grep -Fq 'Active transport не настроен. Это допустимое recovery-состояние' install.sh
 
 # Installed version is public metadata. Keep /etc/awg-pbr private and
@@ -48,12 +49,12 @@ for answer in n N no No NO нет Нет '' '   '; do
   fi
 done
 
-# Fresh installs stage in Selective + unconfigured, configure/recover the
-# first transport, then choose Operating Mode explicitly.
+# Fresh install installs engines and leaves first VPN configuration for the menu.
 grep -Fq "printf '%s\\n' selective >\"\$MODE_FILE\"" install.sh
-grep -Fq 'log "[11a/12] First transport wizard"' install.sh
-grep -Fq 'log "[11b/12] Operating Mode selection"' install.sh
-grep -Fq '2) MikroTik Transit / Backup VPN — transport DOWN/not-ready => FAIL-CLOSED/LOCKDOWN' install.sh
+grep -Fq 'log "[11a/12] No VPN onboarding during clean install"' install.sh
+grep -Fq 'log "[11b/12] Deferred VPN and Operating Mode configuration"' install.sh
+grep -Fq '"$(cat "$TRANSPORT_FILE")" == unconfigured' install.sh
+! grep -Fq 'ask "Режим работы" "1"' install.sh
 grep -Fq 'elif (( ACTIVATE_TRANSIT_AFTER_INSTALL == 1 )); then' install.sh
 
 # Existing v1.2+ mode and v1.3 transport state are preserved during upgrade.
