@@ -6,6 +6,9 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 
 bash -n install.sh src/awg-update src/awg-mihomo-node-policy src/awg-mihomo-ready-postcheck-tun
+# Menu selection uses the versioned installer-installed node-policy helper.
+python3 -B tests/test_mihomo_auto_strategy.py
+python3 -B tests/test_menu_auto_strategy.py
 python3 -B -c 'import ast; from pathlib import Path; ast.parse(Path("src/awg-mihomo-ready-live-match").read_text())'
 python3 -B -c 'import yaml; assert hasattr(yaml, "safe_load")'
 
@@ -34,6 +37,9 @@ must src/awg-mihomo-node-policy 'MIHOMO_READY_AUTO_CANARY="$(cat "$MIHOMO_READY_
 must src/awg-mihomo-node-policy 'MIHOMO_READY_POSTCHECK_BIN="${MIHOMO_READY_POSTCHECK_BIN:-/usr/local/sbin/awg-mihomo-ready-postcheck-tun}"'
 must src/awg-mihomo-node-policy 'ready-auto)'
 must install.sh '"$MIHOMO_NODE_POLICY_CLI" ready-auto enable >/dev/null'
+must src/awg-menu 'mihomo_auto_strategy_menu(){'
+must src/awg-mihomo-node-policy 'select_auto_strategy(){'
+must install.sh 'install_project_helper src/awg-menu /usr/local/sbin/awg-menu'
 
 # Both files are included once in backup and once in removal before restore.
 for path in awg-mihomo-ready-live-match awg-mihomo-ready-postcheck-tun; do

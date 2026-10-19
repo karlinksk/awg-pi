@@ -1487,6 +1487,36 @@ mihomo_node_chain_editor(){
   done
 }
 
+# READY/legacy-AUTO strategy, distinct from manual/fixed node policy.
+mihomo_auto_strategy_menu(){
+  local choice
+  while true; do
+    choice="$(dialog --backtitle "$BACKTITLE" --title "Способ автоматического выбора" --item-help --menu \
+      "Требуется политика узлов AUTO. Активную ноду, транспорт и маршруты не меняем. Дополнительный service-gate, если настроен, сохраняется." 22 110 6 \
+      1 "Текущие настройки" "Показать READY, таймер Hot Pool и независимо настроенный service-gate." \
+      2 "Hot Pool READY" "Включить READY-приоритет и фоновый SHADOW таймер Hot Pool." \
+      3 "Обычный AUTO без Hot Pool" "Отключить READY и фоновый таймер, включая запуск после reboot." \
+      0 "Назад" "Не менять текущие настройки." 3>&1 1>&2 2>&3)" || return 0
+    case "$choice" in
+      1)
+        title="Способ выбора Mihomo"
+        capture "$MIHOMO_NODE_POLICY" auto-strategy status || true
+        ;;
+      2)
+        confirm "Hot Pool READY" "Включить фоновые проверки OpenAI/YouTube24 и READY-приоритет?\n\nТребуется политика узлов AUTO. Активную ноду/транспорт не меняем." || continue
+        title="Hot Pool READY"
+        capture "$MIHOMO_NODE_POLICY" auto-strategy ready || true
+        ;;
+      3)
+        confirm "Обычный AUTO" "Отключить READY-приоритет и таймер Hot Pool, включая запуск после перезагрузки?\n\nОстаётся выбор из проверенного сетевого пула текущей подписки. Настроенный service-gate сохраняется. Активный транспорт не меняем." || continue
+        title="Обычный AUTO"
+        capture "$MIHOMO_NODE_POLICY" auto-strategy classic || true
+        ;;
+      0) return 0 ;;
+    esac
+  done
+}
+
 mihomo_node_policy_menu(){
   local choice
   while true; do
@@ -1499,6 +1529,7 @@ mihomo_node_policy_menu(){
       4 "AUTO — пул узлов" "При отказе выбирает следующий работоспособный узел текущего протокола по свежести и задержке; неудачные временно исключаются. Фильтры задаются в выборе точки выхода." \
       5 "Выбрать / фильтровать живые узлы" "Открывает пул узлов, поиск и фильтры «Только Европа» / протокол без обязательной смены политики." \
       6 "Восстановить резерв при AWG" "Однократная проверка и подбор рабочей ноды Mihomo, пока AWG обслуживает трафик. Не переключает транспорт." \
+      7 "Способ AUTO: Hot Pool / обычный" "Включить или выключить фоновый Hot Pool и READY-приоритет, оставить AUTO из подписки." \
       0 "Назад" "Не менять политику узлов." 3>&1 1>&2 2>&3)" || return 0
     case "$choice" in
       1)
@@ -1524,6 +1555,7 @@ mihomo_node_policy_menu(){
         title="Проверка и восстановление резерва Mihomo"
         capture "$MIHOMO_NODE_POLICY" standby-repair || true
         ;;
+      7) mihomo_auto_strategy_menu ;;
       0) return 0 ;;
     esac
   done

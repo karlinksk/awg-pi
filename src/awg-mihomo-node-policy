@@ -33,6 +33,10 @@ MIHOMO_AUTO_TRANSIT_ROUTING="${MIHOMO_AUTO_TRANSIT_ROUTING:-/usr/local/sbin/awg-
 MIHOMO_AUTO_FAILOPEN="${MIHOMO_AUTO_FAILOPEN:-/usr/local/sbin/awg-pbr-failopen}"
 MIHOMO_AUTO_SYSTEMCTL="${MIHOMO_AUTO_SYSTEMCTL:-systemctl}"
 MIHOMO_AUTO_SERVICE="${MIHOMO_AUTO_SERVICE:-awg-mihomo.service}"
+MIHOMO_STRATEGY_SYSTEMCTL="${MIHOMO_STRATEGY_SYSTEMCTL:-systemctl}"
+MIHOMO_HOT_TIMER="${MIHOMO_HOT_TIMER:-awg-mihomo-hot-pool.timer}"
+MIHOMO_HOT_SERVICE="${MIHOMO_HOT_SERVICE:-awg-mihomo-hot-pool.service}"
+
 # Explicit one-shot standby repair MUST NOT alter a healthy AWG transport.
 MIHOMO_AUTO_TRANSPORT_CLI="${MIHOMO_AUTO_TRANSPORT_CLI:-/usr/local/sbin/awg-transport}"
 MIHOMO_STANDBY_CURL_BIN="${MIHOMO_STANDBY_CURL_BIN:-curl}"
@@ -64,6 +68,7 @@ Usage:
   awg-mihomo-node-policy mode fixed NODE [FALLBACK_NODE...]
   awg-mihomo-node-policy mode auto
   awg-mihomo-node-policy ready-auto enable|disable|status
+  awg-mihomo-node-policy auto-strategy status|ready|classic
   awg-mihomo-node-policy standby-repair  # AWG must be healthy and active; no route change
   awg-mihomo-node-policy manual-selection preview NODE
   awg-mihomo-node-policy manual-selection apply NODE
@@ -88,6 +93,100 @@ Transit remains FAIL-CLOSED. Configured standby AWG may then be tried. A healthy
 active Mihomo is NEVER changed for speed. Disable ready-auto explicitly to
 retain legacy network-only fallback behavior.
 USAGE
+}
+
+# A strategy changes only the READY priority and SHADOW timer. Existing
+# manual/FIXED chains are never overwritten. Service gate remains independent.
+strategy_enabled(){ "$MIHOMO_STRATEGY_SYSTEMCTL" is-enabled --quiet "$MIHOMO_HOT_TIMER"; }
+strategy_active(){ "$MIHOMO_STRATEGY_SYSTEMCTL" is-active --quiet "$MIHOMO_HOT_TIMER"; }
+strategy_status(){
+  local priority policy timer=inactive enabled=disabled
+  priority="$(cat "$MIHOMO_READY_AUTO_MODE_FILE" 2>/dev/null || echo 0)"
+  strategy_active && timer=active
+  strategy_enabled && enabled=enabled
+  policy="$(mode_get 2>/dev/null || echo invalid)"
+  local result=MIXED_CONFIGURATION
+  case "$priority:$timer:$enabled" in
+    1:active:enabled) result=HOT_POOL_READY ;;
+    0:inactive:disabled) result=CLASSIC_AUTO ;;
+  esac
+  printf 'MIHOMO_AUTO_STRATEGY=%s\\n' "$result"
+  printf 'MIHOMO_NODE_POLICY=%s\\n' "$policy"
+  printf 'MIHOMO_HOT_TIMER_ACTIVE=%s\\n' "$timer"
+  printf 'MIHOMO_HOT_TIMER_ENABLED=%s\\n' "$enabled"
+  printf 'MIHOMO_READY_AUTO=%s\\n' "$priority"
+  printf 'MIHOMO_SERVICE_GATE=%s\\n' "$MIHOMO_SERVICE_GATE_MODE"
+}
+strategy_restore(){
+  local enabled="$1" active="$2" fail=0
+  if [[ "$enabled" == yes ]]; then
+    "$MIHOMO_STRATEGY_SYSTEMCTL" enable "$MIHOMO_HOT_TIMER" >/dev/null || fail=1
+  else
+    "$MIHOMO_STRATEGY_SYSTEMCTL" disable "$MIHOMO_HOT_TIMER" >/dev/null || fail=1
+  fi
+  if [[ "$active" == yes ]]; then
+    "$MIHOMO_STRATEGY_SYSTEMCTL" start "$MIHOMO_HOT_TIMER" >/dev/null || fail=1
+  else
+    "$MIHOMO_STRATEGY_SYSTEMCTL" stop "$MIHOMO_HOT_TIMER" >/dev/null || fail=1
+  fi
+  (( fail == 0 ))
+}
+select_auto_strategy(){
+  local target="$1" was_ready was_active=no was_enabled=no wanted=0 fail=0
+  [[ "$target" == ready || "$target" == classic ]] || return 2
+  if [[ "$(mode_get 2>/dev/null || echo invalid)" != auto ]]; then
+    echo 'MIHOMO_AUTO_STRATEGY=REQUIRES_NODE_POLICY_AUTO' >&2
+    return 2
+  fi
+  if "$MIHOMO_STRATEGY_SYSTEMCTL" is-active --quiet "$MIHOMO_HOT_SERVICE"; then
+    echo 'MIHOMO_AUTO_STRATEGY=SCANNER_RUNNING_RETRY_LATER' >&2
+    return 2
+  fi
+  was_ready="$(cat "$MIHOMO_READY_AUTO_MODE_FILE" 2>/dev/null || echo 0)"
+  [[ "$was_ready" == 0 || "$was_ready" == 1 ]] || return 2
+  strategy_active && was_active=yes
+  strategy_enabled && was_enabled=yes
+  [[ "$target" == ready ]] && wanted=1
+  if [[ "$wanted" == 1 ]]; then
+    local helper
+    for helper in "$MIHOMO_HOT_POOL_CLI" "$MIHOMO_POOL_CLI"       "$MIHOMO_READY_GUARD_BIN" "$MIHOMO_READY_POSTCHECK_BIN"       "$MIHOMO_SERVICE_QUICKCHECK_BIN" "$MIHOMO_NETWORK_GATE_BIN"; do
+      [[ -x "$helper" ]] || {
+        echo 'MIHOMO_AUTO_STRATEGY=REJECTED_MISSING_GUARD' >&2
+        return 2
+      }
+    done
+    "$MIHOMO_STRATEGY_SYSTEMCTL" enable --now "$MIHOMO_HOT_TIMER" >/dev/null || fail=1
+    if (( fail == 0 )); then set_ready_auto enable >/dev/null || fail=1; fi
+  else
+    set_ready_auto disable >/dev/null || fail=1
+    if (( fail == 0 )); then
+      "$MIHOMO_STRATEGY_SYSTEMCTL" disable --now "$MIHOMO_HOT_TIMER" >/dev/null || fail=1
+    fi
+  fi
+  # Timer may have raced into a new scan. Never silently claim a safe change.
+  if "$MIHOMO_STRATEGY_SYSTEMCTL" is-active --quiet "$MIHOMO_HOT_SERVICE"; then fail=1; fi
+  local actual="$(cat "$MIHOMO_READY_AUTO_MODE_FILE" 2>/dev/null || echo invalid)"
+  local live_timer=0 enabled_timer=0
+  strategy_active && live_timer=1
+  strategy_enabled && enabled_timer=1
+  if [[ "$actual" != "$wanted" || "$live_timer" != "$wanted" ||
+        "$enabled_timer" != "$wanted" ]]; then fail=1; fi
+  if (( fail )); then
+    local rollback=0
+    if [[ "$was_ready" == 1 ]]; then
+      set_ready_auto enable >/dev/null || rollback=1
+    else
+      set_ready_auto disable >/dev/null || rollback=1
+    fi
+    strategy_restore "$was_enabled" "$was_active" || rollback=1
+    if (( rollback )); then
+      echo 'MIHOMO_AUTO_STRATEGY=ROLLBACK_FAILED_MANUAL_REVIEW' >&2
+    else
+      echo 'MIHOMO_AUTO_STRATEGY=FAILED_ROLLED_BACK' >&2
+    fi
+    return 1
+  fi
+  strategy_status
 }
 
 mode_get(){
@@ -707,6 +806,14 @@ case "${1:-status}" in
   standby-repair)
     [[ $# -eq 1 ]] || { usage >&2; exit 2; }
     standby_repair
+    ;;
+  auto-strategy)
+    [[ $# -eq 2 ]] || { usage >&2; exit 2; }
+    case "$2" in
+      status) strategy_status ;;
+      ready|classic) select_auto_strategy "$2" ;;
+      *) usage >&2; exit 2 ;;
+    esac
     ;;
   ready-auto)
     [[ $# -eq 2 ]] || { usage >&2; exit 2; }
