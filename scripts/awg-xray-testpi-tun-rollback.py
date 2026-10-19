@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Root-owned autonomous rollback for one authorized live Mihomo Xray canary."""
 import fcntl,hashlib,json,os,pathlib,shutil,subprocess,sys,time,urllib.request
+import yaml
 ROOT=pathlib.Path("/var/backups/awg-gateway")
 CONFIG=pathlib.Path("/etc/awg-pbr/transports/mihomo/config.yaml")
 SELECTED=pathlib.Path("/var/lib/awg-pbr/xray-vless/selected.json")
@@ -17,6 +18,25 @@ def restore(path,snapshot,pre):
   os.replace(tmp,path)
  else:
   path.unlink(missing_ok=True)
+def restored_config_status(original, current, expected_sha256):
+ """Verify backup integrity first; allow only semantically identical YAML.
+
+ A Mihomo ExecStartPre restart may re-render comments and whitespace.
+ This NEVER excuses a changed proxy, route, provider, TUN or policy setting.
+ """
+ if hashlib.sha256(original.read_bytes()).hexdigest()!=expected_sha256:
+  return "BACKUP_HASH_MISMATCH"
+ if hashlib.sha256(current.read_bytes()).hexdigest()==expected_sha256:
+  return "BYTE_IDENTICAL"
+ try:
+  baseline=yaml.safe_load(original.read_bytes())
+  active=yaml.safe_load(current.read_bytes())
+  if isinstance(baseline,dict) and baseline==active:
+   return "YAML_EQUIVALENT"
+ except (yaml.YAMLError,ValueError,UnicodeDecodeError):
+  pass
+ return "CONFIG_MISMATCH"
+
 def api_group():
  try:
   return json.load(urllib.request.urlopen("http://127.0.0.1:9090/proxies/AWG-MIHOMO",timeout=3)).get("now")
@@ -82,8 +102,9 @@ def main():
   # systemctl restart/PUT exit codes during startup. A transient nonzero
   # result must not leave an armed watchdog if the gateway has recovered.
   problems=[]
-  if hashlib.sha256(CONFIG.read_bytes()).hexdigest()!=original_hash:
-   problems.append("CONFIG_SHA_MISMATCH")
+  config_proof=restored_config_status(path/"config.previous",CONFIG,original_hash)
+  if config_proof not in ("BYTE_IDENTICAL","YAML_EQUIVALENT"):
+   problems.append(config_proof)
   if (state.get("renderer_preexisting") and
       hashlib.sha256(RENDERER.read_bytes()).hexdigest()!=state.get("old_renderer_sha256")):
    problems.append("RENDERER_SHA_MISMATCH")
