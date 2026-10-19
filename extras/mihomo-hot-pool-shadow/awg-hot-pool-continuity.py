@@ -44,9 +44,12 @@ def identity(name, protocol, server, port):
 
 
 def valid_profile(item):
+    """Accept bounded human-readable display names; never pass them to Hot Pool CLI."""
     if not isinstance(item, dict) or not isinstance(item.get("name"), str):
         return False
-    if not NAME.fullmatch(item["name"]) or item.get("type") not in PROTOCOLS:
+    name = item["name"]
+    if (not name or not name.strip() or len(name) > 256
+            or not name.isprintable() or item.get("type") not in PROTOCOLS):
         return False
     try:
         ip = ipaddress.ip_address(item.get("server"))
@@ -142,11 +145,18 @@ def build_union(vault, live_profiles, live_health, candidate_profiles,
         sig = fingerprint(p)
         if sig in seen_sigs:
             continue
-        alias = p["name"]
+        # Preserve safe legacy aliases/READY identities. Human-facing
+        # subscription names (Unicode, spaces, emoji) are supported upstream,
+        # but CLI and status telemetry require a bounded ASCII alias.
+        alias = p["name"] if NAME.fullmatch(p["name"]) else "hot-" + sig[:20]
         if alias in used_names:
-            alias = "hot-" + sig[:20]
-        if alias in used_names:
-            continue
+            for size in (20, 32, 48, 64):
+                alias = "hot-" + sig[:size]
+                if alias not in used_names:
+                    break
+            else:
+                continue
+        assert NAME.fullmatch(alias)
         used_names.add(alias)
         seen_sigs.add(sig)
         item = dict(p)

@@ -3,6 +3,8 @@
 set -Eeuo pipefail
 cd "$(dirname "$0")/.."
 bash -n install.sh src/awg-update extras/mihomo-hot-pool-shadow/awg-mihomo-hot-continuity-run
+# Names from third-party subscriptions must be safely aliased in the union.
+python3 -B extras/mihomo-hot-pool-shadow/test_hot_pool_unicode_names.py
 python3 -B - <<'PY'
 import ast
 from pathlib import Path
