@@ -101,6 +101,8 @@ backup_gateway(){
     usr/local/sbin/awg-mihomo-node-policy \
     usr/local/sbin/awg-xray-install \
     usr/local/sbin/awg-xray-vless \
+    usr/local/sbin/awg-mihomo-unified-nodes \
+    usr/local/sbin/awg-mihomo-xray-isolated-tun-canary \
     usr/local/sbin/awg-mihomo-ready-live-match \
     usr/local/sbin/awg-mihomo-ready-postcheck-tun \
     usr/local/sbin/awg-mihomo-hot-pool \
@@ -215,6 +217,8 @@ restore_gateway(){
     /usr/local/sbin/awg-mihomo-node-policy \
     /usr/local/sbin/awg-xray-install \
     /usr/local/sbin/awg-xray-vless \
+    /usr/local/sbin/awg-mihomo-unified-nodes \
+    /usr/local/sbin/awg-mihomo-xray-isolated-tun-canary \
     /usr/local/sbin/awg-mihomo-ready-live-match \
     /usr/local/sbin/awg-mihomo-ready-postcheck-tun \
     /usr/local/sbin/awg-mihomo-hot-pool \
