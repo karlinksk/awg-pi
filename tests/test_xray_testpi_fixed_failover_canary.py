@@ -64,6 +64,22 @@ class FixedFailoverCanaryTests(unittest.TestCase):
   self.assertIn('not (port==endpoint_xray[0] and bool(ips&endpoint_xray[1]))',text)
   self.assertIn('not in env.stdout',text)
 
+ def test_regex_passive_stage_is_pinned_to_exact_single_line(self):
+  script=ROOT/"scripts/awg-xray-testpi-degraded-regex-stage.py"
+  content=script.read_text()
+  self.assertIn('ec4c86a9270b5a72e3f4282347311f110bdd7ed6d89b1d8b8a2cf88b679cf6c8',content)
+  self.assertIn('len(changes)==1',content)
+  self.assertIn('bad.replace(bytes((92,92,115)),bytes((92,115)))==good',content)
+  self.assertIn('emit("AUTO_XRAY_ENABLED","NO")',content)
+  self.assertIn('require(network()==prior,"LIVE_NETWORK_CHANGED")',content)
+  self.assertNotIn('"systemctl","restart"',content)
+  spec=importlib.util.spec_from_file_location("regex_stage_unit",script)
+  stage=importlib.util.module_from_spec(spec)
+  spec.loader.exec_module(stage)
+  old,new=stage.inspect()
+  self.assertNotEqual(old,new)
+  self.assertEqual(len(old.splitlines()),len(new.splitlines()))
+
  def test_python_syntax(self):
   for path in (SOURCE,ROOT/"scripts/awg-xray-testpi-fixed-failover-rescue.py"):
    r=subprocess.run([sys.executable,"-m","py_compile",str(path)],
