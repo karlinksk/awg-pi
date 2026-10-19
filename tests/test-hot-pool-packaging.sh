@@ -54,7 +54,12 @@ assert 'ProtectSystem=strict' in unit and 'NoNewPrivileges=true' in unit
 assert 'Unit=awg-mihomo-hot-pool.service' in timer
 assert 'systemctl enable awg-mihomo-hot-pool.timer' not in ins
 assert 'systemctl start awg-mihomo-hot-pool.service' not in ins
-assert 'systemctl enable --now awg-mihomo-hot-pool.timer' not in ins
+# Guarded fresh-install AUTO may enable the timer, but upgrade never does.
+assert 'MIHOMO_FRESH_HOT_POOL_ENABLED=1' in ins
+assert 'MIHOMO_FRESH_HOT_POOL_ENABLED=0' in ins
+assert 'if (( MIHOMO_FRESH_HOT_POOL_ENABLED == 1 )); then' in ins
+assert 'systemctl enable --now awg-mihomo-hot-pool.timer' in ins
+assert 'systemctl disable --now awg-mihomo-hot-pool.timer' in ins
 for name in ('awg-mihomo-hot-pool.py','awg-mihomo-hot-service-scan.py','awg-mihomo-ip-connect-probe.py','awg-hot-pool-continuity.py','awg-mihomo-hot-continuity-run'):
     assert 'install -m 0755 "$source_dir/'+name+'"' in standalone, 'incomplete standalone shadow install '+name
 assert '/var/lib/awg-pbr/hot-pool/continuity' in standalone

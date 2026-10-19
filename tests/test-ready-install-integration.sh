@@ -9,6 +9,7 @@ bash -n install.sh src/awg-update src/awg-mihomo-node-policy src/awg-mihomo-read
 # Menu selection uses the versioned installer-installed node-policy helper.
 python3 -B tests/test_mihomo_auto_strategy.py
 python3 -B tests/test_menu_auto_strategy.py
+python3 -B tests/test_installer_auto_strategy.py
 python3 -B -c 'import ast; from pathlib import Path; ast.parse(Path("src/awg-mihomo-ready-live-match").read_text())'
 python3 -B -c 'import yaml; assert hasattr(yaml, "safe_load")'
 

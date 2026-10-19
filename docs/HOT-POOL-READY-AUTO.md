@@ -19,7 +19,19 @@ sudo awg-mihomo-node-policy ready-auto enable
 sudo awg-mihomo-node-policy ready-auto disable
 ```
 
-**Fresh clean installs:** `install.sh` installs the guard, postcheck, Stage18 and Hot Pool prior to enabling `ready-auto`; initial VPN service and profile can still be configured later. **Existing installs:** preserved until the operator explicitly enables this setting. On fixed/manual node policy, READY priority remains inert.
+**Fresh clean installs:** `install.sh` installs AWG/Mihomo engines and media dependencies, READY guard, postcheck, Stage18 and Hot Pool independently of whether the operator has a provider profile. If the initial Mihomo wizard leaves node policy AUTO (or Mihomo has not yet been configured), the installer enables READY priority **and** the Hot Pool SHADOW timer. If the wizard selects an explicit FIXED chain or MANUAL, the installer disables both READY priority and the Hot Pool timer, including its systemd autostart. Ordinary pool refresh and subscription update remain independent.
+
+**Existing-install upgrades:** installer preserves exact FIXED node order (or AUTO/MANUAL), READY mode, independent service-eligibility mode, plus Hot Pool timer enabled and running states; mismatch causes a failed upgrade instead of silent policy reset. The `awg-update` backup/rollback includes both the configured files and timer state. A FIXED chain only advances left-to-right after a repeated active-Mihomo failure, and it does not imply YouTube/OpenAI testing when the independent service gate is `off`.
+
+Use **VPN routing → Mihomo → Mihomo node failover → AUTO strategy: Hot Pool / ordinary** in the menu to switch between the two AUTO strategies (only when the node policy itself is AUTO). The menu asks for confirmation and the CLI rolls back timer/priority state on systemd error:
+
+```bash
+sudo awg-mihomo-node-policy auto-strategy status
+sudo awg-mihomo-node-policy auto-strategy classic  # stop + disable Hot Pool timer, READY=0
+sudo awg-mihomo-node-policy auto-strategy ready    # start + enable Hot Pool timer, READY=1
+```
+
+Switching does not change the selected node, transport, independent DNS or routes; changing FIXED/MANUAL to AUTO requires a separate explicit node-policy choice. The selector is not a replacement for real Pi TUN, LAN, failover or reboot release tests. **The actual install/upgrade hardware gates remain pending** despite passing isolated installer policy tests.
 
 The candidate service gate is `balanced` only within the node-selector execution when READY priority is enabled and no stricter gate was explicitly selected. The running selection monitor's active-node health criteria are **not silently changed**; in particular a ChatGPT 403 cannot itself trigger a switch.
 

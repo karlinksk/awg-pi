@@ -242,8 +242,19 @@ UPGRADE_POLICY_FILES=(
   "$PBR_DIR/transports/mihomo/node-policy.mode"
   "$PBR_DIR/transports/mihomo/node-policy.nodes"
   "$PBR_DIR/transports/mihomo/ready-auto.mode"
+  "$PBR_DIR/transports/mihomo/service-eligibility.mode"
 )
 UPGRADE_POLICY_HASHES=()
+# Capture both systemd enablement (reboot behavior) and runtime state.
+# Legacy installations may not have shipped a Hot Pool unit at all.
+UPGRADE_HOT_TIMER_ENABLEMENT=absent
+UPGRADE_HOT_TIMER_RUNTIME=absent
+if (( UPGRADE_EXISTING == 1 )) && [[ -f /etc/systemd/system/awg-mihomo-hot-pool.timer ]]; then
+  UPGRADE_HOT_TIMER_ENABLEMENT="$(systemctl is-enabled awg-mihomo-hot-pool.timer 2>/dev/null || true)"
+  UPGRADE_HOT_TIMER_RUNTIME="$(systemctl is-active awg-mihomo-hot-pool.timer 2>/dev/null || true)"
+  [[ -n "$UPGRADE_HOT_TIMER_ENABLEMENT" && -n "$UPGRADE_HOT_TIMER_RUNTIME" ]] ||
+    die "Не удалось определить исходное состояние Hot Pool перед upgrade"
+fi
 if (( UPGRADE_EXISTING == 1 )); then
   for _policy_file in "${UPGRADE_POLICY_FILES[@]}"; do
     _policy_sha="$(upgrade_policy_fingerprint "$_policy_file")" ||
@@ -1152,10 +1163,27 @@ if (( UPGRADE_EXISTING == 0 )); then
   # New clean installs get a persistent, service-qualified READY-first node
   # selection policy. No node is switched now; the isolated Hot Pool gathers
   # two independent successful proofs after a subscription is configured.
-  # Rollback remains available through: awg-mihomo-node-policy ready-auto disable
-  "$MIHOMO_NODE_POLICY_CLI" ready-auto enable >/dev/null || die "Не удалось настроить Hot Pool READY-priority AUTO"
+  # The first-run Mihomo wizard can choose a FIXED chain. Do not override
+  # its operator choice by enabling an unrelated background READY scan.
+  # When no Mihomo profile exists yet, preserve the v1.3 default READY AUTO.
+  MIHOMO_FRESH_HOT_POOL_ENABLED=1
+  _initial_node_policy="$(cat "$PBR_DIR/transports/mihomo/node-policy.mode" 2>/dev/null || echo auto)"
+  case "$_initial_node_policy" in
+    fixed|manual)
+      MIHOMO_FRESH_HOT_POOL_ENABLED=0
+      "$MIHOMO_NODE_POLICY_CLI" ready-auto disable >/dev/null ||
+        die "Не удалось выключить READY для FIXED/MANUAL после первого запуска"
+      ok "Mihomo $_initial_node_policy: Hot Pool READY отключён; выбранная цепочка сохранена"
+      ;;
+    auto)
+      # Rollback remains available through: awg-mihomo-node-policy auto-strategy classic
+      "$MIHOMO_NODE_POLICY_CLI" ready-auto enable >/dev/null ||
+        die "Не удалось настроить Hot Pool READY-priority AUTO"
+      ok "Mihomo AUTO: Hot Pool READY сначала; остальные ноды только после сервисной проверки и postcheck"
+      ;;
+    *) die "Неподдерживаемая политика узлов Mihomo после первой настройки" ;;
+  esac
   ok "Резервирование транспортов: AUTO Mihomo → AWG (без автоматического возврата ради скорости)"
-  ok "Mihomo AUTO: Hot Pool READY сначала; остальные ноды только после сервисной проверки и postcheck"
 fi
 
 ACTIVE_TRANSPORT="$(cat "$TRANSPORT_FILE" 2>/dev/null || echo unconfigured)"
@@ -1214,11 +1242,26 @@ systemctl is-active --quiet awg-opencck-update.timer || warn "OpenCCK timer не
 # without initiating any VPN/route change or trying to select a node.
 # Upgrades preserve the existing operator's enabled/disabled policy.
 if (( UPGRADE_EXISTING == 0 )); then
-  for unit in awg-mihomo-pool-refresh.timer awg-mihomo-stage18-ram-runtime.timer awg-mihomo-stage18-ram-runtime.path awg-mihomo-hot-pool.timer; do
+  for unit in awg-mihomo-pool-refresh.timer awg-mihomo-stage18-ram-runtime.timer awg-mihomo-stage18-ram-runtime.path; do
     systemctl enable --now "$unit" >/dev/null || die "Не удалось включить $unit"
     systemctl is-active --quiet "$unit" || die "Не запущен обязательный таймер $unit"
   done
-  ok "Mihomo Hot Pool, health pool и Stage18 автоматически активируются после настройки подписки (SHADOW_ONLY)"
+  if (( MIHOMO_FRESH_HOT_POOL_ENABLED == 1 )); then
+    systemctl enable --now awg-mihomo-hot-pool.timer >/dev/null ||
+      die "Не удалось включить Hot Pool на чистой установке с AUTO"
+    systemctl is-active --quiet awg-mihomo-hot-pool.timer ||
+      die "Hot Pool timer не запущен после чистой установки"
+    ok "Mihomo Hot Pool READY: SHADOW_ONLY включён для AUTO (по умолчанию)"
+  else
+    systemctl disable --now awg-mihomo-hot-pool.timer >/dev/null ||
+      die "Не удалось отключить Hot Pool для выбранной FIXED/MANUAL политики"
+    if systemctl is-active --quiet awg-mihomo-hot-pool.timer ||
+       systemctl is-enabled --quiet awg-mihomo-hot-pool.timer; then
+      die "Hot Pool неожиданно активен при FIXED/MANUAL"
+    fi
+    ok "Mihomo Hot Pool: таймер выключен, FIXED/MANUAL останется без фоновых проверок"
+  fi
+  ok "Mihomo health pool и Stage18 установлены и готовы к подписке"
 else
   ok "Существующая политика Mihomo-таймеров сохранена при обновлении"
 fi
@@ -1323,7 +1366,17 @@ if (( UPGRADE_EXISTING == 1 )); then
     [[ "$_policy_sha" == "${UPGRADE_POLICY_HASHES[_policy_index]}" ]] ||
       die "Upgrade изменил сохранённую политику AUTO/FIXED/READY; требуется rollback"
   done
-  ok "Upgrade: настройки transport AUTO/FIXED и Mihomo READY_AUTO сохранены"
+  # Installer stages Hot Pool atomically; a disabled timer must remain
+  # disabled (and a previously stopped timer must not start after upgrade).
+  # Only compare units which existed before upgrade: older releases may lack it.
+  if [[ "$UPGRADE_HOT_TIMER_ENABLEMENT" != absent ]]; then
+    _current_hot_enablement="$(systemctl is-enabled awg-mihomo-hot-pool.timer 2>/dev/null || true)"
+    _current_hot_runtime="$(systemctl is-active awg-mihomo-hot-pool.timer 2>/dev/null || true)"
+    [[ "$_current_hot_enablement" == "$UPGRADE_HOT_TIMER_ENABLEMENT" &&
+       "$_current_hot_runtime" == "$UPGRADE_HOT_TIMER_RUNTIME" ]] ||
+      die "Upgrade изменил автозапуск/состояние Hot Pool; требуется rollback"
+  fi
+  ok "Upgrade: FIXED/AUTO, READY, service-gate и состояние таймера Hot Pool сохранены"
 fi
 
 # -----------------------------------------------------------------------------
