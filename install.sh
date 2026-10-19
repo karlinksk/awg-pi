@@ -871,30 +871,107 @@ else
   fi
 fi
 
-# Hot Pool is SHADOW_ONLY. On a new installation its guarded timer is armed
-# below; its service requires a configured provider and health pool. Existing
-# live shadow deployments are preserved during upgrade. Existing *active* shadow
-# deployments are managed independently: preserve their executables and units
-# rather than replacing files beneath a running service.
-# systemctl may print "not-found" AND exit nonzero. Never append a second
-# "not-found": multi-line output would masquerade as a managed external unit.
-_hot_pool_timer_state="$(systemctl is-enabled awg-mihomo-hot-pool.timer 2>/dev/null || true)"
-[[ -n "$_hot_pool_timer_state" ]] || _hot_pool_timer_state=not-found
-if systemctl is-active --quiet awg-mihomo-hot-pool.service ||
-   systemctl is-active --quiet awg-mihomo-hot-pool.timer ||
-   [[ "$_hot_pool_timer_state" != disabled && "$_hot_pool_timer_state" != not-found ]]; then
-  warn "Hot Pool уже управляется отдельно (timer=$_hot_pool_timer_state); сохраняем установленную версию без изменений"
-else
-  install_project_python_helper extras/mihomo-hot-pool-shadow/awg-mihomo-hot-pool.py /usr/local/sbin/awg-mihomo-hot-pool
-  install_project_python_helper extras/mihomo-hot-pool-shadow/awg-mihomo-hot-service-scan.py /usr/local/sbin/awg-mihomo-hot-service-scan
-  install_project_python_helper extras/mihomo-hot-pool-shadow/awg-hot-pool-continuity.py /usr/local/sbin/awg-hot-pool-continuity.py
-  install_project_helper extras/mihomo-hot-pool-shadow/awg-mihomo-hot-continuity-run /usr/local/sbin/awg-mihomo-hot-continuity-run
-  install_project_unit extras/mihomo-hot-pool-shadow/awg-mihomo-hot-pool.service /etc/systemd/system/awg-mihomo-hot-pool.service
-  install_project_unit extras/mihomo-hot-pool-shadow/awg-mihomo-hot-pool.timer /etc/systemd/system/awg-mihomo-hot-pool.timer
-  install -d -o root -g root -m 0700 /var/lib/awg-pbr/hot-pool/continuity /run/awg-pbr/hot-pool/continuity
-  ok "Hot Pool continuity SHADOW_ONLY установлен; таймер включается на чистой установке"
+# Hot Pool is SHADOW_ONLY. Fetch verified components from PROJECT_REF on both
+# clean installation and upgrade, even if its timer was previously enabled.
+# Never replace files while an isolated service check is running; stage all
+# candidates first, then temporarily pause only the Hot Pool timer.
+_hot_stage="$(mktemp -d /run/awg-hot-pool-install.XXXXXXXX)"
+install_project_python_helper extras/mihomo-hot-pool-shadow/awg-mihomo-hot-pool.py "$_hot_stage/pool"
+install_project_python_helper extras/mihomo-hot-pool-shadow/awg-mihomo-hot-service-scan.py "$_hot_stage/scan"
+install_project_python_helper extras/mihomo-hot-pool-shadow/awg-hot-pool-continuity.py "$_hot_stage/continuity"
+install_project_helper extras/mihomo-hot-pool-shadow/awg-mihomo-hot-continuity-run "$_hot_stage/runner"
+install_project_unit extras/mihomo-hot-pool-shadow/awg-mihomo-hot-pool.service "$_hot_stage/service"
+install_project_unit extras/mihomo-hot-pool-shadow/awg-mihomo-hot-pool.timer "$_hot_stage/timer"
+
+# Do not overwrite a custom or independently managed Hot Pool service.
+if [[ -f /etc/systemd/system/awg-mihomo-hot-pool.service ]] &&
+   ! grep -Fqx 'ExecStart=/usr/local/sbin/awg-mihomo-hot-continuity-run' \
+      /etc/systemd/system/awg-mihomo-hot-pool.service; then
+  rm -rf -- "$_hot_stage"
+  die "Hot Pool: неизвестная версия службы; автоматическая замена запрещена"
 fi
-unset _hot_pool_timer_state
+_hot_targets=(
+  /usr/local/sbin/awg-mihomo-hot-pool
+  /usr/local/sbin/awg-mihomo-hot-service-scan
+  /usr/local/sbin/awg-hot-pool-continuity.py
+  /usr/local/sbin/awg-mihomo-hot-continuity-run
+  /etc/systemd/system/awg-mihomo-hot-pool.service
+  /etc/systemd/system/awg-mihomo-hot-pool.timer
+)
+_hot_names=(pool scan continuity runner service timer)
+_hot_timer_running=0
+if systemctl is-active --quiet awg-mihomo-hot-pool.service; then
+  rm -rf -- "$_hot_stage"
+  die "Hot Pool: служба сейчас проверяет ноды; повторите upgrade после завершения"
+fi
+if systemctl is-active --quiet awg-mihomo-hot-pool.timer; then
+  _hot_timer_running=1
+  systemctl stop awg-mihomo-hot-pool.timer \
+    || { rm -rf -- "$_hot_stage"; die "Hot Pool: не удалось приостановить таймер"; }
+fi
+# Stopping a timer does not terminate a service that began a moment earlier.
+if systemctl is-active --quiet awg-mihomo-hot-pool.service; then
+  if (( _hot_timer_running )); then systemctl start awg-mihomo-hot-pool.timer || true; fi
+  rm -rf -- "$_hot_stage"
+  die "Hot Pool: проверка началась одновременно с остановкой таймера"
+fi
+_hot_failed=0
+for _hot_i in "${!_hot_targets[@]}"; do
+  _hot_target="${_hot_targets[_hot_i]}"
+  if [[ -e "$_hot_target" ]]; then
+    cp -p -- "$_hot_target" "$_hot_stage/old-$_hot_i" || _hot_failed=1
+  else
+    : >"$_hot_stage/absent-$_hot_i"
+  fi
+done
+# Atomic per-file replacement; never restart Mihomo, AWG or the Hot Pool
+# service. The next timer cycle runs the verified new version.
+if (( !_hot_failed )); then
+  for _hot_i in "${!_hot_targets[@]}"; do
+    _hot_target="${_hot_targets[_hot_i]}"
+    _hot_tmp="${_hot_target}.hot-pool-staged-$$"
+    _hot_mode=755
+    (( _hot_i >= 4 )) && _hot_mode=644
+    if ! install -m "$_hot_mode" "$_hot_stage/${_hot_names[_hot_i]}" "$_hot_tmp" ||
+       ! mv -f -- "$_hot_tmp" "$_hot_target"; then
+      rm -f -- "$_hot_tmp" || true
+      _hot_failed=1
+      break
+    fi
+  done
+fi
+if (( !_hot_failed )); then
+  systemctl daemon-reload || _hot_failed=1
+fi
+if (( !_hot_failed && _hot_timer_running )); then
+  systemctl start awg-mihomo-hot-pool.timer || _hot_failed=1
+fi
+if (( _hot_failed )); then
+  _hot_rollback_failed=0
+  for _hot_i in "${!_hot_targets[@]}"; do
+    if [[ -f "$_hot_stage/old-$_hot_i" ]]; then
+      cp -p -- "$_hot_stage/old-$_hot_i" "${_hot_targets[_hot_i]}" || _hot_rollback_failed=1
+      cmp -s -- "$_hot_stage/old-$_hot_i" "${_hot_targets[_hot_i]}" || _hot_rollback_failed=1
+    elif [[ -f "$_hot_stage/absent-$_hot_i" ]]; then
+      rm -f -- "${_hot_targets[_hot_i]}" || _hot_rollback_failed=1
+      [[ ! -e "${_hot_targets[_hot_i]}" ]] || _hot_rollback_failed=1
+    fi
+  done
+  systemctl daemon-reload || _hot_rollback_failed=1
+  if (( _hot_timer_running )); then
+    systemctl start awg-mihomo-hot-pool.timer || _hot_rollback_failed=1
+  fi
+  if (( _hot_rollback_failed )); then
+    die "Hot Pool: откат требует ручной проверки; копии сохранены в $_hot_stage"
+  fi
+  rm -rf -- "$_hot_stage"
+  die "Hot Pool: обновление не выполнено, прежняя версия восстановлена"
+fi
+install -d -o root -g root -m 0700 /var/lib/awg-pbr/hot-pool/continuity /run/awg-pbr/hot-pool/continuity
+rm -rf -- "$_hot_stage"
+unset _hot_stage _hot_targets _hot_names _hot_timer_running _hot_failed \
+  _hot_i _hot_target _hot_tmp _hot_mode
+ok "Hot Pool continuity SHADOW_ONLY: установлена текущая версия, состояние таймера сохранено"
 install_project_helper src/awg-pbr-setup "$SETUP_SCRIPT"
 install_project_helper src/awg-transit-nft /usr/local/sbin/awg-transit-nft
 install_project_helper src/awg-transit-preflight /usr/local/sbin/awg-transit-preflight
