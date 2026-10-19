@@ -80,4 +80,5 @@ class TestXrayConfig(unittest.TestCase):
   self.assertIn("ProtectSystem=strict",unit)
   self.assertIn("ConditionPathExists=/var/lib/awg-pbr/xray-vless/selected.json",unit)
   self.assertIn("ReadWritePaths=/run/awg-pbr",unit)
+  self.assertIn("ExecStopPost=/usr/bin/rm -f /run/awg-pbr/xray-vless/config.json",unit)
 if __name__=="__main__":unittest.main()

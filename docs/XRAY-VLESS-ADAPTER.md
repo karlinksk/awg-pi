@@ -32,7 +32,7 @@ The versioned Mihomo config generator has an explicitly disabled-by-default opti
 ## Security and lifecycle
 
 - Selection fingerprint is root-only and contains no UUID or Reality key.
-- Ephemeral Xray config (containing credentials) resides in /run/awg-pbr/xray-vless, root-only 0600. It is rebuilt from the protected provider on start.
+- Ephemeral Xray config (containing credentials) resides in /run/awg-pbr/xray-vless, root-only 0600. It is rebuilt from the protected provider on start. The systemd unit deletes the temporary config on stop.
 - systemd service has ProtectSystem=strict, ProtectHome and a restricted capabilities/network address-family set; no automatic activation or route changes.
 - The gateway backup includes the pinned binary, service, helper and stored selection. The running RAM config is not archived.
 - Subscription refresh does not silently reconfigure an already-running Xray service. Stop/revalidate/restart after subscription change; stale identity cannot start a new service.

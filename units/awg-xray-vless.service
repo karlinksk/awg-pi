@@ -11,6 +11,8 @@ ConditionPathExists=/var/lib/awg-pbr/xray-vless/selected.json
 Type=simple
 ExecStartPre=/usr/local/sbin/awg-xray-vless render
 ExecStart=/usr/local/bin/awg-xray-vless-core run -c /run/awg-pbr/xray-vless/config.json
+# Remove root-only Reality secrets from RAM immediately after any stop.
+ExecStopPost=/usr/bin/rm -f /run/awg-pbr/xray-vless/config.json
 Restart=on-failure
 RestartSec=5
 UMask=0077
