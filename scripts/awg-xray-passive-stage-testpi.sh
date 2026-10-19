@@ -12,7 +12,8 @@ fail(){ printf 'XRAY_STAGE_ERROR=%s\n' "$1" >&2; exit 1; }
 [[ "$MODE" == --check || "$MODE" == --stage ]] || fail USAGE_CHECK_OR_STAGE
 [[ "${EUID:-$(id -u)}" == 0 ]] || fail ROOT_REQUIRED
 [[ "$(hostname)" == awg-upgrade ]] || fail NOT_TEST_PI
-[[ " $(hostname -I) " == *" 192.168.112.34 "* ]] || fail WRONG_TEST_ADDRESS
+# Hostname and explicit root invocation scope this helper to the test host.
+# Never embed user-specific LAN addresses or network identifiers in Git.
 [[ "$(cat /etc/awg-pbr/mode 2>/dev/null)" == transit ]] || fail TRANSIT_ONLY
 systemctl is-active --quiet awg-mihomo.service || fail MIHOMO_NOT_ACTIVE
 if systemctl is-active --quiet awg-xray-vless.service; then fail XRAY_ALREADY_ACTIVE; fi

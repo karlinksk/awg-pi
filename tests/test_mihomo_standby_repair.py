@@ -70,6 +70,7 @@ sys.exit(0)
     MIHOMO_AUTO_MODE_FILE=str(p/'opmode'),MIHOMO_AUTO_TRANSPORT_CLI=str(p/'transport'),
     MIHOMO_AUTO_SYSTEMCTL=str(p/'systemctl'),MIHOMO_POOL_CLI=str(p/'pool'),
     MIHOMO_HOT_POOL_CLI=str(p/'hot'),MIHOMO_CONFIGURE_BIN=str(p/'configure'),
+    MIHOMO_UNIFIED_NODE_CLI=str(p/'missing-unified-cli'),
     MIHOMO_READY_GUARD_BIN=str(p/'guard'),MIHOMO_READY_POSTCHECK_BIN=str(p/'post'),
     MIHOMO_READY_AUTO_CANARY=canary,MIHOMO_SERVICE_GATE_MODE='balanced',
     MIHOMO_STANDBY_CURL_BIN=str(p/'curl'),MIHOMO_AUTO_TRANSIT_ROUTING=str(p/'transit'),

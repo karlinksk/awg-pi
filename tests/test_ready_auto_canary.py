@@ -89,6 +89,7 @@ echo "systemctl:$*" >> "$LOG"
    params={'MIHOMO_NODE_POLICY_MODE_FILE':str(p/'mode'),'MIHOMO_NODE_NAME_FILE':str(p/'node'),
            'MIHOMO_NODE_POLICY_ORDER_FILE':str(p/'order'), 'MIHOMO_POOL_CLI':str(p/'pool'),
            'MIHOMO_HOT_POOL_CLI':str(p/'hot'),'MIHOMO_CONFIGURE_BIN':str(p/'configure'),
+           'MIHOMO_UNIFIED_NODE_CLI':str(p/'missing-unified-cli'),
            'MIHOMO_READY_GUARD_BIN':str(p/'guard'),'MIHOMO_READY_POSTCHECK_BIN':str(p/'post'),
            'MIHOMO_SERVICE_QUICKCHECK_BIN':str(p/'scan'),'MIHOMO_NETWORK_GATE_BIN':str(p/'network'),
            'MIHOMO_READY_AUTO_CANARY':canary,'MIHOMO_SERVICE_GATE_MODE':gate,
