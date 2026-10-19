@@ -34,6 +34,32 @@ class LinuxBackendTests(unittest.TestCase):
         self.assertIn("--interface",seen["args"])
         self.assertNotIn("HTTPS_PROXY",seen["env"])
         self.assertNotIn("http_proxy",seen["env"])
+    def test_verified_awg_backup_must_have_exact_safe_transit_routes(self):
+        with tempfile.TemporaryDirectory() as d:
+            mode=Path(d)/"mode";mode.write_text("transit")
+            def valid(*args,**kwargs):
+                if args[-1]=="get":return "awg"
+                if args[-1]=="status":
+                    return "Transit guard: SAFE\nTransit policy rule: ACTIVE\nTransit VPN table: READY"
+                if args[0]=="ip":return "default dev awg0 scope link"
+                raise AssertionError(args)
+            with mock.patch.object(m,"MODE",mode), mock.patch.object(m,"run",side_effect=valid),\
+                 mock.patch.object(m,"active",return_value=True):
+                self.assertTrue(m.verified_awg_backup_safe())
+            with mock.patch.object(m,"MODE",mode), mock.patch.object(m,"run",side_effect=lambda *a,**k:
+                 "default dev mihomo0" if a[0]=="ip" else valid(*a,**k)),\
+                 mock.patch.object(m,"active",return_value=True):
+                self.assertFalse(m.verified_awg_backup_safe())
+
+    def test_failclosed_never_quiesces_healthy_active_awg(self):
+        with tempfile.TemporaryDirectory() as d:
+            mode=Path(d)/"mode";mode.write_text("transit")
+            with mock.patch.object(m,"MODE",mode),\
+                 mock.patch.object(m,"verified_awg_backup_safe",return_value=True),\
+                 mock.patch.object(m,"run") as cmd:
+                self.assertTrue(m.failclosed())
+                cmd.assert_not_called()
+
     def test_transit_quiesce_cleans_only_transaction_owned_files(self):
         with tempfile.TemporaryDirectory() as d:
             root=Path(d);mode=root/"mode";mode.write_text("transit")

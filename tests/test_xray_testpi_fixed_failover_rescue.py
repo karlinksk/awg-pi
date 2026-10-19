@@ -71,6 +71,53 @@ class IndependentRescueTests(unittest.TestCase):
      m.restore(s)
     run.assert_not_called()
 
+ def test_independent_rescue_preserves_healthy_active_awg(self):
+  with tempfile.TemporaryDirectory() as d:
+   base=Path(d);s=base/"xray-auto-rescue-1-2";s.mkdir()
+   state=s/"state.json";state.write_text(json.dumps({"status":"armed","result":None}))
+   calls=[]
+   with (mock.patch.object(m,"MAINT",base/"maintenance.lock"),
+         mock.patch.object(m,"BRIDGE",base/"bridge"),
+         mock.patch.object(m,"RUNTIME_BRIDGE",base/"bridge-runtime"),
+         mock.patch.object(m,"SELECTED",base/"selected"),
+         mock.patch.object(m,"active",return_value=False),
+         mock.patch.object(m,"check_snapshot",return_value={"old":"HY2","xray":"VLESS"}),
+         mock.patch.object(m,"clear_test_fault",side_effect=lambda snap:calls.append("clear")),
+         mock.patch.object(m,"clean_monitor_optin",side_effect=lambda:calls.append("optin")),
+         mock.patch.object(m,"verified_awg_backup_safe",return_value=True),
+         mock.patch.object(m,"failclosed") as stop,
+         mock.patch.object(m,"run") as command):
+    m.restore(s)
+    stop.assert_not_called()
+    command.assert_not_called()
+   self.assertEqual(calls,["clear","optin"])
+   record=json.loads(state.read_text())
+   self.assertEqual(record["status"],"preserved_awg")
+   self.assertEqual(record["result"],"PASS")
+
+ def test_awg_backup_with_xray_artifact_does_not_claim_full_cleanup(self):
+  with tempfile.TemporaryDirectory() as d:
+   base=Path(d);s=base/"xray-auto-rescue-1-2";s.mkdir()
+   state=s/"state.json";state.write_text(json.dumps({"status":"armed","result":None}))
+   bridge=base/"bridge";bridge.write_text("test")
+   with (mock.patch.object(m,"MAINT",base/"maintenance.lock"),
+         mock.patch.object(m,"BRIDGE",bridge),
+         mock.patch.object(m,"RUNTIME_BRIDGE",base/"runtime"),
+         mock.patch.object(m,"SELECTED",base/"selected"),
+         mock.patch.object(m,"active",return_value=False),
+         mock.patch.object(m,"check_snapshot",return_value={"old":"HY2","xray":"VLESS"}),
+         mock.patch.object(m,"clear_test_fault"),
+         mock.patch.object(m,"clean_monitor_optin"),
+         mock.patch.object(m,"verified_awg_backup_safe",return_value=True),
+         mock.patch.object(m,"failclosed") as stop,
+         mock.patch.object(m,"run") as command):
+    m.restore(s)
+    stop.assert_not_called()
+    command.assert_not_called()
+   self.assertIsNone(json.loads(state.read_text())["result"])
+   self.assertEqual(json.loads(state.read_text())["status"],"armed")
+   self.assertTrue(bridge.exists())
+
  def test_no_fault_no_changes_to_healthy_original(self):
   with tempfile.TemporaryDirectory() as d:
    base=Path(d);s=base/"xray-auto-rescue-1-2";s.mkdir()

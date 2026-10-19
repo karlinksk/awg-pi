@@ -86,9 +86,33 @@ def choose(value):
         if resp.status not in (200,204):raise RuntimeError("CONTROLLER_REJECTED")
     if controller().get("now")!=value:raise RuntimeError("CONTROLLER_NOT_COMMITTED")
 
+def verified_awg_backup_safe():
+    """Do not quiesce a verified *different* active transport on timeout."""
+    if MODE.read_text().strip()!="transit":return False
+    try:
+        if run("/usr/local/sbin/awg-transport","get",timeout=10)!="awg" or \
+           not active("awg-quick@awg0.service"):
+            return False
+        status=run("/usr/local/sbin/awg-transit-routing","status",timeout=10).splitlines()
+        if not all(v in status for v in ("Transit guard: SAFE",
+              "Transit policy rule: ACTIVE","Transit VPN table: READY")):
+            return False
+        for table in ("100","101"):
+            lines=run("ip","-4","route","show","table",table,timeout=6).splitlines()
+            if len(lines)!=1 or not re.fullmatch(
+                r"default\s+dev\s+awg0(?:\s+.*)?",lines[0].strip()):
+                return False
+        return True
+    except (OSError,RuntimeError,subprocess.TimeoutExpired):
+        return False
+
 def failclosed():
     # Transit remains subject to existing nft drop guard; never open DIRECT.
     if MODE.read_text().strip()!="transit":return False
+    # The selection monitor may have already selected a healthy AWG backup.
+    # Do NOT disable its SAFE guard, stop its transport or rewrite AWG routes.
+    # Test-only rescue separately clears its endpoint blocks and opt-in.
+    if verified_awg_backup_safe():return True
     try:
         run("/usr/local/sbin/awg-transit-routing","disable",timeout=16)
         for service in (MIHOMO,XRAY):

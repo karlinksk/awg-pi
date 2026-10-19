@@ -232,6 +232,23 @@ def clear_test_fault(snap):
            "table inet awg_xray_fixed_test" not in listed.stdout,
            "FAULT_TABLE_COULD_NOT_BE_INSPECTED")
 
+def verified_awg_backup_safe():
+ """Preserve a healthy AWG transport; never force its tables onto mihomo0."""
+ if not active("awg-quick@awg0.service") or not active("ssh.service") or \
+    not active("dnsmasq.service"):
+  return False
+ try:
+  if ok("/usr/local/sbin/awg-transport","get",timeout=10)!="awg" or not healthy_guard():
+   return False
+  for table in ("100","101"):
+   lines=ok("ip","-4","route","show","table",table,timeout=7).splitlines()
+   if len(lines)!=1 or not re.fullmatch(
+       r"default\s+dev\s+awg0(?:\s+.*)?",lines[0].strip()):
+    return False
+  return True
+ except (OSError,RuntimeError,subprocess.TimeoutExpired):
+  return False
+
 def restore(snap):
  manifest=check_snapshot(snap)
  with (snap/"rescue.lock").open("a") as lock:
@@ -244,6 +261,21 @@ def restore(snap):
    fcntl.flock(maintenance,fcntl.LOCK_EX)
    clear_test_fault(snap)
    clean_monitor_optin()
+   # A configured AWG may legitimately win the transport fallback race.
+   # Stop here: preserving an independently SAFE/ACTIVE/READY backup is safer
+   # than forcibly replacing its routes with a test snapshot of mihomo0.
+   if verified_awg_backup_safe():
+    clean=(not active("awg-xray-vless.service") and
+           not BRIDGE.exists() and not RUNTIME_BRIDGE.exists() and
+           not SELECTED.exists())
+    if clean:
+     jsonput(snap/"state.json",dict(state,result="PASS",status="preserved_awg"))
+     emit("RESULT","PASS_AWG_BACKUP_PRESERVED_NOT_HY2")
+    else:
+     # Keep the confirmed AWG live; report leftover Xray artifacts explicitly.
+     # They must be reviewed independently, never cleaned by rerouting AWG.
+     emit("RESULT","AWG_SAFE_XRAY_ARTIFACTS_REQUIRE_REVIEW")
+    return
    # If no fault was injected, do not disrupt a still-healthy original.
    if (CURRENT.read_text().strip()==manifest["old"] and active("awg-mihomo.service")
        and not active("awg-xray-vless.service") and not SELECTED.exists()
@@ -304,8 +336,12 @@ def main():
  elif len(sys.argv)==3 and sys.argv[1]=="--recover":
   try:restore(pathlib.Path(sys.argv[2]))
   except Exception:
-   # Never route to DIRECT after a restore error. Second timer retries.
-   try:failclosed()
+   # An active AWG may have taken over after this rescue started. Never
+   # disable its healthy Transit policy as an error-handler side effect.
+   try:
+    if not verified_awg_backup_safe() and \
+       ok("/usr/local/sbin/awg-transport","get",timeout=9)=="mihomo":
+     failclosed()
    except Exception:pass
    raise
  else:raise RuntimeError("USAGE")
