@@ -61,7 +61,7 @@ class TestXrayConfig(unittest.TestCase):
  def test_menu_is_operator_optin_only(self):
   menu=(ROOT/"src/awg-menu").read_text()
   self.assertIn("mihomo_xray_vless_menu(){",menu)
-  self.assertIn("Xray VLESS (эксперимент)",menu)
+  self.assertIn("Xray VLESS: диагностика",menu)
   self.assertIn("awg-xray-vless select",menu)
   func=menu.split("mihomo_xray_vless_menu(){",1)[1].split("\n}\n",1)[0]
   self.assertNotIn("awg-transport select",func)

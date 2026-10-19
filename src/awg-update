@@ -103,6 +103,7 @@ backup_gateway(){
     usr/local/sbin/awg-xray-vless \
     usr/local/sbin/awg-mihomo-unified-nodes \
     usr/local/sbin/awg-mihomo-results-view \
+    usr/local/sbin/awg-mihomo-node-picker \
     usr/local/sbin/awg-xray-activation-transaction \
     usr/local/sbin/awg-xray-live-backend \
     usr/local/sbin/awg-mihomo-ready-live-match \
@@ -221,6 +222,7 @@ restore_gateway(){
     /usr/local/sbin/awg-xray-vless \
     /usr/local/sbin/awg-mihomo-unified-nodes \
     /usr/local/sbin/awg-mihomo-results-view \
+    /usr/local/sbin/awg-mihomo-node-picker \
     /usr/local/sbin/awg-xray-activation-transaction \
     /usr/local/sbin/awg-xray-live-backend \
     /usr/local/sbin/awg-mihomo-ready-live-match \
