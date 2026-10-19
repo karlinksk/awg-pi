@@ -186,7 +186,7 @@ class LinuxBackend:
         write_atomic(self.snapshot/"state.json",json.dumps(state).encode())
         self.watchdog_unit="awg-xray-failover-"+str(os.getpid())
         try:
-            run("systemd-run","--unit="+self.watchdog_unit,"--on-active=180s",
+            run("systemd-run","--unit="+self.watchdog_unit,"--on-active=300s",
                 str(EXECUTOR),"watchdog",str(self.snapshot),timeout=12)
             if not active(self.watchdog_unit+".timer"):
                 raise RuntimeError("INDEPENDENT_WATCHDOG_NOT_ACTIVE")
