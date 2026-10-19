@@ -122,6 +122,35 @@ def candidate_allowed_by_policy(failed, candidate):
         return chain.index(candidate)>chain.index(failed)
     except (OSError,UnicodeError):return False
 
+def verified_degraded_fixed_baseline():
+    """Explicit test-Pi FIXED recovery after Mihomo candidate rollback.
+
+    Only Transit FAIL-CLOSED with an inactive Mihomo, absent Transit rule,
+    and no foreign policy routes is eligible. Direct/Selective is forbidden.
+    The external dispatcher still must prove TWO failed incumbent HTTPS tests.
+    """
+    if (socket.gethostname()!="awg-upgrade" or
+        os.environ.get("AWG_XRAY_DEGRADED_FIXED")!="1" or
+        os.environ.get("MIHOMO_XRAY_FIXED_FAILOVER_CANARY")!="1" or
+        NODE_POLICY_MODE.read_text().strip()!="fixed" or
+        active(MIHOMO) or active(XRAY) or
+        not active("ssh.service") or not active("dnsmasq.service")):
+        return False
+    try:
+        lines=run("/usr/local/sbin/awg-transit-routing","status",timeout=10).splitlines()
+        if ("Transit policy rule: INACTIVE" not in lines or
+            not any(x in lines for x in ("Transit guard: SAFE","Transit guard: LOCKDOWN"))):
+            return False
+        for table in ("100","101"):
+            routes=run("ip","-4","route","show","table",table,timeout=6).strip()
+            if routes and not all(re.fullmatch(
+                r"default\\s+dev\\s+mihomo0(?:\\s+.*)?",x.strip())
+                for x in routes.splitlines()):
+                return False
+        return True
+    except (OSError,RuntimeError,subprocess.TimeoutExpired):
+        return False
+
 def snapshot_transition(snapshot, expected, desired):
     """Serialize watchdog and activation before touching the network.
 
@@ -157,6 +186,7 @@ class LinuxBackend:
         self.fingerprint=None
         self.snapshot=None
         self.watchdog_unit=None
+        self.degraded_fixed=False
     def preflight(self,failed,candidate):
         if os.geteuid()!=0 or MODE.read_text().strip()!="transit":
             raise RuntimeError("ROOT_TRANSIT_REQUIRED")
@@ -164,7 +194,13 @@ class LinuxBackend:
             raise RuntimeError("FAILED_NODE_IDENTITY_CHANGED")
         if not candidate_allowed_by_policy(failed,candidate):
             raise RuntimeError("CANDIDATE_NOT_ALLOWED_BY_NODE_POLICY")
-        if not active(MIHOMO) or active(XRAY) or not routes_ok():
+        if active(XRAY):
+            raise RuntimeError("XRAY_ALREADY_ACTIVE")
+        if active(MIHOMO) and routes_ok():
+            self.degraded_fixed=False
+        elif verified_degraded_fixed_baseline():
+            self.degraded_fixed=True
+        else:
             raise RuntimeError("LIVE_BASELINE_UNSAFE")
         if BRIDGE.exists() or BRIDGE_RUNTIME.exists() or SELECTED.exists() or not RENDERER.is_file() or not ADAPTER.is_file():
             raise RuntimeError("BRIDGE_NOT_UNINSTALLED_OR_ADAPTER_MISSING")
@@ -199,7 +235,12 @@ class LinuxBackend:
         # Do not call awg-route while holding the maintenance lock: that CLI
         # acquires the same flock. The transit-routing helper is lock-free.
         policy=run("/usr/local/sbin/awg-transit-routing","status",timeout=10)
-        if "Transit guard: SAFE" not in policy or "Transit policy rule: ACTIVE" not in policy:
+        lines=policy.splitlines()
+        if self.degraded_fixed:
+            if ("Transit policy rule: INACTIVE" not in lines or
+                not any(x in lines for x in ("Transit guard: SAFE","Transit guard: LOCKDOWN"))):
+                raise RuntimeError("DEGRADED_TRANSIT_GUARD_UNSAFE")
+        elif "Transit guard: SAFE" not in lines or "Transit policy rule: ACTIVE" not in lines:
             raise RuntimeError("TRANSIT_GUARD_NOT_SAFE")
     def arm_watchdog(self):
         if not self.provider_hash:raise RuntimeError("PREFLIGHT_NOT_COMPLETE")
@@ -287,6 +328,16 @@ class LinuxBackend:
     def check_tun_https(self):
         return http_code(["--interface","mihomo0","--noproxy","*"])
     def check_policy_routes(self):
+        # For an exhausted FIXED chain, the previous failed Mihomo attempt
+        # intentionally disabled Transit. Re-enable the rule ONLY after the
+        # newly selected Xray-backed Mihomo TUN actually passed HTTPS 401.
+        if self.degraded_fixed:
+            if not routes_ok() or not self.check_tun_https():
+                return False
+            try:
+                run("/usr/local/sbin/awg-transit-routing","apply",timeout=16)
+            except (OSError,RuntimeError,subprocess.TimeoutExpired):
+                return False
         status=run("/usr/local/sbin/awg-transit-routing","status",timeout=12)
         return (routes_ok() and "Transit guard: SAFE" in status and
                 "Transit policy rule: ACTIVE" in status and

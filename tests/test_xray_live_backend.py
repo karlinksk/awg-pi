@@ -72,6 +72,64 @@ class LinuxBackendTests(unittest.TestCase):
             self.assertTrue(m.original_tun_unreachable_twice())
         self.assertEqual(check.call_count,2)
 
+    def test_degraded_fixed_requires_explicit_test_pi_failclosed(self):
+        import os
+        with tempfile.TemporaryDirectory() as dirname:
+            mode=Path(dirname)/"node-policy.mode"
+            mode.write_text("fixed")
+            env={"AWG_XRAY_DEGRADED_FIXED":"1",
+                 "MIHOMO_XRAY_FIXED_FAILOVER_CANARY":"1"}
+            def services(unit):
+                return unit in ("ssh.service","dnsmasq.service")
+            def status(*args,**kwargs):
+                if args[-1]=="status":
+                    return "Transit guard: SAFE\nTransit policy rule: INACTIVE\nTransit VPN table: NOT_READY"
+                return ""
+            with (mock.patch.object(m,"NODE_POLICY_MODE",mode),
+                  mock.patch.object(m.socket,"gethostname",return_value="awg-upgrade"),
+                  mock.patch.dict(os.environ,env),
+                  mock.patch.object(m,"active",side_effect=services),
+                  mock.patch.object(m,"run",side_effect=status)):
+                self.assertTrue(m.verified_degraded_fixed_baseline())
+                with mock.patch.dict(os.environ,{"AWG_XRAY_DEGRADED_FIXED":"0"}):
+                    self.assertFalse(m.verified_degraded_fixed_baseline())
+                with mock.patch.object(m,"active",return_value=True):
+                    self.assertFalse(m.verified_degraded_fixed_baseline())
+                with mock.patch.object(m,"run",return_value=
+                      "Transit guard: SAFE\nTransit policy rule: ACTIVE"):
+                    self.assertFalse(m.verified_degraded_fixed_baseline())
+                with mock.patch.object(m,"run",side_effect=lambda *a,**kw:
+                      ("default via 192.0.2.1 dev eth0" if a[0]=="ip" else status(*a,**kw))):
+                    self.assertFalse(m.verified_degraded_fixed_baseline())
+                mode.write_text("auto")
+                self.assertFalse(m.verified_degraded_fixed_baseline())
+
+    def test_degraded_policy_rule_restored_only_after_real_xray_tun_https(self):
+        backend=m.LinuxBackend("failed-HY2","Xray-VLESS")
+        backend.degraded_fixed=True
+        good="Transit guard: SAFE\nTransit policy rule: ACTIVE\nTransit VPN table: READY"
+        calls=[]
+        def command(*argv,**kwargs):
+            calls.append(argv)
+            return good
+        with (mock.patch.object(m,"routes_ok",return_value=True),
+              mock.patch.object(backend,"check_tun_https",return_value=True),
+              mock.patch.object(m,"run",side_effect=command)):
+            self.assertTrue(backend.check_policy_routes())
+        self.assertIn(("/usr/local/sbin/awg-transit-routing","apply"),calls)
+        calls.clear()
+        with (mock.patch.object(m,"routes_ok",return_value=True),
+              mock.patch.object(backend,"check_tun_https",return_value=False),
+              mock.patch.object(m,"run",side_effect=command)):
+            self.assertFalse(backend.check_policy_routes())
+        self.assertEqual(calls,[])
+        backend.degraded_fixed=False
+        calls.clear()
+        with (mock.patch.object(m,"routes_ok",return_value=True),
+              mock.patch.object(m,"run",side_effect=command)):
+            self.assertTrue(backend.check_policy_routes())
+        self.assertNotIn(("/usr/local/sbin/awg-transit-routing","apply"),calls)
+
     def test_bridge_stays_ephemeral_until_live_tun_verification(self):
         import tempfile
         with tempfile.TemporaryDirectory() as dirname:

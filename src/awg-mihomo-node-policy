@@ -498,7 +498,7 @@ service_candidate_allowed(){
 }
 
 failover_fixed(){
-  local current="$1" node found_current=0 attempts=0
+  local current="$1" node found_current=0 attempts=0 failed_mihomo_candidates=0
   while IFS= read -r node || [[ -n "$node" ]]; do
     [[ -n "$node" ]] || continue
     if (( found_current == 0 )); then
@@ -540,6 +540,7 @@ failover_fixed(){
         # validates exact provider/credentials, arms 300s watchdog BEFORE
         # mutation, and fails Transit CLOSED if its candidate cannot commit.
         if AWG_XRAY_EXPERIMENTAL_APPLY=TEST_PI_AUTHORIZED \
+             AWG_XRAY_DEGRADED_FIXED="$failed_mihomo_candidates" \
              "${MIHOMO_XRAY_TRANSACTION_CLI:-/usr/local/sbin/awg-xray-live-backend}" apply "$current" "$node" >/dev/null; then
           printf 'MIHOMO_NODE_FAILOVER=%s->%s\n' "$current" "$node"
           return 0
@@ -551,10 +552,31 @@ failover_fixed(){
       fi
       [[ "$engine" == MIHOMO ]] || { echo "MIHOMO_NODE_FAILOVER=ENGINE_UNSUPPORTED" >&2; continue; }
     fi
-    if "$MIHOMO_CONFIGURE" node select-auto "$node" >/dev/null; then
+    if MIHOMO_NODE_FAILOVER_RECOVERY=1 "$MIHOMO_CONFIGURE" node select-auto "$node" >/dev/null; then
+      # The configure transaction validated the new Pi-bound TUN, but left
+      # Transit disabled to keep forwarded clients FAIL-CLOSED during switch.
+      # Reapply the policy rule only after a verified successful new node.
+      if [[ "$(cat "$MIHOMO_AUTO_MODE_FILE" 2>/dev/null)" == transit ]]; then
+        if ! "$MIHOMO_AUTO_TRANSIT_ROUTING" apply >/dev/null; then
+          echo "MIHOMO_NODE_FAILOVER=TRANSIT_REAPPLY_FAILED_FAIL_CLOSED" >&2
+          return 1
+        fi
+        local transit_status
+        transit_status="$("$MIHOMO_AUTO_TRANSIT_ROUTING" status 2>/dev/null)" || return 1
+        if ! grep -Fxq "Transit guard: SAFE" <<<"$transit_status" ||
+           ! grep -Fxq "Transit policy rule: ACTIVE" <<<"$transit_status" ||
+           ! grep -Fxq "Transit VPN table: READY" <<<"$transit_status"; then
+          echo "MIHOMO_NODE_FAILOVER=TRANSIT_UNVERIFIED_FAIL_CLOSED" >&2
+          return 1
+        fi
+      fi
       printf 'MIHOMO_NODE_FAILOVER=%s->%s\n' "$current" "$node"
       return 0
     fi
+    # The configure rollback kept the original metadata, but MUST NOT
+    # restart the already-failed incumbent. Next Xray sees a deliberately
+    # stopped Mihomo and disabled Transit policy rule, not normal traffic.
+    failed_mihomo_candidates=1
   done <"$MIHOMO_NODE_POLICY_ORDER_FILE"
   (( found_current == 1 )) || return 1
   return 1
