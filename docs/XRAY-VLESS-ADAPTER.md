@@ -47,3 +47,29 @@ In isolated **proxy-only** tests, Xray 26.3.27 passed native config validation a
 No live Mihomo service, actual TUN, FIXED chain, Pi LAN-client route or MikroTik rule was changed. Tests through the isolated proxy are **not** production TUN/LAN/READY/failover PASS. Real optional bridge TUN, LAN, provider-refresh, outage and reboot gates remain OPEN.
 
 This adapter is an independent experimental PR layered on draft PR #115. It must not delay or silently expand the release gate for v1.3.0; no merge or release before tests and explicit owner approval.
+
+## Experimental guarded failover executor (2026-10-19)
+
+The versioned installer now includes **disabled-by-default** transaction components:
+`awg-xray-activation-transaction` (state-machine safety checks) and
+`awg-xray-live-backend` (Linux operations, independent timer watchdog,
+Transit fail-closed on failure). Neither is invoked by the installer, a node
+policy, systemd timers, or Hot Pool. The executable `apply` action is
+test-Pi gated and must not be advertised as installed/working AUTO failover.
+
+The transaction explicitly rejects the original failed node, duplicate or
+rotated candidate identities, stale basic-network eligibility and missing
+TUN postcheck. Before switching it arms a watchdog; on failure it disables
+Transit policy under the existing nftables guard, stops unverified services
+and removes transaction-owned boot wiring without restoring the failed node.
+Systemd boot dependencies are staged only after TUN validation. Cancellation
+of a failed watchdog arm cannot stop a previously healthy gateway later.
+
+**Acceptance still open:** real interrupted-activation recovery, actual
+Mihomo -> Xray TUN failover on the test Pi, reboot and boot ordering, LAN/WG
+forwarding, AWG fallback if configured, subscription rotation during failover,
+and independent proof that management SSH/SSTP remains accessible. Mock tests,
+isolated Xray proxy tests and the earlier manual healthy-HY2 canary are
+different evidence scopes. No runtime service or MikroTik configuration was
+modified while developing this versioned executor. Release v1.3.0 and PR
+#115 remain gated by clean install, LAN, failover and reboot validation.
