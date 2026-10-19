@@ -76,6 +76,7 @@ run_policy(){
     MIHOMO_NODE_POLICY_ORDER_FILE="$TMP/etc/node-policy.nodes" \
     MIHOMO_NODE_NAME_FILE="$TMP/etc/node-name" \
     MIHOMO_CONFIGURE_BIN="$TMP/bin/configure" \
+    MIHOMO_UNIFIED_NODE_CLI="$TMP/bin/resolver" \
     MIHOMO_POOL_CLI="$TMP/bin/pool" \
     MOCK_NODE_LOG="$TMP/log" \
     MOCK_POOL_LOG="$TMP/pool.log" \
@@ -229,5 +230,45 @@ echo "=== MANUAL clears the fallback allow-list ==="
 out="$(run_policy mode manual)"
 grep -Fqx 'MIHOMO_NODE_POLICY=manual' <<<"$out"
 sudo test ! -e "$TMP/etc/node-policy.nodes"
+
+echo "=== cross-core VLESS cannot enter legacy FIXED/AUTO configure ==="
+cat >"$TMP/bin/resolver" <<'MOCK'
+#!/usr/bin/env bash
+[[ "${1:-}" == resolve ]] || exit 2
+case "${2:-}" in
+  "DE (backup)+1") printf 'NODE_ENGINE=XRAY\nNODE_ACTIVATED=NO\n' ;;
+  "NL [test]*") printf 'NODE_ENGINE=MIHOMO\nNODE_ACTIVATED=NO\n' ;;
+  *) printf 'NODE_ENGINE=MIHOMO\nNODE_ACTIVATED=NO\n' ;;
+esac
+MOCK
+chmod +x "$TMP/bin/resolver"
+run_policy mode fixed '🇫🇮 Finland' 'DE (backup)+1' 'NL [test]*' >/dev/null
+printf '%s\n' '🇫🇮 Finland' | sudo tee "$TMP/etc/node-name" >/dev/null
+: >"$TMP/log"
+out="$(run_policy failover 2>"$TMP/err")"
+grep -Fqx 'MIHOMO_NODE_FAILOVER=🇫🇮 Finland->NL [test]*' <<<"$out"
+grep -Fq 'MIHOMO_NODE_FAILOVER=XRAY_TRANSACTION_NOT_CERTIFIED' "$TMP/err"
+if grep -Fq 'node select-auto DE (backup)+1' "$TMP/log"; then
+  echo 'FAIL: Xray candidate leaked into Mihomo-only configure' >&2
+  exit 1
+fi
+run_policy mode auto >/dev/null
+printf '%s\n' '🇫🇮 Finland' | sudo tee "$TMP/etc/node-name" >/dev/null
+: >"$TMP/log"
+out="$(run_policy failover 2>"$TMP/err")"
+grep -Fqx 'MIHOMO_NODE_FAILOVER=🇫🇮 Finland->NL [test]*' <<<"$out"
+if grep -Fq 'node select-auto DE (backup)+1' "$TMP/log"; then
+  echo 'FAIL: AUTO Xray candidate leaked into Mihomo-only configure' >&2
+  exit 1
+fi
+chmod -x "$TMP/bin/resolver"
+: >"$TMP/log"
+printf '%s\n' '🇫🇮 Finland' | sudo tee "$TMP/etc/node-name" >/dev/null
+if run_policy failover >"$TMP/out" 2>"$TMP/err"; then
+  echo 'FAIL: non-executable engine resolver allowed failover' >&2
+  exit 1
+fi
+[[ ! -s "$TMP/log" ]]
+grep -Fq 'ENGINE_RESOLVER_UNAVAILABLE' "$TMP/err"
 
 echo "Mihomo exact-node policy: OK"

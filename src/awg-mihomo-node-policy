@@ -514,6 +514,15 @@ failover_fixed(){
     # An unproven ChatGPT/YouTube candidate must never be selected when
     # service gating is required. Continue to the next explicit FIXED node.
     service_candidate_allowed "$node" || continue
+    # Cross-core failover must never be sent through the Mihomo-only selector.
+    # Until the guarded Xray transaction is certified, skip Xray candidates.
+    if [[ -e "${MIHOMO_UNIFIED_NODE_CLI:-/usr/local/sbin/awg-mihomo-unified-nodes}" ]]; then
+      [[ -x "${MIHOMO_UNIFIED_NODE_CLI:-/usr/local/sbin/awg-mihomo-unified-nodes}" ]] || { echo "MIHOMO_NODE_FAILOVER=ENGINE_RESOLVER_UNAVAILABLE" >&2; continue; }
+      local resolved engine
+      resolved="$("${MIHOMO_UNIFIED_NODE_CLI:-/usr/local/sbin/awg-mihomo-unified-nodes}" resolve "$node" 2>/dev/null)" || continue
+      engine="$(sed -n 's/^NODE_ENGINE=//p' <<<"$resolved")"
+      [[ "$engine" == MIHOMO ]] || { echo "MIHOMO_NODE_FAILOVER=XRAY_TRANSACTION_NOT_CERTIFIED" >&2; continue; }
+    fi
     if "$MIHOMO_CONFIGURE" node select-auto "$node" >/dev/null; then
       printf 'MIHOMO_NODE_FAILOVER=%s->%s\n' "$current" "$node"
       return 0
@@ -621,7 +630,7 @@ quiesce_failed_mihomo(){
 }
 
 failover_auto(){
-  local current="$1" candidate item attempts=0 from_ready=0
+  local current="$1" candidate item attempts=0 from_ready=0 candidate_visits=0
   # Keep the legacy non-READY AUTO bound unchanged. READY AUTO may inspect
   # all four prepared reserves before a small fresh-qualified fallback.
   local max_checks=3
@@ -667,6 +676,10 @@ failover_auto(){
       candidate="$("$MIHOMO_POOL_CLI" "${best_args[@]}" 2>/dev/null)" || break
     fi
     [[ -n "$candidate" ]] || break
+    # Bound ALL candidates, including resolver-rejected cross-core nodes.
+    # A pool helper can repeatedly return the same excluded candidate.
+    (( candidate_visits < max_checks )) || { echo "MIHOMO_NODE_FAILOVER=CANDIDATE_LIMIT" >&2; break; }
+    candidate_visits=$((candidate_visits+1))
     validate_node_name "$candidate" || return 1
     # A faulty pool helper must not return an excluded dead/failed node.
     for item in "${excludes[@]}"; do
@@ -709,6 +722,20 @@ failover_auto(){
       fi
     fi
 
+    # The legacy configure path cannot activate the Xray sidecar safely.
+    # Explicitly exclude cross-core candidates until a guarded transactional
+    # switch with independent no-return recovery is certified.
+    if [[ -e "${MIHOMO_UNIFIED_NODE_CLI:-/usr/local/sbin/awg-mihomo-unified-nodes}" ]]; then
+      [[ -x "${MIHOMO_UNIFIED_NODE_CLI:-/usr/local/sbin/awg-mihomo-unified-nodes}" ]] || { echo "MIHOMO_NODE_FAILOVER=ENGINE_RESOLVER_UNAVAILABLE" >&2; continue; }
+      local resolved engine
+      resolved="$("${MIHOMO_UNIFIED_NODE_CLI:-/usr/local/sbin/awg-mihomo-unified-nodes}" resolve "$candidate" 2>/dev/null)" || { excludes+=("$candidate"); continue; }
+      engine="$(sed -n 's/^NODE_ENGINE=//p' <<<"$resolved")"
+      if [[ "$engine" != MIHOMO ]]; then
+        echo "MIHOMO_NODE_FAILOVER=XRAY_TRANSACTION_NOT_CERTIFIED" >&2
+        excludes+=("$candidate")
+        continue
+      fi
+    fi
     # When recovering from an already FAILED live node, the configure
     # transaction must not restart that old node if candidate activation fails.
     if MIHOMO_NODE_FAILOVER_RECOVERY="$MIHOMO_READY_AUTO_CANARY"       "$MIHOMO_CONFIGURE" node select-auto "$candidate" >/dev/null; then

@@ -184,6 +184,8 @@ def command():
     sub.add_parser("list")
     test=sub.add_parser("probe");test.add_argument("indices",nargs="+",type=int)
     sub.add_parser("probe-vless-all")
+    resolve=sub.add_parser("resolve")
+    resolve.add_argument("name")
     best=sub.add_parser("best")
     best.add_argument("--exclude",action="append",default=[])
     x=a.parse_args()
@@ -223,6 +225,21 @@ def command():
         persist_cache(adapter,sha,updated)
         return
     rows=inventory(nodes,pool,cache,adapter)
+    if x.cmd=="resolve":
+        matches=[r for r in rows if r["name"]==x.name]
+        if len(matches)!=1 or matches[0]["engine"]=="UNSUPPORTED" or matches[0]["basic_network"]=="UNUSABLE_DUPLICATE_OR_MISSING_NAME":
+            die("NODE_AMBIGUOUS_OR_UNSUPPORTED")
+        row=matches[0]
+        print("NODE_ENGINE="+row["engine"])
+        print("NODE_INDEX="+str(row["index"]))
+        print("NODE_BASIC_NETWORK="+row["basic_network"])
+        print("NODE_PROVIDER_SHA256="+sha)
+        # Resolving an engine is never permission to activate it.  In
+        # particular the manual canary rollback targets a healthy old node,
+        # which is NOT a valid recovery target after automatic failover.
+        print("NODE_ACTIVATED=NO")
+        print("NODE_LIVE_FAILOVER_CERTIFIED=NO")
+        return
     if x.cmd=="best":
         # Read-only candidate suggestion, NOT an activation command.
         options=[row for row in rows if row["basic_network"]=="NETWORK_OK" and

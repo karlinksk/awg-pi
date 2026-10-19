@@ -150,6 +150,24 @@ class DynamicNodesTests(unittest.TestCase):
                 self.m.command()
         self.assertFalse(self.m.CACHE.exists())
 
+    def test_resolve_engine_without_activation_or_ready(self):
+        import contextlib,io,sys
+        self.seed(self.vless)
+        out=io.StringIO()
+        with mock.patch.object(sys,"argv",["unified-nodes","resolve",self.vless["name"]]), \
+             mock.patch.object(self.m.os,"geteuid",return_value=0), \
+             contextlib.redirect_stdout(out):
+            self.m.command()
+        self.assertIn("NODE_ENGINE=XRAY",out.getvalue())
+        self.assertIn("NODE_ACTIVATED=NO",out.getvalue())
+        self.assertIn("NODE_LIVE_FAILOVER_CERTIFIED=NO",out.getvalue())
+        self.assertNotIn("READY=PASS",out.getvalue())
+        self.publish([self.hy2,self.vlessb])
+        with mock.patch.object(sys,"argv",["unified-nodes","resolve",self.vless["name"]]), \
+             mock.patch.object(self.m.os,"geteuid",return_value=0), \
+             contextlib.redirect_stdout(io.StringIO()):
+            with self.assertRaises(SystemExit):self.m.command()
+
     def test_no_ready_claim_on_simple_http_check(self):
         self.seed(self.vless)
         rows,_=self.get_rows()
