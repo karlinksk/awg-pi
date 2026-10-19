@@ -31,11 +31,26 @@ chmod 700 "$TEMP"
 trap 'rm -rf -- "$TEMP"' EXIT
 MIHOMO_XRAY_VLESS_BRIDGE=0 "$LIVE/awg-mihomo-config" > "$TEMP/old.yaml" || fail OLD_RENDER_FAILED
 MIHOMO_XRAY_VLESS_BRIDGE=0 bash "$ROOT/src/awg-mihomo-config" > "$TEMP/new.yaml" || fail NEW_RENDER_FAILED
-cmp -s "$TEMP/old.yaml" "$TEMP/new.yaml" || fail RENDERER_DEFAULT_CHANGED
+render_equivalent(){
+  python3 - "$1" "$2" <<'PY'
+import sys
+import yaml
+try:
+    with open(sys.argv[1],encoding="utf-8") as old:
+        before=yaml.safe_load(old)
+    with open(sys.argv[2],encoding="utf-8") as new:
+        after=yaml.safe_load(new)
+except Exception:
+    raise SystemExit(2)
+if not isinstance(before,dict) or before!=after:
+    raise SystemExit(1)
+PY
+}
+render_equivalent "$TEMP/old.yaml" "$TEMP/new.yaml" || fail RENDERER_DEFAULT_CHANGED
 for file in src/awg-mihomo-config src/awg-mihomo-unified-nodes.py src/awg-xray-activation-transaction.py src/awg-xray-live-backend.py; do
   [[ -s "$ROOT/$file" ]] || fail SOURCE_INCOMPLETE
 done
-echo XRAY_STAGE_RENDERER_DEFAULT=IDENTICAL
+echo XRAY_STAGE_RENDERER_DEFAULT=EQUIVALENT
 echo XRAY_STAGE_ACTIVE_MIHOMO=UNCHANGED
 if [[ "$MODE" == --check ]]; then
   echo XRAY_STAGE_PREFLIGHT=PASS
@@ -94,7 +109,7 @@ for n in "${!TARGETS[@]}"; do
   install -m 0755 -o root -g root "$ROOT/${SOURCES[$n]}" "$LIVE/${TARGETS[$n]}"
 done
 MIHOMO_XRAY_VLESS_BRIDGE=0 "$LIVE/awg-mihomo-config" > "$TEMP/staged.yaml"
-cmp -s "$TEMP/old.yaml" "$TEMP/staged.yaml" || fail INSTALLED_RENDER_CHANGED
+render_equivalent "$TEMP/old.yaml" "$TEMP/staged.yaml" || fail INSTALLED_RENDER_CHANGED
 [[ "$(systemctl is-active awg-mihomo.service)" == active ]] || fail MIHOMO_CHANGED
 [[ "$(systemctl is-active awg-xray-vless.service)" != active ]] || fail XRAY_CHANGED
 STAGING=0
