@@ -90,6 +90,35 @@ class IndependentRescueTests(unittest.TestCase):
    self.assertEqual(json.loads(state.read_text())["status"],"unchanged")
    run.assert_not_called()
 
+ def test_fault_is_removed_even_if_original_recovers_before_first_rescue(self):
+  with tempfile.TemporaryDirectory() as d:
+   base=Path(d);snap=base/"xray-auto-rescue-1-2";snap.mkdir()
+   (snap/"state.json").write_text(json.dumps({"status":"armed","result":None}))
+   (snap/"fault.json").write_text(json.dumps({
+    "kind":"nft_endpoint_blackhole","table":"awg_xray_fixed_test"}))
+   current=base/"node-name";current.write_text("HY2")
+   calls=[]
+   def shell(*args,**kwargs):
+    calls.append(args)
+    if args[:3]==("nft","list","table"):
+     return mock.Mock(returncode=0,stdout='table inet awg_xray_fixed_test { chain block_output { comment "AWG-XRAY-FIXED-TEST" } }')
+    return mock.Mock(returncode=0,stdout="")
+   with (mock.patch.object(m,"CURRENT",current),
+         mock.patch.object(m,"MAINT",base/"maintenance.lock"),
+         mock.patch.object(m,"BRIDGE",base/"bridge"),
+         mock.patch.object(m,"SELECTED",base/"selected"),
+         mock.patch.object(m,"check_snapshot",return_value={"old":"HY2","xray":"VLESS"}),
+         mock.patch.object(m,"run",side_effect=shell),
+         mock.patch.object(m,"ok",side_effect=lambda *args,**kwargs:calls.append(args) or ""),
+         mock.patch.object(m,"active",side_effect=lambda n:n in ("awg-mihomo.service","awg-selection-monitor.service")),
+         mock.patch.object(m,"healthy_guard",return_value=True),
+         mock.patch.object(m,"openai",return_value=True)):
+    m.restore(snap)
+   result=json.loads((snap/"state.json").read_text())
+   self.assertEqual(result["status"],"unchanged")
+   self.assertIn(("nft","delete","table","inet","awg_xray_fixed_test"),calls)
+   self.assertNotIn(("systemctl","stop","awg-mihomo.service"),calls)
+
  def test_active_xray_recovery_keeps_transit_closed_until_real_https(self):
   with tempfile.TemporaryDirectory() as d:
    base=Path(d);s=base/"xray-auto-rescue-1-2";s.mkdir()

@@ -210,6 +210,28 @@ def clean_monitor_optin():
   ok("systemctl","restart","awg-selection-monitor.service",timeout=20)
  require(active("awg-selection-monitor.service"),"SELECTION_MONITOR_NOT_RESTORED")
 
+def clear_test_fault(snap):
+ # Remove temporary fault before checking selected-node drift, so an
+ # unrelated safe manual node change cannot strand the test-side blocker.
+ # Remove ONLY a test-owned block, if a future fault injector records it;
+ # reject arbitrary nft modifications rather than erasing unrelated rules.
+ test_fault=snap/"fault.json"
+ if test_fault.is_file():
+  f=json.loads(test_fault.read_text())
+  require(f=={"kind":"nft_endpoint_blackhole","table":"awg_xray_fixed_test"},
+          "UNKNOWN_FAULT_INJECTION")
+  rules=run("nft","list","table","inet","awg_xray_fixed_test",timeout=7)
+  if rules.returncode==0:
+   require("chain block_output" in rules.stdout and
+           "AWG-XRAY-FIXED-TEST" in rules.stdout,
+           "FAULT_TABLE_OWNERSHIP_UNVERIFIED")
+   ok("nft","delete","table","inet","awg_xray_fixed_test")
+  else:
+   listed=run("nft","list","tables",timeout=8)
+   require(listed.returncode==0 and
+           "table inet awg_xray_fixed_test" not in listed.stdout,
+           "FAULT_TABLE_COULD_NOT_BE_INSPECTED")
+
 def restore(snap):
  manifest=check_snapshot(snap)
  with (snap/"rescue.lock").open("a") as lock:
@@ -220,6 +242,7 @@ def restore(snap):
   require(state.get("status")=="armed","RESCUE_NOT_ARMED")
   with MAINT.open("a") as maintenance:
    fcntl.flock(maintenance,fcntl.LOCK_EX)
+   clear_test_fault(snap)
    clean_monitor_optin()
    # If no fault was injected, do not disrupt a still-healthy original.
    if (CURRENT.read_text().strip()==manifest["old"] and active("awg-mihomo.service")
@@ -228,26 +251,6 @@ def restore(snap):
     jsonput(snap/"state.json",dict(state,result="PASS",status="unchanged"))
     emit("RESULT","PASS_ORIGINAL_UNCHANGED")
     return
-   # Remove temporary fault before checking selected-node drift, so an
-   # unrelated safe manual node change cannot strand the test-side blocker.
-   # Remove ONLY a test-owned block, if a future fault injector records it;
-   # reject arbitrary nft modifications rather than erasing unrelated rules.
-   test_fault=snap/"fault.json"
-   if test_fault.is_file():
-    f=json.loads(test_fault.read_text())
-    require(f=={"kind":"nft_endpoint_blackhole","table":"awg_xray_fixed_test"},
-            "UNKNOWN_FAULT_INJECTION")
-    rules=run("nft","list","table","inet","awg_xray_fixed_test",timeout=7)
-    if rules.returncode==0:
-     require("chain block_output" in rules.stdout and
-             "AWG-XRAY-FIXED-TEST" in rules.stdout,
-             "FAULT_TABLE_OWNERSHIP_UNVERIFIED")
-     ok("nft","delete","table","inet","awg_xray_fixed_test")
-    else:
-     listed=run("nft","list","tables",timeout=8)
-     require(listed.returncode==0 and
-             "table inet awg_xray_fixed_test" not in listed.stdout,
-             "FAULT_TABLE_COULD_NOT_BE_INSPECTED")
    require(CURRENT.read_text().strip() in (manifest["old"],manifest["xray"]),
            "FOREIGN_SELECTED_NODE")
    # The local endpoint block is removed before provider drift is checked;

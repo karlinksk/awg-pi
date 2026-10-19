@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Rootless negative/structural checks for test-Pi automatic FIXED fault injection."""
 import importlib.util,ipaddress,os,subprocess,sys,tempfile,unittest
+from unittest import mock
 from pathlib import Path
 from unittest import mock
 ROOT=Path(__file__).resolve().parents[1]
@@ -76,8 +77,23 @@ class FixedFailoverCanaryTests(unittest.TestCase):
   spec=importlib.util.spec_from_file_location("regex_stage_unit",script)
   stage=importlib.util.module_from_spec(spec)
   spec.loader.exec_module(stage)
-  old,new=stage.inspect()
-  self.assertNotEqual(old,new)
+  # Build the PREVIOUS executor as a fixture. Hardware stages this fix,
+  # so a unit test cannot assume that live /usr/local is always the old SHA.
+  current=stage.SOURCE.read_bytes()
+  lines=current.splitlines(keepends=True)
+  ix=[n for n,line in enumerate(lines) if b"default" in line and
+      b"mihomo0" in line and b"x.strip()" in line]
+  self.assertEqual(len(ix),1)
+  lines[ix[0]]=lines[ix[0]].replace(bytes((92,115)),bytes((92,92,115)))
+  previous=b"".join(lines)
+  self.assertEqual(stage.sha(previous),stage.OLD_SHA)
+  with tempfile.TemporaryDirectory() as d:
+   old_live=Path(d)/"old-executor"
+   old_live.write_bytes(previous)
+   with mock.patch.object(stage,"LIVE",old_live):
+    old,new=stage.inspect()
+  self.assertEqual(old,previous)
+  self.assertEqual(new,current)
   self.assertEqual(len(old.splitlines()),len(new.splitlines()))
 
  def test_python_syntax(self):
