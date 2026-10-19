@@ -104,6 +104,27 @@ class LinuxBackendTests(unittest.TestCase):
                 mode.write_text("auto")
                 self.assertFalse(m.verified_degraded_fixed_baseline())
 
+    def test_degraded_fixed_accepts_only_old_mihomo_defaults_not_foreign_routes(self):
+        with tempfile.TemporaryDirectory() as dirname:
+            path=Path(dirname)/"mode"
+            path.write_text("fixed")
+            env={"AWG_XRAY_DEGRADED_FIXED":"1",
+                 "MIHOMO_XRAY_FIXED_FAILOVER_CANARY":"1"}
+            def services(unit):
+                return unit in ("ssh.service","dnsmasq.service")
+            def check(*args,**kwargs):
+                if args[-1]=="status":
+                    return "Transit guard: LOCKDOWN"+chr(10)+"Transit policy rule: INACTIVE"
+                if args[0]=="ip":
+                    return "default dev mihomo0 scope link"
+                raise AssertionError("unexpected test call")
+            with (mock.patch.object(m,"NODE_POLICY_MODE",path),
+                  mock.patch.object(m.socket,"gethostname",return_value="awg-upgrade"),
+                  mock.patch.dict(m.os.environ,env),
+                  mock.patch.object(m,"active",side_effect=services),
+                  mock.patch.object(m,"run",side_effect=check)):
+                self.assertTrue(m.verified_degraded_fixed_baseline())
+
     def test_degraded_policy_rule_restored_only_after_real_xray_tun_https(self):
         backend=m.LinuxBackend("failed-HY2","Xray-VLESS")
         backend.degraded_fixed=True

@@ -144,7 +144,7 @@ def verified_degraded_fixed_baseline():
         for table in ("100","101"):
             routes=run("ip","-4","route","show","table",table,timeout=6).strip()
             if routes and not all(re.fullmatch(
-                r"default\\s+dev\\s+mihomo0(?:\\s+.*)?",x.strip())
+                r"default\s+dev\s+mihomo0(?:\s+.*)?",x.strip())
                 for x in routes.splitlines()):
                 return False
         return True
