@@ -60,8 +60,10 @@ def main():
   if sys.argv[1]=="--check":
    show("TRIGGER","NOT_STARTED");return
   require(BASE.is_dir() and BASE.stat().st_uid==0,"BACKUP_DIRECTORY_UNSAFE")
-  folder=pathlib.Path(tempfile.mkdtemp(prefix="xray-failover-",dir=BASE))
-  folder.chmod(0o700)
+  # Match the executor allowlist exactly; an arbitrary mkdtemp suffix makes
+  # systemd launch the service but causes watchdog() to reject its snapshot.
+  folder=BASE/("xray-failover-"+str(int(time.time()))+"-"+str(os.getpid()))
+  folder.mkdir(mode=0o700)
   state=folder/"state.json"
   state.write_text(json.dumps({"state":"pending","test_only":True}))
   state.chmod(0o600)

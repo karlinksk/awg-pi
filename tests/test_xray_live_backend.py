@@ -233,6 +233,10 @@ class LinuxBackendTests(unittest.TestCase):
         script=ROOT/"scripts"/"awg-xray-testpi-watchdog-safe-trigger.py"
         source=script.read_text()
         self.assertIn('str(EXEC),"watchdog",str(folder)',source)
+        # Snapshot filename is part of the security boundary in watchdog().
+        self.assertIn('folder=BASE/("xray-failover-"+str(int(time.time()))+"-"+str(os.getpid()))',source)
+        self.assertIn('folder.mkdir(mode=0o700)',source)
+        self.assertNotIn('mkdtemp(prefix="xray-failover-"',source)
         self.assertIn('"--on-active=5s"',source)
         self.assertIn('current=="pending"',source)
         self.assertIn('"expired_before_mutation"',source)
