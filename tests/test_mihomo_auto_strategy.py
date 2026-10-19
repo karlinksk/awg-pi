@@ -69,9 +69,11 @@ esac
         p=self.call("classic");self.assertEqual(p.returncode,0,p.stderr)
         self.assertEqual(self.states(),("0","0","0","auto"))
         self.assertIn("CLASSIC_AUTO",self.call("status").stdout)
+        self.assertEqual(len(self.call("status").stdout.splitlines()),6)
         p=self.call("ready");self.assertEqual(p.returncode,0,p.stderr)
         self.assertEqual(self.states(),("1","1","1","auto"))
         self.assertIn("HOT_POOL_READY",self.call("status").stdout)
+        self.assertEqual(len(self.call("status").stdout.splitlines()),6)
     def test_fixed_chain_not_overwritten(self):
         self.mode.write_text("fixed\n");self.order.write_text("node1\nnode2\n")
         self.assertNotEqual(self.call("classic").returncode,0)

@@ -110,12 +110,12 @@ strategy_status(){
     1:active:enabled) result=HOT_POOL_READY ;;
     0:inactive:disabled) result=CLASSIC_AUTO ;;
   esac
-  printf 'MIHOMO_AUTO_STRATEGY=%s\\n' "$result"
-  printf 'MIHOMO_NODE_POLICY=%s\\n' "$policy"
-  printf 'MIHOMO_HOT_TIMER_ACTIVE=%s\\n' "$timer"
-  printf 'MIHOMO_HOT_TIMER_ENABLED=%s\\n' "$enabled"
-  printf 'MIHOMO_READY_AUTO=%s\\n' "$priority"
-  printf 'MIHOMO_SERVICE_GATE=%s\\n' "$MIHOMO_SERVICE_GATE_MODE"
+  printf 'MIHOMO_AUTO_STRATEGY=%s\n' "$result"
+  printf 'MIHOMO_NODE_POLICY=%s\n' "$policy"
+  printf 'MIHOMO_HOT_TIMER_ACTIVE=%s\n' "$timer"
+  printf 'MIHOMO_HOT_TIMER_ENABLED=%s\n' "$enabled"
+  printf 'MIHOMO_READY_AUTO=%s\n' "$priority"
+  printf 'MIHOMO_SERVICE_GATE=%s\n' "$MIHOMO_SERVICE_GATE_MODE"
 }
 strategy_restore(){
   local enabled="$1" active="$2" fail=0
