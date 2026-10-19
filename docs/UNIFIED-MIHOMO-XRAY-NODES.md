@@ -87,3 +87,31 @@ not a stable release and not a replacement for v1.3.0 release gates. The
 next stage adds the guarded live TUN switch/rollback for MANUAL, AUTO and
 FIXED across engine changes. Only after real TUN, LAN, failover and reboot
 tests may it be enabled in the main node-policy path.
+
+
+## 2026-10-19: isolated real TUN three-leg validation
+
+An independent root-owned test with no live service restart used an extra
+\`awgxtun0\` Mihomo TUN interface, separate controller and ports, temporary
+Xray on loopback, and private RAM-only credentials from the current HoneyVPN
+provider:
+
+| Selection via isolated Mihomo controller | Local proxy HTTPS | Real test TUN HTTPS |
+| --- | --- | --- |
+| Native Mihomo / Hysteria2 | OpenAI 401 | OpenAI 401; interface bytes increased |
+| Xray / VLESS Reality XHTTP | OpenAI 401 | OpenAI 401; interface bytes increased |
+| Native Mihomo / Hysteria2 restored | OpenAI 401 | OpenAI 401; interface bytes increased |
+
+The system's real \`awg-mihomo.service\`, FIXED policy, current Transit
+forwarding guards, tables 100/101, SSH/SSTP/MikroTik were untouched.
+\`awgxtun0\` was deleted on exit. This proves an independent **test TUN**,
+not a forwarded LAN-client test, nor production Mihomo engine-aware
+MANUAL/AUTO/FIXED selection.
+
+The versioned manual-only test is available after install/update as
+\`awg-mihomo-xray-isolated-tun-canary\`. It requires both an explicit
+\`--confirm-isolated\` argument and \`AWG_ISOLATED_EXPECT_HOST\` exactly
+matching the chosen test Pi. It cannot be triggered by timers or the
+automatic gateway selector. Run only on an authorized test Pi, not the
+production microSD. No browser/obsolete HTTP YouTube tests are used; actual
+YouTube24 and LAN remain separate release gates.
