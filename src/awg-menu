@@ -452,9 +452,24 @@ hot_pool_summary(){
   elif ! systemctl is-active --quiet awg-mihomo-hot-pool.timer; then
     printf 'автопроверка выключена'
   else
-    # Read-only; uses the exact two-proof READY calculation, never changes live traffic.
-    local info ready target
-    info="$(timeout 3 /usr/local/sbin/awg-mihomo-hot-pool status 2>/dev/null)" || {
+    # This installation uses the continuity union provider/pool/state for
+    # SHADOW checks. The legacy CLI defaults to an independent shadow.json
+    # (possibly missing), which can falsely report READY 0/4 in this menu.
+    # Detect continuity by its installed wrapper; keep older installs working.
+    local info ready target union_dir
+    local -a status_args=(status)
+    if [[ -x /usr/local/sbin/awg-mihomo-hot-continuity-run ]]; then
+      union_dir=/run/awg-pbr/hot-pool/continuity
+      if [[ ! -s "$union_dir/provider.yaml" || ! -s "$union_dir/pool.json" ||
+            ! -s "$union_dir/state.json" ]]; then
+        printf 'ожидает проверки'
+        return
+      fi
+      status_args=(--provider "$union_dir/provider.yaml"
+                   --pool "$union_dir/pool.json"
+                   --state "$union_dir/state.json" status)
+    fi
+    info="$(timeout 3 /usr/local/sbin/awg-mihomo-hot-pool "${status_args[@]}" 2>/dev/null)" || {
       printf 'не проверено'
       return
     }

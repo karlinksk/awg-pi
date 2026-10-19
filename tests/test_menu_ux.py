@@ -167,7 +167,8 @@ show_operation_result 7 'Проверка подписки'
 
     def test_evidence_semantics_and_russian_auto(self):
         self.assertIn('hot_pool_summary(){', SOURCE)
-        self.assertIn('awg-mihomo-hot-pool status', SOURCE)
+        self.assertIn('status_args=(--provider', SOURCE)
+        self.assertIn('"${status_args[@]}"', SOURCE)
         self.assertIn('if [[ "$transport" == "не настроен" ]]', SOURCE)
         self.assertIn('Смена узлов Mihomo управляется отдельной политикой', SOURCE)
         self.assertIn('только если профиль AWG настроен и работоспособен', SOURCE)
