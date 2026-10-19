@@ -1,0 +1,55 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+[[ ${EUID:-$(id -u)} -eq 0 ]] || exec sudo "$0" "$@"
+# Pinned official Xray-core, no arbitrary binaries.
+VERSION=26.3.27
+ARCHIVE_SHA256=4d30283ae614e3057f730f67cd088a42be6fdf91f8639d82cb69e48cde80413c
+TARGET="${AWG_XRAY_BINARY:-/usr/local/bin/awg-xray-vless-core}"
+FETCH="${AWG_XRAY_FETCH:-/usr/local/sbin/awg-fetch}"
+MODE="${AWG_XRAY_FETCH_MODE:-auto}"
+ARCHIVE_URL="https://github.com/XTLS/Xray-core/releases/download/v${VERSION}/Xray-linux-arm64-v8a.zip"
+command_mode="${1:-ensure}";shift || :
+if [[ "$command_mode" == status ]]; then
+  if [[ ! -x "$TARGET" ]]; then echo XRAY_VLESS_CORE=MISSING;exit 1;fi
+  line="$("$TARGET" version 2>/dev/null | head -n1)"
+  [[ "$line" == "Xray ${VERSION} "* ]] || { echo XRAY_VLESS_CORE=VERSION_MISMATCH;exit 1; }
+  echo "XRAY_VLESS_CORE=PINNED_VERSION_OK version=${VERSION}"
+  exit 0
+fi
+[[ "$command_mode" == ensure ]] || { echo "Usage: awg-xray-install ensure|status" >&2;exit 2; }
+(( $# == 0 )) || exit 2
+[[ "$(dpkg --print-architecture 2>/dev/null || uname -m)" == arm64 ]] ||
+  { echo "XRAY_INSTALL=ARM64_ONLY" >&2;exit 2; }
+if "$0" status >/dev/null 2>&1;then
+  echo XRAY_INSTALL=ALREADY_PRESENT
+  exit 0
+fi
+if systemctl is-active --quiet awg-xray-vless.service;then
+  echo "XRAY_INSTALL=REFUSED_RUNNING_SERVICE" >&2;exit 1
+fi
+[[ -x "$FETCH" ]] || { echo "XRAY_INSTALL=MISSING_BOOTSTRAP_FETCH" >&2;exit 1; }
+temp="$(mktemp -d)"
+trap 'rm -rf -- "$temp"' EXIT
+chmod 700 "$temp"
+"$FETCH" --mode "$MODE" --url "$ARCHIVE_URL" --output "$temp/xray.zip" -- \
+  -4 --http1.1 --tlsv1.2 -fLsS --retry 3 --connect-timeout 10 --max-time 180 \
+  -H "User-Agent: AWG-Pi-Gateway-v1.3" >/dev/null ||
+  { echo "XRAY_INSTALL=FETCH_FAILED" >&2;exit 1; }
+echo "${ARCHIVE_SHA256}  $temp/xray.zip" | sha256sum -c - >/dev/null ||
+  { echo "XRAY_INSTALL=HASH_MISMATCH" >&2;exit 1; }
+python3 -B - "$temp/xray.zip" "$temp/xray" <<'PY'
+import os,sys,zipfile
+with zipfile.ZipFile(sys.argv[1]) as z:
+    items=[x for x in z.infolist() if x.filename=="xray" and not x.is_dir()]
+    if len(items)!=1 or not 10000000<items[0].file_size<120000000:
+        raise SystemExit("XRAY_INSTALL=BAD_ASSET")
+    with z.open(items[0]) as source,open(sys.argv[2],"wb") as target:
+        import shutil;shutil.copyfileobj(source,target)
+os.chmod(sys.argv[2],0o700)
+PY
+[[ "$("$temp/xray" version | head -n1)" == "Xray ${VERSION} "* ]] ||
+  { echo "XRAY_INSTALL=VERSION_MISMATCH" >&2;exit 1; }
+install -o root -g root -m 0755 "$temp/xray" "$TARGET"
+echo "XRAY_INSTALL=PINNED_VERIFIED version=$VERSION"
+echo "XRAY_SERVICE_AUTOSTART=DISABLED"

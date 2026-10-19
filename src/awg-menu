@@ -1869,6 +1869,51 @@ mihomo_advanced_menu(){
   done
 }
 
+# Experimental, OFF-by-default VLESS/Reality bridge. This menu only stages
+# a sidecar and never modifies the live Mihomo TUN, selected node, or router.
+mihomo_xray_vless_menu(){
+  local choice index
+  while true; do
+    choice="$(dialog --backtitle "$BACKTITLE" --title "Xray VLESS (опционально)" --item-help --menu \
+      "Дополнительный VLESS Reality XHTTP/gRPC через локальный Xray SOCKS5. Нода берётся из УЖЕ загруженной подписки Mihomo. Режим экспериментальный: не участвует автоматически в FIXED/Hot Pool. Маршруты и активную ноду не меняет." 24 112 7 \
+      1 "Состояние Xray" "Версия и выбранный VLESS без раскрытия ключей." \
+      2 "Номера VLESS в подписке" "Показать индекс/протокол VLESS XHTTP/gRPC в рабочей подписке Mihomo." \
+      3 "Выбрать VLESS для Xray" "Только сохраняет отпечаток VLESS; служба не запускается." \
+      4 "Запустить локальный Xray" "Только loopback SOCKS5; не меняет TUN, DNS, ACTIVE и FIXED." \
+      5 "Остановить локальный Xray" "Останавливает экспериментальный SOCKS5; текущий TUN не меняет." \
+      0 "Назад" "Не менять настройки." 3>&1 1>&2 2>&3)" || return 0
+    case "$choice" in
+      1)
+        title="Xray VLESS"
+        capture /usr/local/sbin/awg-xray-install status || true
+        capture /usr/local/sbin/awg-xray-vless status || true
+        ;;
+      2)
+        title="VLESS-ноды текущей подписки"
+        capture /usr/local/sbin/awg-xray-vless list || true
+        ;;
+      3)
+        index="$(input "Выбор VLESS/Xray" "Введите порядковый номер VLESS из списка Xray. Номера относятся к текущей подписке; после обновления провайдера выбранный профиль повторно проверяется по точному отпечатку." "")" || continue
+        [[ "$index" =~ ^[0-9]{1,5}$ ]] || { msg "Xray VLESS" "Требуется числовой индекс."; continue; }
+        confirm "Xray VLESS" "Подготовить VLESS №$index для Xray? Это не переключает рабочий Mihomo." || continue
+        title="Подготовка Xray VLESS"
+        capture /usr/local/sbin/awg-xray-vless select "$index" || true
+        ;;
+      4)
+        confirm "Запуск Xray VLESS" "Запустить отдельную локальную Xray-службу? Только порт 127.0.0.1:17892. Это НЕ переключит Mihomo и не добавит ноду в резерв." || continue
+        title="Запуск Xray VLESS"
+        capture systemctl start awg-xray-vless.service || true
+        ;;
+      5)
+        confirm "Остановка Xray VLESS" "Остановить локальную Xray-службу? Если она вручную выбрана в Mihomo, соединение по ней прервётся. Остальной шлюз не меняем." || continue
+        title="Остановка Xray VLESS"
+        capture systemctl stop awg-xray-vless.service || true
+        ;;
+      0) return 0 ;;
+    esac
+  done
+}
+
 mihomo_menu(){
   local choice
   while true; do
@@ -1879,6 +1924,7 @@ mihomo_menu(){
       3 "Точка выхода / узел" "Показать узлы текущего источника и безопасно выбрать рабочий узел Mihomo." \
       4 "Резервирование узлов Mihomo" "MANUAL, FIXED или AUTO по проверенному пулу. При исчерпании нод возможно резервирование на AWG, если он настроен и исправен." \
       5 "Расширенные / восстановление" "Ручной канал загрузки, формат подписки, подготовленный профиль и локальное восстановление Mihomo." \
+      6 "Xray VLESS (эксперимент)" "Локальный Xray VLESS XHTTP/gRPC без изменения активной ноды." \
       0 "Назад" "Вернуться в меню VPN без изменений." 3>&1 1>&2 2>&3)" || return 0
 
     case "$choice" in
@@ -1890,6 +1936,7 @@ mihomo_menu(){
       3) mihomo_node_menu ;;
       4) mihomo_node_policy_menu ;;
       5) mihomo_advanced_menu ;;
+      6) mihomo_xray_vless_menu ;;
       0) return 0 ;;
     esac
   done

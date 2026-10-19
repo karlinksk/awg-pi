@@ -1,0 +1,32 @@
+[Unit]
+Description=AWG optional Xray VLESS/Reality outbound for Mihomo (opt-in SOCKS5)
+Wants=network-online.target
+After=network-online.target
+ConditionPathExists=/usr/local/bin/awg-xray-vless-core
+ConditionPathExists=/var/lib/awg-pbr/mihomo/providers/subscription.yaml
+ConditionPathExists=/var/lib/awg-pbr/xray-vless/selected.json
+# Never started automatically by installer, Hot Pool or failover.
+
+[Service]
+Type=simple
+ExecStartPre=/usr/local/sbin/awg-xray-vless render
+ExecStart=/usr/local/bin/awg-xray-vless-core run -c /run/awg-pbr/xray-vless/config.json
+Restart=on-failure
+RestartSec=5
+UMask=0077
+NoNewPrivileges=true
+CapabilityBoundingSet=CAP_NET_RAW
+AmbientCapabilities=CAP_NET_RAW
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictRealtime=true
+LockPersonality=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+ReadWritePaths=/run/awg-pbr
+
+[Install]
+WantedBy=multi-user.target

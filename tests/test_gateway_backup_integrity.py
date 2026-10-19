@@ -135,6 +135,12 @@ class GatewayBackupIntegrity(unittest.TestCase):
         self.assertIn('mv -fT -- "$archive_tmp" "$dir/gateway-state.tgz"', BACKUP)
         self.assertIn("GATEWAY_BACKUP=VERIFIED", BACKUP)
 
+    def test_optional_xray_adapter_in_backup_and_rollback(self):
+        for name in ("etc/systemd/system/awg-xray-vless.service","var/lib/awg-pbr/xray-vless","usr/local/bin/awg-xray-vless-core","usr/local/sbin/awg-xray-install","usr/local/sbin/awg-xray-vless"):
+            self.assertIn(name, BACKUP)
+        self.assertIn("awg-xray-vless.service", UPDATE)
+        self.assertIn("rm -rf /etc/awg-pbr /var/lib/awg-pbr/xray-vless", UPDATE)
+
     def test_explicit_backup_command_does_not_invoke_upgrade(self):
         self.assertIn("  backup)\n", UPDATE)
         self.assertIn('manual_backup="$(mktemp -d', UPDATE)

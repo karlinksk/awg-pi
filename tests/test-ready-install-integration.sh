@@ -11,6 +11,8 @@ python3 -B tests/test_mihomo_auto_strategy.py
 python3 -B tests/test_menu_auto_strategy.py
 python3 -B tests/test_installer_auto_strategy.py
 python3 -B tests/test_clean_install_deferred_profiles.py
+python3 -B tests/test_xray_vless_adapter.py
+python3 -B tests/test_mihomo_xray_bridge.py
 python3 -B -c 'import ast; from pathlib import Path; ast.parse(Path("src/awg-mihomo-ready-live-match").read_text())'
 python3 -B -c 'import yaml; assert hasattr(yaml, "safe_load")'
 
