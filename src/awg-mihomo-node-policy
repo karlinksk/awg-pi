@@ -514,14 +514,42 @@ failover_fixed(){
     # An unproven ChatGPT/YouTube candidate must never be selected when
     # service gating is required. Continue to the next explicit FIXED node.
     service_candidate_allowed "$node" || continue
-    # Cross-core failover must never be sent through the Mihomo-only selector.
-    # Until the guarded Xray transaction is certified, skip Xray candidates.
+    # Engine-aware FIXED. Xray is an opt-in, TEST-PI-ONLY transaction.
+    # The old Mihomo-only selector must never receive a Reality VLESS name.
     if [[ -e "${MIHOMO_UNIFIED_NODE_CLI:-/usr/local/sbin/awg-mihomo-unified-nodes}" ]]; then
-      [[ -x "${MIHOMO_UNIFIED_NODE_CLI:-/usr/local/sbin/awg-mihomo-unified-nodes}" ]] || { echo "MIHOMO_NODE_FAILOVER=ENGINE_RESOLVER_UNAVAILABLE" >&2; continue; }
+      [[ -x "${MIHOMO_UNIFIED_NODE_CLI:-/usr/local/sbin/awg-mihomo-unified-nodes}" ]] || { echo "MIHOMO_NODE_FAILOVER=ENGINE_RESOLVER_UNAVAILABLE" >&2; return 1; }
       local resolved engine
       resolved="$("${MIHOMO_UNIFIED_NODE_CLI:-/usr/local/sbin/awg-mihomo-unified-nodes}" resolve "$node" 2>/dev/null)" || continue
       engine="$(sed -n 's/^NODE_ENGINE=//p' <<<"$resolved")"
-      [[ "$engine" == MIHOMO ]] || { echo "MIHOMO_NODE_FAILOVER=XRAY_TRANSACTION_NOT_CERTIFIED" >&2; continue; }
+      if [[ "$engine" == XRAY ]]; then
+        if [[ "${MIHOMO_XRAY_FIXED_FAILOVER_CANARY:-0}" != 1 ]]; then
+          echo "MIHOMO_NODE_FAILOVER=XRAY_TRANSACTION_NOT_CERTIFIED" >&2
+          continue
+        fi
+        if [[ "$(hostname)" != awg-upgrade || "$(cat "$MIHOMO_AUTO_MODE_FILE" 2>/dev/null)" != transit ||
+              "$(sed -n 's/^NODE_BASIC_NETWORK=//p' <<<"$resolved")" != NETWORK_OK ]]; then
+          echo "MIHOMO_NODE_FAILOVER=XRAY_EXPERIMENTAL_PREFLIGHT_REJECTED" >&2
+          continue
+        fi
+        if [[ ! -x "${MIHOMO_XRAY_TRANSACTION_CLI:-/usr/local/sbin/awg-xray-live-backend}" ]]; then
+          echo "MIHOMO_NODE_FAILOVER=XRAY_TRANSACTION_EXECUTOR_MISSING" >&2
+          return 1
+        fi
+        # Only the independent guarded transaction can make a cross-core
+        # decision. It rechecks failed-TUN HTTPS twice under maintenance lock,
+        # validates exact provider/credentials, arms 300s watchdog BEFORE
+        # mutation, and fails Transit CLOSED if its candidate cannot commit.
+        if AWG_XRAY_EXPERIMENTAL_APPLY=TEST_PI_AUTHORIZED \
+             "${MIHOMO_XRAY_TRANSACTION_CLI:-/usr/local/sbin/awg-xray-live-backend}" apply "$current" "$node" >/dev/null; then
+          printf 'MIHOMO_NODE_FAILOVER=%s->%s\n' "$current" "$node"
+          return 0
+        fi
+        # Transaction might already have quiesced Mihomo. Never try the
+        # Mihomo-only selector or start the known-failed predecessor again.
+        echo "MIHOMO_NODE_FAILOVER=XRAY_TRANSACTION_ABORTED_REVIEW_REQUIRED" >&2
+        return 1
+      fi
+      [[ "$engine" == MIHOMO ]] || { echo "MIHOMO_NODE_FAILOVER=ENGINE_UNSUPPORTED" >&2; continue; }
     fi
     if "$MIHOMO_CONFIGURE" node select-auto "$node" >/dev/null; then
       printf 'MIHOMO_NODE_FAILOVER=%s->%s\n' "$current" "$node"
