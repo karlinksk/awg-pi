@@ -75,6 +75,32 @@ class CanarySafetyTests(unittest.TestCase):
         self.assertNotIn('node select-auto',script)
         self.assertNotIn('awg-transit-routing","disable"',script)
 
+    def test_recovered_live_yaml_may_be_equivalent_but_backup_must_be_exact(self):
+        import hashlib
+        original=b'proxies:\n  - name: HY2\n    type: hysteria2\n'
+        alternate=b'# ExecStartPre regenerated\n'+original
+        changed=b'proxies:\n  - name: Xray\n    type: socks5\n'
+        with tempfile.TemporaryDirectory() as d:
+            backup=Path(d)/"previous"
+            current=Path(d)/"current"
+            backup.write_bytes(original)
+            baseline=hashlib.sha256(original).hexdigest()
+            current.write_bytes(original)
+            self.assertEqual(canary.restored_config_proof(backup,current,baseline),"BYTE_IDENTICAL")
+            current.write_bytes(alternate)
+            self.assertEqual(canary.restored_config_proof(backup,current,baseline),"YAML_EQUIVALENT")
+            current.write_bytes(changed)
+            self.assertEqual(canary.restored_config_proof(backup,current,baseline),"CONFIG_DIFFERENT")
+            current.write_bytes(alternate)
+            self.assertEqual(canary.restored_config_proof(backup,current,"0"*64),"BACKUP_HASH_INVALID")
+
+    def test_success_requires_restored_snapshot_and_semantically_verified_config(self):
+        source=CANARY.read_text()
+        self.assertIn('verified_state.get("state")=="restored"',source)
+        self.assertIn('restored_config_proof(snap/"config.previous",CONF,before_config_hash)',source)
+        self.assertIn('"RESTORED_CONFIG_"+proof',source)
+        self.assertNotIn('"RESTORED_CONFIG_SHA_MISMATCH"',source)
+
     def test_rollback_is_independent_and_idempotent(self):
         text=ROLLBACK.read_text()
         self.assertIn('state.get("state")=="restored"',text)

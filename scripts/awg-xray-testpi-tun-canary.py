@@ -60,6 +60,27 @@ def resolve_fixed_xray(candidate, provider_sha):
  require(ix.isdigit() and int(ix)>=1,"XRAY_INDEX_INVALID")
  return ix
 
+def restored_config_proof(saved,current,baseline_sha):
+ """Verify the saved bytes first; permit only YAML-equivalent re-rendering.
+
+ Mihomo ExecStartPre can rewrite ordering/comments after a restart.
+ Neither changed VPN settings nor a corrupted snapshot may pass.
+ """
+ baseline=saved.read_bytes()
+ live=current.read_bytes()
+ if hashlib.sha256(baseline).hexdigest()!=baseline_sha:
+  return "BACKUP_HASH_INVALID"
+ if hashlib.sha256(live).hexdigest()==baseline_sha:
+  return "BYTE_IDENTICAL"
+ try:
+  a=yaml.safe_load(baseline)
+  b=yaml.safe_load(live)
+  if isinstance(a,dict) and a==b:
+   return "YAML_EQUIVALENT"
+ except (yaml.YAMLError,ValueError,UnicodeDecodeError):
+  pass
+ return "CONFIG_DIFFERENT"
+
 def mode_id():
  # Read only the root-protected mode state: awg-route CLI acquires the
  # maintenance flock and can fail when the canary itself owns that lock.
@@ -236,8 +257,12 @@ def main():
      if line.startswith("LIVE_CANARY_"):
       print("ROLLBACK_LOG="+line[:110],flush=True)
    else:
-    require(hashlib.sha256(CONF.read_bytes()).hexdigest()==before_config_hash,
-            "RESTORED_CONFIG_SHA_MISMATCH")
+    proof=restored_config_proof(snap/"config.previous",CONF,before_config_hash)
+    require(proof in ("BYTE_IDENTICAL","YAML_EQUIVALENT"),
+            "RESTORED_CONFIG_"+proof)
+    verified_state=json.loads((snap/"state.json").read_text())
+    require(verified_state.get("state")=="restored", "ROLLBACK_SNAPSHOT_NOT_RESTORED")
+    print("LIVE_CANARY_CONFIG_RESTORED="+proof,flush=True)
     require(not SELECTED.exists(),"SELECTION_NOT_CLEANED")
     require(proc(["systemctl","is-active","--quiet",XUNIT]).returncode!=0,"XRAY_NOT_STOPPED")
     require(https("mihomo0"),"RESTORED_TUN_UNHEALTHY")

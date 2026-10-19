@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Non-mutating tests for the hash-pinned test Pi unified-picker installation."""
+"""Read-only regression for preinstall and already-installed test-Pi picker."""
+import hashlib
 import importlib.util
 from pathlib import Path
 import subprocess
@@ -15,25 +16,34 @@ spec.loader.exec_module(mod)
 
 class PickerStaging(unittest.TestCase):
     def test_installed_menu_read_only_patch_preflight(self):
+        source=mod.SOURCE.read_text()
+        if mod.PICKER.exists():
+            self.assertEqual(
+                hashlib.sha256(mod.PICKER.read_bytes()).digest(),
+                hashlib.sha256(mod.SOURCE_PICKER.read_bytes()).digest())
+            installed=mod.INSTALLED.read_text()
+            for name in (*mod.SELECTED,mod.NEW_MENU):
+                self.assertEqual(mod.function(installed,name),mod.function(source,name))
+            self.assertIn('MIHOMO_NODE_PICKER=',installed)
+            return
         old,new=mod.check()
         self.assertNotEqual(old,new)
         original=old.decode()
         current=new.decode()
         self.assertIn('MIHOMO_NODE_PICKER=',current)
         self.assertEqual(current.count("mihomo_xray_vless_menu(){"),1)
-        self.assertIn("if [[ \"$engine\" == XRAY ]]; then",current)
+        self.assertIn('if [[ "$engine" == XRAY ]]; then',current)
         self.assertIn('awg-xray-vless select "$index"',current)
         self.assertIn('node select-auto "$node_name"',current)
         self.assertIn('systemctl is-active --quiet awg-xray-vless.service',current)
-        # Other critical menu sections survive the surgical patch unchanged.
         for name in ("vpn_menu","selection_policy_menu","dns_menu",
                      "operating_mode_menu","system_menu"):
             self.assertEqual(mod.function(original,name),mod.function(current,name))
 
     def test_refuse_unreviewed_old_or_replay(self):
-        new=mod.patch(mod.INSTALLED.read_text(),mod.SOURCE.read_text())
+        # A source that is already installed must not be patched a second time.
         with self.assertRaisesRegex(RuntimeError,"OLD_FUNCTION_ALREADY_NEW"):
-            mod.patch(new,mod.SOURCE.read_text())
+            mod.patch(mod.SOURCE.read_text(),mod.SOURCE.read_text())
         with self.assertRaises((RuntimeError,ValueError)):
             mod.patch("bad",mod.SOURCE.read_text())
 
@@ -47,8 +57,14 @@ class PickerStaging(unittest.TestCase):
     def test_readonly_stage_test(self):
         r=subprocess.run([sys.executable,"-B",str(P),"--check"],
                          capture_output=True,text=True,timeout=15)
-        self.assertEqual(r.returncode,0,r.stdout+r.stderr)
-        self.assertIn("XRAY_PICKER_STAGE_PREFLIGHT=PASS",r.stdout)
-        self.assertIn("XRAY_PICKER_STAGE_INSTALLED=NO",r.stdout)
+        if mod.PICKER.exists():
+            # Safe one-shot installer refuses overwrite; this is expected.
+            self.assertNotEqual(r.returncode,0)
+            self.assertIn("XRAY_PICKER_STAGE_ERROR=PRECHECK_OR_INSTALL_FAILED",r.stdout)
+        else:
+            self.assertEqual(r.returncode,0,r.stdout+r.stderr)
+            self.assertIn("XRAY_PICKER_STAGE_PREFLIGHT=PASS",r.stdout)
+            self.assertIn("XRAY_PICKER_STAGE_INSTALLED=NO",r.stdout)
 
-if __name__=="__main__":unittest.main()
+if __name__=="__main__":
+    unittest.main()
