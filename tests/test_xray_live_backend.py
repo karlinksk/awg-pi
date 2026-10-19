@@ -61,6 +61,17 @@ class LinuxBackendTests(unittest.TestCase):
                  mock.patch.object(m,"run",return_value=""):
                 self.assertFalse(m.failclosed())
             self.assertTrue(bridge.exists())
+    def test_healthy_original_tun_forbids_live_emergency_activation(self):
+        with mock.patch.object(m,"http_code",return_value=True) as check:
+            self.assertFalse(m.original_tun_unreachable_twice())
+        check.assert_called_once_with(["--interface","mihomo0","--noproxy","*"])
+        with mock.patch.object(m,"http_code",side_effect=[False,True]) as check:
+            self.assertFalse(m.original_tun_unreachable_twice())
+        self.assertEqual(check.call_count,2)
+        with mock.patch.object(m,"http_code",side_effect=[False,False]) as check:
+            self.assertTrue(m.original_tun_unreachable_twice())
+        self.assertEqual(check.call_count,2)
+
     def test_bridge_stays_ephemeral_until_live_tun_verification(self):
         import tempfile
         with tempfile.TemporaryDirectory() as dirname:

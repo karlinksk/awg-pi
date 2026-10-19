@@ -66,6 +66,12 @@ def http_code(args):
     except (OSError,RuntimeError,subprocess.TimeoutExpired):
         return False
 
+def original_tun_unreachable_twice():
+    # This emergency executor is NOT a manual healthy-node selector.
+    # Never disrupt a proven reachable incumbent just to try VLESS.
+    return (not http_code(["--interface","mihomo0","--noproxy","*"]) and
+            not http_code(["--interface","mihomo0","--noproxy","*"]))
+
 def controller():
     opener=urllib.request.build_opener(urllib.request.ProxyHandler({}))
     with opener.open("http://127.0.0.1:9090/proxies/"+GROUP,timeout=3) as r:
@@ -350,6 +356,8 @@ def cli():
     loader.exec_module(module)
     with Path("/run/awg-maintenance.lock").open("a") as lock:
         fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
+        if not original_tun_unreachable_twice():
+            raise SystemExit("XRAY_TRANSACTION_ABORT=ORIGINAL_TUN_STILL_REACHABLE")
         receipt=module.activate(sys.argv[2],sys.argv[3],LinuxBackend(sys.argv[2],sys.argv[3]))
     print("XRAY_TRANSACTION_RUNTIME_TUN_VERIFIED="+str(receipt.tun_verified).upper())
     print("XRAY_TRANSACTION_REBOOT_TESTED=NO")
