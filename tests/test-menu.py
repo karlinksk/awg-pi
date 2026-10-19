@@ -269,9 +269,9 @@ assert 'items+=("$ui_idx" "$display_name — $description"' in menu
 assert 'capture "$MIHOMO_POOL" list "$target" --all --ignore-policy' not in menu
 assert 'mihomo_pool_results_dialog "$target"' in menu
 assert 'mihomo_pool_results_dialog live' in menu
-assert 'Причина:' in menu
+assert 'Причина:' in Path('src/awg-mihomo-results-view.py').read_text()
 assert 'Состояние' in menu
-assert 'Задержка' in menu
+assert 'Задержка' in Path('src/awg-mihomo-results-view.py').read_text()
 assert '"$MIHOMO_NODE_POLICY" manual-selection preview "$node_name"' in menu
 assert '"$MIHOMO_NODE_POLICY" manual-selection apply "$node_name"' in menu
 assert 'После успешной проверки выбранный узел автоматически станет первым элементом цепочки' in menu

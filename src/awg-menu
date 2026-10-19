@@ -74,6 +74,8 @@ MIHOMO_INSTALLER=/usr/local/sbin/awg-mihomo-install
 MIHOMO_ENV_FILE=/etc/awg-pbr/transports/mihomo/provider.env
 MIHOMO_NODE_POLICY=/usr/local/sbin/awg-mihomo-node-policy
 MIHOMO_POOL=/usr/local/sbin/awg-mihomo-pool
+MIHOMO_RESULTS_VIEW=/usr/local/sbin/awg-mihomo-results-view
+MIHOMO_UNIFIED=/usr/local/sbin/awg-mihomo-unified-nodes
 AWG_FIRST_RUN=/usr/local/sbin/awg-first-run
 AWG_SELECTION=/usr/local/sbin/awg-selection
 AWG_UPDATE=/usr/local/sbin/awg-update
@@ -889,53 +891,16 @@ mihomo_pool_results_dialog(){
 
   if ! "$MIHOMO_POOL" list "$target" --all --ignore-policy --format json >"$json_tmp" 2>"$TMP"; then
     rm -f "$json_tmp"
-    dialog --backtitle "$BACKTITLE" --title "Все результаты проверки Mihomo" --textbox "$TMP" 30 110
+    dialog --backtitle "$BACKTITLE" --title "Результаты Mihomo / Xray" --textbox "$TMP" 30 110
     return 1
   fi
 
-  python3 - "$json_tmp" >"$TMP" <<'PY'
-import json
-import sys
-
-path = sys.argv[1]
-with open(path, encoding="utf-8") as f:
-    nodes = json.load(f)
-
-def display_name(value):
-    value = str(value or "")
-    head, sep, tail = value.partition(" ")
-    if sep and head and not any(ch.isalnum() for ch in head):
-        return tail
-    return value
-
-def clip(value, width):
-    value = str(value or "")
-    if len(value) <= width:
-        return value
-    if width <= 1:
-        return value[:width]
-    return value[: width - 1] + "…"
-
-print(f"{'№':>3}  {'Узел':<22} {'Протокол':<9} {'Сервер':<31} {'Состояние':<12} {'Страна':<6} {'Задержка':>9}")
-print("-" * 101)
-
-for i, node in enumerate(nodes, 1):
-    name = clip(display_name(node.get("name")), 22)
-    proto = clip(node.get("type"), 9)
-    endpoint = clip(f"{node.get('server', '')}:{node.get('port', '')}", 31)
-    healthy = bool(node.get("healthy"))
-    state = "работает" if healthy else "недоступен"
-    country = node.get("country_code") or "—"
-    delay = f"{node.get('delay_ms')} мс" if isinstance(node.get("delay_ms"), int) else "—"
-    print(f"{i:>3}  {name:<22} {proto:<9} {endpoint:<31} {state:<12} {country:<6} {delay:>9}")
-    if not healthy:
-        reason = node.get("error") or node.get("geo_error") or ""
-        if reason:
-            print(f"     Причина: {reason}")
-PY
+  if ! "$MIHOMO_RESULTS_VIEW" "$json_tmp" --target "$target" >"$TMP" 2>/dev/null; then
+    printf "%s\n" "Экран результатов Mihomo/Xray недоступен. Проверьте установку awg-mihomo-results-view." >"$TMP"
+  fi
   rm -f "$json_tmp"
 
-  dialog --backtitle "$BACKTITLE" --title "Все результаты проверки Mihomo" --textbox "$TMP" 32 112
+  dialog --backtitle "$BACKTITLE" --title "Результаты Mihomo / Xray" --textbox "$TMP" 32 112
 }
 
 select_tsv_node_dialog(){
@@ -1099,9 +1064,9 @@ mihomo_pool_pick(){
       1 "Выбрать работоспособный узел [$region_label]" "Открыть список проверенных узлов текущего протокола; внутри доступен поиск по имени, адресу и стране точки выхода." \
       2 "Фильтр: Только Европа [$region_label]" "Переключить между всеми работоспособными узлами и только подтверждёнными европейскими точками выхода." \
       3 "Протокол [$protocol_label]" "Выбрать: все протоколы, VLESS, Trojan, Hysteria2, Shadowsocks или VMess. Это также ограничивает следующий health-scan и AUTO." \
-      4 "Обновить проверку сейчас" "Повторно проверить только узлы выбранного протокола через отдельный экземпляр Mihomo, не затрагивая рабочий транспорт." \
+      4 "Обновить проверку сейчас" "Проверить Mihomo; на live дополнительно Xray VLESS HTTPS в RAM. Рабочий VPN не переключается." \
       5 "Статистика пула узлов" "Показать протокол, состояние пула, количество узлов, работоспособных и европейских точек, а также возраст проверки." \
-      6 "Показать все результаты" "Диагностика: показать результаты для текущего протокола, включая недоступные узлы и причины, ничего не применяя." \
+      6 "Показать все результаты" "Михомо и Xray раздельно: HTTPS Xray не означает READY/TUN/LAN; просмотр ничего не меняет." \
       0 "Назад" "Вернуться без выбора узла." 3>&1 1>&2 2>&3)" || return 1
     case "$choice" in
       1)
@@ -1135,7 +1100,14 @@ mihomo_pool_pick(){
         ;;
       4)
         title="Проверка узлов Mihomo"
-        capture "$MIHOMO_POOL" scan "$target" --geo-if-policy || true
+        if capture "$MIHOMO_POOL" scan "$target" --geo-if-policy; then
+          # An explicit user-requested refresh also checks optional Xray
+          # Reality nodes, in a bounded isolated RAM proxy (never via READY).
+          # Candidate-provider pools are deliberately not mixed with live.
+          if [[ "$target" == live && -x "$MIHOMO_UNIFIED" ]]; then
+            capture "$MIHOMO_UNIFIED" probe-vless-all || true
+          fi
+        fi
         ;;
       5)
         mihomo_pool_status_dialog "$target" || true

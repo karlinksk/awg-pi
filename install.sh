@@ -821,6 +821,8 @@ install_project_helper src/awg-xray-install /usr/local/sbin/awg-xray-install
 install_project_python_helper src/awg-xray-vless.py /usr/local/sbin/awg-xray-vless
 # Unified read-only inventory and network-only Xray checks (no Hot Pool dependency).
 install_project_python_helper src/awg-mihomo-unified-nodes.py /usr/local/sbin/awg-mihomo-unified-nodes
+# UI displays engine-specific Mihomo and Xray basic HTTPS evidence without READY claims.
+install_project_python_helper src/awg-mihomo-results-view.py /usr/local/sbin/awg-mihomo-results-view
 # Guarded cross-core runtime canary: install files only. Never enable AUTO,
 # start a sidecar or alter the selected live node during clean installation.
 install_project_python_helper src/awg-xray-activation-transaction.py /usr/local/sbin/awg-xray-activation-transaction
