@@ -819,5 +819,90 @@ class HotPoolTests(unittest.TestCase):
         self.assertGreaterEqual(discovery_count,2)
         self.assertGreaterEqual(peak_ready,4)
 
+
+    @staticmethod
+    def _adaptive_history(proto, ids, now, *, passed=False):
+        return [{'at': now - 600,
+                 'identity': hashlib.sha256(name.encode()).hexdigest(),
+                 'protocol': proto, 'eligible': passed}
+                for name in ids]
+
+    def _adaptive_nodes(self):
+        return [
+            dict(name=f'vless-{i}', type='vless', server=f'198.51.100.{i+1}',
+                 port=10000+i, healthy=True, delay_ms=50+i, index=i)
+            for i in range(4)
+        ] + [
+            dict(name=f'ss-{i}', type='ss', server=f'198.51.100.{i+1}',
+                 port=10000+i, healthy=True, delay_ms=90+i, index=i)
+            for i in range(4,8)
+        ]
+
+    def test_adaptive_drops_new_vless_behind_untried_shadowsocks(self):
+        self.state['geo_history'] = self._adaptive_history(
+            'vless', [f'failed-{i}' for i in range(5)], self.now)
+        candidates=hot.shortlist(self._adaptive_nodes(),self.state,'',now=self.now)
+        plan=hot.select_probes(candidates,self.state,self.now)
+        self.assertEqual(len(plan),2)
+        self.assertEqual([n['type'] for _,n in plan],['ss','ss'])
+        self.assertEqual([kind for kind,_ in plan],['DISCOVER','DISCOVER'])
+
+    def test_adaptive_no_history_follows_old_latency_order(self):
+        candidates=hot.shortlist(self._adaptive_nodes(),self.state,'',now=self.now)
+        plan=hot.select_probes(candidates,self.state,self.now)
+        self.assertEqual([n['type'] for _,n in plan],['vless','vless'])
+
+    def test_adaptive_one_bad_identity_not_counted_multiple_times(self):
+        self.state['geo_history']=self._adaptive_history('vless',['single']*40,self.now)
+        self.assertEqual(hot.protocol_discovery_penalties(self.state,self.now),set())
+
+    def test_adaptive_positive_identity_clears_penalty(self):
+        self.state['geo_history']=self._adaptive_history(
+            'vless',[f'failed-{i}' for i in range(5)],self.now)
+        self.state['geo_history']+=self._adaptive_history(
+            'vless',['worked'],self.now,passed=True)
+        self.assertEqual(hot.protocol_discovery_penalties(self.state,self.now),set())
+
+    def test_adaptive_old_negative_expires_45min_after_last_check(self):
+        self.state['geo_history']=self._adaptive_history(
+            'vless',[f'failed-{i}' for i in range(5)],self.now)
+        self.assertEqual(hot.protocol_discovery_penalties(self.state,self.now+46*60),set())
+
+    def test_adaptive_malformed_history_is_ignored(self):
+        self.state['geo_history']=[None,{},dict(at=self.now,identity='broken',
+               protocol='vless',eligible=False),dict(at='bad',
+               identity='a'*64,protocol='vless',eligible=False)]
+        self.assertEqual(hot.protocol_discovery_penalties(self.state,self.now),set())
+
+    def test_adaptive_first_pass_vless_still_gets_confirmation(self):
+        ns=self._adaptive_nodes()
+        self.state['geo_history']=self._adaptive_history(
+            'vless',[f'failed-{i}' for i in range(5)],self.now)
+        hot.record_scan(self.state,ns[0],True,self.now-1200)
+        plan=hot.select_probes(hot.shortlist(ns,self.state,'',now=self.now),
+                               self.state,self.now)
+        self.assertEqual(plan[0][1]['name'],ns[0]['name'])
+
+    def test_adaptive_only_vless_remains_testable(self):
+        ns=self._adaptive_nodes()[:4]
+        self.state['geo_history']=self._adaptive_history(
+            'vless',[f'failed-{i}' for i in range(5)],self.now)
+        plan=hot.select_probes(hot.shortlist(ns,self.state,'',now=self.now),
+                               self.state,self.now)
+        self.assertEqual(len(plan),2)
+        self.assertEqual([n['type'] for _,n in plan],['vless','vless'])
+
+    def test_adaptive_urgent_ready_renewal_has_priority(self):
+        ns=self._adaptive_nodes()+[self.nodes[0]]
+        self.state['geo_history']=self._adaptive_history(
+            'vless',[f'failed-{i}' for i in range(5)],self.now)
+        ready=self.nodes[0]
+        hot.record_scan(self.state,ready,True,self.now-2700)
+        hot.record_scan(self.state,ready,True,self.now-1500)
+        plan=hot.select_probes(hot.shortlist(ns,self.state,'',now=self.now),
+                               self.state,self.now)
+        self.assertEqual((plan[0][0],plan[0][1]['name']),('RENEW',ready['name']))
+
+
 if __name__ == '__main__':
     unittest.main()

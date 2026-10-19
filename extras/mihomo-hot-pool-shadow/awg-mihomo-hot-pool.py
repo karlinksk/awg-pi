@@ -551,8 +551,44 @@ def probe_order(nodes: list[dict], state: dict, now: int) -> list[dict]:
     return sorted(nodes, key=priority)
 
 
+def protocol_discovery_penalties(state: dict, now: int) -> set[str]:
+    """Temporarily prefer productive protocols for *new* candidates only.
+
+    Require >=4 different identities with recent negative shadow eligibility
+    and zero positive proofs in that protocol, not four retries of one server.
+    A 45-minute gap removes the penalty automatically, so a changing VLESS
+    subscription receives another opportunity without any extra timer or state.
+    READY renewal, first-PASS confirmation, SUSPECT recovery, and all network
+    eligibility rules remain untouched.
+    """
+    latest: dict[str, dict[str, tuple[int, bool]]] = {}
+    for sample in state.get('geo_history', []):
+        if not isinstance(sample, dict):
+            continue
+        at = sample.get('at')
+        ident = sample.get('identity')
+        proto = sample.get('protocol')
+        passed = sample.get('eligible')
+        if (type(at) is not int or not 0 <= now - at <= 4 * 3600
+                or not isinstance(ident, str)
+                or not re.fullmatch(r'[0-9a-f]{64}', ident)
+                or proto not in ('ss', 'vless', 'trojan', 'hysteria2', 'vmess')
+                or type(passed) is not bool):
+            continue
+        rows = latest.setdefault(proto, {})
+        if ident not in rows or at >= rows[ident][0]:
+            rows[ident] = (at, passed)
+    return {
+        proto for proto, rows in latest.items()
+        if len(rows) >= 4
+        and not any(passed for _, passed in rows.values())
+        and now - max(at for at, _ in rows.values()) < 45 * 60
+    }
+
+
 def discovery_priority(node: dict, state: dict, now: int,
-                       ready_protocols: dict[str, int]) -> tuple[int, int, int, int]:
+                       ready_protocols: dict[str, int],
+                       deprioritized: set[str] | None = None) -> tuple[int, int, int, int, int]:
     """Prefer missing transports while giving previous PASS a fast second test.
 
     Soft diversity target: 2 VLESS, 1 Shadowsocks and 1 Trojan/Hysteria2.
@@ -576,7 +612,10 @@ def discovery_priority(node: dict, state: dict, now: int,
         1 if not record else 2)
     # Confirm one fresh PASS before exploring an unfamiliar protocol: a
     # second PASS 10+ minutes apart is the only path to a new READY.
-    return (phase, diversity, int(record.get('last_checked', 0)), node['delay_ms'])
+    # Protocol evidence only breaks ties within a qualification phase.
+    # Never demote a candidate with a fresh first PASS.
+    penalty = int(phase != 0 and protocol in (deprioritized or set()))
+    return (phase, penalty, diversity, int(record.get('last_checked', 0)), node['delay_ms'])
 
 
 def select_probes(nodes: list[dict], state: dict, now: int) -> list[tuple[str, dict]]:
@@ -607,7 +646,9 @@ def select_probes(nodes: list[dict], state: dict, now: int) -> list[tuple[str, d
     explore = [n for n in nodes if not is_ready(n, state, now)
                and state['checks'].get(identity(n), {}).get('last_result') != 'SUSPECT'
                and eligible_for_probe(n, state, now)] if discovering else []
-    explore.sort(key=lambda n: discovery_priority(n, state, now, ready_counts))
+    deprioritized = protocol_discovery_penalties(state, now)
+    explore.sort(key=lambda n: discovery_priority(
+        n, state, now, ready_counts, deprioritized))
 
     plan: list[tuple[str, dict]] = []
     # Deadline-protect any READY whose oldest proof might expire before our
