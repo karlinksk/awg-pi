@@ -35,6 +35,10 @@ class CanaryTrace(unittest.TestCase):
         self.assertIn('CANARY_TMPFS_EXEC=PASS', S)
         self.assertLess(S.index('CANARY_TMPFS_EXEC=PASS'),
                         S.index('systemd-run --quiet --collect'))
+        self.assertIn('NODE_AUTO_PRECHECK=PASS', S)
+        self.assertIn('die NODE_AUTO_PRECHECK_NOT_ENABLED', S)
+        self.assertLess(S.index('NODE_AUTO_PRECHECK=PASS'),
+                        S.index('systemd-run --quiet --collect'))
 
     def test_watchdog_armed_before_failure(self):
         self.assertLess(S.index("systemd-run --quiet --collect"),
