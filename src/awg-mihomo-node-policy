@@ -3,6 +3,19 @@ set -Eeuo pipefail
 
 [[ ${EUID:-$(id -u)} -eq 0 ]] || exec sudo "$0" "$@"
 
+# Persistent explicit user opt-in. Each invocation reloads this file; the monitor
+# invokes node-policy afresh, so no transient systemd environment required.
+MIHOMO_XRAY_AUTO_MODE_FILE="${MIHOMO_XRAY_AUTO_MODE_FILE:-/etc/awg-pbr/transports/mihomo/xray-auto.mode}"
+_xray_auto_mode="$(cat "$MIHOMO_XRAY_AUTO_MODE_FILE" 2>/dev/null || echo 0)"
+[[ "$_xray_auto_mode" == 0 || "$_xray_auto_mode" == 1 ]] || { echo XRAY_AUTO_INVALID_STATE >&2; exit 2; }
+if [[ "$_xray_auto_mode" == 1 ]]; then
+  MIHOMO_XRAY_AUTO_FAILOVER_CANARY=1
+  MIHOMO_XRAY_SELECTIVE_CANARY=1
+elif [[ -z "${MIHOMO_XRAY_AUTO_FAILOVER_CANARY+x}" ]]; then
+  MIHOMO_XRAY_AUTO_FAILOVER_CANARY=0
+fi
+export MIHOMO_XRAY_AUTO_FAILOVER_CANARY MIHOMO_XRAY_SELECTIVE_CANARY
+
 MIHOMO_NODE_POLICY_MODE_FILE="${MIHOMO_NODE_POLICY_MODE_FILE:-/etc/awg-pbr/transports/mihomo/node-policy.mode}"
 MIHOMO_NODE_POLICY_ORDER_FILE="${MIHOMO_NODE_POLICY_ORDER_FILE:-/etc/awg-pbr/transports/mihomo/node-policy.nodes}"
 MIHOMO_NODE_NAME_FILE="${MIHOMO_NODE_NAME_FILE:-/etc/awg-pbr/transports/mihomo/node-name}"
@@ -698,7 +711,7 @@ auto_xray_candidate(){
   operating_mode="$(cat "$MIHOMO_AUTO_MODE_FILE" 2>/dev/null || true)"
   if [[ "${MIHOMO_STANDBY_REPAIR:-0}" == 1 ||
         "$MIHOMO_READY_AUTO_CANARY" != 0 ||
-        "$(hostname)" != awg-upgrade ||
+        "$_xray_auto_mode" != 1 ||
         ( "$operating_mode" != transit && "$operating_mode" != selective ) ||
         ( "$operating_mode" == selective && "${MIHOMO_XRAY_SELECTIVE_CANARY:-0}" != 1 ) ||
         "$(sed -n 's/^NODE_BASIC_NETWORK=//p' <<<"$resolved")" != NETWORK_OK ]]; then
