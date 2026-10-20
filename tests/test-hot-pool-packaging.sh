@@ -54,11 +54,12 @@ assert 'ProtectSystem=strict' in unit and 'NoNewPrivileges=true' in unit
 assert 'Unit=awg-mihomo-hot-pool.service' in timer
 assert 'systemctl enable awg-mihomo-hot-pool.timer' not in ins
 assert 'systemctl start awg-mihomo-hot-pool.service' not in ins
-# On empty fresh-install the timer is armed but waits for a provider;
-# operator-set disabled state is preserved on an upgrade.
+# On an empty fresh install the timer must remain disabled and inactive;
+# the operator's existing enabled/disabled state is preserved on upgrade.
 assert 'No VPN onboarding during clean install' in ins
-assert 'Не удалось подготовить Hot Pool timer до ввода подписки' in ins
-assert 'systemctl enable --now awg-mihomo-hot-pool.timer' in ins
+assert 'Не удалось выключить Hot Pool timer после чистой установки' in ins
+assert 'systemctl disable --now awg-mihomo-hot-pool.timer' in ins
+assert 'systemctl enable --now awg-mihomo-hot-pool.timer' not in ins
 assert 'UPGRADE_HOT_TIMER_ENABLEMENT=' in ins
 assert 'UPGRADE_HOT_TIMER_RUNTIME=' in ins
 assert 'if [[ "$UPGRADE_HOT_TIMER_ENABLEMENT" != absent ]]; then' in ins
