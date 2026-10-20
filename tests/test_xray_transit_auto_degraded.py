@@ -25,7 +25,7 @@ class TransitDegraded(unittest.TestCase):
                 if args[0]=="ip":return "default dev mihomo0 scope link"
                 raise AssertionError(args)
             services={"ssh.service","dnsmasq.service","awg-pbr-health.service","awg-quick@awg0.service"}
-            with mock.patch.object(m,"MODE",mode),mock.patch.object(m,"NODE_POLICY_MODE",policy),mock.patch.object(m.socket,"gethostname",return_value="awg-upgrade"),mock.patch.dict(m.os.environ,{"MIHOMO_XRAY_AUTO_FAILOVER_CANARY":"1"}),mock.patch.object(m,"run",side_effect=run),mock.patch.object(m,"active",side_effect=lambda u:u in services):
+            with mock.patch.object(m,"MODE",mode),mock.patch.object(m,"NODE_POLICY_MODE",policy),mock.patch.object(m.socket,"gethostname",return_value="awg-upgrade"),mock.patch.object(m,"xray_auto_authorized",return_value=True),mock.patch.dict(m.os.environ,{"MIHOMO_XRAY_AUTO_FAILOVER_CANARY":"1"}),mock.patch.object(m,"run",side_effect=run),mock.patch.object(m,"active",side_effect=lambda u:u in services):
                 self.assertTrue(m.verified_degraded_auto_transit_baseline())
                 for changed in ("Transit guard: UNSAFE","Transit policy rule: ACTIVE"):
                     with self.subTest(changed=changed),mock.patch.object(m,"run",side_effect=lambda *a,**k: changed if a[-1]=="status" else run(*a,**k)):
