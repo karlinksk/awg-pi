@@ -385,7 +385,30 @@ class LinuxBackend:
         run("systemctl","start",XRAY,timeout=25)
         if not active(XRAY):raise RuntimeError("XRAY_SERVICE_NOT_ACTIVE")
     def check_local_https(self):
-        return http_code(["--socks5-hostname","127.0.0.1:17892","--noproxy",""])
+        """Bounded Xray SOCKS5 warmup followed by exact OpenAI HTTPS 401 proof.
+
+        systemd Type=simple returns "active" before the Xray TCP listener
+        necessarily binds. A single immediate curl used to abort within 1 ms
+        of core startup. Wait for localhost listen (not a PASS), then allow
+        up to three real outbound TLS checks. Never accept a bare socket
+        connection, HTTP 403/5xx, or a stopped/restarted Xray as ready.
+        """
+        deadline=time.monotonic()+12
+        while time.monotonic()<deadline:
+            if not active(XRAY):return False
+            try:
+                with socket.create_connection(("127.0.0.1",17892),timeout=.5):
+                    break
+            except OSError:
+                time.sleep(.25)
+        else:
+            return False
+        for attempt in range(3):
+            if not active(XRAY):return False
+            if http_code(["--socks5-hostname","127.0.0.1:17892","--noproxy",""]):
+                return True
+            if attempt<2:time.sleep(1)
+        return False
     def stage_mihomo_bridge(self):
         if not self.check_provider_unchanged():raise RuntimeError("PROVIDER_ROTATED")
         # Always validate exactly the versioned renderer that the live unit uses.
