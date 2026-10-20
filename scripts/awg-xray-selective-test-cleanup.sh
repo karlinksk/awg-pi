@@ -76,8 +76,7 @@ done
 for svc in awg-quick@awg0 awg-selection-monitor awg-pbr-health ssh dnsmasq;do
   up "$svc" || die "SERVICE_DOWN_AFTER_$svc"
 done
-[[ "$(sha256sum "$CURRENT" | cut -d' ' -f1)" ==
-   "$(sha256sum "$OLD_NODE" | cut -d' ' -f1)" ]] || die NODE_SELECTION_NOT_RESTORED
+[[ "$(sha256sum "$CURRENT" | cut -d' ' -f1)" == "$(sha256sum "$OLD_NODE" | cut -d' ' -f1)" ]] || die NODE_SELECTION_NOT_RESTORED
 echo XRAY_TEST_CLEANUP=PASS
 echo XRAY_SERVICE=DISABLED_INACTIVE
 echo NATIVE_NODE_SELECTION=RESTORED_NOT_LIVE_TESTED
