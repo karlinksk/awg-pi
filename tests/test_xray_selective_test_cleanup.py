@@ -39,7 +39,7 @@ class SelectiveTestCleanup(unittest.TestCase):
             RUN)
         self.assertIn('XRAY_TEST_RECOVER_ACTIVE=1 "$dir/test-cleanup" "$dir"',RUN)
         self.assertLess(RUN.index('"$dir/test-cleanup" "$dir"'),
-                        RUN.index("systemctl restart awg-selection-monitor\\nRECOVER"))
+                        RUN.index("systemctl restart awg-selection-monitor"))
         self.assertIn('EXTERNAL_TEST_STILL_ACTIVE',CLEAN)
         self.assertIn('XRAY_TEST_RECOVER_ACTIVE',CLEAN)
         self.assertIn('EXPERIMENT_WATCHDOG_STILL_ACTIVE',CLEAN)
