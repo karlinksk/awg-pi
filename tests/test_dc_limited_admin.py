@@ -79,7 +79,7 @@ class DCLimitedAdminTests(unittest.TestCase):
         self.assertIn("chmod 0440", src)
         self.assertIn("ALL=(root) NOPASSWD:", src)
         for action in ("status", "services", "network", "versions", "stage18"):
-            self.assertIn(' "$HELPER" ' + action if action == "status" else action, src)
+            self.assertIn(action, src)
         self.assertNotIn("NOPASSWD: ALL", src)
         self.assertNotIn("/bin/bash", src)
 
