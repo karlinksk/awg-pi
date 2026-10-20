@@ -780,7 +780,7 @@ failover_auto(){
       candidate="$("$MIHOMO_HOT_POOL_CLI" "${hot_args[@]}" 2>/dev/null)" || candidate=""
       [[ -z "$candidate" ]] || from_ready=1
     fi
-    if [[ -z "$candidate" ]]; then
+    if [[ -z "$candidate" && "$candidate_visits" -lt "$max_checks" ]]; then
       candidate="$("$MIHOMO_POOL_CLI" "${best_args[@]}" 2>/dev/null)" || candidate=""
     fi
     if [[ -z "$candidate" && "${MIHOMO_XRAY_AUTO_FAILOVER_CANARY:-0}" == 1 &&
