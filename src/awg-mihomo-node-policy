@@ -31,6 +31,7 @@ MIHOMO_READY_UNION_STATE="${MIHOMO_READY_UNION_STATE:-/run/awg-pbr/hot-pool/cont
 MIHOMO_AUTO_MODE_FILE="${MIHOMO_AUTO_MODE_FILE:-/etc/awg-pbr/mode}"
 MIHOMO_AUTO_TRANSIT_ROUTING="${MIHOMO_AUTO_TRANSIT_ROUTING:-/usr/local/sbin/awg-transit-routing}"
 MIHOMO_AUTO_FAILOPEN="${MIHOMO_AUTO_FAILOPEN:-/usr/local/sbin/awg-pbr-failopen}"
+MIHOMO_AUTO_VPN_ENABLED_FILE="${MIHOMO_AUTO_VPN_ENABLED_FILE:-/etc/awg-pbr/vpn-enabled}"
 MIHOMO_AUTO_SYSTEMCTL="${MIHOMO_AUTO_SYSTEMCTL:-systemctl}"
 MIHOMO_AUTO_SERVICE="${MIHOMO_AUTO_SERVICE:-awg-mihomo.service}"
 MIHOMO_STRATEGY_SYSTEMCTL="${MIHOMO_STRATEGY_SYSTEMCTL:-systemctl}"
@@ -720,7 +721,7 @@ auto_xray_candidate(){
        ! "$MIHOMO_AUTO_SYSTEMCTL" is-active --quiet ssh.service ||
        ! "$MIHOMO_AUTO_SYSTEMCTL" is-active --quiet dnsmasq.service ||
        ! "$MIHOMO_AUTO_SYSTEMCTL" is-active --quiet awg-quick@awg0.service ||
-       [[ "$(cat /etc/awg-pbr/vpn-enabled 2>/dev/null)" != 1 ]]; then
+       [[ "$(cat "$MIHOMO_AUTO_VPN_ENABLED_FILE" 2>/dev/null)" != 1 ]]; then
       echo 'MIHOMO_NODE_FAILOVER=XRAY_SELECTIVE_BASELINE_UNSAFE_AWG_FALLBACK' >&2
       return 1
     fi
