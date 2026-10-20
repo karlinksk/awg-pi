@@ -199,6 +199,35 @@ def verified_degraded_fixed_baseline():
     except (OSError,RuntimeError,subprocess.TimeoutExpired):
         return False
 
+def verified_degraded_auto_transit_baseline():
+    """AUTO Transit candidate after native exhaustion: protected FAIL-CLOSED only."""
+    if (socket.gethostname()!="awg-upgrade" or
+        MODE.read_text().strip()!="transit" or
+        NODE_POLICY_MODE.read_text().strip()!="auto" or
+        os.environ.get("MIHOMO_XRAY_AUTO_FAILOVER_CANARY")!="1" or
+        active(MIHOMO) or active(XRAY) or
+        not all(active(u) for u in
+                    ("ssh.service","dnsmasq.service","awg-pbr-health.service",
+                     "awg-quick@awg0.service"))):
+        return False
+    try:
+        if (run("/usr/local/sbin/awg-transport","get",timeout=10)!="mihomo" or
+            run("/usr/local/sbin/awg-transport","check","awg",timeout=12)!="healthy"):
+            return False
+        status=run("/usr/local/sbin/awg-transit-routing","status",timeout=10).splitlines()
+        if ("Transit policy rule: INACTIVE" not in status or
+            not any(x in status for x in ("Transit guard: SAFE","Transit guard: LOCKDOWN"))):
+            return False
+        for table in ("100","101"):
+            routes=run("ip","-4","route","show","table",table,timeout=6)
+            if routes.strip() and not all(re.fullmatch(
+                    r"default\s+dev\s+mihomo0(?:\s+.*)?",line.strip())
+                    for line in routes.splitlines()):
+                return False
+        return True
+    except (OSError,RuntimeError,subprocess.TimeoutExpired):
+        return False
+
 def verified_selective_route_ownership():
     """No AWG/foreign route may be replaced by a Selective Xray recovery."""
     try:
@@ -307,6 +336,9 @@ class LinuxBackend:
         if active(MIHOMO) and routes_ok():
             self.degraded_fixed=False
         elif verified_degraded_fixed_baseline():
+            self.degraded_fixed=True
+        elif operating_mode=="transit" and verified_degraded_auto_transit_baseline():
+            # Same verified inactive-rule Transit guard; never bypass it.
             self.degraded_fixed=True
         elif operating_mode=="selective" and verified_degraded_selective_baseline():
             self.degraded_selective=True
