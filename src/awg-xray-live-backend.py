@@ -36,6 +36,7 @@ MIHOMO="awg-mihomo.service"
 GROUP="AWG-MIHOMO"
 LOCAL="AWG-XRAY-VLESS-LOCAL"
 EXECUTOR=Path("/usr/local/sbin/awg-xray-live-backend")
+MAINTENANCE_LOCK=Path("/run/awg-maintenance.lock")
 
 def run(*args,timeout=20,env=None):
     p=subprocess.run(args,stdin=subprocess.DEVNULL,stdout=subprocess.PIPE,
@@ -460,42 +461,46 @@ def watchdog(path):
     if path.parent!=BASE or not re.fullmatch(r"xray-failover-[0-9]+-[0-9]+",path.name):
         raise RuntimeError("INVALID_SNAPSHOT")
     if path.is_symlink():raise RuntimeError("SYMLINK_SNAPSHOT")
-    with (path/"watchdog-state.lock").open("a") as lock:
-        fcntl.flock(lock,fcntl.LOCK_EX)
-        state=json.loads((path/"state.json").read_text())
-        if state.get("state") in ("cancelled","expired_before_mutation","quiesced"):
-            return
-        if state.get("state")=="pending":
-            state["state"]="expired_before_mutation"
-            write_atomic(path/"state.json",json.dumps(state).encode())
-            return  # no Xray/route change yet; never stop a healthy Mihomo
-        if state.get("state") not in ("armed","committed"):
-            raise RuntimeError("UNEXPECTED_WATCHDOG_STATE")
-    if state.get("state")=="committed":
-        # A verified committed Xray-backed TUN is still usable. A foreign
-        # active AWG or stale bridge is NOT healthy Xray evidence.
-        try:
-            operating_mode=MODE.read_text().strip()
-            if operating_mode=="transit":
-                status=run("/usr/local/sbin/awg-transit-routing","status",timeout=10)
-                good=("Transit guard: SAFE" in status and
-                      "Transit policy rule: ACTIVE" in status and
-                      "Transit VPN table: READY" in status)
-            elif operating_mode=="selective":
-                good=(run("/usr/local/sbin/awg-transport","get",timeout=10)=="mihomo"
-                      and active("ssh.service") and active("dnsmasq.service")
-                      and active("awg-pbr-health.service"))
-                if good:
-                    rules=run("ip","-4","rule","show",timeout=8)
-                    good=any(re.search(r"\bfwmark\s+(?:0x100|256)\s+lookup\s+100\b",l)
-                             for l in rules.splitlines())
-            else:good=False
-        except Exception:good=False
-        if good and routes_ok() and http_code(["--interface","mihomo0","--noproxy","*"]):
-            return
-    if not failclosed():raise RuntimeError("FAIL_CLOSED_NOT_CONFIRMED")
-    state["state"]="quiesced"
-    write_atomic(path/"state.json",json.dumps(state).encode())
+    # Serialize all recovery decisions with awg-transport select and
+    # the Xray executor; the earlier AWG takeover is rechecked under lock.
+    with MAINTENANCE_LOCK.open("a") as maintenance:
+        fcntl.flock(maintenance,fcntl.LOCK_EX)
+        with (path/"watchdog-state.lock").open("a") as lock:
+            fcntl.flock(lock,fcntl.LOCK_EX)
+            state=json.loads((path/"state.json").read_text())
+            if state.get("state") in ("cancelled","expired_before_mutation","quiesced"):
+                return
+            if state.get("state")=="pending":
+                state["state"]="expired_before_mutation"
+                write_atomic(path/"state.json",json.dumps(state).encode())
+                return  # no Xray/route change yet; never stop a healthy Mihomo
+            if state.get("state") not in ("armed","committed"):
+                raise RuntimeError("UNEXPECTED_WATCHDOG_STATE")
+        if state.get("state")=="committed":
+            # A verified committed Xray-backed TUN is still usable. A foreign
+            # active AWG or stale bridge is NOT healthy Xray evidence.
+            try:
+                operating_mode=MODE.read_text().strip()
+                if operating_mode=="transit":
+                    status=run("/usr/local/sbin/awg-transit-routing","status",timeout=10)
+                    good=("Transit guard: SAFE" in status and
+                          "Transit policy rule: ACTIVE" in status and
+                          "Transit VPN table: READY" in status)
+                elif operating_mode=="selective":
+                    good=(run("/usr/local/sbin/awg-transport","get",timeout=10)=="mihomo"
+                          and active("ssh.service") and active("dnsmasq.service")
+                          and active("awg-pbr-health.service"))
+                    if good:
+                        rules=run("ip","-4","rule","show",timeout=8)
+                        good=any(re.search(r"\bfwmark\s+(?:0x100|256)\s+lookup\s+100\b",l)
+                                 for l in rules.splitlines())
+                else:good=False
+            except Exception:good=False
+            if good and routes_ok() and http_code(["--interface","mihomo0","--noproxy","*"]):
+                return
+        if not failclosed():raise RuntimeError("FAIL_CLOSED_NOT_CONFIRMED")
+        state["state"]="quiesced"
+        write_atomic(path/"state.json",json.dumps(state).encode())
 
 def cli():
     if len(sys.argv)==3 and sys.argv[1]=="watchdog":
