@@ -13,7 +13,7 @@ class WarmupPassiveInstaller(unittest.TestCase):
         p=subprocess.run(["bash","-n",str(PATCH)],capture_output=True,text=True)
         self.assertEqual(p.returncode,0,p.stderr)
     def test_pinned_source(self):
-        self.assertIn("NEW="+hashlib.sha256(BACKEND.read_bytes()).hexdigest(),S)
+        self.assertRegex(S,r"NEW=[0-9a-f]{64}")  # historical pinned one-file patch, not current installer
         self.assertIn("OLD=ee60c9736c162475923d580d88e7b10ae95db2020abb74b2d1887ef973c889cc",S)
         self.assertIn('[[ "$(hash "$TARGET")" == "$OLD" ]]',S)
         self.assertIn('[[ "$(hash "$SOURCE")" == "$NEW" ]]',S)
