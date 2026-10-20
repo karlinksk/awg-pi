@@ -278,6 +278,41 @@ automatic_awg_recovery_verified(){
   done
   api awg0
 }
+# Bounded, non-secret snapshot; never claim AWG recovery from a log line alone.
+transit_recovery_diagnostic(){
+  local value t state line
+  value="$("$backend" get 2>/dev/null || true)"
+  case "$value" in awg|mihomo|unconfigured) ;; *) value=UNKNOWN;; esac
+  echo "RECOVERY_TRANSPORT=$value"
+  for t in awg-quick@awg0 awg-selection-monitor ssh dnsmasq awg-mihomo awg-xray-vless;do
+    if up "$t";then state=ACTIVE;else state=INACTIVE;fi
+    echo "RECOVERY_UNIT_${t//[^a-zA-Z0-9]/_}=$state"
+  done
+  value="$(cat /etc/awg-pbr/mode 2>/dev/null || true)"
+  case "$value" in selective|transit) ;; *)value=UNKNOWN;;esac
+  echo "RECOVERY_MODE=$value"
+  value="$(/usr/local/sbin/awg-transit-routing status 2>/dev/null || true)"
+  for line in 'Transit guard:' 'Transit policy rule:' 'Transit VPN table:';do
+    state="$(grep -F "$line" <<<"$value" | head -n1 || true)"
+    case "$state" in
+      'Transit guard: SAFE'|'Transit guard: LOCKDOWN'|'Transit guard: UNSAFE'|      'Transit policy rule: ACTIVE'|'Transit policy rule: INACTIVE'|      'Transit VPN table: READY'|'Transit VPN table: NOT_READY') ;;
+      *) state="$line UNKNOWN";;
+    esac
+    case "$line" in
+      'Transit guard:') echo "RECOVERY_GUARD=${state#Transit guard: }";;
+      'Transit policy rule:') echo "RECOVERY_POLICY=${state#Transit policy rule: }";;
+      'Transit VPN table:') echo "RECOVERY_VPN_TABLE=${state#Transit VPN table: }";;
+    esac
+  done
+  for t in 100 101;do
+    value="$(ip -4 route show table "$t" 2>/dev/null || true)"
+    if grep -Eq '^default[[:space:]]+dev[[:space:]]+awg0([[:space:]]|$)' <<<"$value";then state=AWG;
+    elif grep -Eq '^default[[:space:]]+dev[[:space:]]+mihomo0([[:space:]]|$)' <<<"$value";then state=MIHOMO;
+    else state=OTHER_OR_EMPTY;fi
+    echo "RECOVERY_ROUTE_${t}=$state"
+  done
+  if api awg0;then echo RECOVERY_AWG_HTTPS=PASS;else echo RECOVERY_AWG_HTTPS=FAIL;fi
+}
 second=NOT_RUN
 if [[ "$first" == XRAY_TUN ]];then
   echo 'XRAY_TUN_HTTPS=PASS'
@@ -290,6 +325,8 @@ if [[ "$first" == XRAY_TUN ]];then
     sleep 3
   done
   echo "SECOND_RESULT=$second"
+  echo "=== SECOND_FAULT_DIAGNOSTIC ==="
+  transit_recovery_diagnostic
 fi
 failclosed_checked=0
 if [[ "$second" == AWG ]];then
