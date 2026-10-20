@@ -41,7 +41,7 @@ must src/awg-mihomo-node-policy 'MIHOMO_READY_AUTO_MODE_FILE="${MIHOMO_READY_AUT
 must src/awg-mihomo-node-policy 'MIHOMO_READY_AUTO_CANARY="$(cat "$MIHOMO_READY_AUTO_MODE_FILE" 2>/dev/null || echo 0)"'
 must src/awg-mihomo-node-policy 'MIHOMO_READY_POSTCHECK_BIN="${MIHOMO_READY_POSTCHECK_BIN:-/usr/local/sbin/awg-mihomo-ready-postcheck-tun}"'
 must src/awg-mihomo-node-policy 'ready-auto)'
-must install.sh '"$MIHOMO_NODE_POLICY_CLI" ready-auto enable >/dev/null'
+must install.sh '"$MIHOMO_NODE_POLICY_CLI" ready-auto disable >/dev/null'
 must src/awg-menu 'mihomo_auto_strategy_menu(){'
 must src/awg-mihomo-node-policy 'select_auto_strategy(){'
 must install.sh 'install_project_helper src/awg-menu /usr/local/sbin/awg-menu'
