@@ -11,7 +11,7 @@ class CanaryTrace(unittest.TestCase):
         proc=subprocess.run(["bash","-n",str(SRC)],capture_output=True,text=True)
         self.assertEqual(proc.returncode,0,proc.stderr)
     def test_environment_verified_before_fault(self):
-        a=S.index("systemctl restart awg-selection-monitor\n# Never inject failure")
+        a=S.index('systemctl restart awg-selection-monitor\neffective="$(systemctl show')
         b=S.index("die CANARY_EFFECTIVE_ENVIRONMENT_NOT_APPLIED")
         c=S.index("systemctl stop awg-mihomo\n")
         self.assertTrue(a<b<c)
