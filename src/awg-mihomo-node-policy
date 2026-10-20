@@ -709,6 +709,34 @@ auto_xray_candidate(){
     echo "MIHOMO_NODE_FAILOVER=XRAY_TRANSACTION_EXECUTOR_MISSING" >&2
     return 2
   fi
+  if [[ "$operating_mode" == selective ]] &&
+     ! "$MIHOMO_AUTO_SYSTEMCTL" is-active --quiet "$MIHOMO_AUTO_SERVICE"; then
+    # In Selective a stopped incumbent can still leave fwmark 0x100 bound to
+    # its dead TUN. The Xray executor CORRECTLY refuses this unsafe baseline.
+    # Make the existing Selective FAIL-OPEN transition first; no AWG, DNS or
+    # SSH mutation. Only the explicit test Pi canary reaches this point.
+    if [[ "$("$MIHOMO_AUTO_TRANSPORT_CLI" get 2>/dev/null || true)" != mihomo ||
+          "$("$MIHOMO_AUTO_TRANSPORT_CLI" check awg 2>/dev/null || true)" != healthy ]] ||
+       ! "$MIHOMO_AUTO_SYSTEMCTL" is-active --quiet ssh.service ||
+       ! "$MIHOMO_AUTO_SYSTEMCTL" is-active --quiet dnsmasq.service ||
+       ! "$MIHOMO_AUTO_SYSTEMCTL" is-active --quiet awg-quick@awg0.service ||
+       [[ "$(cat /etc/awg-pbr/vpn-enabled 2>/dev/null)" != 1 ]]; then
+      echo 'MIHOMO_NODE_FAILOVER=XRAY_SELECTIVE_BASELINE_UNSAFE_AWG_FALLBACK' >&2
+      return 1
+    fi
+    if ip -4 rule show | grep -Eq 'fwmark[[:space:]]+(0x100|256)[[:space:]]+lookup[[:space:]]+100'; then
+      if ! "$MIHOMO_AUTO_FAILOPEN" >/dev/null; then
+        echo 'MIHOMO_NODE_FAILOVER=XRAY_SELECTIVE_FAILOPEN_FAILED_AWG_FALLBACK' >&2
+        return 1
+      fi
+    fi
+    if ip -4 rule show | grep -Eq 'fwmark[[:space:]]+(0x100|256)[[:space:]]+lookup[[:space:]]+100'; then
+      echo 'MIHOMO_NODE_FAILOVER=XRAY_SELECTIVE_STALE_POLICY_RULE_AWG_FALLBACK' >&2
+      return 1
+    fi
+    # Print only a fixed, non-secret diagnostic. Do not log provider/node names.
+    logger -t awg-xray-auto 'SELECTIVE_FAILOPEN=PREPARED_BEFORE_XRAY'
+  fi
   if AWG_XRAY_EXPERIMENTAL_APPLY=TEST_PI_AUTHORIZED "$executor" apply "$current" "$candidate" >/dev/null; then
     printf 'MIHOMO_NODE_FAILOVER=%s->%s\n' "$current" "$candidate"
     return 0
