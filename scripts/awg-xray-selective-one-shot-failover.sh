@@ -211,7 +211,8 @@ PY
 first=TIMEOUT
 for i in $(seq 1 60);do
   if [[ "$("$backend" get 2>/dev/null || true)" == awg ]];then first=AWG_EARLY;break;fi
-  if up awg-xray-vless && up awg-mihomo && api mihomo0 &&\n     xray_transaction_committed;then first=XRAY_TUN;break;fi
+  if up awg-xray-vless && up awg-mihomo && api mihomo0 &&
+     xray_transaction_committed;then first=XRAY_TUN;break;fi
   sleep 3
 done
 echo "FIRST_RESULT=$first"
