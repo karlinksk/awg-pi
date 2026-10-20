@@ -25,7 +25,7 @@ class SelectiveAWGSecondStage(unittest.TestCase):
         self.backend=str(mock)
     def probe(self,**kwargs):
         env=dict(os.environ,TRANSPORT="awg",XRAY_UP="0",MIHOMO_UP="0",
-                 BAD_SERVICE="",BAD_TABLE="",API_OK="1")
+                 BAD_SERVICE="",BAD_TABLE="",API_OK="1",RULE_OK="1")
         env.update({k:str(v) for k,v in kwargs.items()})
         script=CHECK+r'''
 backend="$MOCK_BACKEND"
@@ -36,6 +36,14 @@ up(){
   return 0
 }
 ip(){
+  if [[ "$2" == rule ]];then
+    if [[ "$RULE_OK" == 1 ]];then
+      echo '100: from all fwmark 0x100 lookup 100'
+    else
+      echo '0: from all lookup local'
+    fi
+    return 0
+  fi
   local table="$5"
   if [[ "$table" == "$BAD_TABLE" ]];then
     echo 'default dev mihomo0 scope link'
@@ -55,6 +63,9 @@ automatic_awg_recovery_verified
         for table in ("100","101"):
             with self.subTest(table=table):
                 self.assertNotEqual(self.probe(BAD_TABLE=table).returncode,0)
+    def test_selective_mark_absent_fails_even_with_correct_awg_routes(self):
+        self.assertNotEqual(self.probe(RULE_OK="0").returncode,0)
+
     def test_selector_did_not_switch(self):
         self.assertNotEqual(self.probe(TRANSPORT="mihomo").returncode,0)
     def test_xray_still_running_cannot_claim_fallback(self):
