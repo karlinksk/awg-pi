@@ -1334,7 +1334,7 @@ fi
 #
 # Fresh install, then one-time authorization:
 # sudo env AWG_DC_PREPARE=1 AWG_DC_USER=karlinks bash install.sh
-# awg-dc pair (ordinary user) ; sudo awg-dc enable karlinks
+# awg-dc pair (ordinary user); after verification and Ctrl+C, boot service auto-enables
 #
 # Reinstall with already-restored owner-only DC session:
 # sudo env AWG_DC_PREPARE=1 AWG_DC_AUTOSTART=1 AWG_DC_USER=karlinks bash install.sh
@@ -1365,7 +1365,7 @@ case "${AWG_DC_AUTOSTART:-0}" in
       ok "DC работает независимо от SSH, systemd восстановит его после reboot."
     else
       warn "DC autostart не включён: сначала требуется однократная OAuth-авторизация, root-owned systemd unit и кэш агента."
-      warn "После awg-dc pair выполните: sudo awg-dc enable $_dc_user"
+      warn "Для существующей авторизации: sudo awg-dc enable $_dc_user"
     fi
     ;;
   *) die "AWG_DC_AUTOSTART должен быть 0 или 1" ;;
