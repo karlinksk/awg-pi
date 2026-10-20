@@ -20,6 +20,13 @@ class DcMenuPlacement(unittest.TestCase):
         for line in s.splitlines():
             if '9 "Desktop Commander — удалённый доступ"' in line:
                 self.assertTrue(line.rstrip().endswith("\\"),line)
+    def test_policy_menu_dialog_has_valid_continuations(self):
+        s=(ROOT/"src/awg-menu").read_text()
+        section=s.split("mihomo_node_policy_menu(){",1)[1].split("\\nmihomo_candidate_auto_apply(){",1)[0]
+        line=next(x for x in section.splitlines() if '8 "Xray VLESS в AUTO:' in x)
+        self.assertTrue(line.endswith("\\\\"), line)
+        self.assertFalse(line.endswith("\\\\\\\\"), line)
+        self.assertIn('0 "Назад"',section)
     def test_bash_syntax(self):
         p=subprocess.run(["bash","-n",str(ROOT/"src/awg-menu")],capture_output=True,text=True)
         self.assertEqual(p.returncode,0,p.stderr)
