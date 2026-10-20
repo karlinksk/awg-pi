@@ -198,6 +198,42 @@ def verified_degraded_fixed_baseline():
     except (OSError,RuntimeError,subprocess.TimeoutExpired):
         return False
 
+def verified_degraded_selective_baseline():
+    """Selectively fail-open *stopped* Mihomo after rejected native candidates.
+
+    The incumbent is known dead; never start it just to pass preflight.
+    This guarded state is eligible only when the separate AWG standby is healthy
+    and a temporary test-Pi AUTO canary explicitly authorized the transaction.
+    """
+    if (socket.gethostname()!="awg-upgrade" or
+        MODE.read_text().strip()!="selective" or
+        NODE_POLICY_MODE.read_text().strip()!="auto" or
+        os.environ.get("MIHOMO_XRAY_AUTO_FAILOVER_CANARY")!="1" or
+        os.environ.get("MIHOMO_XRAY_SELECTIVE_CANARY")!="1" or
+        active(MIHOMO) or active(XRAY) or
+        not all(active(unit) for unit in
+            ("ssh.service","dnsmasq.service","awg-pbr-health.service",
+             "awg-quick@awg0.service"))):
+        return False
+    try:
+        if (Path("/etc/awg-pbr/vpn-enabled").read_text().strip()!="1" or
+            run("/usr/local/sbin/awg-transport","get",timeout=10)!="mihomo" or
+            run("/usr/local/sbin/awg-transport","check","awg",timeout=12)!="healthy"):
+            return False
+        rules=run("ip","-4","rule","show",timeout=8)
+        if any(re.search(r"\bfwmark\s+(?:0x100|256)\s+lookup\s+100\b",line)
+               for line in rules.splitlines()):
+            return False
+        for table in ("100","101"):
+            routes=run("ip","-4","route","show","table",table,timeout=6)
+            if routes.strip() and not all(re.fullmatch(
+                r"default\s+dev\s+mihomo0(?:\s+.*)?",line.strip())
+                for line in routes.splitlines()):
+                return False
+        return True
+    except (OSError,RuntimeError,subprocess.TimeoutExpired):
+        return False
+
 def snapshot_transition(snapshot, expected, desired):
     """Serialize watchdog and activation before touching the network.
 
@@ -234,6 +270,7 @@ class LinuxBackend:
         self.snapshot=None
         self.watchdog_unit=None
         self.degraded_fixed=False
+        self.degraded_selective=False
     def preflight(self,failed,candidate):
         operating_mode=MODE.read_text().strip()
         if os.geteuid()!=0 or operating_mode not in ("transit","selective"):
@@ -256,6 +293,8 @@ class LinuxBackend:
             self.degraded_fixed=False
         elif verified_degraded_fixed_baseline():
             self.degraded_fixed=True
+        elif operating_mode=="selective" and verified_degraded_selective_baseline():
+            self.degraded_selective=True
         else:
             raise RuntimeError("LIVE_BASELINE_UNSAFE")
         if BRIDGE.exists() or BRIDGE_RUNTIME.exists() or SELECTED.exists() or not RENDERER.is_file() or not ADAPTER.is_file():
