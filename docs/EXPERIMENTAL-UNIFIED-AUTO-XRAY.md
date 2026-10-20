@@ -39,3 +39,13 @@ No automatic performance-driven return from AWG to Mihomo/Xray. Xray→Mihomo no
 - Recheck fresh install, upgrade/persistence and reboot. Keep PR Draft until acceptance, never claim this source stage as a v1.3 release gate PASS.
 
 Related: [PROJECT_STATE](PROJECT_STATE.md), [installer-first policy](INSTALLER-CHANGE-POLICY.md), [release gate](TESTING-v1.3.0.md).
+
+## Selective-first source status, 2026-10-20
+
+Selective and Transit remain separate acceptance gates; **Selective is first**. Selective support in source is double-gated by `MIHOMO_XRAY_AUTO_FAILOVER_CANARY=1` **and** `MIHOMO_XRAY_SELECTIVE_CANARY=1`, absent from installers/units. The Xray executor verifies identity/fresh network proof, backed-up AWG routing and HTTPS and preserves a healthy AWG. An unsafe Xray abort calls the existing Selective `awg-pbr-failopen` (drops the mark-0x100 route), stops unverified components and confirms SSH/DNS; Transit continues to use its FAIL-CLOSED guard. The independent watchdog takes the shared maintenance lock to avoid racing `awg-transport select awg`.
+
+Native health-pool AUTO retains its bounded attempts. When exhausted, and only under the explicit canary, it can nominate **one** freshly verified Xray candidate from `awg-mihomo-unified-nodes best --engine XRAY`, excluding already rejected names. A rejected Xray transaction is not passed into legacy Mihomo activation; control falls through to configured AWG. `READY=OFF` / Hot Pool OFF stays unchanged for paid HoneyVPN.
+
+The root-only `scripts/awg-xray-selective-auto-preflight.py --check|--scan` protects unchanged live transport/node/routes. `--scan` invokes bounded isolated Xray HTTPS probes; only credential-fingerprinted Xray network cache is modified. **Not yet executed as root on the live test stand** (Desktop Commander sudo block). 
+
+Full isolated-Pi Python regression suite: **589/589 PASS** at commit `e855ae92`, Bash syntax PASS, no live service changes. Root-only preflight, sidecar AUTO, rollback timers, forwarded client and reboot remain **OPEN**. Do not call Selective PASS or enable on production from source tests.
