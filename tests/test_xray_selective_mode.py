@@ -27,7 +27,12 @@ class SelectiveXraySafety(unittest.TestCase):
         consent=mock.patch.object(m,"xray_auto_authorized",return_value=True)
         consent.start(); self.addCleanup(consent.stop)
 
-    # The historical test-Pi scenario has an explicit experimental opt-in.\n    def test_auto_optin_required(self):\n        with mock.patch.object(m,"xray_auto_authorized",return_value=False):\n            self.assertFalse(m.verified_degraded_selective_baseline())\n\n    def modefile(self, root, value="selective"):
+    # Historical test-Pi scenarios explicitly authorized this AUTO path.
+    def test_auto_optin_required(self):
+        with mock.patch.object(m, "xray_auto_authorized", return_value=False):
+            self.assertFalse(m.verified_degraded_selective_baseline())
+
+    def modefile(self, root, value="selective"):
         mode = root / "mode"
         mode.write_text(value)
         return mode
