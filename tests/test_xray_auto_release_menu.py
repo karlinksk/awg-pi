@@ -10,6 +10,15 @@ class XrayAutoReleaseMenu(unittest.TestCase):
         self.assertIn('if [[ ! -e "$_XRAY_AUTO_MODE" ]]',s)
         self.assertIn('install_project_helper src/awg-menu /usr/local/sbin/awg-menu',s)
         self.assertIn('install_project_python_helper src/awg-xray-live-backend.py',s)
+    def test_mode_writes_are_real_newline_not_literal_backslash_n(self):
+        installer=(ROOT/"install.sh").read_text()
+        policy=(ROOT/"src/awg-mihomo-node-policy").read_text()
+        self.assertIn("printf '0\\\\n' > \"$_XRAY_AUTO_MODE\"",installer)
+        self.assertIn("printf '0\\\\n' > \"$tmp\"",policy)
+        self.assertIn("printf '1\\\\n' > \"$tmp\"",policy)
+        self.assertNotIn("printf '0\\\\\\\\n'",installer)
+        self.assertNotIn("printf '0\\\\\\\\n'",policy)
+        self.assertNotIn("printf '1\\\\\\\\n'",policy)
     def test_menu_has_visible_opt_in(self):
         s=(ROOT/"src/awg-menu").read_text()
         self.assertIn("mihomo_xray_auto_menu(){",s)
