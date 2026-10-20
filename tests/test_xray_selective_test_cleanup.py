@@ -53,9 +53,10 @@ class SelectiveTestCleanup(unittest.TestCase):
         self.assertIn("! up awg-xray-vless || die XRAY_FAULT_DID_NOT_STOP",RUN)
         self.assertIn("SELECTIVE_XRAY_AUTO_FAILOVER=NOT_VERIFIED",RUN)
         self.assertIn('if [[ "$first" != XRAY_TUN || "$second" != AWG ]]',RUN)
-        self.assertLess(RUN.index('echo "SECOND_RESULT=$second"'),
-                        RUN.index('bash "$dir/recover"'))
-        self.assertLess(RUN.index('bash "$dir/recover"'),
+        observed=RUN.index('echo "SECOND_RESULT=$second"')
+        final_restore=RUN.index('bash "$dir/recover"',observed)
+        self.assertLess(observed,final_restore)
+        self.assertLess(final_restore,
                         RUN.index("SELECTIVE_XRAY_AUTO_FAILOVER=PASS"))
 
     def test_backup_before_removal(self):
