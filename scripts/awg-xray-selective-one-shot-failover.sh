@@ -4,7 +4,7 @@ set -Eeuo pipefail
 umask 077
 backend=/usr/local/sbin/awg-transport
 drop=/run/systemd/system/awg-selection-monitor.service.d/95-xray-selective-canary.conf
-dir="$(mktemp -d /run/awg-xray-auto-test.XXXXXXXX)"
+dir="$(mktemp -d /dev/shm/awg-xray-auto-test.XXXXXXXX)"
 timer=awg-xray-auto-test-recover.timer
 up(){ systemctl is-active --quiet "$1"; }
 die(){ echo "ABORT=$1";exit 1; }
@@ -125,6 +125,16 @@ case "$1" in
 esac
 TRACE
 chmod 0700 "$dir/trace-node-policy"
+# A POSIX execute bit is insufficient: /run is often mounted noexec.
+# Verify actual direct execution, not only test -x or unit Environment.
+cat > "$dir/exec-preflight" <<'EXECGATE'
+#!/usr/bin/env bash
+exit 0
+EXECGATE
+chmod 0700 "$dir/exec-preflight"
+"$dir/exec-preflight" || die TEMP_RUNTIME_NOEXEC
+rm -f "$dir/exec-preflight"
+echo 'CANARY_TMPFS_EXEC=PASS'
 systemd-run --quiet --collect --unit=awg-xray-auto-test-recover --on-active=420s /bin/bash "$dir/recover" || die WATCHDOG_NOT_ARMED
 up "$timer" || die WATCHDOG_NOT_ACTIVE
 echo 'WATCHDOG=ARMED_420S'
