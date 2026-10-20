@@ -33,6 +33,17 @@ class SelectiveTestCleanup(unittest.TestCase):
         self.assertNotIn('awg-transit-routing',CLEAN)
         self.assertNotIn('systemctl start awg-mihomo',CLEAN)
         self.assertIn('ACTIVE_TRANSPORT=AWG_UNCHANGED',CLEAN)
+    def test_one_shot_watchdog_recovery_invokes_guarded_cleanup(self):
+        self.assertIn(
+            'install -o root -g root -m 0700 "$root/scripts/awg-xray-selective-test-cleanup.sh" "$dir/test-cleanup"',
+            RUN)
+        self.assertIn('XRAY_TEST_RECOVER_ACTIVE=1 "$dir/test-cleanup" "$dir"',RUN)
+        self.assertLess(RUN.index('"$dir/test-cleanup" "$dir"'),
+                        RUN.index("systemctl restart awg-selection-monitor\\nRECOVER"))
+        self.assertIn('EXTERNAL_TEST_STILL_ACTIVE',CLEAN)
+        self.assertIn('XRAY_TEST_RECOVER_ACTIVE',CLEAN)
+        self.assertIn('EXPERIMENT_WATCHDOG_STILL_ACTIVE',CLEAN)
+
     def test_backup_before_removal(self):
         self.assertLess(CLEAN.index('echo XRAY_CLEANUP_BACKUP=VERIFIED'),
                         CLEAN.index('systemctl stop "$XRAY_UNIT"'))
