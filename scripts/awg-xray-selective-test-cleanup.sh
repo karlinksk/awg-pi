@@ -10,7 +10,8 @@ XRAY_UNIT=awg-xray-vless.service
 RUNTIME=/run/systemd/system/awg-mihomo.service.d/61-awg-xray-bridge.conf
 PERSISTENT=/etc/systemd/system/awg-mihomo.service.d/61-awg-xray-bridge.conf
 SELECTED=/var/lib/awg-pbr/xray-vless/selected.json
-OLD_NODE=/dev/shm/awg-xray-auto-test.sykDWYxb/old-node
+[[ $# -eq 1 && "$1" == /dev/shm/awg-xray-auto-test.* ]] || { echo 'XRAY_TEST_CLEANUP_ABORT=BAD_TEST_DIR' >&2;exit 2; }
+OLD_NODE="$1/old-node"
 BACKUP="/var/backups/awg-gateway/xray-selective-test-cleanup-$(date -u +%Y%m%dT%H%M%S)-$$"
 die(){ echo "XRAY_TEST_CLEANUP_ABORT=$1" >&2;exit 1; }
 up(){ systemctl is-active --quiet "$1"; }
