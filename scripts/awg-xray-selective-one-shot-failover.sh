@@ -23,6 +23,17 @@ for u in ssh dnsmasq awg-mihomo awg-quick@awg0 awg-selection-monitor awg-pbr-hea
 for t in 100 101;do ip -4 route show table "$t" | grep -Eq '^default +dev +mihomo0' || die "ROUTE_$t";done
 for b in mihomo awg;do [[ "$("$backend" check "$b")" == healthy ]] || die "HEALTH_$b";done
 api mihomo0 && api awg0 || die HTTPS_NOT_READY
+# Cross-core AUTO consumes Xray evidence for only 600 seconds. Refuse an
+# expired/changed profile before arming a fault; no stale cache->AWG false PASS.
+# Run the isolated HTTPS check while both existing VPN paths are healthy.
+echo '=== REFRESH_XRAY_HEALTH_CACHE ==='
+/usr/local/sbin/awg-mihomo-unified-nodes probe-vless-all >/dev/null || die XRAY_PASSIVE_SCAN_FAILED
+xray_candidate="$(/usr/local/sbin/awg-mihomo-unified-nodes best --engine XRAY 2>/dev/null)" || die XRAY_NO_FRESH_NETWORK_OK
+[[ -n "$xray_candidate" ]] || die XRAY_NO_CANDIDATE
+unset xray_candidate
+echo 'XRAY_FRESH_NETWORK_OK=CONFIRMED'
+[[ "$("$backend" get)" == mihomo ]] || die TRANSPORT_CHANGED_DURING_SCAN
+api mihomo0 && api awg0 || die HTTPS_LOST_AFTER_SCAN
 root="$(cd "$(dirname "$0")/.." && pwd -P)"
 for file in src/awg-mihomo-node-policy src/awg-xray-live-backend.py src/awg-mihomo-unified-nodes.py;do
   name="$(basename "$file" .py)"
