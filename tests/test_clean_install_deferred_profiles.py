@@ -6,7 +6,7 @@ import os,subprocess,tempfile,unittest
 ROOT=Path(__file__).resolve().parents[1]
 INS=(ROOT/"install.sh").read_text()
 A=INS.index('if (( UPGRADE_EXISTING == 0 )); then\n  STAGE="завершение установки без VPN-профилей"')
-B=INS.index("\n\n# Fresh installs PREPARE availability-AUTO only.",A)
+B=INS.index("\n\n# Fresh installs PREPARE conservative transport AUTO only.",A)
 POST=INS[A:B]
 C=INS.index('if (( UPGRADE_EXISTING == 0 )); then\n  STAGE="завершение безопасной установки"')
 D=INS.index("elif (( ACTIVATE_TRANSIT_AFTER_INSTALL == 1 )); then",C)

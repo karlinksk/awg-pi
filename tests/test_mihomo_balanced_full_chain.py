@@ -140,6 +140,7 @@ printf '%s\\n' "$3" >"$MOCK_NODE_NAME_FILE"
           MIHOMO_NODE_NAME_FILE=str(self.node),
           MIHOMO_POOL_CLI=str(self.bin/"pool"),
           MIHOMO_CONFIGURE_BIN=str(self.bin/"configure"),
+          MIHOMO_UNIFIED_NODE_CLI=str(self.bin/"missing-unified-cli"),
           MIHOMO_SERVICE_QUICKCHECK_BIN=str(self.bin/"scan"),
           MIHOMO_NETWORK_GATE_BIN=str(GATE),
           MOCK_TRANSPORT_STATE=str(self.selected),

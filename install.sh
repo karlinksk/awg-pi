@@ -814,6 +814,20 @@ install_project_helper src/awg-fetch "$FETCH_CLI"
 install_project_helper src/awg-mihomo-config "$MIHOMO_CONFIG_SCRIPT"
 install_project_helper src/awg-mihomo-update "$MIHOMO_UPDATE_SCRIPT"
 install_project_helper src/awg-mihomo-install "$MIHOMO_INSTALL_SCRIPT"
+# Optional Xray VLESS/Reality adapter: installed on an EMPTY clean install,
+# but not selected/enabled until the owner explicitly opts in after adding
+# the Mihomo subscription. This does not add a third active TUN transport.
+install_project_helper src/awg-xray-install /usr/local/sbin/awg-xray-install
+install_project_python_helper src/awg-xray-vless.py /usr/local/sbin/awg-xray-vless
+# Unified read-only inventory and network-only Xray checks (no Hot Pool dependency).
+install_project_python_helper src/awg-mihomo-unified-nodes.py /usr/local/sbin/awg-mihomo-unified-nodes
+# UI displays engine-specific Mihomo and Xray basic HTTPS evidence without READY claims.
+install_project_python_helper src/awg-mihomo-results-view.py /usr/local/sbin/awg-mihomo-results-view
+install_project_python_helper src/awg-mihomo-node-picker.py /usr/local/sbin/awg-mihomo-node-picker
+# Guarded cross-core runtime canary: install files only. Never enable AUTO,
+# start a sidecar or alter the selected live node during clean installation.
+install_project_python_helper src/awg-xray-activation-transaction.py /usr/local/sbin/awg-xray-activation-transaction
+install_project_python_helper src/awg-xray-live-backend.py /usr/local/sbin/awg-xray-live-backend
 install_project_helper src/awg-mihomo-prepare "$MIHOMO_PREPARE_SCRIPT"
 install_project_helper src/awg-mihomo-configure "$MIHOMO_CONFIGURE_SCRIPT"
 install_project_helper src/awg-first-run "$FIRST_RUN_CLI"
@@ -894,6 +908,20 @@ else
   if ! "$MIHOMO_INSTALL_SCRIPT" status; then
     warn "Mihomo engine требует отдельного безопасного обновления (активный транспорт не затронут)"
   fi
+fi
+
+# Provision pinned upstream Xray separately from Mihomo. Xray remains OFF
+# and keeps no credentials on disk until the user selects a VLESS profile.
+# Clean install cannot depend on profiles supplied only after completion.
+if (( UPGRADE_EXISTING == 0 )); then
+  /usr/local/sbin/awg-xray-install ensure ||
+    die "Не удалось установить обязательный Xray VLESS adapter на чистой Pi"
+  ok "Дополнительный Xray-core установлен, служба не включена"
+elif ! /usr/local/sbin/awg-xray-install status >/dev/null 2>&1; then
+  # No service restart and no provider mutation; a failed optional upgrade
+  # cannot interrupt the active Mihomo/AWG gateway.
+  /usr/local/sbin/awg-xray-install ensure ||
+    warn "Xray adapter ожидает отдельной установки; активный шлюз не затронут"
 fi
 
 # Hot Pool is SHADOW_ONLY. Fetch verified components from PROJECT_REF on both
@@ -1032,6 +1060,8 @@ if [[ ! -s /etc/awg-pbr/transports/mihomo/remnawave.hwid && -r /etc/awg-pbr/tran
   unset _existing_hwid
 fi
 install_project_unit units/awg-mihomo.service /etc/systemd/system/awg-mihomo.service
+# Opt-in only. Do not enable or start this unit during installation/update.
+install_project_unit units/awg-xray-vless.service /etc/systemd/system/awg-xray-vless.service
 install_project_unit units/awg-mihomo-update.service /etc/systemd/system/awg-mihomo-update.service
 install_project_unit units/awg-mihomo-update.timer /etc/systemd/system/awg-mihomo-update.timer
 install_project_unit units/awg-mihomo-pool-refresh.service /etc/systemd/system/awg-mihomo-pool-refresh.service
@@ -1173,20 +1203,14 @@ if (( UPGRADE_EXISTING == 0 )); then
   ok "Шлюз и оба движка установлены без VPN-профилей; первый транспорт выбирается позднее в sudo awg-menu"
 fi
 
-# Fresh installs PREPARE availability-AUTO only. The selector keeps a healthy
-# active transport sticky, lets Mihomo change nodes first, and falls
-# back to AWG after repeated failures. Neither profile has to be supplied now;
-# the monitor remains passive while both backends are unconfigured.
+# Fresh installs PREPARE conservative transport AUTO only. READY priority
+# and its isolated Hot Pool scanner remain opt-in after installation. No
+# profiles are present; upgrades MUST retain the operator's existing state.
 if (( UPGRADE_EXISTING == 0 )); then
   "$SELECTION_CLI" mode auto mihomo awg >/dev/null || die "Не удалось настроить безопасное автоматическое резервирование"
-  # On clean install the user has not configured any profiles or FIXED
-  # chain yet. Install the full READY/Hot Pool capabilities and arm the
-  # SHADOW timer, which remains passive without a provider subscription.
-  # The operator may later disable Hot Pool and choose a FIXED chain via
-  # awg-menu without rerunning install.sh.
-  "$MIHOMO_NODE_POLICY_CLI" ready-auto enable >/dev/null ||
-    die "Не удалось подготовить READY AUTO для настройки после установки"
-  ok "Mihomo READY/Hot Pool подготовлены; без подписки SHADOW-проверки не запускаются"
+  "$MIHOMO_NODE_POLICY_CLI" ready-auto disable >/dev/null ||
+    die "Не удалось выставить READY OFF по умолчанию"
+  ok "Mihomo READY=OFF; Hot Pool установлен, но не запускается до включения через меню"
   ok "Резервирование транспортов: AUTO Mihomo → AWG (без автоматического возврата ради скорости)"
 fi
 
@@ -1241,20 +1265,22 @@ systemctl is-active --quiet awg-traffic.service || warn "traffic accounting не
 systemctl start awg-opencck-update.timer
 systemctl is-active --quiet awg-opencck-update.timer || warn "OpenCCK timer не активен; ручное обновление останется доступно"
 
-# Install-once, automatic-after-profile: the units themselves require a
-# configured Mihomo provider. Timers can be armed on a fresh AWG-only install
-# without initiating any VPN/route change or trying to select a node.
-# Upgrades preserve the existing operator's enabled/disabled policy.
+# Base pool-refresh and Stage18 runtime are provider-guarded; only Hot Pool
+# and READY are explicitly opt-in. A resumed partial first-install also ends
+# with Hot Pool disabled; an upgrade retains the operator's existing policy.
 if (( UPGRADE_EXISTING == 0 )); then
   for unit in awg-mihomo-pool-refresh.timer awg-mihomo-stage18-ram-runtime.timer awg-mihomo-stage18-ram-runtime.path; do
     systemctl enable --now "$unit" >/dev/null || die "Не удалось включить $unit"
     systemctl is-active --quiet "$unit" || die "Не запущен обязательный таймер $unit"
   done
-  systemctl enable --now awg-mihomo-hot-pool.timer >/dev/null ||
-    die "Не удалось подготовить Hot Pool timer до ввода подписки"
-  systemctl is-active --quiet awg-mihomo-hot-pool.timer ||
-    die "Hot Pool timer не запущен после установки"
-  ok "Hot Pool SHADOW_ONLY ожидает подписку; READY-проверки начнутся только после её ввода"
+  systemctl disable --now awg-mihomo-hot-pool.timer >/dev/null ||
+    die "Не удалось выключить Hot Pool timer после чистой установки"
+  if systemctl is-enabled --quiet awg-mihomo-hot-pool.timer ||
+     systemctl is-active --quiet awg-mihomo-hot-pool.timer ||
+     systemctl is-active --quiet awg-mihomo-hot-pool.service; then
+    die "Hot Pool должен остаться выключенным после чистой установки"
+  fi
+  ok "Hot Pool SHADOW_ONLY установлен, timer DISABLED/INACTIVE; READY OFF до включения через меню"
   ok "Mihomo health pool и Stage18 установлены и готовы к подписке"
 else
   ok "Существующая политика Mihomo-таймеров сохранена при обновлении"

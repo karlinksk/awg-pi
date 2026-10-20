@@ -24,7 +24,7 @@ This checklist supplements `docs/TESTING-v1.3.0.md`. Checkboxes below are delibe
 - [ ] A09. Independent timed recovery and saved current state are ready before activating any experimental node, changing gateway mode or disrupting a transport.
 - [ ] A10. Every confirmed fix is committed to authoritative source, fresh installer, upgrade/rollback path, regression tests and docs; verify commit includes it.
 - [ ] A11. Review open dependency PRs #106, #108, #109, #110 and #111; reconcile merge order and behavior, with no stale file/overwrite of independently managed services.
-- [ ] A12. Resolve discrepancies between historical "READY OFF / passive timer" documentation and current fresh installer enabling READY-priority and provider-guarded timers; test **actual** chosen default.
+- [ ] A12. Confirm a fresh install sets **READY OFF** (`ready-auto.mode=0`) and Hot Pool timer **disabled/inactive**, even when no subscription exists. Stage18 and base pool-refresh may remain provider-guarded; upgrades preserve pre-existing READY/timer preferences.
 
 ## B. Fresh installation, provisioning and onboarding (B01–B16)
 
@@ -35,9 +35,9 @@ This checklist supplements `docs/TESTING-v1.3.0.md`. Checkboxes below are delibe
 - [ ] B05. **After installer completion**, import a pasted AWG config via `awg-menu`; protect input and rollback an invalid profile without overwriting a good one.
 - [ ] B06. **After installer completion**, configure Mihomo with a subscription URL via `awg-menu`; select and preflight an exact node, with no implicit change of gateway operating mode.
 - [ ] B07. **After installer completion**, configure Mihomo from a local provider file or pasted subscription; verify local input itself requires no remote subscription fetch.
-- [ ] B08. With **no profiles at all during installation**, finish in `Selective + unconfigured`; verify both engines and media dependencies installed, SSH/DNS/menu safe, no AWG startup without config, and no subscription-backed scan or selector thrashing.
+- [ ] B08. With **no profiles at all during installation**, finish in `Selective + unconfigured`, Xray OFF, READY OFF and Hot Pool timer DISABLED/INACTIVE. Verify all engines/media dependencies installed, SSH/DNS/menu safe, no AWG start without config, and no subscription-backed scan/selector thrashing.
 - [ ] B09. Safely resume an interrupted, unversioned first installation **without profiles**, distinguish it from a real upgrade, and still finish `Selective + unconfigured` without forcing a first-transport wizard.
-- [ ] B10. Verify the operator can configure the first transport **and then optionally change Selective/Transit via `awg-menu` after installation**; the installer does not choose Transit or ask for a VPN profile during the clean-install run.
+- [ ] B10. Verify the operator can configure the first transport **and then optionally change Selective/Transit and opt in to Hot Pool/READY through `awg-menu` after installation**. Neither a VPN profile, Transit nor Hot Pool/READY is activated during clean install.
 - [ ] B11. Wrong/cancelled/no-TTY input does not silently select arbitrary transport, alter router or corrupt private state.
 - [ ] B12. All deployed scripts, systemd units, their executable/ownership permissions and service enablement match the tracked candidate commit.
 - [ ] B13. System-wide `node` resolves to pinned SHA256-verified v22.16.0, global `WebSocket` exists; Debian APT-owned `/usr/bin/node` remains intact.

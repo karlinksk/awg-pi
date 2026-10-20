@@ -38,7 +38,15 @@ class PackagedSystemdUnitTests(unittest.TestCase):
             for match in EXEC_RE.finditer(source.read_text()):
                 exe = match.group(1)
                 with self.subTest(unit=source.name, exe=exe):
-                    if exe.startswith("/usr/local/"):
+                    if exe == "/usr/local/bin/awg-xray-vless-core":
+                        # The signed/pinned Xray binary is installed by its
+                        # checksum-verified bootstrap, not copied from src/.
+                        self.assertIn("install_project_helper src/awg-xray-install", INSTALLER)
+                        self.assertIn("/usr/local/sbin/awg-xray-install ensure", INSTALLER)
+                        installer = (ROOT / "src/awg-xray-install").read_text()
+                        self.assertIn(exe, installer)
+                        self.assertIn("sha256sum -c -", installer)
+                    elif exe.startswith("/usr/local/"):
                         self.assertIn(exe, INSTALLER,
                                       "Missing installed executable referenced by unit")
                     self.assertNotIn("../", exe)

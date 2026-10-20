@@ -74,6 +74,9 @@ MIHOMO_INSTALLER=/usr/local/sbin/awg-mihomo-install
 MIHOMO_ENV_FILE=/etc/awg-pbr/transports/mihomo/provider.env
 MIHOMO_NODE_POLICY=/usr/local/sbin/awg-mihomo-node-policy
 MIHOMO_POOL=/usr/local/sbin/awg-mihomo-pool
+MIHOMO_RESULTS_VIEW=/usr/local/sbin/awg-mihomo-results-view
+MIHOMO_NODE_PICKER=/usr/local/sbin/awg-mihomo-node-picker
+MIHOMO_UNIFIED=/usr/local/sbin/awg-mihomo-unified-nodes
 AWG_FIRST_RUN=/usr/local/sbin/awg-first-run
 AWG_SELECTION=/usr/local/sbin/awg-selection
 AWG_UPDATE=/usr/local/sbin/awg-update
@@ -889,53 +892,16 @@ mihomo_pool_results_dialog(){
 
   if ! "$MIHOMO_POOL" list "$target" --all --ignore-policy --format json >"$json_tmp" 2>"$TMP"; then
     rm -f "$json_tmp"
-    dialog --backtitle "$BACKTITLE" --title "Все результаты проверки Mihomo" --textbox "$TMP" 30 110
+    dialog --backtitle "$BACKTITLE" --title "Результаты Mihomo / Xray" --textbox "$TMP" 30 110
     return 1
   fi
 
-  python3 - "$json_tmp" >"$TMP" <<'PY'
-import json
-import sys
-
-path = sys.argv[1]
-with open(path, encoding="utf-8") as f:
-    nodes = json.load(f)
-
-def display_name(value):
-    value = str(value or "")
-    head, sep, tail = value.partition(" ")
-    if sep and head and not any(ch.isalnum() for ch in head):
-        return tail
-    return value
-
-def clip(value, width):
-    value = str(value or "")
-    if len(value) <= width:
-        return value
-    if width <= 1:
-        return value[:width]
-    return value[: width - 1] + "…"
-
-print(f"{'№':>3}  {'Узел':<22} {'Протокол':<9} {'Сервер':<31} {'Состояние':<12} {'Страна':<6} {'Задержка':>9}")
-print("-" * 101)
-
-for i, node in enumerate(nodes, 1):
-    name = clip(display_name(node.get("name")), 22)
-    proto = clip(node.get("type"), 9)
-    endpoint = clip(f"{node.get('server', '')}:{node.get('port', '')}", 31)
-    healthy = bool(node.get("healthy"))
-    state = "работает" if healthy else "недоступен"
-    country = node.get("country_code") or "—"
-    delay = f"{node.get('delay_ms')} мс" if isinstance(node.get("delay_ms"), int) else "—"
-    print(f"{i:>3}  {name:<22} {proto:<9} {endpoint:<31} {state:<12} {country:<6} {delay:>9}")
-    if not healthy:
-        reason = node.get("error") or node.get("geo_error") or ""
-        if reason:
-            print(f"     Причина: {reason}")
-PY
+  if ! "$MIHOMO_RESULTS_VIEW" "$json_tmp" --target "$target" >"$TMP" 2>/dev/null; then
+    printf "%s\n" "Экран результатов Mihomo/Xray недоступен. Проверьте установку awg-mihomo-results-view." >"$TMP"
+  fi
   rm -f "$json_tmp"
 
-  dialog --backtitle "$BACKTITLE" --title "Все результаты проверки Mihomo" --textbox "$TMP" 32 112
+  dialog --backtitle "$BACKTITLE" --title "Результаты Mihomo / Xray" --textbox "$TMP" 32 112
 }
 
 select_tsv_node_dialog(){
@@ -968,9 +934,10 @@ select_tsv_node_dialog(){
       description="$type | $endpoint"
       [[ -z "$country" || "$country" == "??" ]] || description="$description | страна выхода: $country"
       [[ -z "$delay" || "$delay" == "-" ]] || description="$description | $delay"
+      [[ "$health" == XRAY_HTTPS ]] && description="$description | Xray: HTTPS OK (не TUN)"
       [[ "$health" == DEAD ]] && description="$description | НЕДОСТУПЕН"
       [[ "$duplicate" == DUPLICATE ]] && description="$description | ДУБЛИКАТ ИМЕНИ"
-      items+=("$ui_idx" "$display_name — $description" "Выбрать этот узел Mihomo.")
+      items+=("$ui_idx" "$display_name — $description" "Mihomo: применить; Xray: подготовить профиль без переключения TUN.")
     done <<<"$filtered"
     search_prompt="$prompt\n\nПоказано: $count из $total"
     [[ -z "$query" ]] || search_prompt="$search_prompt | поиск: $query"
@@ -1083,7 +1050,7 @@ mihomo_pool_status_dialog(){
 MIHOMO_POOL_PICKED_NODE=""
 
 mihomo_pool_pick(){
-  local target="$1" dialog_title="$2" prompt="$3" choice region region_label protocol protocol_label selected_protocol listing node
+  local target="$1" dialog_title="$2" prompt="$3" choice region region_label protocol protocol_label selected_protocol listing node node_json pick_rc
   MIHOMO_POOL_PICKED_NODE=""
   while true; do
     region="$("$MIHOMO_POOL" policy get 2>/dev/null || echo all)"
@@ -1095,22 +1062,39 @@ mihomo_pool_pick(){
     protocol="$("$MIHOMO_POOL" protocol get 2>/dev/null || echo all)"
     protocol_label="$(mihomo_protocol_label "$protocol")"
     choice="$(dialog --backtitle "$BACKTITLE" --title "$dialog_title" --item-help --menu \
-      "Показываются только узлы, прошедшие реальную проверку через Mihomo. Фильтры региона и протокола ограничивают проверяемый и доступный пул." 26 114 12 \
-      1 "Выбрать работоспособный узел [$region_label]" "Открыть список проверенных узлов текущего протокола; внутри доступен поиск по имени, адресу и стране точки выхода." \
-      2 "Фильтр: Только Европа [$region_label]" "Переключить между всеми работоспособными узлами и только подтверждёнными европейскими точками выхода." \
-      3 "Протокол [$protocol_label]" "Выбрать: все протоколы, VLESS, Trojan, Hysteria2, Shadowsocks или VMess. Это также ограничивает следующий health-scan и AUTO." \
-      4 "Обновить проверку сейчас" "Повторно проверить только узлы выбранного протокола через отдельный экземпляр Mihomo, не затрагивая рабочий транспорт." \
-      5 "Статистика пула узлов" "Показать протокол, состояние пула, количество узлов, работоспособных и европейских точек, а также возраст проверки." \
-      6 "Показать все результаты" "Диагностика: показать результаты для текущего протокола, включая недоступные узлы и причины, ничего не применяя." \
+      "Mihomo: проверка узла. Xray VLESS: изолированный OpenAI HTTPS, НЕ READY/TUN/LAN. Выбор Xray сначала только подготавливает профиль." 26 114 12 \
+      1 "Выбрать узел Mihomo / Xray [$region_label]" "Показать работающие Mihomo и Xray с HTTPS OK; Xray не переключает живой TUN." \
+      2 "Фильтр: Только Европа [$region_label]" "Для Xray страна без независимого GeoIP не подтверждена — такие ноды скрыты этим фильтром." \
+      3 "Протокол [$protocol_label]" "Фильтр выбора: все, VLESS, Trojan, HY2, SS, VMess. Mihomo pool и отдельная Xray HTTPS-проверка независимы." \
+      4 "Обновить проверку сейчас" "Проверить Mihomo; на live дополнительно Xray VLESS HTTPS в RAM. Рабочий VPN не переключается." \
+      5 "Статистика пула Mihomo" "Счётчики относятся к Mihomo; работающие через Xray ноды отмечены отдельно в результатах." \
+      6 "Показать все результаты" "Михомо и Xray раздельно: HTTPS Xray не означает READY/TUN/LAN; просмотр ничего не меняет." \
       0 "Назад" "Вернуться без выбора узла." 3>&1 1>&2 2>&3)" || return 1
     case "$choice" in
       1)
         title="Проверка пула Mihomo"
         if ! run_with_progress "$title" "$MIHOMO_POOL" ensure "$target" --geo-if-policy; then
-          dialog --backtitle "$BACKTITLE" --title "$title" --textbox "$TMP" 30 110
+          # A Mihomo-only scan can fail all Reality VLESS nodes while the
+          # independent Xray OpenAI network gate remains valid.
+          [[ "$target" == live ]] || {
+            dialog --backtitle "$BACKTITLE" --title "$title" --textbox "$TMP" 30 110
+            continue
+          }
+        fi
+        node_json="$(mktemp /run/awg-pbr/mihomo-node-picker.XXXXXX.json)"
+        chmod 600 "$node_json"
+        if ! "$MIHOMO_POOL" list "$target" --all --ignore-policy --format json >"$node_json" 2>/dev/null; then
+          rm -f "$node_json"
+          msg "$dialog_title" "Не удалось прочитать текущий пул узлов."
           continue
         fi
-        listing="$("$MIHOMO_POOL" list "$target" 2>/dev/null)" || {
+        if ! listing="$("$MIHOMO_NODE_PICKER" "$node_json" --target "$target" --protocol "$protocol" --region "$region" 2>/dev/null)"; then
+          rm -f "$node_json"
+          msg "$dialog_title" "Единый каталог недоступен. Рабочий транспорт не менялся."
+          continue
+        fi
+        rm -f "$node_json"
+        [[ -n "$listing" ]] || {
           msg "$dialog_title" "Нет работоспособных узлов, подходящих под текущие фильтры. Обновите проверку или измените фильтр региона/протокола."
           continue
         }
@@ -1136,6 +1120,11 @@ mihomo_pool_pick(){
       4)
         title="Проверка узлов Mihomo"
         capture "$MIHOMO_POOL" scan "$target" --geo-if-policy || true
+        # Do not depend on Mihomo scan success: Reality VLESS may be unusable
+        # through Mihomo but succeed via isolated Xray. The scans stay separate.
+        if [[ "$target" == live && -x "$MIHOMO_UNIFIED" ]]; then
+          capture "$MIHOMO_UNIFIED" probe-vless-all || true
+        fi
         ;;
       5)
         mihomo_pool_status_dialog "$target" || true
@@ -1227,13 +1216,41 @@ select_chain_index(){
 }
 
 mihomo_node_menu(){
-  local node_name info_tmp current rc preview fixed_chain="" confirm_text sync_out updated_chain=""
+  local node_name info_tmp current rc preview fixed_chain="" confirm_text sync_out updated_chain="" resolver engine index proof
 
-  if ! mihomo_pool_pick live "Точка выхода Mihomo" "Выберите работоспособный узел. В строке показаны протокол, адрес, страна точки выхода и задержка."; then
+  if ! mihomo_pool_pick live "Точка выхода Mihomo / Xray" "Mihomo — штатное переключение; Xray VLESS — пока только безопасная подготовка профиля."; then
     return 0
   fi
   node_name="$MIHOMO_POOL_PICKED_NODE"
-  [[ -n "$node_name" ]] || { msg "Mihomo" "Имя узла не задано."; return 0; }
+  [[ -n "$node_name" ]] || { msg "Выбор узла" "Имя узла не задано."; return 0; }
+
+  resolver="$("$MIHOMO_UNIFIED" resolve "$node_name" 2>/dev/null)" || {
+    msg "Выбор узла" "Профиль изменился или имя неоднозначно. Обновите проверку; переключения не было."
+    return 0
+  }
+  engine="$(sed -n 's/^NODE_ENGINE=//p' <<<"$resolver" | head -n1)"
+  if [[ "$engine" == XRAY ]]; then
+    proof="$(sed -n 's/^NODE_BASIC_NETWORK=//p' <<<"$resolver" | head -n1)"
+    index="$(sed -n 's/^NODE_INDEX=//p' <<<"$resolver" | head -n1)"
+    if [[ "$proof" != NETWORK_OK || ! "$index" =~ ^[0-9]+$ ]]; then
+      msg "Xray VLESS" "Профиль изменился или HTTPS-доказательство устарело. Рабочая нода не изменена."
+      return 0
+    fi
+    if systemctl is-active --quiet awg-xray-vless.service; then
+      msg "Xray VLESS" "Xray уже запущен. Не заменяем профиль активной службы без отдельной транзакции."
+      return 0
+    fi
+    confirm "Подготовка Xray VLESS" "Сохранить профиль выбранного узла Xray?\\n\\nЭто НЕ переключит живой TUN. Постоянный переход через Xray пока не допущен: автономный откат после выбора узла ещё требует испытания.\\n\\nMihomo, FIXED, DNS и MikroTik остаются прежними." || return 0
+    title="Подготовка профиля Xray"
+    if capture /usr/local/sbin/awg-xray-vless select "$index"; then
+      msg "Xray VLESS" "Профиль подготовлен. Живой трафик остаётся на прежней ноде.\\n\\nHTTPS OK означает только изолированную сетевую проверку, а не TUN/READY."
+    fi
+    return 0
+  fi
+  [[ "$engine" == MIHOMO ]] || {
+    msg "Выбор узла" "Движок не поддерживается; переключение запрещено."
+    return 0
+  }
 
   info_tmp="$(mktemp)"
   title="Подготовка узла Mihomo"
@@ -1576,7 +1593,7 @@ mihomo_candidate_auto_apply(){
   if [[ "$current" == unconfigured ]]; then
     capture "$AWG_TRANSPORT" select mihomo || return 1
   fi
-  msg "Mihomo готов" "Подписка применена; выбран доступный узел, политика узлов AUTO. Основной работающий транспорт не переключается ради скорости. Hot Pool и резервирование продолжают работать автоматически."
+  msg "Mihomo готов" "Подписка применена; выбран доступный узел, политика узлов AUTO. Основной работающий транспорт не переключается ради скорости. Hot Pool и READY включаются отдельно через меню; резервирование использует выбранную политику."
 }
 
 mihomo_initial_setup_flow(){
@@ -1869,6 +1886,64 @@ mihomo_advanced_menu(){
   done
 }
 
+# Experimental, OFF-by-default VLESS/Reality bridge. This menu only stages
+# a sidecar and never modifies the live Mihomo TUN, selected node, or router.
+mihomo_xray_vless_menu(){
+  local choice index
+  while true; do
+    choice="$(dialog --backtitle "$BACKTITLE" --title "Xray VLESS (опционально)" --item-help --menu \
+      "Дополнительный VLESS Reality XHTTP/gRPC через локальный Xray SOCKS5. Нода берётся из УЖЕ загруженной подписки Mihomo. Режим экспериментальный: не участвует автоматически в FIXED/Hot Pool. Маршруты и активную ноду не меняет." 24 112 7 \
+      1 "Состояние Xray" "Версия и выбранный VLESS без раскрытия ключей." \
+      2 "Номера VLESS в подписке" "Показать индекс/протокол VLESS XHTTP/gRPC в рабочей подписке Mihomo." \
+      3 "Выбрать VLESS для Xray" "Только сохраняет отпечаток VLESS; служба не запускается." \
+      4 "Запустить локальный Xray" "Только loopback SOCKS5; не меняет TUN, DNS, ACTIVE и FIXED." \
+      5 "Остановить локальный Xray" "Останавливает экспериментальный SOCKS5; текущий TUN не меняет." \
+      6 "Общий список Mihomo/Xray" "Все ноды активной подписки; базовая сеть, не Hot Pool READY." \
+      7 "Проверить VLESS Xray" "Изолированный HTTPS probe одной ноды, не меняет TUN/FIXED." \
+      0 "Назад" "Не менять настройки." 3>&1 1>&2 2>&3)" || return 0
+    case "$choice" in
+      1)
+        title="Xray VLESS"
+        capture /usr/local/sbin/awg-xray-install status || true
+        capture /usr/local/sbin/awg-xray-vless status || true
+        ;;
+      2)
+        title="VLESS-ноды текущей подписки"
+        capture /usr/local/sbin/awg-xray-vless list || true
+        ;;
+      3)
+        index="$(input "Выбор VLESS/Xray" "Введите порядковый номер VLESS из списка Xray. Номера относятся к текущей подписке; после обновления провайдера выбранный профиль повторно проверяется по точному отпечатку." "")" || continue
+        [[ "$index" =~ ^[0-9]{1,5}$ ]] || { msg "Xray VLESS" "Требуется числовой индекс."; continue; }
+        confirm "Xray VLESS" "Подготовить VLESS №$index для Xray? Это не переключает рабочий Mihomo." || continue
+        title="Подготовка Xray VLESS"
+        capture /usr/local/sbin/awg-xray-vless select "$index" || true
+        ;;
+      4)
+        confirm "Запуск Xray VLESS" "Запустить отдельную локальную Xray-службу? Только порт 127.0.0.1:17892. Это НЕ переключит Mihomo и не добавит ноду в резерв." || continue
+        title="Запуск Xray VLESS"
+        capture systemctl start awg-xray-vless.service || true
+        ;;
+      5)
+        confirm "Остановка Xray VLESS" "Остановить локальную Xray-службу? Если она вручную выбрана в Mihomo, соединение по ней прервётся. Остальной шлюз не меняем." || continue
+        title="Остановка Xray VLESS"
+        capture systemctl stop awg-xray-vless.service || true
+        ;;
+      6)
+        title="Единый каталог нод Mihomo / Xray"
+        capture /usr/local/sbin/awg-mihomo-unified-nodes list || true
+        ;;
+      7)
+        index="$(input "Базовая проверка VLESS" "Номер VLESS в текущем общем списке. Только TCP HTTPS OpenAI через изолированный Xray. Это не READY и не меняет активный узел." "")" || continue
+        [[ "$index" =~ ^[0-9]{1,5}$ ]] || { msg "Xray" "Нужен номер ноды.";continue; }
+        confirm "Проверка Xray" "Проверить Xray/VLESS №$index через изолированный SOCKS5? До 25 секунд, без влияния на Mihomo TUN." || continue
+        title="Сетевая проверка Xray/VLESS"
+        capture /usr/local/sbin/awg-mihomo-unified-nodes probe "$index" || true
+        ;;
+      0) return 0 ;;
+    esac
+  done
+}
+
 mihomo_menu(){
   local choice
   while true; do
@@ -1876,9 +1951,10 @@ mihomo_menu(){
       "Повседневное управление Mihomo: источник подписки, узлы, резервирование узлов и восстановление. Активный транспорт выбирается уровнем выше." 24 110 8 \
       1 "Состояние Mihomo" "Показывает текущий профиль, выбранный узел, адрес сервера, состояние службы и последний канал загрузки без вывода секретов." \
       2 "Подписка / источник" "Заменить URL, обновить через AUTO или импортировать профиль/подписку из файла либо текста." \
-      3 "Точка выхода / узел" "Показать узлы текущего источника и безопасно выбрать рабочий узел Mihomo." \
-      4 "Резервирование узлов Mihomo" "MANUAL, FIXED или AUTO по проверенному пулу. При исчерпании нод возможно резервирование на AWG, если он настроен и исправен." \
+      3 "Точка выхода Mihomo / Xray" "Единый список: Mihomo применяет ноду, Xray VLESS пока только подготавливает профиль. Без автоматического TUN-переключения." \
+      4 "Политика узлов Mihomo (FIXED/AUTO)" "Mihomo резервирует исправные ноды и AWG; автоматический переход на Xray до отдельных испытаний запрещён." \
       5 "Расширенные / восстановление" "Ручной канал загрузки, формат подписки, подготовленный профиль и локальное восстановление Mihomo." \
+      6 "Xray VLESS: диагностика" "Отдельный Xray Reality XHTTP/gRPC, HTTPS-проверка, подготовка профиля и локальный SOCKS. Без смены работающего TUN." \
       0 "Назад" "Вернуться в меню VPN без изменений." 3>&1 1>&2 2>&3)" || return 0
 
     case "$choice" in
@@ -1890,6 +1966,7 @@ mihomo_menu(){
       3) mihomo_node_menu ;;
       4) mihomo_node_policy_menu ;;
       5) mihomo_advanced_menu ;;
+      6) mihomo_xray_vless_menu ;;
       0) return 0 ;;
     esac
   done

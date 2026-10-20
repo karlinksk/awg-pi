@@ -1,0 +1,101 @@
+#!/usr/bin/env python3
+"""Read-only, engine-specific output for the user-facing unified node picker."""
+import importlib.util
+import sys
+from pathlib import Path
+import unittest
+from unittest import mock
+
+ROOT=Path(__file__).resolve().parents[1]
+PICKER=ROOT/"src/awg-mihomo-node-picker.py"
+VIEW=ROOT/"src/awg-mihomo-results-view.py"
+spec=importlib.util.spec_from_file_location("node_picker",PICKER)
+picker=importlib.util.module_from_spec(spec);sys.modules[spec.name]=picker
+spec.loader.exec_module(picker)
+vs=importlib.util.spec_from_file_location("source_view",VIEW)
+view=importlib.util.module_from_spec(vs);sys.modules[vs.name]=view
+vs.loader.exec_module(view)
+
+mihomo={"index":1,"name":"Germany Hysteria2","type":"hysteria2",
+        "server":"hys.example","port":2097,"healthy":True,
+        "delay_ms":440,"country_code":"DE"}
+xray={"index":2,"name":"Finland VLESS","type":"vless",
+      "server":"xray.example","port":443,"healthy":False,"error":"http-504"}
+profiles=[{k:v for k,v in row.items() if k in ("name","type","server","port")}
+          for row in (mihomo,xray)]
+inventory=[
+    {"index":1,"name":"Germany Hysteria2","engine":"MIHOMO","basic_network":"UNTESTED"},
+    {"index":2,"name":"Finland VLESS","engine":"XRAY","basic_network":"NETWORK_OK"}
+]
+
+class UnifiedPicker(unittest.TestCase):
+    def rows(self,pool=None,source=None,proofs=None,protocol="all",region="all"):
+        with mock.patch.object(picker,"load_view",return_value=view):
+            return picker.entries(pool or [mihomo,xray],
+                source if source is not None else profiles,
+                proofs if proofs is not None else inventory,protocol,region)
+
+    def test_mihomo_and_xray_visible_in_one_list(self):
+        data=self.rows()
+        self.assertEqual(len(data),2)
+        self.assertIn("HEALTHY",data[0])
+        self.assertIn("XRAY_HTTPS",data[1])
+        self.assertIn("Finland VLESS",data[1])
+
+    def test_only_fresh_xray_network_ok_is_selectable(self):
+        for status in ("UNTESTED","NETWORK_FAIL","UNKNOWN_HTTP","UNKNOWN_ERROR"):
+            with self.subTest(status=status):
+                inv=[inventory[0],{**inventory[1],"basic_network":status}]
+                self.assertEqual(len(self.rows(proofs=inv)),1)
+                self.assertNotIn("Finland VLESS",self.rows(proofs=inv)[0])
+
+    def test_duplicate_names_and_provider_churn_never_selected(self):
+        duplicate=[profiles[0],profiles[1],{**profiles[1],"port":8443}]
+        self.assertEqual(len(self.rows(source=duplicate,proofs=inventory+[
+            {**inventory[1],"index":3}])),1)
+        rotated=[profiles[0],{**profiles[1],"server":"new.example"}]
+        self.assertEqual(len(self.rows(source=rotated)),1)
+
+    def test_protocol_filter_preserved(self):
+        self.assertEqual(len(self.rows(protocol="vless")),1)
+        self.assertIn("XRAY_HTTPS",self.rows(protocol="vless")[0])
+        self.assertEqual(len(self.rows(protocol="hysteria2")),1)
+
+    def test_europe_filter_does_not_infer_xray_country(self):
+        # The provider's 'Finland' name alone is not verified GeoIP evidence.
+        self.assertEqual(len(self.rows(region="europe")),1)
+        self.assertIn("HEALTHY",self.rows(region="europe")[0])
+
+    def test_mihomo_healthy_without_xray_inventory_fallback(self):
+        rows=self.rows(source=[],proofs=[])
+        self.assertEqual(len(rows),1)
+        self.assertIn("HEALTHY",rows[0])
+
+    def test_unknown_engine_cannot_become_selectable(self):
+        inv=[{**inventory[0],"engine":"UNSUPPORTED"},inventory[1]]
+        self.assertEqual(len(self.rows(proofs=inv)),1)
+
+    def test_malicious_name_newline_cannot_corrupt_picker(self):
+        bad={**xray,"name":"Finland\tVLESS"}
+        source=[profiles[0],{**profiles[1],"name":"Finland\tVLESS"}]
+        inv=[inventory[0],{**inventory[1],"name":"Finland\tVLESS"}]
+        self.assertEqual(len(self.rows(pool=[mihomo,bad],source=source,proofs=inv)),1)
+
+    def test_menu_routes_xray_away_from_mihomo_select_auto(self):
+        menu=(ROOT/"src/awg-menu").read_text()
+        self.assertIn('MIHOMO_NODE_PICKER=/usr/local/sbin/awg-mihomo-node-picker',menu)
+        self.assertIn('if [[ "$engine" == XRAY ]]; then',menu)
+        self.assertIn('awg-xray-vless select "$index"',menu)
+        self.assertIn('[[ "$engine" == MIHOMO ]] ||',menu)
+        self.assertIn('Постоянный переход через Xray пока не допущен',menu)
+        self.assertIn('MIHOMO_POOL_PICKED_NODE',menu)
+        self.assertIn('independent Xray OpenAI network gate remains valid',menu)
+        self.assertIn('Reality VLESS may be unusable',menu)
+
+    def test_not_installed_into_auto_selection(self):
+        source=PICKER.read_text()
+        for word in ("systemctl", "node select-auto", "awg-transit-routing",
+                     "MIHOMO_READY_AUTO=1","READY_PASS"):
+            self.assertNotIn(word,source)
+
+if __name__=="__main__":unittest.main()

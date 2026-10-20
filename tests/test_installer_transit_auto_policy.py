@@ -37,7 +37,7 @@ class InstallerFailoverContract(unittest.TestCase):
 
     def test_clean_install_keeps_agreed_default_not_awg_first(self):
         self.assertIn('if (( UPGRADE_EXISTING == 0 )); then\n  "$SELECTION_CLI" mode auto mihomo awg', INSTALL)
-        self.assertIn('"$MIHOMO_NODE_POLICY_CLI" ready-auto enable', INSTALL)
+        self.assertIn('"$MIHOMO_NODE_POLICY_CLI" ready-auto disable', INSTALL)
         self.assertNotIn('"$SELECTION_CLI" mode auto awg mihomo', INSTALL)
         self.assertLess(INSTALL.index('install_project_helper src/awg-selection-monitor'),
                         INSTALL.index('systemctl enable awg-pbr-setup.service'))

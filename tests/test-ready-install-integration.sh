@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Offline release regression: clean installs explicitly provision Hot Pool
-# READY-priority, while existing upgrades preserve their opt-in/out choice.
+# Offline release regression: clean installs ship Hot Pool and READY disabled;
+# existing upgrades preserve their opt-in/out choice.
 set -Eeuo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
@@ -11,6 +11,9 @@ python3 -B tests/test_mihomo_auto_strategy.py
 python3 -B tests/test_menu_auto_strategy.py
 python3 -B tests/test_installer_auto_strategy.py
 python3 -B tests/test_clean_install_deferred_profiles.py
+python3 -B tests/test_xray_vless_adapter.py
+python3 -B tests/test_mihomo_xray_bridge.py
+python3 -B tests/test_unified_subscription_churn.py
 python3 -B -c 'import ast; from pathlib import Path; ast.parse(Path("src/awg-mihomo-ready-live-match").read_text())'
 python3 -B -c 'import yaml; assert hasattr(yaml, "safe_load")'
 
@@ -18,7 +21,7 @@ must(){
   grep -Fq -- "$2" "$1" || { echo "READY_INSTALL_TEST=MISSING $1: $2" >&2; exit 1; }
 }
 
-# READY helpers must exist before fresh installation activates priority.
+# READY helpers must ship even when fresh installation leaves priority off.
 must install.sh 'install_project_python_helper src/awg-mihomo-ready-live-match "$MIHOMO_READY_GUARD"'
 must install.sh 'install_project_helper src/awg-mihomo-ready-postcheck-tun "$MIHOMO_READY_POSTCHECK"'
 must install.sh 'python3 -B -c'
@@ -38,7 +41,7 @@ must src/awg-mihomo-node-policy 'MIHOMO_READY_AUTO_MODE_FILE="${MIHOMO_READY_AUT
 must src/awg-mihomo-node-policy 'MIHOMO_READY_AUTO_CANARY="$(cat "$MIHOMO_READY_AUTO_MODE_FILE" 2>/dev/null || echo 0)"'
 must src/awg-mihomo-node-policy 'MIHOMO_READY_POSTCHECK_BIN="${MIHOMO_READY_POSTCHECK_BIN:-/usr/local/sbin/awg-mihomo-ready-postcheck-tun}"'
 must src/awg-mihomo-node-policy 'ready-auto)'
-must install.sh '"$MIHOMO_NODE_POLICY_CLI" ready-auto enable >/dev/null'
+must install.sh '"$MIHOMO_NODE_POLICY_CLI" ready-auto disable >/dev/null'
 must src/awg-menu 'mihomo_auto_strategy_menu(){'
 must src/awg-mihomo-node-policy 'select_auto_strategy(){'
 must install.sh 'install_project_helper src/awg-menu /usr/local/sbin/awg-menu'
@@ -69,10 +72,11 @@ fi
 python3 -B - <<'PY'
 from pathlib import Path
 s=Path('install.sh').read_text()
-line=s.index('"$MIHOMO_NODE_POLICY_CLI" ready-auto enable')
+line=s.index('"$MIHOMO_NODE_POLICY_CLI" ready-auto disable')
 start=s.rfind('if (( UPGRADE_EXISTING == 0 )); then',0,line)
 end=s.find('fi',line)
 assert start != -1 and end != -1
-assert 'ready-auto enable' not in s[:start]
+assert 'ready-auto disable' not in s[:start]
+assert 'ready-auto enable' not in s
 PY
 echo READY_INSTALL_INTEGRATION=PASS

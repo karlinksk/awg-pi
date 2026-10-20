@@ -30,7 +30,7 @@ required = [
     '"Обновить через выбранный канал"',
     '"Подготовленный профиль [',
     '"Локальное восстановление Mihomo (.gz)"',
-    '"Точка выхода / узел"',
+    '"Точка выхода Mihomo / Xray"',
     '"Активный транспорт"',
     '"Расширенные / восстановление"',
     '"Добавить / настроить транспорт"',
@@ -232,7 +232,8 @@ assert 'resolve_tsv_node_choice' not in menu
 assert 'select_tsv_node_dialog' in menu
 assert 'Введите номер или ТОЧНОЕ имя узла из списка выше:' not in menu
 assert 'Введите номер или ТОЧНОЕ имя узла из списка:' not in menu
-assert 'Выберите работоспособный узел. В строке показаны протокол, адрес, страна точки выхода и задержка.' in menu
+assert 'Точка выхода Mihomo / Xray' in menu
+assert 'Xray VLESS — пока только безопасная подготовка профиля.' in menu
 assert 'Выберите основной живой узел подготовленной подписки.' in menu
 assert '🔎 Поиск / фильтр' in menu
 assert 'grep -iF -- "$query"' in menu
@@ -269,9 +270,9 @@ assert 'items+=("$ui_idx" "$display_name — $description"' in menu
 assert 'capture "$MIHOMO_POOL" list "$target" --all --ignore-policy' not in menu
 assert 'mihomo_pool_results_dialog "$target"' in menu
 assert 'mihomo_pool_results_dialog live' in menu
-assert 'Причина:' in menu
+assert 'Причина:' in Path('src/awg-mihomo-results-view.py').read_text()
 assert 'Состояние' in menu
-assert 'Задержка' in menu
+assert 'Задержка' in Path('src/awg-mihomo-results-view.py').read_text()
 assert '"$MIHOMO_NODE_POLICY" manual-selection preview "$node_name"' in menu
 assert '"$MIHOMO_NODE_POLICY" manual-selection apply "$node_name"' in menu
 assert 'После успешной проверки выбранный узел автоматически станет первым элементом цепочки' in menu
@@ -355,8 +356,8 @@ mihomo_block = menu[mihomo_start:mihomo_end]
 for label in (
     '1 "Состояние Mihomo"',
     '2 "Подписка / источник"',
-    '3 "Точка выхода / узел"',
-    '4 "Резервирование узлов Mihomo"',
+    '3 "Точка выхода Mihomo / Xray"',
+    '4 "Политика узлов Mihomo (FIXED/AUTO)"',
     '5 "Расширенные / восстановление"',
 ):
     assert label in mihomo_block, f"missing compact Mihomo item: {label}"

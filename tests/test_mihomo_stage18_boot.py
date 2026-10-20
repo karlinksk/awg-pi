@@ -61,11 +61,12 @@ class RuntimeBootSafety(unittest.TestCase):
         self.assertIn("install_project_unit units/awg-mihomo-stage18-ram-runtime.timer",s)
         self.assertIn("install_project_unit units/awg-mihomo-stage18-ram-runtime.path",s)
         self.assertIn("if (( UPGRADE_EXISTING == 0 )); then",s)
-        # Stage18 dependencies and Hot Pool are armed separately: Hot Pool
-        # must remain passive without a provider but enabled after fresh install.
+        # Base Stage18 timers are provider-guarded. Hot Pool must be installed
+        # but remain disabled until the user opts in via the menu.
         self.assertIn("for unit in awg-mihomo-pool-refresh.timer awg-mihomo-stage18-ram-runtime.timer awg-mihomo-stage18-ram-runtime.path; do",s)
         self.assertIn('systemctl enable --now "$unit"',s)
-        self.assertIn("systemctl enable --now awg-mihomo-hot-pool.timer",s)
+        self.assertIn("systemctl disable --now awg-mihomo-hot-pool.timer",s)
+        self.assertIn("systemctl is-enabled --quiet awg-mihomo-hot-pool.timer",s)
         self.assertIn("systemctl is-active --quiet awg-mihomo-hot-pool.timer",s)
         self.assertNotIn("Stage18 video decode unavailable: FFmpeg missing",s)
 

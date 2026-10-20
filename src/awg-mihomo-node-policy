@@ -498,7 +498,7 @@ service_candidate_allowed(){
 }
 
 failover_fixed(){
-  local current="$1" node found_current=0 attempts=0
+  local current="$1" node found_current=0 attempts=0 failed_mihomo_candidates=0
   while IFS= read -r node || [[ -n "$node" ]]; do
     [[ -n "$node" ]] || continue
     if (( found_current == 0 )); then
@@ -514,10 +514,69 @@ failover_fixed(){
     # An unproven ChatGPT/YouTube candidate must never be selected when
     # service gating is required. Continue to the next explicit FIXED node.
     service_candidate_allowed "$node" || continue
-    if "$MIHOMO_CONFIGURE" node select-auto "$node" >/dev/null; then
+    # Engine-aware FIXED. Xray is an opt-in, TEST-PI-ONLY transaction.
+    # The old Mihomo-only selector must never receive a Reality VLESS name.
+    if [[ -e "${MIHOMO_UNIFIED_NODE_CLI:-/usr/local/sbin/awg-mihomo-unified-nodes}" ]]; then
+      [[ -x "${MIHOMO_UNIFIED_NODE_CLI:-/usr/local/sbin/awg-mihomo-unified-nodes}" ]] || { echo "MIHOMO_NODE_FAILOVER=ENGINE_RESOLVER_UNAVAILABLE" >&2; return 1; }
+      local resolved engine
+      resolved="$("${MIHOMO_UNIFIED_NODE_CLI:-/usr/local/sbin/awg-mihomo-unified-nodes}" resolve "$node" 2>/dev/null)" || continue
+      engine="$(sed -n 's/^NODE_ENGINE=//p' <<<"$resolved")"
+      if [[ "$engine" == XRAY ]]; then
+        if [[ "${MIHOMO_XRAY_FIXED_FAILOVER_CANARY:-0}" != 1 ]]; then
+          echo "MIHOMO_NODE_FAILOVER=XRAY_TRANSACTION_NOT_CERTIFIED" >&2
+          continue
+        fi
+        if [[ "$(hostname)" != awg-upgrade || "$(cat "$MIHOMO_AUTO_MODE_FILE" 2>/dev/null)" != transit ||
+              "$(sed -n 's/^NODE_BASIC_NETWORK=//p' <<<"$resolved")" != NETWORK_OK ]]; then
+          echo "MIHOMO_NODE_FAILOVER=XRAY_EXPERIMENTAL_PREFLIGHT_REJECTED" >&2
+          continue
+        fi
+        if [[ ! -x "${MIHOMO_XRAY_TRANSACTION_CLI:-/usr/local/sbin/awg-xray-live-backend}" ]]; then
+          echo "MIHOMO_NODE_FAILOVER=XRAY_TRANSACTION_EXECUTOR_MISSING" >&2
+          return 1
+        fi
+        # Only the independent guarded transaction can make a cross-core
+        # decision. It rechecks failed-TUN HTTPS twice under maintenance lock,
+        # validates exact provider/credentials, arms 300s watchdog BEFORE
+        # mutation, and fails Transit CLOSED if its candidate cannot commit.
+        if AWG_XRAY_EXPERIMENTAL_APPLY=TEST_PI_AUTHORIZED \
+             AWG_XRAY_DEGRADED_FIXED="$failed_mihomo_candidates" \
+             "${MIHOMO_XRAY_TRANSACTION_CLI:-/usr/local/sbin/awg-xray-live-backend}" apply "$current" "$node" >/dev/null; then
+          printf 'MIHOMO_NODE_FAILOVER=%s->%s\n' "$current" "$node"
+          return 0
+        fi
+        # Transaction might already have quiesced Mihomo. Never try the
+        # Mihomo-only selector or start the known-failed predecessor again.
+        echo "MIHOMO_NODE_FAILOVER=XRAY_TRANSACTION_ABORTED_REVIEW_REQUIRED" >&2
+        return 1
+      fi
+      [[ "$engine" == MIHOMO ]] || { echo "MIHOMO_NODE_FAILOVER=ENGINE_UNSUPPORTED" >&2; continue; }
+    fi
+    if MIHOMO_NODE_FAILOVER_RECOVERY=1 "$MIHOMO_CONFIGURE" node select-auto "$node" >/dev/null; then
+      # The configure transaction validated the new Pi-bound TUN, but left
+      # Transit disabled to keep forwarded clients FAIL-CLOSED during switch.
+      # Reapply the policy rule only after a verified successful new node.
+      if [[ "$(cat "$MIHOMO_AUTO_MODE_FILE" 2>/dev/null)" == transit ]]; then
+        if ! "$MIHOMO_AUTO_TRANSIT_ROUTING" apply >/dev/null; then
+          echo "MIHOMO_NODE_FAILOVER=TRANSIT_REAPPLY_FAILED_FAIL_CLOSED" >&2
+          return 1
+        fi
+        local transit_status
+        transit_status="$("$MIHOMO_AUTO_TRANSIT_ROUTING" status 2>/dev/null)" || return 1
+        if ! grep -Fxq "Transit guard: SAFE" <<<"$transit_status" ||
+           ! grep -Fxq "Transit policy rule: ACTIVE" <<<"$transit_status" ||
+           ! grep -Fxq "Transit VPN table: READY" <<<"$transit_status"; then
+          echo "MIHOMO_NODE_FAILOVER=TRANSIT_UNVERIFIED_FAIL_CLOSED" >&2
+          return 1
+        fi
+      fi
       printf 'MIHOMO_NODE_FAILOVER=%s->%s\n' "$current" "$node"
       return 0
     fi
+    # The configure rollback kept the original metadata, but MUST NOT
+    # restart the already-failed incumbent. Next Xray sees a deliberately
+    # stopped Mihomo and disabled Transit policy rule, not normal traffic.
+    failed_mihomo_candidates=1
   done <"$MIHOMO_NODE_POLICY_ORDER_FILE"
   (( found_current == 1 )) || return 1
   return 1
@@ -621,7 +680,7 @@ quiesce_failed_mihomo(){
 }
 
 failover_auto(){
-  local current="$1" candidate item attempts=0 from_ready=0
+  local current="$1" candidate item attempts=0 from_ready=0 candidate_visits=0
   # Keep the legacy non-READY AUTO bound unchanged. READY AUTO may inspect
   # all four prepared reserves before a small fresh-qualified fallback.
   local max_checks=3
@@ -667,6 +726,10 @@ failover_auto(){
       candidate="$("$MIHOMO_POOL_CLI" "${best_args[@]}" 2>/dev/null)" || break
     fi
     [[ -n "$candidate" ]] || break
+    # Bound ALL candidates, including resolver-rejected cross-core nodes.
+    # A pool helper can repeatedly return the same excluded candidate.
+    (( candidate_visits < max_checks )) || { echo "MIHOMO_NODE_FAILOVER=CANDIDATE_LIMIT" >&2; break; }
+    candidate_visits=$((candidate_visits+1))
     validate_node_name "$candidate" || return 1
     # A faulty pool helper must not return an excluded dead/failed node.
     for item in "${excludes[@]}"; do
@@ -709,6 +772,20 @@ failover_auto(){
       fi
     fi
 
+    # The legacy configure path cannot activate the Xray sidecar safely.
+    # Explicitly exclude cross-core candidates until a guarded transactional
+    # switch with independent no-return recovery is certified.
+    if [[ -e "${MIHOMO_UNIFIED_NODE_CLI:-/usr/local/sbin/awg-mihomo-unified-nodes}" ]]; then
+      [[ -x "${MIHOMO_UNIFIED_NODE_CLI:-/usr/local/sbin/awg-mihomo-unified-nodes}" ]] || { echo "MIHOMO_NODE_FAILOVER=ENGINE_RESOLVER_UNAVAILABLE" >&2; continue; }
+      local resolved engine
+      resolved="$("${MIHOMO_UNIFIED_NODE_CLI:-/usr/local/sbin/awg-mihomo-unified-nodes}" resolve "$candidate" 2>/dev/null)" || { excludes+=("$candidate"); continue; }
+      engine="$(sed -n 's/^NODE_ENGINE=//p' <<<"$resolved")"
+      if [[ "$engine" != MIHOMO ]]; then
+        echo "MIHOMO_NODE_FAILOVER=XRAY_TRANSACTION_NOT_CERTIFIED" >&2
+        excludes+=("$candidate")
+        continue
+      fi
+    fi
     # When recovering from an already FAILED live node, the configure
     # transaction must not restart that old node if candidate activation fails.
     if MIHOMO_NODE_FAILOVER_RECOVERY="$MIHOMO_READY_AUTO_CANARY"       "$MIHOMO_CONFIGURE" node select-auto "$candidate" >/dev/null; then
