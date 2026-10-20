@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
-# TEST-PI ONLY: passive one-file Xray SOCKS readiness hotfix.
+# TEST-PI ONLY: passive one-file Xray Selective commit recheck hotfix.
 # No service stop/start, no route/DNS/SSH/MikroTik mutation.
 set -Eeuo pipefail
 umask 077
 ROOT="$(cd "$(dirname "$0")/.." && pwd -P)"
 TARGET=/usr/local/sbin/awg-xray-live-backend
 SOURCE="$ROOT/src/awg-xray-live-backend.py"
-OLD=99652708de8db0efaffd2af6ffe22ecf31b263224fe27ba5a8dfe7efcaf992bc
-NEW=ee60c9736c162475923d580d88e7b10ae95db2020abb74b2d1887ef973c889cc
-BACKUP="/var/backups/awg-gateway/xray-socks-warmup-$(date -u +%Y%m%dT%H%M%S)-$$"
+OLD=ee60c9736c162475923d580d88e7b10ae95db2020abb74b2d1887ef973c889cc
+NEW=61f3d3143ddc5ce2ac00a292014ee752cb17ae90a9a2c9109ed89a271108165c
+BACKUP="/var/backups/awg-gateway/xray-selective-commit-$(date -u +%Y%m%dT%H%M%S)-$$"
 UNIT="awg-xray-warmup-rollback-$$"
 TIMER="$UNIT.timer"
 armed=0
@@ -53,8 +53,8 @@ set -Eeuo pipefail
 snap="$(cd "$(dirname "$0")" && pwd -P)"
 [[ "$(cat "$snap/state" 2>/dev/null || true)" == PENDING ]] || exit 0
 target=/usr/local/sbin/awg-xray-live-backend
-old=99652708de8db0efaffd2af6ffe22ecf31b263224fe27ba5a8dfe7efcaf992bc
-new=ee60c9736c162475923d580d88e7b10ae95db2020abb74b2d1887ef973c889cc
+old=ee60c9736c162475923d580d88e7b10ae95db2020abb74b2d1887ef973c889cc
+new=61f3d3143ddc5ce2ac00a292014ee752cb17ae90a9a2c9109ed89a271108165c
 exec 9>/run/awg-maintenance.lock
 flock -x -w 30 9
 current="$(sha256sum "$target" | cut -d' ' -f1)"
