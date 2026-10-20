@@ -384,6 +384,19 @@ class LinuxBackend:
     def check_tun_https(self):
         return http_code(["--interface","mihomo0","--noproxy","*"])
     def check_policy_routes(self):
+        if MODE.read_text().strip()=="selective":
+            if not routes_ok() or self.degraded_fixed:
+                return False
+            if not all(active(x) for x in ("ssh.service","dnsmasq.service","awg-pbr-health.service")):
+                return False
+            try:
+                if run("/usr/local/sbin/awg-transport","get",timeout=10)!="mihomo":
+                    return False
+                rules=run("ip","-4","rule","show",timeout=8)
+                return any(re.search(r"\bfwmark\s+(?:0x100|256)\s+lookup\s+100\b",line)
+                           for line in rules.splitlines())
+            except (OSError,RuntimeError,subprocess.TimeoutExpired):
+                return False
         # For an exhausted FIXED chain, the previous failed Mihomo attempt
         # intentionally disabled Transit. Re-enable the rule ONLY after the
         # newly selected Xray-backed Mihomo TUN actually passed HTTPS 401.
