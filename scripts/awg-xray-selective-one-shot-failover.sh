@@ -235,13 +235,30 @@ else
   echo 'XRAY_SELECTIVE_PREACTIVATION=NOT_OBSERVED'
 fi
 
+# This is a strict observation before recover() may explicitly select AWG.
+# A name-only selected transport, failed SSH/DNS, stale routes, and no HTTPS
+# cannot be reported as automatic Xray->AWG failover success.
+automatic_awg_recovery_verified(){
+  [[ "$("$backend" get 2>/dev/null || true)" == awg ]] || return 1
+  for svc in awg-quick@awg0 awg-selection-monitor ssh dnsmasq;do
+    up "$svc" || return 1
+  done
+  ! up awg-xray-vless && ! up awg-mihomo || return 1
+  for table in 100 101;do
+    ip -4 route show table "$table" |
+      grep -Eq '^default[[:space:]]+dev[[:space:]]+awg0([[:space:]]|$)' || return 1
+  done
+  api awg0
+}
+second=NOT_RUN
 if [[ "$first" == XRAY_TUN ]];then
   echo 'XRAY_TUN_HTTPS=PASS'
   systemctl stop awg-xray-vless
+  ! up awg-xray-vless || die XRAY_FAULT_DID_NOT_STOP
   echo 'FAULT=XRAY_STOP'
   second=TIMEOUT
   for i in $(seq 1 30);do
-    if [[ "$("$backend" get 2>/dev/null || true)" == awg ]];then second=AWG;break;fi
+    if automatic_awg_recovery_verified;then second=AWG;break;fi
     sleep 3
   done
   echo "SECOND_RESULT=$second"
@@ -249,6 +266,17 @@ fi
 bash "$dir/recover"
 [[ "$("$backend" get)" == awg ]] && api awg0 || die AWG_POSTCHECK
 for u in ssh dnsmasq awg-selection-monitor awg-quick@awg0;do up "$u" || die "POST_SERVICE_$u";done
+! up awg-xray-vless || die XRAY_SIDECAR_LEFT_RUNNING
+[[ "$(systemctl is-enabled awg-xray-vless 2>/dev/null || true)" == disabled ]] || die XRAY_SIDECAR_LEFT_ENABLED
+for table in 100 101;do
+  ip -4 route show table "$table" |
+    grep -Eq '^default[[:space:]]+dev[[:space:]]+awg0([[:space:]]|$)' || die "AWG_ROUTE_POST_$table"
+done
 echo 'FINAL_AWG_HTTPS=PASS'
+if [[ "$first" != XRAY_TUN || "$second" != AWG ]];then
+  echo 'SELECTIVE_XRAY_AUTO_FAILOVER=NOT_VERIFIED'
+  exit 1
+fi
+echo 'SELECTIVE_XRAY_AUTO_FAILOVER=PASS'
 echo "REPORT_DIR=$dir"
 echo 'RESTORE_ORIGINAL_MIHOMO_NODE=FOLLOWUP'
