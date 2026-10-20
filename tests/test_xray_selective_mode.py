@@ -17,6 +17,14 @@ spec.loader.exec_module(m)
 
 
 class SelectiveXraySafety(unittest.TestCase):
+    def setUp(self):
+        # Isolate the global maintenance lock from the running gateway.
+        lockdir=tempfile.TemporaryDirectory()
+        self.addCleanup(lockdir.cleanup)
+        patch=mock.patch.object(m,"MAINTENANCE_LOCK",Path(lockdir.name)/"maintenance.lock")
+        patch.start()
+        self.addCleanup(patch.stop)
+
     def modefile(self, root, value="selective"):
         mode = root / "mode"
         mode.write_text(value)
