@@ -28,6 +28,14 @@ class CanaryTrace(unittest.TestCase):
         self.assertIn('cat "$dir/node.out"',S)
         self.assertIn('2>"$dir/node.err"',S)
         self.assertNotIn('cat "$dir/node.err"',S)
+    def test_test_executables_never_live_on_noexec_run(self):
+        self.assertIn('mktemp -d /dev/shm/awg-xray-auto-test.', S)
+        self.assertNotIn('mktemp -d /run/awg-xray-auto-test.', S)
+        self.assertIn('"$dir/exec-preflight" || die TEMP_RUNTIME_NOEXEC', S)
+        self.assertIn('CANARY_TMPFS_EXEC=PASS', S)
+        self.assertLess(S.index('CANARY_TMPFS_EXEC=PASS'),
+                        S.index('systemd-run --quiet --collect'))
+
     def test_watchdog_armed_before_failure(self):
         self.assertLess(S.index("systemd-run --quiet --collect"),
                         S.index("systemctl stop awg-mihomo\n"))
