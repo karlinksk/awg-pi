@@ -119,6 +119,10 @@ class XrayAutoDispatch(unittest.TestCase):
         part = SOURCE.split("failover_auto(){", 1)[1].split("\n}\n", 1)[0]
         self.assertIn('systemctl is-active --quiet awg-xray-vless.service', part)
         self.assertIn('XRAY_ACTIVE_DEFER_TO_TRANSPORT_AWG', part)
+        # The Xray service can crash while its boot overlay and selection
+        # remain. AUTO must still refuse unsafe Mihomo-only recovery.
+        self.assertIn('61-awg-xray-bridge.conf', part)
+        self.assertIn('/var/lib/awg-pbr/xray-vless/selected.json', part)
 
     def test_installer_and_menu_do_not_enable_experiment(self):
         for path in (ROOT / "install.sh", ROOT / "src/awg-menu"):
