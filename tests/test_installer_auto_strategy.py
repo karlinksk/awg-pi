@@ -5,7 +5,7 @@ from pathlib import Path
 ROOT=Path(__file__).resolve().parents[1]
 INS=(ROOT/"install.sh").read_text()
 UPD=(ROOT/"src/awg-update").read_text()
-START=INS.split("# Fresh installs PREPARE availability-AUTO only.",1)[1].split("\n",1)[1].split('ACTIVE_TRANSPORT="$(cat "$TRANSPORT_FILE"',1)[0]
+START=INS.split("# Fresh installs PREPARE conservative transport AUTO only.",1)[1].split("\n",1)[1].split('ACTIVE_TRANSPORT="$(cat "$TRANSPORT_FILE"',1)[0]
 TIMER=INS.split("# Install-once, automatic-after-profile:",1)[1].split("\n",1)[1].split('ACTIVE_TRANSPORT="$(cat "$TRANSPORT_FILE"',1)[0]
 class AutoInstallerTests(unittest.TestCase):
  def run_case(self,mode="auto",upgrade=False):
@@ -102,9 +102,9 @@ systemctl(){
   self.assertIn('systemctl enable --now awg-mihomo-hot-pool.timer',UPD)
  def test_source_helpers_precede_onboarding_and_timer(self):
   self.assertLess(INS.index('install_project_helper src/awg-menu /usr/local/sbin/awg-menu'),
-                  INS.index("# Fresh installs PREPARE availability-AUTO only."))
+                  INS.index("# Fresh installs PREPARE conservative transport AUTO only."))
   self.assertLess(INS.index('install_project_helper src/awg-mihomo-node-policy "$MIHOMO_NODE_POLICY_CLI"'),
-                  INS.index("# Fresh installs PREPARE availability-AUTO only."))
+                  INS.index("# Fresh installs PREPARE conservative transport AUTO only."))
   self.assertIn('auto-strategy status|ready|classic',(ROOT/"src/awg-mihomo-node-policy").read_text())
   self.assertIn('mihomo_auto_strategy_menu(){',(ROOT/"src/awg-menu").read_text())
 if __name__=="__main__":unittest.main()
