@@ -1,0 +1,73 @@
+#!/usr/bin/env bash
+# Explicit opt-in, exact-command sudo policy for DC read-only diagnostics.
+# Never grants a shell, arbitrary commands, routing, service control or secrets.
+set -Eeuo pipefail
+umask 077
+export PATH=/usr/sbin:/usr/bin:/sbin:/bin
+POLICY=/etc/sudoers.d/90-awg-dc-admin
+HELPER=/usr/local/sbin/awg-dc-admin
+MARKER='# AWG-PI-DC-ADMIN READONLY V1'
+fail(){ printf 'AWG_DC_ADMIN_ACCESS_ERROR=%s\n' "$1" >&2; exit 2; }
+[[ "$#" == 2 && "$1" == @(enable|disable|status) ]] || fail USAGE_ENABLE_DISABLE_STATUS_USER
+(( EUID == 0 )) || fail ROOT_REQUIRED
+ACTION="$1"
+USER_NAME="$2"
+[[ "$USER_NAME" =~ ^[a-z_][a-z0-9_-]{0,31}$ && "$USER_NAME" != root ]] || fail INVALID_USERNAME
+entry="$(getent passwd "$USER_NAME")" || fail UNKNOWN_USER
+IFS=: read -r _ _ uid _ _ home shell <<< "$entry"
+[[ "$uid" =~ ^[0-9]+$ && "$uid" -ge 1000 && "$home" == "/home/$USER_NAME" &&
+   -d "$home" && ! -L "$home" && "$shell" != */false &&
+   "$shell" != */nologin ]] || fail UNSAFE_ACCOUNT
+
+policy_text(){
+  printf '%s\n' "$MARKER"
+  printf '%s ALL=(root) NOPASSWD: %s status, %s services, %s network, %s versions, %s stage18\n' \
+    "$USER_NAME" "$HELPER" "$HELPER" "$HELPER" "$HELPER" "$HELPER"
+}
+
+[[ ! -L "$POLICY" ]] || fail POLICY_SYMLINK_REFUSED
+case "$ACTION" in
+  status)
+    if [[ -f "$POLICY" ]] && cmp -s "$POLICY" <(policy_text); then
+      echo "AWG_DC_ADMIN_ACCESS=ENABLED"
+    else
+      echo "AWG_DC_ADMIN_ACCESS=DISABLED_OR_CUSTOM_POLICY"
+    fi
+    ;;
+  disable)
+    if [[ ! -e "$POLICY" ]]; then
+      echo "AWG_DC_ADMIN_ACCESS=DISABLED"
+      exit 0
+    fi
+    cmp -s "$POLICY" <(policy_text) || fail FOREIGN_POLICY_REFUSED
+    rm -f -- "$POLICY"
+    echo "AWG_DC_ADMIN_ACCESS=DISABLED"
+    ;;
+  enable)
+    [[ -f "$HELPER" && ! -L "$HELPER" &&
+       "$(stat -c '%u' "$HELPER")" == 0 &&
+       "$(stat -c '%a' "$HELPER")" == 755 ]] || fail HELPER_NOT_ROOT_OWNED_0755
+    [[ -d /etc/sudoers.d && ! -L /etc/sudoers.d &&
+       "$(stat -c '%u' /etc/sudoers.d)" == 0 ]] || fail UNSAFE_SUDOERS_DIR
+    [[ -x /usr/sbin/visudo ]] || fail VISUDO_MISSING
+    session="$home/.desktop-commander-device/device.json"
+    [[ -f "$session" && ! -L "$session" &&
+       "$(stat -c '%u' "$session")" == "$uid" &&
+       "$(stat -c '%a' "$session")" == 600 ]] || fail PAIRING_REQUIRED
+    if [[ -e "$POLICY" ]]; then
+      cmp -s "$POLICY" <(policy_text) || fail FOREIGN_POLICY_REFUSED
+      echo "AWG_DC_ADMIN_ACCESS=ALREADY_ENABLED"
+      exit 0
+    fi
+    temporary="$(mktemp "${POLICY}.tmp.XXXXXXXX")"
+    trap 'rm -f -- "${temporary:-}"' EXIT
+    policy_text >"$temporary"
+    chmod 0440 "$temporary"
+    /usr/sbin/visudo -cf "$temporary" >/dev/null || fail SUDOERS_SYNTAX_ERROR
+    # Atomic rename into place. Never touch other sudoers entries.
+    mv -nT -- "$temporary" "$POLICY" || fail ATOMIC_POLICY_INSTALL_FAILED
+    [[ -f "$POLICY" ]] || fail POLICY_NOT_INSTALLED
+    echo "AWG_DC_ADMIN_ACCESS=ENABLED"
+    echo "AWG_DC_ADMIN_ACCESS_NOTICE=UNBLOCK_SUDO_IN_DC_ONLY_AFTER_REVIEW"
+    ;;
+esac
