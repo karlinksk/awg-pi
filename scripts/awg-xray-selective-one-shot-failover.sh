@@ -51,6 +51,7 @@ done
 [[ $receipts == 1 ]] || die NO_VERIFIED_PASSIVE_BACKUP
 echo 'PREFLIGHT=PASS BACKUP=VERIFIED'
 cp -a /etc/awg-pbr/transports/mihomo/node-name "$dir/old-node"
+install -o root -g root -m 0700 "$root/scripts/awg-xray-selective-test-cleanup.sh" "$dir/test-cleanup"
 cat >"$dir/recover" <<'RECOVER'
 #!/usr/bin/env bash
 set -Eeuo pipefail
@@ -68,6 +69,13 @@ if [[ "$(/usr/local/sbin/awg-transport check awg 2>/dev/null || true)" == health
 else
   /usr/local/sbin/awg-pbr-failopen
   echo RESTORE=SELECTIVE_FAILOPEN
+fi
+# Remove test-owned persistent bridge only AFTER healthy AWG takeover.
+# The helper refuses foreign artifacts, active Mihomo and bad AWG routes.
+if [[ "$(/usr/local/sbin/awg-transport get 2>/dev/null || true)" == awg ]];then
+  dir="$(cd "$(dirname "$0")" && pwd -P)"
+  "$dir/test-cleanup" "$dir" || exit 1
+  echo XRAY_TEST_CLEANUP=PASS
 fi
 systemctl restart awg-selection-monitor
 RECOVER
