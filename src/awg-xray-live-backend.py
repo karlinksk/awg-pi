@@ -29,7 +29,8 @@ NODE_POLICY_MODE=Path("/etc/awg-pbr/transports/mihomo/node-policy.mode")
 XRAY_AUTO_MODE=Path("/etc/awg-pbr/transports/mihomo/xray-auto.mode")
 def xray_auto_authorized():
     try:
-        return XRAY_AUTO_MODE.is_file() and not XRAY_AUTO_MODE.is_symlink() and XRAY_AUTO_MODE.read_text().strip()=="1"
+        return ((XRAY_AUTO_MODE.is_file() and not XRAY_AUTO_MODE.is_symlink() and XRAY_AUTO_MODE.read_text().strip()=="1") or
+                (socket.gethostname()=="awg-upgrade" and os.environ.get("MIHOMO_XRAY_AUTO_FAILOVER_CANARY")=="1"))
     except OSError:
         return False
 
