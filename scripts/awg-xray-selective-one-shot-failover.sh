@@ -1,0 +1,121 @@
+#!/usr/bin/env bash
+# TEST PI ONLY; simulated native-pool exhaustion; real monitor/TUN/AWG.
+set -Eeuo pipefail
+umask 077
+backend=/usr/local/sbin/awg-transport
+drop=/run/systemd/system/awg-selection-monitor.service.d/95-xray-selective-canary.conf
+dir="$(mktemp -d /run/awg-xray-auto-test.XXXXXXXX)"
+timer=awg-xray-auto-test-recover.timer
+up(){ systemctl is-active --quiet "$1"; }
+die(){ echo "ABORT=$1";exit 1; }
+api(){ [[ "$(curl -q -4 --noproxy '*' --interface "$1" --connect-timeout 5 --max-time 13 -sS -o /dev/null -w '%{http_code}:%{ssl_verify_result}' https://api.openai.com/v1/models 2>/dev/null)" == 401:0 ]]; }
+[[ $EUID == 0 && "$(hostname)" == awg-upgrade ]] || die NOT_TESTPI_ROOT
+[[ "$(cat /etc/awg-pbr/mode)" == selective ]] || die NOT_SELECTIVE
+[[ "$(cat /etc/awg-pbr/transports/mihomo/node-policy.mode)" == auto ]] || die NOT_NODE_AUTO
+[[ "$(cat /etc/awg-pbr/transports/mihomo/ready-auto.mode)" == 0 ]] || die READY_ON
+[[ "$("$backend" get)" == mihomo ]] || die NOT_MIHOMO
+[[ ! -e "$drop" ]] || die OVERRIDE_EXISTS
+[[ ! -e /run/systemd/system/awg-mihomo.service.d/61-awg-xray-bridge.conf ]] || die XRAY_BRIDGE
+[[ ! -e /etc/systemd/system/awg-mihomo.service.d/61-awg-xray-bridge.conf ]] || die XRAY_BRIDGE
+[[ ! -e /var/lib/awg-pbr/xray-vless/selected.json ]] || die XRAY_SELECTED
+! up "$timer" && ! up awg-xray-vless || die OLD_TEST_RUNNING
+for u in ssh dnsmasq awg-mihomo awg-quick@awg0 awg-selection-monitor awg-pbr-health;do up "$u" || die "SERVICE_$u";done
+for t in 100 101;do ip -4 route show table "$t" | grep -Eq '^default +dev +mihomo0' || die "ROUTE_$t";done
+for b in mihomo awg;do [[ "$("$backend" check "$b")" == healthy ]] || die "HEALTH_$b";done
+api mihomo0 && api awg0 || die HTTPS_NOT_READY
+root="$(cd "$(dirname "$0")/.." && pwd -P)"
+for file in src/awg-mihomo-node-policy src/awg-xray-live-backend.py src/awg-mihomo-unified-nodes.py;do
+  name="$(basename "$file" .py)"
+  cmp -s "$root/$file" "/usr/local/sbin/$name" || die "SOURCE_DIFFERENT_$name"
+done
+receipts=0
+for snap in /var/backups/awg-gateway/xray-passive-*;do
+  [[ -f "$snap/state" ]] || continue
+  [[ "$(cat "$snap/state")" == COMMITTED ]] || continue
+  for name in awg-mihomo-node-policy awg-xray-live-backend awg-mihomo-unified-nodes;do
+    [[ -s "$snap/old/$name" ]] || die "BACKUP_INCOMPLETE_$name"
+  done
+  receipts=1
+done
+[[ $receipts == 1 ]] || die NO_VERIFIED_PASSIVE_BACKUP
+echo 'PREFLIGHT=PASS BACKUP=VERIFIED'
+cp -a /etc/awg-pbr/transports/mihomo/node-name "$dir/old-node"
+cat >"$dir/recover" <<'RECOVER'
+#!/usr/bin/env bash
+set -Eeuo pipefail
+drop=/run/systemd/system/awg-selection-monitor.service.d/95-xray-selective-canary.conf
+if [[ -e "$drop" ]];then
+  grep -Fq AWG_XRAY_TEST_OWNED "$drop" || exit 1
+  rm -f "$drop"
+  systemctl daemon-reload
+fi
+if [[ "$(/usr/local/sbin/awg-transport check awg 2>/dev/null || true)" == healthy ]];then
+  if [[ "$(/usr/local/sbin/awg-transport get 2>/dev/null || true)" != awg ]];then
+    /usr/local/sbin/awg-transport select awg
+  fi
+  echo RESTORE=AWG
+else
+  /usr/local/sbin/awg-pbr-failopen
+  echo RESTORE=SELECTIVE_FAILOPEN
+fi
+systemctl restart awg-selection-monitor
+RECOVER
+chmod 700 "$dir/recover"
+cat >"$dir/native-exhausted" <<'POOL'
+#!/usr/bin/env bash
+case "$1" in ensure|cooldown)exit 0;;best)exit 1;;*)exit 2;;esac
+POOL
+chmod 700 "$dir/native-exhausted"
+systemd-run --quiet --collect --unit=awg-xray-auto-test-recover --on-active=420s /bin/bash "$dir/recover" || die WATCHDOG_NOT_ARMED
+up "$timer" || die WATCHDOG_NOT_ACTIVE
+echo 'WATCHDOG=ARMED_420S'
+cleanup(){
+  rc=$?
+  trap - EXIT
+  if bash "$dir/recover";then
+    systemctl stop "$timer" >/dev/null 2>&1 || true
+    echo 'RECOVERY_SCRIPT=PASS'
+  else
+    echo 'RECOVERY_SCRIPT=FAILED_TIMER_LEFT_ARMED'
+    rc=1
+  fi
+  exit "$rc"
+}
+trap cleanup EXIT
+install -d -m 755 "$(dirname "$drop")"
+cat >"$drop" <<CONF
+# AWG_XRAY_TEST_OWNED
+[Service]
+Environment="MIHOMO_XRAY_AUTO_FAILOVER_CANARY=1"
+Environment="MIHOMO_XRAY_SELECTIVE_CANARY=1"
+Environment="MIHOMO_POOL_CLI=$dir/native-exhausted"
+CONF
+systemctl daemon-reload
+systemctl restart awg-selection-monitor
+echo 'CANARY=ACTIVE_MONITOR_ONLY'
+systemctl stop awg-mihomo
+echo 'FAULT=MIHOMO_STOP'
+first=TIMEOUT
+for i in $(seq 1 60);do
+  if [[ "$("$backend" get 2>/dev/null || true)" == awg ]];then first=AWG_EARLY;break;fi
+  if up awg-xray-vless && up awg-mihomo && api mihomo0;then first=XRAY_TUN;break;fi
+  sleep 3
+done
+echo "FIRST_RESULT=$first"
+if [[ "$first" == XRAY_TUN ]];then
+  echo 'XRAY_TUN_HTTPS=PASS'
+  systemctl stop awg-xray-vless
+  echo 'FAULT=XRAY_STOP'
+  second=TIMEOUT
+  for i in $(seq 1 30);do
+    if [[ "$("$backend" get 2>/dev/null || true)" == awg ]];then second=AWG;break;fi
+    sleep 3
+  done
+  echo "SECOND_RESULT=$second"
+fi
+bash "$dir/recover"
+[[ "$("$backend" get)" == awg ]] && api awg0 || die AWG_POSTCHECK
+for u in ssh dnsmasq awg-selection-monitor awg-quick@awg0;do up "$u" || die "POST_SERVICE_$u";done
+echo 'FINAL_AWG_HTTPS=PASS'
+echo "REPORT_DIR=$dir"
+echo 'RESTORE_ORIGINAL_MIHOMO_NODE=FOLLOWUP'
