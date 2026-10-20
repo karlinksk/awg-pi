@@ -869,7 +869,12 @@ failover_auto(){
     fi
     # When recovering from an already FAILED live node, the configure
     # transaction must not restart that old node if candidate activation fails.
-    if MIHOMO_NODE_FAILOVER_RECOVERY="$MIHOMO_READY_AUTO_CANARY"       "$MIHOMO_CONFIGURE" node select-auto "$candidate" >/dev/null; then
+    # In experimental cross-core AUTO, a rejected native candidate must
+    # never re-activate the already failed original before trying Xray/AWG.
+    # Preserve the legacy behavior when the experiment is disabled.
+    local recovery_guard="$MIHOMO_READY_AUTO_CANARY"
+    [[ "${MIHOMO_XRAY_AUTO_FAILOVER_CANARY:-0}" != 1 ]] || recovery_guard=1
+    if MIHOMO_NODE_FAILOVER_RECOVERY="$recovery_guard"       "$MIHOMO_CONFIGURE" node select-auto "$candidate" >/dev/null; then
       # Only the canary adds this additional validation; the underlying
       # configure command already provides its own rollback on failure.
       if [[ "$MIHOMO_READY_AUTO_CANARY" != 1 ]]; then
