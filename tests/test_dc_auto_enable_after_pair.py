@@ -21,8 +21,8 @@ class DesktopCommanderPairing(unittest.TestCase):
         installer=(ROOT/"install.sh").read_text()
         self.assertIn('install_project_helper src/awg-dc "$DC_CLI"',installer)
         self.assertIn("install_project_unit units/awg-dc-remote@.service",installer)
-        self.assertNotIn("awg-dc pair",installer)
-        self.assertNotIn("awg-dc enable",installer)
+        self.assertNotIn('"$DC_CLI" pair',installer)
+        self.assertNotIn('"$DC_CLI" enable',installer)
     def test_nonroot_service_requires_saved_pairing(self):
         unit=(ROOT/"units/awg-dc-remote@.service").read_text()
         self.assertIn("User=%i",unit)
