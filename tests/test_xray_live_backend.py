@@ -156,31 +156,31 @@ class LinuxBackendTests(unittest.TestCase):
             mode=Path(dirname)/"mode"
             mode.write_text("transit")
             with mock.patch.object(m,"MODE",mode):
-            backend=m.LinuxBackend("failed-HY2","Xray-VLESS")
-            backend.degraded_fixed=True
-            good="Transit guard: SAFE\nTransit policy rule: ACTIVE\nTransit VPN table: READY"
-            calls=[]
-            def command(*argv,**kwargs):
-                calls.append(argv)
-                return good
-            with (mock.patch.object(m,"routes_ok",return_value=True),
-                  mock.patch.object(backend,"check_tun_https",return_value=True),
-                  mock.patch.object(m,"run",side_effect=command)):
-                self.assertTrue(backend.check_policy_routes())
-            self.assertIn(("/usr/local/sbin/awg-transit-routing","apply"),calls)
-            calls.clear()
-            with (mock.patch.object(m,"routes_ok",return_value=True),
-                  mock.patch.object(backend,"check_tun_https",return_value=False),
-                  mock.patch.object(m,"run",side_effect=command)):
-                self.assertFalse(backend.check_policy_routes())
-            self.assertEqual(calls,[])
-            backend.degraded_fixed=False
-            calls.clear()
-            with (mock.patch.object(m,"routes_ok",return_value=True),
-                  mock.patch.object(m,"run",side_effect=command)):
-                self.assertTrue(backend.check_policy_routes())
-            self.assertNotIn(("/usr/local/sbin/awg-transit-routing","apply"),calls)
-    
+                backend=m.LinuxBackend("failed-HY2","Xray-VLESS")
+                backend.degraded_fixed=True
+                good="Transit guard: SAFE\nTransit policy rule: ACTIVE\nTransit VPN table: READY"
+                calls=[]
+                def command(*argv,**kwargs):
+                    calls.append(argv)
+                    return good
+                with (mock.patch.object(m,"routes_ok",return_value=True),
+                      mock.patch.object(backend,"check_tun_https",return_value=True),
+                      mock.patch.object(m,"run",side_effect=command)):
+                    self.assertTrue(backend.check_policy_routes())
+                self.assertIn(("/usr/local/sbin/awg-transit-routing","apply"),calls)
+                calls.clear()
+                with (mock.patch.object(m,"routes_ok",return_value=True),
+                      mock.patch.object(backend,"check_tun_https",return_value=False),
+                      mock.patch.object(m,"run",side_effect=command)):
+                    self.assertFalse(backend.check_policy_routes())
+                self.assertEqual(calls,[])
+                backend.degraded_fixed=False
+                calls.clear()
+                with (mock.patch.object(m,"routes_ok",return_value=True),
+                      mock.patch.object(m,"run",side_effect=command)):
+                    self.assertTrue(backend.check_policy_routes())
+                self.assertNotIn(("/usr/local/sbin/awg-transit-routing","apply"),calls)
+        
     def test_bridge_stays_ephemeral_until_live_tun_verification(self):
         import tempfile
         with tempfile.TemporaryDirectory() as dirname:
