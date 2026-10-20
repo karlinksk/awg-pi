@@ -901,7 +901,7 @@ install_project_helper src/awg-mihomo-node-policy "$MIHOMO_NODE_POLICY_CLI"
 _XRAY_AUTO_MODE="$PBR_DIR/transports/mihomo/xray-auto.mode"
 if [[ ! -e "$_XRAY_AUTO_MODE" ]]; then
   install -d -o root -g root -m 0700 "$(dirname "$_XRAY_AUTO_MODE")"
-  printf '0\\n' > "$_XRAY_AUTO_MODE"
+  printf '0\n' > "$_XRAY_AUTO_MODE"
   chmod 600 "$_XRAY_AUTO_MODE"
 fi
 
