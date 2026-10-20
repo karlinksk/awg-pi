@@ -77,8 +77,8 @@ cat >"$dir/native-exhausted" <<'POOL'
 case "$1" in ensure|cooldown)exit 0;;best)exit 1;;*)exit 2;;esac
 POOL
 chmod 700 "$dir/native-exhausted"
-# Diagnostic wrapper for the one-shot canary only. Installed gateway code
-# is untouched. No node names, URLs or credentials enter the system journal.
+# One-shot only: trace Node AUTO eligibility and return codes. Secrets stay
+# inside a root-only tmpfs file and are never logged.
 cat >"$dir/trace-node-policy" <<'TRACE'
 #!/usr/bin/env bash
 set -u
@@ -105,7 +105,6 @@ case "$1" in
     "$real" failover >"$dir/node.out" 2>"$dir/node.err"
     result=$?
     logger -t awg-xray-auto "PHASE=NODE_FAILOVER_RETURN_$result"
-    # Publish fixed, nonsecret code only; node.err stays in root-only tmpfs.
     if grep -Fq 'XRAY_SELECTIVE_BASELINE_UNSAFE_AWG_FALLBACK' "$dir/node.err";then
       logger -t awg-xray-auto 'PHASE=SELECTIVE_BASELINE_REJECTED'
     elif grep -Fq 'XRAY_SELECTIVE_FAILOPEN_FAILED_AWG_FALLBACK' "$dir/node.err";then
@@ -153,8 +152,6 @@ Environment="MIHOMO_NODE_POLICY_CLI=$dir/trace-node-policy"
 CONF
 systemctl daemon-reload
 systemctl restart awg-selection-monitor
-# Never inject failure unless systemd actually supplied the three canary
-# environment overrides. Drop-in presence alone does not prove runtime use.
 effective="$(systemctl show awg-selection-monitor.service -p Environment --value)"
 [[ "$effective" == *"MIHOMO_XRAY_AUTO_FAILOVER_CANARY=1"* &&
    "$effective" == *"MIHOMO_XRAY_SELECTIVE_CANARY=1"* &&
@@ -173,32 +170,8 @@ for i in $(seq 1 60);do
 done
 echo "FIRST_RESULT=$first"
 echo '=== NODE_AUTO_SAFE_TRACE ==='
-journalctl -t awg-xray-auto --since '-8 minutes' -o cat --no-pager 2>/dev/null | grep -E '^PHASE=[A-Z0-9_]+echo '=== XRAY_SELECTIVE_PREACTIVATION_DIAGNOSTIC ==='
-# Fixed status strings only, no subscription URLs, node names or credentials.
-if journalctl -t awg-xray-auto --since '-9 minutes' -o cat --no-pager 2>/dev/null | grep -F 'SELECTIVE_FAILOPEN=PREPARED_BEFORE_XRAY' >/dev/null; then
-  echo 'XRAY_SELECTIVE_PREACTIVATION=OBSERVED'
-else
-  echo 'XRAY_SELECTIVE_PREACTIVATION=NOT_OBSERVED'
-fi
-
-if [[ "$first" == XRAY_TUN ]];then
-  echo 'XRAY_TUN_HTTPS=PASS'
-  systemctl stop awg-xray-vless
-  echo 'FAULT=XRAY_STOP'
-  second=TIMEOUT
-  for i in $(seq 1 30);do
-    if [[ "$("$backend" get 2>/dev/null || true)" == awg ]];then second=AWG;break;fi
-    sleep 3
-  done
-  echo "SECOND_RESULT=$second"
-fi
-bash "$dir/recover"
-[[ "$("$backend" get)" == awg ]] && api awg0 || die AWG_POSTCHECK
-for u in ssh dnsmasq awg-selection-monitor awg-quick@awg0;do up "$u" || die "POST_SERVICE_$u";done
-echo 'FINAL_AWG_HTTPS=PASS'
-echo "REPORT_DIR=$dir"
-echo 'RESTORE_ORIGINAL_MIHOMO_NODE=FOLLOWUP'
- | tail -n 25 || true
+journalctl -t awg-xray-auto --since '-8 minutes' -o cat --no-pager 2>/dev/null |
+  grep -E '^PHASE=[A-Z0-9_]+$' | tail -n 25 || true
 echo '=== XRAY_SELECTIVE_PREACTIVATION_DIAGNOSTIC ==='
 # Fixed status strings only, no subscription URLs, node names or credentials.
 if journalctl -t awg-xray-auto --since '-9 minutes' -o cat --no-pager 2>/dev/null | grep -F 'SELECTIVE_FAILOPEN=PREPARED_BEFORE_XRAY' >/dev/null; then
