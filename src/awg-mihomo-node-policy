@@ -721,6 +721,7 @@ auto_xray_candidate(){
 
 failover_auto(){
   local current="$1" candidate item attempts=0 from_ready=0 candidate_visits=0 resolved engine xray_rc
+  local xray_nomination_used=0 max_candidate_visits=3
   # An active Xray sidecar already owns the Mihomo TUN. The ordinary node
   # selector cannot safely dismantle its boot bridge or restart a failed
   # predecessor. Let transport AUTO fall back to configured AWG instead.
@@ -737,6 +738,11 @@ failover_auto(){
   # all four prepared reserves before a small fresh-qualified fallback.
   local max_checks=3
   [[ "$MIHOMO_READY_AUTO_CANARY" == 1 ]] && max_checks=6
+  max_candidate_visits="$max_checks"
+  if [[ "${MIHOMO_XRAY_AUTO_FAILOVER_CANARY:-0}" == 1 && "$MIHOMO_READY_AUTO_CANARY" == 0 ]]; then
+    # Three bounded classic Mihomo candidates + one exact fresh Xray candidate.
+    max_candidate_visits=$((max_checks + 1))
+  fi
   local -a excludes=("$current") best_args=() hot_args=()
   local -a union_args=(--provider "$MIHOMO_READY_UNION_PROVIDER"
      --pool "$MIHOMO_READY_UNION_POOL" --state "$MIHOMO_READY_UNION_STATE")
@@ -775,12 +781,24 @@ failover_auto(){
       [[ -z "$candidate" ]] || from_ready=1
     fi
     if [[ -z "$candidate" ]]; then
-      candidate="$("$MIHOMO_POOL_CLI" "${best_args[@]}" 2>/dev/null)" || break
+      candidate="$("$MIHOMO_POOL_CLI" "${best_args[@]}" 2>/dev/null)" || candidate=""
+    fi
+    if [[ -z "$candidate" && "${MIHOMO_XRAY_AUTO_FAILOVER_CANARY:-0}" == 1 &&
+          "$MIHOMO_READY_AUTO_CANARY" == 0 && "$xray_nomination_used" == 0 ]]; then
+      # The native Mihomo health pool can exclude XHTTP/REALITY candidates.
+      # Only when it is exhausted, nominate one exact Xray candidate from
+      # the independent provider/fingerprint-aware network health inventory.
+      xray_nomination_used=1
+      if [[ -x "${MIHOMO_UNIFIED_NODE_CLI:-/usr/local/sbin/awg-mihomo-unified-nodes}" ]]; then
+        local -a unified_args=(best --engine XRAY)
+        for item in "${excludes[@]}"; do unified_args+=(--exclude "$item"); done
+        candidate="$("${MIHOMO_UNIFIED_NODE_CLI:-/usr/local/sbin/awg-mihomo-unified-nodes}" "${unified_args[@]}" 2>/dev/null)" || candidate=""
+      fi
     fi
     [[ -n "$candidate" ]] || break
     # Bound ALL candidates, including resolver-rejected cross-core nodes.
     # A pool helper can repeatedly return the same excluded candidate.
-    (( candidate_visits < max_checks )) || { echo "MIHOMO_NODE_FAILOVER=CANDIDATE_LIMIT" >&2; break; }
+    (( candidate_visits < max_candidate_visits )) || { echo "MIHOMO_NODE_FAILOVER=CANDIDATE_LIMIT" >&2; break; }
     candidate_visits=$((candidate_visits+1))
     validate_node_name "$candidate" || return 1
     # A faulty pool helper must not return an excluded dead/failed node.
