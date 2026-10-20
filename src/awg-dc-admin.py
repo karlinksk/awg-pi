@@ -100,8 +100,12 @@ def status():
         ("/etc/amnezia/amneziawg/awg0.conf", "AWG_PROFILE"),
         ("/var/lib/awg-pbr/mihomo/providers/subscription.yaml", "MIHOMO_PROVIDER"),
     ):
-        print("AWG_DC_ADMIN_" + name + "=" +
-              ("PRESENT" if Path(path).is_file() else "ABSENT"))
+        try:
+            present = Path(path).is_file()
+            value = "PRESENT" if present else "ABSENT"
+        except OSError:
+            value = "UNKNOWN"
+        print("AWG_DC_ADMIN_" + name + "=" + value)
     return 0
 
 HANDLERS = {"status": status, "stage18": stage18, "services": services,
