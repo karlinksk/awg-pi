@@ -83,6 +83,48 @@ class DCLimitedAdminTests(unittest.TestCase):
         self.assertNotIn("NOPASSWD: ALL", src)
         self.assertNotIn("/bin/bash", src)
 
+    def test_sudo_global_timestamp_not_reusable_by_dc(self):
+        src = ACCESS.read_text()
+        self.assertIn("Defaults:%s timestamp_type=tty, timestamp_timeout=0", src)
+        self.assertIn("runuser -u \"$USER_NAME\" -- /usr/bin/sudo -K", src)
+        self.assertIn("LEGACY_TIMESTAMP_UNSAFE", src)
+        self.assertIn("policy_text_v1", src)
+        self.assertIn("POLICY_CHANGED_DURING_UPGRADE", src)
+        self.assertIn("known_policy || fail FOREIGN_POLICY_REFUSED", src)
+
+    def test_real_sudoers_policy_syntax(self):
+        import os
+        import tempfile
+        src = ACCESS.read_text()
+        start = src.index("policy_text_v1(){")
+        end = src.index('[[ ! -L "$POLICY" ]]')
+        definitions = src[start:end]
+        prelude = (
+            "MARKER='# AWG-PI-DC-ADMIN READONLY V2'\n"
+            "LEGACY_MARKER='# AWG-PI-DC-ADMIN READONLY V1'\n"
+            "HELPER=/usr/local/sbin/awg-dc-admin\n"
+            "USER_NAME=karlinks\n"
+        )
+        for fn, legacy in (("policy_text", False), ("policy_text_v1", True)):
+            with self.subTest(policy=fn):
+                result = subprocess.run(
+                    ["bash", "-c", prelude + definitions + "\n" + fn],
+                    capture_output=True, text=True, check=True,
+                )
+                self.assertIn("NOPASSWD:", result.stdout)
+                if legacy:
+                    self.assertNotIn("timestamp_timeout=0", result.stdout)
+                else:
+                    self.assertIn("Defaults:karlinks timestamp_type=tty, timestamp_timeout=0", result.stdout)
+                with tempfile.TemporaryDirectory() as tmpdir:
+                    filename = Path(tmpdir) / "sudoers-check"
+                    filename.write_text(result.stdout)
+                    checked = subprocess.run(
+                        ["/usr/sbin/visudo", "-cf", str(filename)],
+                        capture_output=True, text=True,
+                    )
+                    self.assertEqual(checked.returncode, 0, checked.stderr)
+
     def test_installer_only_installs_no_activation(self):
         src = INSTALL.read_text()
         self.assertIn("install_project_python_helper src/awg-dc-admin.py", src)
