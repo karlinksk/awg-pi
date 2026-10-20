@@ -25,6 +25,7 @@ class XrayAutoDispatch(unittest.TestCase):
         self.mode = self.base / "mode"
         self.mode.write_text("transit\n")
         self.mkbin("hostname", "echo awg-upgrade")
+        self.mkbin("systemctl", '[ "$1" = is-active ]')
         self.mkbin("transaction",
                    'printf "%s:%s:%s\\n" "$AWG_XRAY_EXPERIMENTAL_APPLY" "$2" "$3" >> "$MOCK_LOG"\n'
                    '[ "$MOCK_RC" = 0 ]')
@@ -52,7 +53,9 @@ class XrayAutoDispatch(unittest.TestCase):
                "MIHOMO_STANDBY_REPAIR": standby,
                "MIHOMO_READY_AUTO_CANARY": ready,
                "MIHOMO_AUTO_MODE_FILE": str(self.mode),
-               "MIHOMO_XRAY_TRANSACTION_CLI": str(exe)}
+               "MIHOMO_XRAY_TRANSACTION_CLI": str(exe),
+               "MIHOMO_AUTO_SYSTEMCTL": str(self.bin/"systemctl"),
+               "MIHOMO_AUTO_SERVICE": "awg-mihomo.service"}
         script = FUNCTION + ('auto_xray_candidate FAILED-CURRENT VLESS-CANDIDATE '
                              '"NODE_ENGINE=XRAY\nNODE_BASIC_NETWORK=$1"')
         return subprocess.run(["bash", "-c", script, "test", health],
