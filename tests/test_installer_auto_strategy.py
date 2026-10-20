@@ -6,7 +6,7 @@ ROOT=Path(__file__).resolve().parents[1]
 INS=(ROOT/"install.sh").read_text()
 UPD=(ROOT/"src/awg-update").read_text()
 START=INS.split("# Fresh installs PREPARE conservative transport AUTO only.",1)[1].split("\n",1)[1].split('ACTIVE_TRANSPORT="$(cat "$TRANSPORT_FILE"',1)[0]
-TIMER=INS.split("# Install-once, automatic-after-profile:",1)[1].split("\n",1)[1].split('ACTIVE_TRANSPORT="$(cat "$TRANSPORT_FILE"',1)[0]
+TIMER=INS.split("# Base pool-refresh and Stage18 runtime are provider-guarded; only Hot Pool",1)[1].split("\n",1)[1].split('ACTIVE_TRANSPORT="$(cat "$TRANSPORT_FILE"',1)[0]
 class AutoInstallerTests(unittest.TestCase):
  def run_case(self,mode="auto",upgrade=False):
   with tempfile.TemporaryDirectory(prefix="auto-strategy-installer-") as directory:
