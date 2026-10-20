@@ -472,12 +472,24 @@ def watchdog(path):
         if state.get("state") not in ("armed","committed"):
             raise RuntimeError("UNEXPECTED_WATCHDOG_STATE")
     if state.get("state")=="committed":
-        # If the watchdog fires just after commit, check live state anyway.
+        # A verified committed Xray-backed TUN is still usable. A foreign
+        # active AWG or stale bridge is NOT healthy Xray evidence.
         try:
-            status=run("/usr/local/sbin/awg-transit-routing","status",timeout=10)
-            good=("Transit guard: SAFE" in status and
-                  "Transit policy rule: ACTIVE" in status and
-                  "Transit VPN table: READY" in status)
+            operating_mode=MODE.read_text().strip()
+            if operating_mode=="transit":
+                status=run("/usr/local/sbin/awg-transit-routing","status",timeout=10)
+                good=("Transit guard: SAFE" in status and
+                      "Transit policy rule: ACTIVE" in status and
+                      "Transit VPN table: READY" in status)
+            elif operating_mode=="selective":
+                good=(run("/usr/local/sbin/awg-transport","get",timeout=10)=="mihomo"
+                      and active("ssh.service") and active("dnsmasq.service")
+                      and active("awg-pbr-health.service"))
+                if good:
+                    rules=run("ip","-4","rule","show",timeout=8)
+                    good=any(re.search(r"\bfwmark\s+(?:0x100|256)\s+lookup\s+100\b",l)
+                             for l in rules.splitlines())
+            else:good=False
         except Exception:good=False
         if good and routes_ok() and http_code(["--interface","mihomo0","--noproxy","*"]):
             return
