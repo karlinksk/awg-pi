@@ -188,6 +188,7 @@ def command():
     resolve.add_argument("name")
     best=sub.add_parser("best")
     best.add_argument("--exclude",action="append",default=[])
+    best.add_argument("--engine",choices=("ANY","MIHOMO","XRAY"),default="ANY")
     x=a.parse_args()
     if os.geteuid()!=0:die("ROOT_REQUIRED")
     adapter=load_adapter()
@@ -243,7 +244,8 @@ def command():
     if x.cmd=="best":
         # Read-only candidate suggestion, NOT an activation command.
         options=[row for row in rows if row["basic_network"]=="NETWORK_OK" and
-                 row["name"] not in x.exclude]
+                 row["name"] not in x.exclude and
+                 (x.engine=="ANY" or row["engine"]==x.engine)]
         if not options:raise SystemExit(1)
         # Existing subscription order, not guessed latency/country.
         print(options[0]["name"])

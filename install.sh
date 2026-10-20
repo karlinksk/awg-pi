@@ -828,6 +828,9 @@ install_project_python_helper src/awg-mihomo-node-picker.py /usr/local/sbin/awg-
 # start a sidecar or alter the selected live node during clean installation.
 install_project_python_helper src/awg-xray-activation-transaction.py /usr/local/sbin/awg-xray-activation-transaction
 install_project_python_helper src/awg-xray-live-backend.py /usr/local/sbin/awg-xray-live-backend
+# Passive, pure cross-core recovery contracts (no service activation).
+install_project_python_helper src/awg-xray-failover-contract.py /usr/local/sbin/awg-xray-failover-contract
+install_project_python_helper src/awg-xray-recovery-runner.py /usr/local/sbin/awg-xray-recovery-runner
 install_project_helper src/awg-mihomo-prepare "$MIHOMO_PREPARE_SCRIPT"
 install_project_helper src/awg-mihomo-configure "$MIHOMO_CONFIGURE_SCRIPT"
 install_project_helper src/awg-first-run "$FIRST_RUN_CLI"

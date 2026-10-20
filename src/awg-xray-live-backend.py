@@ -23,6 +23,7 @@ BASE=Path("/var/backups/awg-gateway")
 PROVIDER=Path("/var/lib/awg-pbr/mihomo/providers/subscription.yaml")
 SELECTED=Path("/var/lib/awg-pbr/xray-vless/selected.json")
 MODE=Path("/etc/awg-pbr/mode")
+VPN_ENABLED=Path("/etc/awg-pbr/vpn-enabled")
 CURRENT=Path("/etc/awg-pbr/transports/mihomo/node-name")
 NODE_POLICY_MODE=Path("/etc/awg-pbr/transports/mihomo/node-policy.mode")
 NODE_POLICY_ORDER=Path("/etc/awg-pbr/transports/mihomo/node-policy.nodes")
@@ -36,6 +37,7 @@ MIHOMO="awg-mihomo.service"
 GROUP="AWG-MIHOMO"
 LOCAL="AWG-XRAY-VLESS-LOCAL"
 EXECUTOR=Path("/usr/local/sbin/awg-xray-live-backend")
+MAINTENANCE_LOCK=Path("/run/awg-maintenance.lock")
 
 def run(*args,timeout=20,env=None):
     p=subprocess.run(args,stdin=subprocess.DEVNULL,stdout=subprocess.PIPE,
@@ -88,15 +90,25 @@ def choose(value):
 
 def verified_awg_backup_safe():
     """Do not quiesce a verified *different* active transport on timeout."""
-    if MODE.read_text().strip()!="transit":return False
+    operating_mode=MODE.read_text().strip()
+    if operating_mode not in ("transit","selective"):return False
     try:
         if run("/usr/local/sbin/awg-transport","get",timeout=10)!="awg" or \
            not active("awg-quick@awg0.service"):
             return False
-        status=run("/usr/local/sbin/awg-transit-routing","status",timeout=10).splitlines()
-        if not all(v in status for v in ("Transit guard: SAFE",
-              "Transit policy rule: ACTIVE","Transit VPN table: READY")):
-            return False
+        if operating_mode=="transit":
+            status=run("/usr/local/sbin/awg-transit-routing","status",timeout=10).splitlines()
+            if not all(v in status for v in ("Transit guard: SAFE",
+                  "Transit policy rule: ACTIVE","Transit VPN table: READY")):
+                return False
+        else:
+            # A healthy Selective AWG backup has the same ownership
+            # priority as a healthy Transit AWG backup. Keep SSH/DNS and
+            # prove an actual AWG HTTPS response before protecting it.
+            if not active("ssh.service") or not active("dnsmasq.service") or \
+               run("/usr/local/sbin/awg-transport","check","awg",timeout=12)!="healthy" or \
+               not http_code(["--interface","awg0","--noproxy","*"]):
+                return False
         for table in ("100","101"):
             lines=run("ip","-4","route","show","table",table,timeout=6).splitlines()
             if len(lines)!=1 or not re.fullmatch(
@@ -107,30 +119,42 @@ def verified_awg_backup_safe():
         return False
 
 def failclosed():
-    # Transit remains subject to existing nft drop guard; never open DIRECT.
-    if MODE.read_text().strip()!="transit":return False
-    # The selection monitor may have already selected a healthy AWG backup.
-    # Do NOT disable its SAFE guard, stop its transport or rewrite AWG routes.
-    # Test-only rescue separately clears its endpoint blocks and opt-in.
+    """Mode-specific abort, never disrupting an independently healthy AWG."""
+    operating_mode=MODE.read_text().strip()
+    if operating_mode not in ("transit","selective"):return False
     if verified_awg_backup_safe():return True
     try:
-        run("/usr/local/sbin/awg-transit-routing","disable",timeout=16)
+        # Refuse other components' bridge files BEFORE changing routes.
+        for overlay in (BRIDGE_RUNTIME,BRIDGE):
+            if overlay.exists() and (
+                overlay.is_symlink() or
+                b"MIHOMO_XRAY_VLESS_BRIDGE=1" not in overlay.read_bytes()
+            ):
+                return False
+        if operating_mode=="transit":
+            # Existing FAIL-CLOSED guard; never route selected clients direct.
+            run("/usr/local/sbin/awg-transit-routing","disable",timeout=16)
+        else:
+            # Reuse Selective FAIL-OPEN (drops the 0x100 policy rule).
+            run("/usr/local/sbin/awg-pbr-failopen",timeout=16)
         for service in (MIHOMO,XRAY):
             run("systemctl","stop",service,timeout=20)
-        # The live candidate was not certified. Do not leave a persistent
-        # bridge pointing at its unverified sidecar on the next reboot.
         for overlay in (BRIDGE_RUNTIME,BRIDGE):
-            if overlay.exists():
-                if overlay.is_symlink() or b"MIHOMO_XRAY_VLESS_BRIDGE=1" not in overlay.read_bytes():
-                    return False
-                overlay.unlink()
+            overlay.unlink(missing_ok=True)
         run("systemctl","disable",XRAY,timeout=15)
         run("systemctl","daemon-reload",timeout=15)
-        SELECTED.unlink(missing_ok=True)  # preflight requires it absent
-        proof=run("/usr/local/sbin/awg-transit-routing","status",timeout=10)
-        return (not active(MIHOMO) and
-                "Transit policy rule: INACTIVE" in proof and
-                ("Transit guard: SAFE" in proof or "Transit guard: LOCKDOWN" in proof))
+        SELECTED.unlink(missing_ok=True)
+        if operating_mode=="transit":
+            proof=run("/usr/local/sbin/awg-transit-routing","status",timeout=10)
+            return (not active(MIHOMO) and
+                    "Transit policy rule: INACTIVE" in proof and
+                    ("Transit guard: SAFE" in proof or "Transit guard: LOCKDOWN" in proof))
+        # A broken TUN cannot own the Selective 0x100 policy rule.
+        rules=run("ip","-4","rule","show",timeout=8)
+        leaked=any(re.search(r"\bfwmark\s+(?:0x100|256)\s+lookup\s+100\b",line)
+                   for line in rules.splitlines())
+        return (not leaked and not active(MIHOMO) and not active(XRAY) and
+                active("ssh.service") and active("dnsmasq.service"))
     except Exception:
         return False
 
@@ -175,6 +199,83 @@ def verified_degraded_fixed_baseline():
     except (OSError,RuntimeError,subprocess.TimeoutExpired):
         return False
 
+def verified_degraded_auto_transit_baseline():
+    """AUTO Transit candidate after native exhaustion: protected FAIL-CLOSED only."""
+    if (socket.gethostname()!="awg-upgrade" or
+        MODE.read_text().strip()!="transit" or
+        NODE_POLICY_MODE.read_text().strip()!="auto" or
+        os.environ.get("MIHOMO_XRAY_AUTO_FAILOVER_CANARY")!="1" or
+        active(MIHOMO) or active(XRAY) or
+        not all(active(u) for u in
+                    ("ssh.service","dnsmasq.service","awg-pbr-health.service",
+                     "awg-quick@awg0.service"))):
+        return False
+    try:
+        if (run("/usr/local/sbin/awg-transport","get",timeout=10)!="mihomo" or
+            run("/usr/local/sbin/awg-transport","check","awg",timeout=12)!="healthy"):
+            return False
+        status=run("/usr/local/sbin/awg-transit-routing","status",timeout=10).splitlines()
+        if ("Transit policy rule: INACTIVE" not in status or
+            not any(x in status for x in ("Transit guard: SAFE","Transit guard: LOCKDOWN"))):
+            return False
+        for table in ("100","101"):
+            routes=run("ip","-4","route","show","table",table,timeout=6)
+            if routes.strip() and not all(re.fullmatch(
+                    r"default\s+dev\s+mihomo0(?:\s+.*)?",line.strip())
+                    for line in routes.splitlines()):
+                return False
+        return True
+    except (OSError,RuntimeError,subprocess.TimeoutExpired):
+        return False
+
+def verified_selective_route_ownership():
+    """No AWG/foreign route may be replaced by a Selective Xray recovery."""
+    try:
+        if MODE.read_text().strip()!="selective":
+            return False
+        if run("/usr/local/sbin/awg-transport","get",timeout=10)!="mihomo":
+            return False
+        return routes_ok() and all(active(x) for x in
+            ("ssh.service","dnsmasq.service","awg-pbr-health.service"))
+    except (OSError,RuntimeError,subprocess.TimeoutExpired):
+        return False
+
+def verified_degraded_selective_baseline():
+    """Selectively fail-open *stopped* Mihomo after rejected native candidates.
+
+    The incumbent is known dead; never start it just to pass preflight.
+    This guarded state is eligible only when the separate AWG standby is healthy
+    and a temporary test-Pi AUTO canary explicitly authorized the transaction.
+    """
+    if (socket.gethostname()!="awg-upgrade" or
+        MODE.read_text().strip()!="selective" or
+        NODE_POLICY_MODE.read_text().strip()!="auto" or
+        os.environ.get("MIHOMO_XRAY_AUTO_FAILOVER_CANARY")!="1" or
+        os.environ.get("MIHOMO_XRAY_SELECTIVE_CANARY")!="1" or
+        active(MIHOMO) or active(XRAY) or
+        not all(active(unit) for unit in
+            ("ssh.service","dnsmasq.service","awg-pbr-health.service",
+             "awg-quick@awg0.service"))):
+        return False
+    try:
+        if (VPN_ENABLED.read_text().strip()!="1" or
+            run("/usr/local/sbin/awg-transport","get",timeout=10)!="mihomo" or
+            run("/usr/local/sbin/awg-transport","check","awg",timeout=12)!="healthy"):
+            return False
+        rules=run("ip","-4","rule","show",timeout=8)
+        if any(re.search(r"\bfwmark\s+(?:0x100|256)\s+lookup\s+100\b",line)
+               for line in rules.splitlines()):
+            return False
+        for table in ("100","101"):
+            routes=run("ip","-4","route","show","table",table,timeout=6)
+            if routes.strip() and not all(re.fullmatch(
+                r"default\s+dev\s+mihomo0(?:\s+.*)?",line.strip())
+                for line in routes.splitlines()):
+                return False
+        return True
+    except (OSError,RuntimeError,subprocess.TimeoutExpired):
+        return False
+
 def snapshot_transition(snapshot, expected, desired):
     """Serialize watchdog and activation before touching the network.
 
@@ -211,9 +312,21 @@ class LinuxBackend:
         self.snapshot=None
         self.watchdog_unit=None
         self.degraded_fixed=False
+        self.degraded_selective=False
+        # In-process evidence: this transaction re-armed Selective after TUN proof.
+        self.selective_rule_rearmed=False
     def preflight(self,failed,candidate):
-        if os.geteuid()!=0 or MODE.read_text().strip()!="transit":
-            raise RuntimeError("ROOT_TRANSIT_REQUIRED")
+        operating_mode=MODE.read_text().strip()
+        if os.geteuid()!=0 or operating_mode not in ("transit","selective"):
+            raise RuntimeError("ROOT_SUPPORTED_MODE_REQUIRED")
+        if operating_mode=="selective":
+            # Separate, explicit Selective authorization. The Transit
+            # experiment must never implicitly enable Selective.
+            if (os.environ.get("MIHOMO_XRAY_SELECTIVE_CANARY")!="1" or
+                NODE_POLICY_MODE.read_text().strip()!="auto" or
+                run("/usr/local/sbin/awg-transport","get",timeout=10)!="mihomo" or
+                not all(active(x) for x in ("ssh.service","dnsmasq.service","awg-pbr-health.service"))):
+                raise RuntimeError("SELECTIVE_AUTO_BASELINE_NOT_AUTHORIZED")
         if CURRENT.read_text().strip()!=failed or failed==candidate:
             raise RuntimeError("FAILED_NODE_IDENTITY_CHANGED")
         if not candidate_allowed_by_policy(failed,candidate):
@@ -224,6 +337,11 @@ class LinuxBackend:
             self.degraded_fixed=False
         elif verified_degraded_fixed_baseline():
             self.degraded_fixed=True
+        elif operating_mode=="transit" and verified_degraded_auto_transit_baseline():
+            # Same verified inactive-rule Transit guard; never bypass it.
+            self.degraded_fixed=True
+        elif operating_mode=="selective" and verified_degraded_selective_baseline():
+            self.degraded_selective=True
         else:
             raise RuntimeError("LIVE_BASELINE_UNSAFE")
         if BRIDGE.exists() or BRIDGE_RUNTIME.exists() or SELECTED.exists() or not RENDERER.is_file() or not ADAPTER.is_file():
@@ -258,14 +376,15 @@ class LinuxBackend:
             raise RuntimeError("XRAY_CANDIDATE_NOT_FRESHLY_NETWORK_QUALIFIED")
         # Do not call awg-route while holding the maintenance lock: that CLI
         # acquires the same flock. The transit-routing helper is lock-free.
-        policy=run("/usr/local/sbin/awg-transit-routing","status",timeout=10)
-        lines=policy.splitlines()
-        if self.degraded_fixed:
-            if ("Transit policy rule: INACTIVE" not in lines or
-                not any(x in lines for x in ("Transit guard: SAFE","Transit guard: LOCKDOWN"))):
-                raise RuntimeError("DEGRADED_TRANSIT_GUARD_UNSAFE")
-        elif "Transit guard: SAFE" not in lines or "Transit policy rule: ACTIVE" not in lines:
-            raise RuntimeError("TRANSIT_GUARD_NOT_SAFE")
+        if operating_mode=="transit":
+            policy=run("/usr/local/sbin/awg-transit-routing","status",timeout=10)
+            lines=policy.splitlines()
+            if self.degraded_fixed:
+                if ("Transit policy rule: INACTIVE" not in lines or
+                    not any(x in lines for x in ("Transit guard: SAFE","Transit guard: LOCKDOWN"))):
+                    raise RuntimeError("DEGRADED_TRANSIT_GUARD_UNSAFE")
+            elif "Transit guard: SAFE" not in lines or "Transit policy rule: ACTIVE" not in lines:
+                raise RuntimeError("TRANSIT_GUARD_NOT_SAFE")
     def arm_watchdog(self):
         if not self.provider_hash:raise RuntimeError("PREFLIGHT_NOT_COMPLETE")
         self.snapshot=BASE/("xray-failover-"+str(int(time.time()))+"-"+str(os.getpid()))
@@ -300,7 +419,30 @@ class LinuxBackend:
         run("systemctl","start",XRAY,timeout=25)
         if not active(XRAY):raise RuntimeError("XRAY_SERVICE_NOT_ACTIVE")
     def check_local_https(self):
-        return http_code(["--socks5-hostname","127.0.0.1:17892","--noproxy",""])
+        """Bounded Xray SOCKS5 warmup followed by exact OpenAI HTTPS 401 proof.
+
+        systemd Type=simple returns "active" before the Xray TCP listener
+        necessarily binds. A single immediate curl used to abort within 1 ms
+        of core startup. Wait for localhost listen (not a PASS), then allow
+        up to three real outbound TLS checks. Never accept a bare socket
+        connection, HTTP 403/5xx, or a stopped/restarted Xray as ready.
+        """
+        deadline=time.monotonic()+12
+        while time.monotonic()<deadline:
+            if not active(XRAY):return False
+            try:
+                with socket.create_connection(("127.0.0.1",17892),timeout=.5):
+                    break
+            except OSError:
+                time.sleep(.25)
+        else:
+            return False
+        for attempt in range(3):
+            if not active(XRAY):return False
+            if http_code(["--socks5-hostname","127.0.0.1:17892","--noproxy",""]):
+                return True
+            if attempt<2:time.sleep(1)
+        return False
     def stage_mihomo_bridge(self):
         if not self.check_provider_unchanged():raise RuntimeError("PROVIDER_ROTATED")
         # Always validate exactly the versioned renderer that the live unit uses.
@@ -352,6 +494,43 @@ class LinuxBackend:
     def check_tun_https(self):
         return http_code(["--interface","mihomo0","--noproxy","*"])
     def check_policy_routes(self):
+        if MODE.read_text().strip()=="selective":
+            if not routes_ok() or self.degraded_fixed:
+                return False
+            if not all(active(x) for x in ("ssh.service","dnsmasq.service","awg-pbr-health.service")):
+                return False
+            try:
+                if run("/usr/local/sbin/awg-transport","get",timeout=10)!="mihomo":
+                    return False
+                rules=run("ip","-4","rule","show",timeout=8)
+                enabled=any(re.search(r"\bfwmark\s+(?:0x100|256)\s+lookup\s+100\b",line)
+                            for line in rules.splitlines())
+                if self.degraded_selective:
+                    # Initial postcheck sees FAIL-OPEN (no mark). Commit calls
+                    # this same check again after the first pass re-arms 0x100.
+                    # Reject a PRE-EXISTING rule on the first check, but accept
+                    # our own re-armed rule only while ownership, live TUN
+                    # HTTPS and all safety prerequisites still pass.
+                    if (not self.check_tun_https() or
+                        VPN_ENABLED.read_text().strip()!="1" or
+                        not verified_selective_route_ownership()):
+                        return False
+                    if self.selective_rule_rearmed:
+                        # The rule cannot be silently recreated or repaired
+                        # by a commit-time check. Losing it is hard failure.
+                        return enabled
+                    if enabled:
+                        return False
+                    run("ip","-4","rule","add","priority","100","fwmark","0x100",
+                        "lookup","100",timeout=8)
+                    rules=run("ip","-4","rule","show",timeout=8)
+                    enabled=any(re.search(r"\bfwmark\s+(?:0x100|256)\s+lookup\s+100\b",line)
+                                for line in rules.splitlines())
+                    if enabled:
+                        self.selective_rule_rearmed=True
+                return enabled
+            except (OSError,RuntimeError,subprocess.TimeoutExpired):
+                return False
         # For an exhausted FIXED chain, the previous failed Mihomo attempt
         # intentionally disabled Transit. Re-enable the rule ONLY after the
         # newly selected Xray-backed Mihomo TUN actually passed HTTPS 401.
@@ -415,30 +594,46 @@ def watchdog(path):
     if path.parent!=BASE or not re.fullmatch(r"xray-failover-[0-9]+-[0-9]+",path.name):
         raise RuntimeError("INVALID_SNAPSHOT")
     if path.is_symlink():raise RuntimeError("SYMLINK_SNAPSHOT")
-    with (path/"watchdog-state.lock").open("a") as lock:
-        fcntl.flock(lock,fcntl.LOCK_EX)
-        state=json.loads((path/"state.json").read_text())
-        if state.get("state") in ("cancelled","expired_before_mutation","quiesced"):
-            return
-        if state.get("state")=="pending":
-            state["state"]="expired_before_mutation"
-            write_atomic(path/"state.json",json.dumps(state).encode())
-            return  # no Xray/route change yet; never stop a healthy Mihomo
-        if state.get("state") not in ("armed","committed"):
-            raise RuntimeError("UNEXPECTED_WATCHDOG_STATE")
-    if state.get("state")=="committed":
-        # If the watchdog fires just after commit, check live state anyway.
-        try:
-            status=run("/usr/local/sbin/awg-transit-routing","status",timeout=10)
-            good=("Transit guard: SAFE" in status and
-                  "Transit policy rule: ACTIVE" in status and
-                  "Transit VPN table: READY" in status)
-        except Exception:good=False
-        if good and routes_ok() and http_code(["--interface","mihomo0","--noproxy","*"]):
-            return
-    if not failclosed():raise RuntimeError("FAIL_CLOSED_NOT_CONFIRMED")
-    state["state"]="quiesced"
-    write_atomic(path/"state.json",json.dumps(state).encode())
+    # Serialize all recovery decisions with awg-transport select and
+    # the Xray executor; the earlier AWG takeover is rechecked under lock.
+    with MAINTENANCE_LOCK.open("a") as maintenance:
+        fcntl.flock(maintenance,fcntl.LOCK_EX)
+        with (path/"watchdog-state.lock").open("a") as lock:
+            fcntl.flock(lock,fcntl.LOCK_EX)
+            state=json.loads((path/"state.json").read_text())
+            if state.get("state") in ("cancelled","expired_before_mutation","quiesced"):
+                return
+            if state.get("state")=="pending":
+                state["state"]="expired_before_mutation"
+                write_atomic(path/"state.json",json.dumps(state).encode())
+                return  # no Xray/route change yet; never stop a healthy Mihomo
+            if state.get("state") not in ("armed","committed"):
+                raise RuntimeError("UNEXPECTED_WATCHDOG_STATE")
+        if state.get("state")=="committed":
+            # A verified committed Xray-backed TUN is still usable. A foreign
+            # active AWG or stale bridge is NOT healthy Xray evidence.
+            try:
+                operating_mode=MODE.read_text().strip()
+                if operating_mode=="transit":
+                    status=run("/usr/local/sbin/awg-transit-routing","status",timeout=10)
+                    good=("Transit guard: SAFE" in status and
+                          "Transit policy rule: ACTIVE" in status and
+                          "Transit VPN table: READY" in status)
+                elif operating_mode=="selective":
+                    good=(run("/usr/local/sbin/awg-transport","get",timeout=10)=="mihomo"
+                          and active("ssh.service") and active("dnsmasq.service")
+                          and active("awg-pbr-health.service"))
+                    if good:
+                        rules=run("ip","-4","rule","show",timeout=8)
+                        good=any(re.search(r"\bfwmark\s+(?:0x100|256)\s+lookup\s+100\b",l)
+                                 for l in rules.splitlines())
+                else:good=False
+            except Exception:good=False
+            if good and routes_ok() and http_code(["--interface","mihomo0","--noproxy","*"]):
+                return
+        if not failclosed():raise RuntimeError("FAIL_CLOSED_NOT_CONFIRMED")
+        state["state"]="quiesced"
+        write_atomic(path/"state.json",json.dumps(state).encode())
 
 def cli():
     if len(sys.argv)==3 and sys.argv[1]=="watchdog":

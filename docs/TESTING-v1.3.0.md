@@ -21,6 +21,10 @@ preserving the v1.2 routing semantics:
 - Subscription secrets, UUIDs, Reality keys, HWIDs and full private URLs must
   not appear in normal status/menu output.
 
+## 2026-10-20 Selective two-fault hardware evidence (experimental; not release gate completion)
+
+Owner ran pinned guarded Selective test on `awg-upgrade`: `FAULT=MIHOMO_STOP`, `FIRST_RESULT=XRAY_TUN`, `XRAY_TUN_HTTPS=PASS`; then `FAULT=XRAY_STOP`, `SECOND_RESULT=AWG`, `FINAL_AWG_HTTPS=PASS`, `SELECTIVE_XRAY_AUTO_FAILOVER=PASS`. Cleanup and watchdog recovery returned PASS. Independent non-root postcheck at 18:19:57 +07 confirmed AWG service active, Xray and Mihomo inactive, both policy route tables 100/101 via awg0, SSH/dnsmasq/monitor/health active, zero failed systemd units and no test timers. Detailed root-only trace and original native-node live restoration are **not independently verified**. This is **only** a controlled Selective Pi-bound TUN / dual-fault trial, not Transit, LAN, YouTube24, reboot or clean-install acceptance. Xray AUTO remains OFF by default; preserve owner choice to leave READY and Hot Pool OFF for paid subscriptions. Do not merge the experimental branch as v1.3.0 release evidence.
+
 ## 1. CI gate
 
 Before any RC is installed on hardware, the target commit must pass:
@@ -657,3 +661,9 @@ and Transit, with actual LAN clients where each mode requires them.
 Until all required current-install hardware gates and CI/upgrade/rollback
 checks pass, keep PR #115 **DRAFT**, and keep `main` / the stable release
 updater target at v1.2.0. No speculative PASS entries.
+
+## 2026-10-20 Transit AUTO two-fault hardware evidence — test Pi only
+
+On `awg-upgrade`, the authorized owner ran `scripts/awg-xray-transit-gate-from-awg.sh` with independently armed 600s/420s recovery timers. `TRANSIT_BASELINE=PASS`, `FAULT=MIHOMO_STOP`, `FIRST_RESULT=XRAY_TUN`, `XRAY_TUN_HTTPS=PASS`; then `FAULT=XRAY_STOP`, `SECOND_RESULT=AWG`, `SECOND_LAST_PREDICATE=PASS`. Before scripted rollback the observer confirmed AWG selected, healthy Xray/Mihomo shutdown, Transit guard SAFE, policy ACTIVE, VPN table READY, both route tables 100/101 through AWG, and HTTPS through awg0 PASS. Native Transit policy disable produced `TRANSIT_POLICY=DISABLED_FAIL_CLOSED` and `TRANSIT_FAIL_CLOSED_GUARD_STATE=PASS_NOT_PACKET_TEST`; reapply produced `TRANSIT_POLICY=ACTIVE`. Test reported `TRANSIT_XRAY_AUTO_FAILOVER=PASS_PI_TUN_AND_GUARD_ONLY`; two recovery layers and Selective restoration PASS. Independent posttest observation found AWG active, SSH/DNS/monitor active, Mihomo/Xray inactive, both tables through awg0 and zero failed services.
+
+**Scope:** this is real test-Pi engine/TUN HTTPS and protective nft/policy state evidence, **not** a LAN-client packet-level FAIL-CLOSED test. No clean-install/reboot proof, no production media/MikroTik modification, and the restored native Mihomo node was **not live retested**. Xray experimental PR #141 remains separate from installer PR #115; do not call v1.3.0 released, merged, clean-installed, or fully accepted on this receipt alone.
