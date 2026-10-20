@@ -198,6 +198,18 @@ def verified_degraded_fixed_baseline():
     except (OSError,RuntimeError,subprocess.TimeoutExpired):
         return False
 
+def verified_selective_route_ownership():
+    """No AWG/foreign route may be replaced by a Selective Xray recovery."""
+    try:
+        if MODE.read_text().strip()!="selective":
+            return False
+        if run("/usr/local/sbin/awg-transport","get",timeout=10)!="mihomo":
+            return False
+        return routes_ok() and all(active(x) for x in
+            ("ssh.service","dnsmasq.service","awg-pbr-health.service"))
+    except (OSError,RuntimeError,subprocess.TimeoutExpired):
+        return False
+
 def verified_degraded_selective_baseline():
     """Selectively fail-open *stopped* Mihomo after rejected native candidates.
 
@@ -433,8 +445,22 @@ class LinuxBackend:
                 if run("/usr/local/sbin/awg-transport","get",timeout=10)!="mihomo":
                     return False
                 rules=run("ip","-4","rule","show",timeout=8)
-                return any(re.search(r"\bfwmark\s+(?:0x100|256)\s+lookup\s+100\b",line)
-                           for line in rules.splitlines())
+                enabled=any(re.search(r"\bfwmark\s+(?:0x100|256)\s+lookup\s+100\b",line)
+                            for line in rules.splitlines())
+                if self.degraded_selective:
+                    # Native fallback left the policy in FAIL-OPEN. Re-arm it
+                    # only after the *new* Xray-backed TUN is verified and
+                    # only while the exact Selective ownership is unchanged.
+                    if (enabled or not self.check_tun_https() or
+                        Path("/etc/awg-pbr/vpn-enabled").read_text().strip()!="1" or
+                        not verified_selective_route_ownership()):
+                        return False
+                    run("ip","-4","rule","add","priority","100","fwmark","0x100",
+                        "lookup","100",timeout=8)
+                    rules=run("ip","-4","rule","show",timeout=8)
+                    enabled=any(re.search(r"\bfwmark\s+(?:0x100|256)\s+lookup\s+100\b",line)
+                                for line in rules.splitlines())
+                return enabled
             except (OSError,RuntimeError,subprocess.TimeoutExpired):
                 return False
         # For an exhausted FIXED chain, the previous failed Mihomo attempt
