@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Offline release regression: clean installs explicitly provision Hot Pool
-# READY-priority, while existing upgrades preserve their opt-in/out choice.
+# Offline release regression: clean installs ship Hot Pool and READY disabled;
+# existing upgrades preserve their opt-in/out choice.
 set -Eeuo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
@@ -21,7 +21,7 @@ must(){
   grep -Fq -- "$2" "$1" || { echo "READY_INSTALL_TEST=MISSING $1: $2" >&2; exit 1; }
 }
 
-# READY helpers must exist before fresh installation activates priority.
+# READY helpers must ship even when fresh installation leaves priority off.
 must install.sh 'install_project_python_helper src/awg-mihomo-ready-live-match "$MIHOMO_READY_GUARD"'
 must install.sh 'install_project_helper src/awg-mihomo-ready-postcheck-tun "$MIHOMO_READY_POSTCHECK"'
 must install.sh 'python3 -B -c'
@@ -72,10 +72,11 @@ fi
 python3 -B - <<'PY'
 from pathlib import Path
 s=Path('install.sh').read_text()
-line=s.index('"$MIHOMO_NODE_POLICY_CLI" ready-auto enable')
+line=s.index('"$MIHOMO_NODE_POLICY_CLI" ready-auto disable')
 start=s.rfind('if (( UPGRADE_EXISTING == 0 )); then',0,line)
 end=s.find('fi',line)
 assert start != -1 and end != -1
-assert 'ready-auto enable' not in s[:start]
+assert 'ready-auto disable' not in s[:start]
+assert 'ready-auto enable' not in s
 PY
 echo READY_INSTALL_INTEGRATION=PASS
