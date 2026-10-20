@@ -40,6 +40,15 @@ class CanaryTrace(unittest.TestCase):
         self.assertLess(S.index('NODE_AUTO_PRECHECK=PASS'),
                         S.index('systemd-run --quiet --collect'))
 
+    def test_xray_pass_requires_actual_committed_transaction(self):
+        self.assertIn('xray_transaction_committed(){',S)
+        self.assertIn('"state")=="committed"',S)
+        self.assertIn('"AWG-XRAY-VLESS-LOCAL"',S)
+        self.assertIn('api mihomo0 &&',S)
+        self.assertIn('xray_transaction_committed;then first=XRAY_TUN',S)
+        self.assertLess(S.index('xray_transaction_committed(){'),
+                        S.index('first=TIMEOUT'))
+
     def test_watchdog_armed_before_failure(self):
         self.assertLess(S.index("systemd-run --quiet --collect"),
                         S.index("systemctl stop awg-mihomo\n"))
