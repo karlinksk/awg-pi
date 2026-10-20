@@ -88,15 +88,25 @@ def choose(value):
 
 def verified_awg_backup_safe():
     """Do not quiesce a verified *different* active transport on timeout."""
-    if MODE.read_text().strip()!="transit":return False
+    operating_mode=MODE.read_text().strip()
+    if operating_mode not in ("transit","selective"):return False
     try:
         if run("/usr/local/sbin/awg-transport","get",timeout=10)!="awg" or \
            not active("awg-quick@awg0.service"):
             return False
-        status=run("/usr/local/sbin/awg-transit-routing","status",timeout=10).splitlines()
-        if not all(v in status for v in ("Transit guard: SAFE",
-              "Transit policy rule: ACTIVE","Transit VPN table: READY")):
-            return False
+        if operating_mode=="transit":
+            status=run("/usr/local/sbin/awg-transit-routing","status",timeout=10).splitlines()
+            if not all(v in status for v in ("Transit guard: SAFE",
+                  "Transit policy rule: ACTIVE","Transit VPN table: READY")):
+                return False
+        else:
+            # A healthy Selective AWG backup has the same ownership
+            # priority as a healthy Transit AWG backup. Keep SSH/DNS and
+            # prove an actual AWG HTTPS response before protecting it.
+            if not active("ssh.service") or not active("dnsmasq.service") or \
+               run("/usr/local/sbin/awg-transport","check","awg",timeout=12)!="healthy" or \
+               not http_code(["--interface","awg0","--noproxy","*"]):
+                return False
         for table in ("100","101"):
             lines=run("ip","-4","route","show","table",table,timeout=6).splitlines()
             if len(lines)!=1 or not re.fullmatch(
