@@ -721,7 +721,12 @@ failover_auto(){
   # An active Xray sidecar already owns the Mihomo TUN. The ordinary node
   # selector cannot safely dismantle its boot bridge or restart a failed
   # predecessor. Let transport AUTO fall back to configured AWG instead.
-  if systemctl is-active --quiet awg-xray-vless.service; then
+  if systemctl is-active --quiet awg-xray-vless.service ||
+     [[ -e /etc/systemd/system/awg-mihomo.service.d/61-awg-xray-bridge.conf ||
+        -e /run/systemd/system/awg-mihomo.service.d/61-awg-xray-bridge.conf ||
+        -e /var/lib/awg-pbr/xray-vless/selected.json ]]; then
+    # Also handle a crashed sidecar with persistent Xray bridge metadata.
+    # Never accidentally activate an old Mihomo node through that overlay.
     echo "MIHOMO_NODE_FAILOVER=XRAY_ACTIVE_DEFER_TO_TRANSPORT_AWG" >&2
     return 1
   fi
