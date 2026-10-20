@@ -1203,20 +1203,14 @@ if (( UPGRADE_EXISTING == 0 )); then
   ok "Шлюз и оба движка установлены без VPN-профилей; первый транспорт выбирается позднее в sudo awg-menu"
 fi
 
-# Fresh installs PREPARE availability-AUTO only. The selector keeps a healthy
-# active transport sticky, lets Mihomo change nodes first, and falls
-# back to AWG after repeated failures. Neither profile has to be supplied now;
-# the monitor remains passive while both backends are unconfigured.
+# Fresh installs PREPARE conservative transport AUTO only. READY priority
+# and its isolated Hot Pool scanner remain opt-in after installation. No
+# profiles are present; upgrades MUST retain the operator's existing state.
 if (( UPGRADE_EXISTING == 0 )); then
   "$SELECTION_CLI" mode auto mihomo awg >/dev/null || die "Не удалось настроить безопасное автоматическое резервирование"
-  # On clean install the user has not configured any profiles or FIXED
-  # chain yet. Install the full READY/Hot Pool capabilities and arm the
-  # SHADOW timer, which remains passive without a provider subscription.
-  # The operator may later disable Hot Pool and choose a FIXED chain via
-  # awg-menu without rerunning install.sh.
-  "$MIHOMO_NODE_POLICY_CLI" ready-auto enable >/dev/null ||
-    die "Не удалось подготовить READY AUTO для настройки после установки"
-  ok "Mihomo READY/Hot Pool подготовлены; без подписки SHADOW-проверки не запускаются"
+  "$MIHOMO_NODE_POLICY_CLI" ready-auto disable >/dev/null ||
+    die "Не удалось выставить READY OFF по умолчанию"
+  ok "Mihomo READY=OFF; Hot Pool установлен, но не запускается до включения через меню"
   ok "Резервирование транспортов: AUTO Mihomo → AWG (без автоматического возврата ради скорости)"
 fi
 
@@ -1271,20 +1265,22 @@ systemctl is-active --quiet awg-traffic.service || warn "traffic accounting не
 systemctl start awg-opencck-update.timer
 systemctl is-active --quiet awg-opencck-update.timer || warn "OpenCCK timer не активен; ручное обновление останется доступно"
 
-# Install-once, automatic-after-profile: the units themselves require a
-# configured Mihomo provider. Timers can be armed on a fresh AWG-only install
-# without initiating any VPN/route change or trying to select a node.
-# Upgrades preserve the existing operator's enabled/disabled policy.
+# Base pool-refresh and Stage18 runtime are provider-guarded; only Hot Pool
+# and READY are explicitly opt-in. A resumed partial first-install also ends
+# with Hot Pool disabled; an upgrade retains the operator's existing policy.
 if (( UPGRADE_EXISTING == 0 )); then
   for unit in awg-mihomo-pool-refresh.timer awg-mihomo-stage18-ram-runtime.timer awg-mihomo-stage18-ram-runtime.path; do
     systemctl enable --now "$unit" >/dev/null || die "Не удалось включить $unit"
     systemctl is-active --quiet "$unit" || die "Не запущен обязательный таймер $unit"
   done
-  systemctl enable --now awg-mihomo-hot-pool.timer >/dev/null ||
-    die "Не удалось подготовить Hot Pool timer до ввода подписки"
-  systemctl is-active --quiet awg-mihomo-hot-pool.timer ||
-    die "Hot Pool timer не запущен после установки"
-  ok "Hot Pool SHADOW_ONLY ожидает подписку; READY-проверки начнутся только после её ввода"
+  systemctl disable --now awg-mihomo-hot-pool.timer >/dev/null ||
+    die "Не удалось выключить Hot Pool timer после чистой установки"
+  if systemctl is-enabled --quiet awg-mihomo-hot-pool.timer ||
+     systemctl is-active --quiet awg-mihomo-hot-pool.timer ||
+     systemctl is-active --quiet awg-mihomo-hot-pool.service; then
+    die "Hot Pool должен остаться выключенным после чистой установки"
+  fi
+  ok "Hot Pool SHADOW_ONLY установлен, timer DISABLED/INACTIVE; READY OFF до включения через меню"
   ok "Mihomo health pool и Stage18 установлены и готовы к подписке"
 else
   ok "Существующая политика Mihomo-таймеров сохранена при обновлении"
