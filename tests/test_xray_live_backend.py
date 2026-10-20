@@ -14,6 +14,14 @@ spec=importlib.util.spec_from_file_location("xray_linux_backend",p)
 m=importlib.util.module_from_spec(spec);sys.modules[spec.name]=m;spec.loader.exec_module(m)
 
 class LinuxBackendTests(unittest.TestCase):
+    def setUp(self):
+        # Rootless watchdog calls must never touch /run/awg-maintenance.lock.
+        lockdir=tempfile.TemporaryDirectory()
+        self.addCleanup(lockdir.cleanup)
+        patch=mock.patch.object(m,"MAINTENANCE_LOCK",Path(lockdir.name)/"maintenance.lock")
+        patch.start()
+        self.addCleanup(patch.stop)
+
     def test_route_output_normalizes_whitespace(self):
         def good(*args,**kwargs):
             if args[-1]=="100":return "default    dev    mihomo0 scope link"
