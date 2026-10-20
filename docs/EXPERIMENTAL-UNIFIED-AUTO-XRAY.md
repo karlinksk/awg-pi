@@ -13,27 +13,28 @@ Status: **draft source / rootless tests only**. NOT enabled on the test Pi, NOT 
 
 ## Experimental safety restrictions
 
-`MIHOMO_XRAY_AUTO_FAILOVER_CANARY` defaults to **0** (disabled). It must **not** be exported by the installer, menu, subscription refresh or service units.
+`MIHOMO_XRAY_AUTO_FAILOVER_CANARY` defaults to **0** (disabled). **Selective** additionally requires `MIHOMO_XRAY_SELECTIVE_CANARY=1`; the Transit test flag alone does not authorize Selective. It must **not** be exported by the installer, menu, subscription refresh or service units.
 
 Even with this temporary test-only opt-in, cross-core AUTO dispatch refuses:
 
 - any host other than test Pi `awg-upgrade`;
-- Selective or any mode other than Transit;
+- modes other than Selective/Transit; Selective without its own second opt-in flag;
 - running while a healthy AWG is being repaired as Mihomo standby;
 - enabled READY/Hot Pool priority (distinct media-proof contract);
 - stale/missing network proof, absent Xray executor, or unsafe/corrupt Xray bridge state.
 
 The executor itself additionally requires two failed incumbent Pi-bound HTTPS checks, exact provider credentials/identity, a locked maintenance transaction, an independent 300-second watchdog, genuine TUN HTTPS success, route validation and controlled boot wiring. Failure is not a PASS.
 
-**Selective is explicitly NOT covered.** Its FAIL-OPEN / independent DNS semantics require a separately proven mode-aware Xray recovery; do not relax this guard to make a canary appear to pass. Do not change the active node, test Pi operating mode or MikroTik just to bypass the requirement.
+**Selective source support is experimental but uninstalled.** The added backend uses the existing `awg-pbr-failopen` helper if no working VPN remains, verifies removal of mark `0x100` lookup 100, keeps SSH/DNS and avoids touching a verified healthy AWG takeover. It never uses Transit disable for Selective. These are rootless unit-test assertions, **NOT hardware FAIL-OPEN evidence**. A live selective test remains blocked pending independent rescue/watchdog race review, privileged passive scan, installation/rollback review and operator-authorized fault window. Do not change the active node, test Pi operating mode or MikroTik just to bypass the requirement.
 
 No automatic performance-driven return from AWG to Mihomo/Xray. Xray→Mihomo node recovery through old selector remains blocked while the sidecar/bridge is present; unhealthy Xray delegates to AWG rather than trying unsafe live cleanup.
 
 ## Evidence and required next gates
 
-- Source syntax and 12 new isolated dispatch tests PASS on the test Pi, existing FIXED regressions 15/15 PASS; full rootless Python test suite 569/569 PASS for initial commit (rerun against latest HEAD after any edits).
+- Rootless tests on Pi: initial 569/569 PASS, then 577/577 PASS after Selective safety modifications; new Selective passive scanner and its own unit tests added after that run. Latest HEAD must be tested again before reporting aggregate PASS.
 - No privileged source installation or live Xray AUTO test in this draft.
-- Before activation: design/review independent recovery for Selective and safe Xray bridge cleanup; run fresh isolated Xray scans, verify current provider fingerprint and root-only preflight; test only on the isolated microSD with rollback timers prearmed.
+- In test order: **Selective first**, then **Transit** only after Selective gates pass. The bounded test-Pi `scripts/awg-xray-selective-auto-preflight.py --check|--scan` verifies exact Selective baseline; `--scan` runs at most two 4-candidate isolated Xray HTTPS batches and writes only the credential-fingerprinted network cache. No service/route change. Its real root run remains pending.
+- Before activation: verify independent recovery and watchdog/transport concurrency for Selective; review safe Xray bridge cleanup; scan fresh Xray profiles, ensure credential identity and root-only preflight; test only on isolated microSD with watchdog/rescue timers armed.
 - Prove real failed Mihomo → Xray via *Mihomo TUN* OpenAI HTTPS, monitor evidence, stable routing, SSH/DNS/SSTP, and configured AWG protection. Verify failed Xray → AWG and restoration without stale bridge or direct leaks. Test LAN-client separately if release target demands it.
 - Recheck fresh install, upgrade/persistence and reboot. Keep PR Draft until acceptance, never claim this source stage as a v1.3 release gate PASS.
 
