@@ -244,6 +244,9 @@ automatic_awg_recovery_verified(){
     up "$svc" || return 1
   done
   ! up awg-xray-vless && ! up awg-mihomo || return 1
+  # Routes alone are insufficient when the Selective fwmark is absent.
+  ip -4 rule show |
+    grep -Eq 'fwmark[[:space:]]+(0x100|256)[[:space:]]+lookup[[:space:]]+100' || return 1
   for table in 100 101;do
     ip -4 route show table "$table" |
       grep -Eq '^default[[:space:]]+dev[[:space:]]+awg0([[:space:]]|$)' || return 1
