@@ -58,3 +58,10 @@
 4. После существенного результата обновлять **только проверенные факты** и статус следующего шага здесь; детали доказательств — в тестовой документации/PR. **Не плодить новые планы и документы вместо завершения шлюза.**
 
 См. [политику installer-first](INSTALLER-CHANGE-POLICY.md), [release gate](TESTING-v1.3.0.md), [правила для агентов](../AGENTS.md), [PR #115](https://github.com/karlinksk/awg-pi/pull/115).
+
+## 2026-10-20 — AUTO Xray: подтверждённые испытания и очередь релиза
+
+- Тестовая Pi: `TRANSIT_XRAY_AUTO_FAILOVER=PASS_PI_TUN_AND_GUARD_ONLY`; реально подтверждены Mihomo→Xray→AWG, HTTPS TUN и защитные состояния Transit. Selective two-fault пройден ранее. LAN packet-level FAIL-CLOSED, clean-install и reboot ещё не пройдены.
+- Согласовано: разблокировать Xray в штатном AUTO и выборе нод меню, испытать пункты меню и исправить обнаруженное, объединить проверенные изменения с установщиком PR #115, затем clean-install, пользовательский LAN-тест, пакетный FAIL-CLOSED и reboot только на тестовом стенде.
+- В `src/awg-menu` Xray пока только подготавливает профиль, а автоэкзекьютор в `src/awg-mihomo-node-policy` и `src/awg-xray-live-backend.py` привязан к hostname `awg-upgrade`. До переноса проверок безопасности на чистую Pi простой UI-тумблер создаст ложное включение функции; требуется устранить блокер, regression/rollback и установить компоненты через `install.sh`/upgrade.
+- Не менять приоритет SSTP, SSH, независимый DNS, активные ноды, рабочую microSD и MikroTik. Selective FAIL-OPEN и Transit FAIL-CLOSED неизменны. READY/Hot Pool могут быть выключены оператором.
