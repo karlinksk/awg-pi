@@ -40,7 +40,7 @@ class XrayLocalHTTPSWarmup(unittest.TestCase):
               mock.patch.object(m.time,"sleep") as sleep):
             self.assertTrue(self.backend.check_local_https())
         self.assertEqual(len(calls),3)
-        self.assertEqual(calls[-1][0],("127.0.0.1",17892))
+        self.assertEqual(calls[-1][0],(("127.0.0.1",17892),))
         self.assertEqual(tls.call_count,2)
         self.assertEqual(tls.call_args.args[0],
                          ["--socks5-hostname","127.0.0.1:17892","--noproxy",""])
