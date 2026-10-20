@@ -174,8 +174,15 @@ cleanup(){
 trap cleanup EXIT
 /usr/local/sbin/awg-route mode transit || die TRANSIT_SWITCH_FAILED
 [[ "$(cat /etc/awg-pbr/mode)" == transit ]] || die TRANSIT_MODE_NOT_SET
-/usr/local/sbin/awg-transit-routing status | grep -Fqx "Transit guard: SAFE" || die TRANSIT_GUARD_UNSAFE
-/usr/local/sbin/awg-transit-routing status | grep -Fqx "Transit policy rule: ACTIVE" || die TRANSIT_RULE_INACTIVE
+transit_status="$(/usr/local/sbin/awg-transit-routing status)" || die TRANSIT_STATUS_UNAVAILABLE
+# Capture the exact three-line status before rejecting, not a transient or
+# separately sampled state. Both SAFE and active policy/route are required.
+if ! grep -Fqx 'Transit guard: SAFE' <<<"$transit_status" ||
+   ! grep -Fqx 'Transit policy rule: ACTIVE' <<<"$transit_status" ||
+   ! grep -Fqx 'Transit VPN table: READY' <<<"$transit_status";then
+  printf '%s\n' "$transit_status"
+  die TRANSIT_BASELINE_NOT_READY
+fi
 echo TRANSIT_BASELINE=PASS
 up "$timer" || die WATCHDOG_NOT_ACTIVE
 echo 'WATCHDOG=ARMED_420S'
