@@ -1534,6 +1534,35 @@ mihomo_auto_strategy_menu(){
   done
 }
 
+mihomo_xray_auto_menu(){
+  local choice status
+  while true; do
+    status="$("$MIHOMO_NODE_POLICY" xray-auto status 2>/dev/null || echo MIHOMO_XRAY_AUTO=unavailable)"
+    choice="$(dialog --backtitle "$BACKTITLE" --title "AUTO Mihomo / Xray" --item-help --menu \\
+      "Состояние: $status\\n\\nПри отказе Mihomo сначала проверяются его ноды, затем один свежий Xray VLESS/Reality. Далее — настроенный AWG. Selective FAIL-OPEN, Transit FAIL-CLOSED. READY/Hot Pool управляются отдельно." 24 108 6 \\
+      1 "Включить Xray в AUTO" "Требует AUTO нод, отключённого READY и настроенного резервного AWG. Без смены активного транспорта." \\
+      2 "Выключить Xray в AUTO" "Отключает будущие автоматические переходы Xray. Текущую ноду и каналы не прерывает." \\
+      3 "Показать состояние" "Показывает постоянную настройку AUTO Xray." \\
+      0 "Назад" "Сохранить настройки." 3>&1 1>&2 2>&3)" || return 0
+    case "$choice" in
+      1)
+        confirm "Включение Xray AUTO" "Разрешить Xray VLESS как следующий резерв после нод Mihomo? Перед включением требуется исправный AWG и выключенный READY. Активный канал не переключаем." || continue
+        title="Включить Xray AUTO"
+        capture "$MIHOMO_NODE_POLICY" xray-auto enable || true
+        ;;
+      2)
+        title="Выключить Xray AUTO"
+        capture "$MIHOMO_NODE_POLICY" xray-auto disable || true
+        ;;
+      3)
+        title="Состояние Xray AUTO"
+        capture "$MIHOMO_NODE_POLICY" xray-auto status || true
+        ;;
+      0) return 0;;
+    esac
+  done
+}
+
 mihomo_node_policy_menu(){
   local choice
   while true; do
@@ -1547,6 +1576,7 @@ mihomo_node_policy_menu(){
       5 "Выбрать / фильтровать живые узлы" "Открывает пул узлов, поиск и фильтры «Только Европа» / протокол без обязательной смены политики." \
       6 "Восстановить резерв при AWG" "Однократная проверка и подбор рабочей ноды Mihomo, пока AWG обслуживает трафик. Не переключает транспорт." \
       7 "Способ AUTO: Hot Pool / обычный" "Включить или выключить фоновый Hot Pool и READY-приоритет, оставить AUTO из подписки." \
+      8 "Xray VLESS в AUTO: включить / выключить" "Разрешить подтверждённый guarded Xray fallback после Mihomo. Требует отдельного явного включения." \\
       0 "Назад" "Не менять политику узлов." 3>&1 1>&2 2>&3)" || return 0
     case "$choice" in
       1)
@@ -1573,6 +1603,7 @@ mihomo_node_policy_menu(){
         capture "$MIHOMO_NODE_POLICY" standby-repair || true
         ;;
       7) mihomo_auto_strategy_menu ;;
+      8) mihomo_xray_auto_menu ;;
       0) return 0 ;;
     esac
   done
@@ -1951,8 +1982,8 @@ mihomo_menu(){
       "Повседневное управление Mihomo: источник подписки, узлы, резервирование узлов и восстановление. Активный транспорт выбирается уровнем выше." 24 110 8 \
       1 "Состояние Mihomo" "Показывает текущий профиль, выбранный узел, адрес сервера, состояние службы и последний канал загрузки без вывода секретов." \
       2 "Подписка / источник" "Заменить URL, обновить через AUTO или импортировать профиль/подписку из файла либо текста." \
-      3 "Точка выхода Mihomo / Xray" "Единый список: Mihomo применяет ноду, Xray VLESS пока только подготавливает профиль. Без автоматического TUN-переключения." \
-      4 "Политика узлов Mihomo (FIXED/AUTO)" "Mihomo резервирует исправные ноды и AWG; автоматический переход на Xray до отдельных испытаний запрещён." \
+      3 "Точка выхода Mihomo / Xray" "Единый список: Mihomo применяет ноду, Ручной выбор Xray подготавливает профиль; живое переключение выполняет только защищённый AUTO после отказа." \
+      4 "Политика узлов Mihomo (FIXED/AUTO)" "Mihomo резервирует исправные ноды и AWG; Xray AUTO включается отдельно; применяются TUN-проверка и безопасный откат." \
       5 "Расширенные / восстановление" "Ручной канал загрузки, формат подписки, подготовленный профиль и локальное восстановление Mihomo." \
       6 "Xray VLESS: диагностика" "Отдельный Xray Reality XHTTP/gRPC, HTTPS-проверка, подготовка профиля и локальный SOCKS. Без смены работающего TUN." \
       0 "Назад" "Вернуться в меню VPN без изменений." 3>&1 1>&2 2>&3)" || return 0
