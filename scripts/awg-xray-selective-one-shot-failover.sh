@@ -177,10 +177,41 @@ unset effective
 echo 'CANARY=ACTIVE_MONITOR_ONLY'
 systemctl stop awg-mihomo
 echo 'FAULT=MIHOMO_STOP'
+# A live SOCKS or TUN HTTP401 is NOT proof of a committed cross-core switch.
+# Require the executor's committed snapshot (created after route + boot checks),
+# this exact test's timestamp, and Mihomo's selected Xray bridge.
+test_started="$(date +%s)"
+xray_transaction_committed(){
+  XRAY_TEST_STARTED="$test_started" python3 -B - <<'PY'
+import json,os,time,urllib.request
+from pathlib import Path
+begin=int(os.environ["XRAY_TEST_STARTED"])
+try:
+    request=urllib.request.Request("http://127.0.0.1:9090/proxies/AWG-MIHOMO")
+    with urllib.request.build_opener(urllib.request.ProxyHandler({})).open(request,timeout=3) as res:
+        if json.load(res).get("now")!="AWG-XRAY-VLESS-LOCAL":
+            raise SystemExit(1)
+    base=Path("/var/backups/awg-gateway")
+    for snap in base.glob("xray-failover-*"):
+        if not snap.is_dir() or snap.is_symlink():
+            continue
+        pieces=snap.name.split("-")
+        if len(pieces)!=4:
+            continue
+        timestamp=int(pieces[2])
+        if timestamp<begin-3 or timestamp>int(time.time())+3:
+            continue
+        if json.loads((snap/"state.json").read_text()).get("state")=="committed":
+            raise SystemExit(0)
+except (OSError,ValueError,TypeError,KeyError,TimeoutError):
+    pass
+raise SystemExit(1)
+PY
+}
 first=TIMEOUT
 for i in $(seq 1 60);do
   if [[ "$("$backend" get 2>/dev/null || true)" == awg ]];then first=AWG_EARLY;break;fi
-  if up awg-xray-vless && up awg-mihomo && api mihomo0;then first=XRAY_TUN;break;fi
+  if up awg-xray-vless && up awg-mihomo && api mihomo0 &&\n     xray_transaction_committed;then first=XRAY_TUN;break;fi
   sleep 3
 done
 echo "FIRST_RESULT=$first"
