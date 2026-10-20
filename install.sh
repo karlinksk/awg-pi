@@ -814,6 +814,11 @@ install_project_helper src/awg-fetch "$FETCH_CLI"
 install_project_helper src/awg-mihomo-config "$MIHOMO_CONFIG_SCRIPT"
 install_project_helper src/awg-mihomo-update "$MIHOMO_UPDATE_SCRIPT"
 install_project_helper src/awg-mihomo-install "$MIHOMO_INSTALL_SCRIPT"
+# Optional Xray VLESS/Reality adapter: installed on an EMPTY clean install,
+# but not selected/enabled until the owner explicitly opts in after adding
+# the Mihomo subscription. This does not add a third active TUN transport.
+install_project_helper src/awg-xray-install /usr/local/sbin/awg-xray-install
+install_project_python_helper src/awg-xray-vless.py /usr/local/sbin/awg-xray-vless
 install_project_helper src/awg-mihomo-prepare "$MIHOMO_PREPARE_SCRIPT"
 install_project_helper src/awg-mihomo-configure "$MIHOMO_CONFIGURE_SCRIPT"
 install_project_helper src/awg-first-run "$FIRST_RUN_CLI"
@@ -894,6 +899,20 @@ else
   if ! "$MIHOMO_INSTALL_SCRIPT" status; then
     warn "Mihomo engine требует отдельного безопасного обновления (активный транспорт не затронут)"
   fi
+fi
+
+# Provision pinned upstream Xray separately from Mihomo. Xray remains OFF
+# and keeps no credentials on disk until the user selects a VLESS profile.
+# Clean install cannot depend on profiles supplied only after completion.
+if (( UPGRADE_EXISTING == 0 )); then
+  /usr/local/sbin/awg-xray-install ensure ||
+    die "Не удалось установить обязательный Xray VLESS adapter на чистой Pi"
+  ok "Дополнительный Xray-core установлен, служба не включена"
+elif ! /usr/local/sbin/awg-xray-install status >/dev/null 2>&1; then
+  # No service restart and no provider mutation; a failed optional upgrade
+  # cannot interrupt the active Mihomo/AWG gateway.
+  /usr/local/sbin/awg-xray-install ensure ||
+    warn "Xray adapter ожидает отдельной установки; активный шлюз не затронут"
 fi
 
 # Hot Pool is SHADOW_ONLY. Fetch verified components from PROJECT_REF on both
@@ -1032,6 +1051,8 @@ if [[ ! -s /etc/awg-pbr/transports/mihomo/remnawave.hwid && -r /etc/awg-pbr/tran
   unset _existing_hwid
 fi
 install_project_unit units/awg-mihomo.service /etc/systemd/system/awg-mihomo.service
+# Opt-in only. Do not enable or start this unit during installation/update.
+install_project_unit units/awg-xray-vless.service /etc/systemd/system/awg-xray-vless.service
 install_project_unit units/awg-mihomo-update.service /etc/systemd/system/awg-mihomo-update.service
 install_project_unit units/awg-mihomo-update.timer /etc/systemd/system/awg-mihomo-update.timer
 install_project_unit units/awg-mihomo-pool-refresh.service /etc/systemd/system/awg-mihomo-pool-refresh.service
