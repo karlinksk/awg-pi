@@ -37,7 +37,7 @@ class XrayAutoDispatch(unittest.TestCase):
 
     def run_helper(self, *, optin="0", mode="transit", health="NETWORK_OK",
                    host="awg-upgrade", ready="0", standby="0", rc="0",
-                   executor=True):
+                   executor=True, selective_optin="0"):
         self.mode.write_text(mode + "\n")
         self.mkbin("hostname", "echo " + host)
         exe = self.bin / "transaction"
@@ -48,6 +48,7 @@ class XrayAutoDispatch(unittest.TestCase):
         env = {**os.environ, "PATH": str(self.bin) + ":" + os.environ["PATH"],
                "MOCK_LOG": str(self.log), "MOCK_RC": rc,
                "MIHOMO_XRAY_AUTO_FAILOVER_CANARY": optin,
+               "MIHOMO_XRAY_SELECTIVE_CANARY": selective_optin,
                "MIHOMO_STANDBY_REPAIR": standby,
                "MIHOMO_READY_AUTO_CANARY": ready,
                "MIHOMO_AUTO_MODE_FILE": str(self.mode),
@@ -70,10 +71,17 @@ class XrayAutoDispatch(unittest.TestCase):
         self.assertEqual(self.log.read_text().strip(),
                          "TEST_PI_AUTHORIZED:FAILED-CURRENT:VLESS-CANDIDATE")
 
-    def test_selective_is_not_experimental_auto_eligible(self):
+    def test_selective_does_not_inherit_transit_optin(self):
         result = self.run_helper(optin="1", mode="selective")
         self.assertEqual(result.returncode, 2)
         self.assertEqual(self.log.read_text(), "")
+
+    def test_selective_requires_both_explicit_canary_flags(self):
+        result = self.run_helper(optin="1", mode="selective", selective_optin="1")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.log.read_text().strip(),
+                         "TEST_PI_AUTHORIZED:FAILED-CURRENT:VLESS-CANDIDATE")
+
 
     def test_network_unproven_cannot_activate(self):
         result = self.run_helper(optin="1", health="UNKNOWN_HTTP")
