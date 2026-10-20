@@ -679,8 +679,52 @@ quiesce_failed_mihomo(){
   echo 'READY_AUTO=NO_WORKING_MIHOMO_NODE' >&2
 }
 
+# Experimental cross-core AUTO, deliberately OFF by default. Unlike the
+# existing FIXED canary, this operates only on one exact, freshly qualified
+# Xray candidate picked by the current health pool. The live executor owns
+# the double-dead-TUN proof, provider credential check, independent watchdog,
+# guarded TUN activation, and fail-closed abort. This dispatcher never retries
+# the known failed node or routes VLESS through the legacy Mihomo selector.
+auto_xray_candidate(){
+  local current="$1" candidate="$2" resolved="$3" executor
+  if [[ "${MIHOMO_XRAY_AUTO_FAILOVER_CANARY:-0}" != 1 ]]; then
+    echo "MIHOMO_NODE_FAILOVER=XRAY_TRANSACTION_NOT_CERTIFIED" >&2
+    return 2
+  fi
+  # A standby repair while AWG is active MUST NOT mutate its routes.
+  # READY has a distinct evidence contract and is not covered by this canary.
+  if [[ "${MIHOMO_STANDBY_REPAIR:-0}" == 1 ||
+        "$MIHOMO_READY_AUTO_CANARY" != 0 ||
+        "$(hostname)" != awg-upgrade ||
+        "$(cat "$MIHOMO_AUTO_MODE_FILE" 2>/dev/null)" != transit ||
+        "$(sed -n 's/^NODE_BASIC_NETWORK=//p' <<<"$resolved")" != NETWORK_OK ]]; then
+    echo "MIHOMO_NODE_FAILOVER=XRAY_AUTO_PREFLIGHT_REJECTED" >&2
+    return 2
+  fi
+  executor="${MIHOMO_XRAY_TRANSACTION_CLI:-/usr/local/sbin/awg-xray-live-backend}"
+  if [[ ! -x "$executor" ]]; then
+    echo "MIHOMO_NODE_FAILOVER=XRAY_TRANSACTION_EXECUTOR_MISSING" >&2
+    return 2
+  fi
+  if AWG_XRAY_EXPERIMENTAL_APPLY=TEST_PI_AUTHORIZED "$executor" apply "$current" "$candidate" >/dev/null; then
+    printf 'MIHOMO_NODE_FAILOVER=%s->%s\n' "$current" "$candidate"
+    return 0
+  fi
+  # An aborted transaction may have quiesced the old, known-dead transport.
+  # Stop node recovery here; allow the normal selection monitor to try AWG.
+  echo "MIHOMO_NODE_FAILOVER=XRAY_AUTO_TRANSACTION_ABORTED_AWG_FALLBACK" >&2
+  return 1
+}
+
 failover_auto(){
-  local current="$1" candidate item attempts=0 from_ready=0 candidate_visits=0
+  local current="$1" candidate item attempts=0 from_ready=0 candidate_visits=0 resolved engine xray_rc
+  # An active Xray sidecar already owns the Mihomo TUN. The ordinary node
+  # selector cannot safely dismantle its boot bridge or restart a failed
+  # predecessor. Let transport AUTO fall back to configured AWG instead.
+  if systemctl is-active --quiet awg-xray-vless.service; then
+    echo "MIHOMO_NODE_FAILOVER=XRAY_ACTIVE_DEFER_TO_TRANSPORT_AWG" >&2
+    return 1
+  fi
   # Keep the legacy non-READY AUTO bound unchanged. READY AUTO may inspect
   # all four prepared reserves before a small fresh-qualified fallback.
   local max_checks=3
@@ -777,11 +821,22 @@ failover_auto(){
     # switch with independent no-return recovery is certified.
     if [[ -e "${MIHOMO_UNIFIED_NODE_CLI:-/usr/local/sbin/awg-mihomo-unified-nodes}" ]]; then
       [[ -x "${MIHOMO_UNIFIED_NODE_CLI:-/usr/local/sbin/awg-mihomo-unified-nodes}" ]] || { echo "MIHOMO_NODE_FAILOVER=ENGINE_RESOLVER_UNAVAILABLE" >&2; continue; }
-      local resolved engine
       resolved="$("${MIHOMO_UNIFIED_NODE_CLI:-/usr/local/sbin/awg-mihomo-unified-nodes}" resolve "$candidate" 2>/dev/null)" || { excludes+=("$candidate"); continue; }
       engine="$(sed -n 's/^NODE_ENGINE=//p' <<<"$resolved")"
+      if [[ "$engine" == XRAY ]]; then
+        if auto_xray_candidate "$current" "$candidate" "$resolved"; then
+          return 0
+        else
+          xray_rc=$?
+          # An aborted live transaction is not a normal failed candidate:
+          # it owns independent recovery and requires transport-level AWG.
+          (( xray_rc == 2 )) || return 1
+          excludes+=("$candidate")
+          continue
+        fi
+      fi
       if [[ "$engine" != MIHOMO ]]; then
-        echo "MIHOMO_NODE_FAILOVER=XRAY_TRANSACTION_NOT_CERTIFIED" >&2
+        echo "MIHOMO_NODE_FAILOVER=ENGINE_UNSUPPORTED" >&2
         excludes+=("$candidate")
         continue
       fi
