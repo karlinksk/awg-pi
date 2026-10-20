@@ -16,6 +16,10 @@ Usage:
   sudo awg-dc enable USER    Persistent boot-time service AFTER pairing
   sudo awg-dc disable USER   Disable service without deleting authorization
   sudo awg-dc status USER    Safe status (no private credentials)
+  sudo awg-dc-admin-access enable USER   Opt-in limited root diagnostics (after pairing)
+  sudo awg-dc-admin-access disable USER  Revoke only the added sudoers grant
+  sudo awg-dc-admin-access status USER   Audit grant (no secrets)
+See docs/DC-LIMITED-ADMIN.md. Never unblocks sudo or grants root automatically.
 No routing, SSTP, firewall, DNS or subscription changes.
 HELP
 }
