@@ -23,6 +23,7 @@ BASE=Path("/var/backups/awg-gateway")
 PROVIDER=Path("/var/lib/awg-pbr/mihomo/providers/subscription.yaml")
 SELECTED=Path("/var/lib/awg-pbr/xray-vless/selected.json")
 MODE=Path("/etc/awg-pbr/mode")
+VPN_ENABLED=Path("/etc/awg-pbr/vpn-enabled")
 CURRENT=Path("/etc/awg-pbr/transports/mihomo/node-name")
 NODE_POLICY_MODE=Path("/etc/awg-pbr/transports/mihomo/node-policy.mode")
 NODE_POLICY_ORDER=Path("/etc/awg-pbr/transports/mihomo/node-policy.nodes")
@@ -228,7 +229,7 @@ def verified_degraded_selective_baseline():
              "awg-quick@awg0.service"))):
         return False
     try:
-        if (Path("/etc/awg-pbr/vpn-enabled").read_text().strip()!="1" or
+        if (VPN_ENABLED.read_text().strip()!="1" or
             run("/usr/local/sbin/awg-transport","get",timeout=10)!="mihomo" or
             run("/usr/local/sbin/awg-transport","check","awg",timeout=12)!="healthy"):
             return False
@@ -452,7 +453,7 @@ class LinuxBackend:
                     # only after the *new* Xray-backed TUN is verified and
                     # only while the exact Selective ownership is unchanged.
                     if (enabled or not self.check_tun_https() or
-                        Path("/etc/awg-pbr/vpn-enabled").read_text().strip()!="1" or
+                        VPN_ENABLED.read_text().strip()!="1" or
                         not verified_selective_route_ownership()):
                         return False
                     run("ip","-4","rule","add","priority","100","fwmark","0x100",
