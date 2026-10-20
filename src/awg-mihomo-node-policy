@@ -1025,7 +1025,7 @@ case "${1:-status}" in
         done
         [[ -s /etc/amnezia/amneziawg/awg0.conf ]] || { echo XRAY_AUTO_REQUIRES_CONFIGURED_AWG_BACKUP >&2;exit 1; }
         tmp="$(mktemp "${MIHOMO_XRAY_AUTO_MODE_FILE}.XXXXXX")"
-        printf '1\\n' > "$tmp"
+        printf '1\n' > "$tmp"
         chmod 600 "$tmp"
         mv -f "$tmp" "$MIHOMO_XRAY_AUTO_MODE_FILE"
         echo MIHOMO_XRAY_AUTO=enabled
@@ -1033,7 +1033,7 @@ case "${1:-status}" in
       disable)
         mkdir -p "$(dirname "$MIHOMO_XRAY_AUTO_MODE_FILE")"
         tmp="$(mktemp "${MIHOMO_XRAY_AUTO_MODE_FILE}.XXXXXX")"
-        printf '0\\n' > "$tmp"
+        printf '0\n' > "$tmp"
         chmod 600 "$tmp"
         mv -f "$tmp" "$MIHOMO_XRAY_AUTO_MODE_FILE"
         echo MIHOMO_XRAY_AUTO=disabled
