@@ -21,6 +21,10 @@ preserving the v1.2 routing semantics:
 - Subscription secrets, UUIDs, Reality keys, HWIDs and full private URLs must
   not appear in normal status/menu output.
 
+## 2026-10-20 Selective two-fault hardware evidence (experimental; not release gate completion)
+
+Owner ran pinned guarded Selective test on `awg-upgrade`: `FAULT=MIHOMO_STOP`, `FIRST_RESULT=XRAY_TUN`, `XRAY_TUN_HTTPS=PASS`; then `FAULT=XRAY_STOP`, `SECOND_RESULT=AWG`, `FINAL_AWG_HTTPS=PASS`, `SELECTIVE_XRAY_AUTO_FAILOVER=PASS`. Cleanup and watchdog recovery returned PASS. Independent non-root postcheck at 18:19:57 +07 confirmed AWG service active, Xray and Mihomo inactive, both policy route tables 100/101 via awg0, SSH/dnsmasq/monitor/health active, zero failed systemd units and no test timers. Detailed root-only trace and original native-node live restoration are **not independently verified**. This is **only** a controlled Selective Pi-bound TUN / dual-fault trial, not Transit, LAN, YouTube24, reboot or clean-install acceptance. Xray AUTO remains OFF by default; preserve owner choice to leave READY and Hot Pool OFF for paid subscriptions. Do not merge the experimental branch as v1.3.0 release evidence.
+
 ## 1. CI gate
 
 Before any RC is installed on hardware, the target commit must pass:
