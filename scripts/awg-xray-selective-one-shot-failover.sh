@@ -74,7 +74,7 @@ fi
 # The helper refuses foreign artifacts, active Mihomo and bad AWG routes.
 if [[ "$(/usr/local/sbin/awg-transport get 2>/dev/null || true)" == awg ]];then
   dir="$(cd "$(dirname "$0")" && pwd -P)"
-  "$dir/test-cleanup" "$dir" || exit 1
+  XRAY_TEST_RECOVER_ACTIVE=1 "$dir/test-cleanup" "$dir" || exit 1
   echo XRAY_TEST_CLEANUP=PASS
 fi
 systemctl restart awg-selection-monitor
