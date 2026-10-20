@@ -256,6 +256,7 @@ UPGRADE_POLICY_FILES=(
   "$PBR_DIR/transports/mihomo/node-policy.mode"
   "$PBR_DIR/transports/mihomo/node-policy.nodes"
   "$PBR_DIR/transports/mihomo/ready-auto.mode"
+  "$PBR_DIR/transports/mihomo/xray-auto.mode"
   "$PBR_DIR/transports/mihomo/service-eligibility.mode"
 )
 UPGRADE_POLICY_HASHES=()
@@ -895,6 +896,15 @@ install_project_helper src/awg-mihomo-tun-check "$MIHOMO_TUN_CHECK"
 install_project_helper src/awg-dc "$DC_CLI"
 install_project_unit units/awg-dc-remote@.service "$DC_UNIT"
 install_project_helper src/awg-mihomo-node-policy "$MIHOMO_NODE_POLICY_CLI"
+# Opt-in only: default OFF on clean installation; preserve on upgrades.
+# Delivers both Python executor and node-policy, no live sidecar activation.
+_XRAY_AUTO_MODE="$PBR_DIR/transports/mihomo/xray-auto.mode"
+if [[ ! -e "$_XRAY_AUTO_MODE" ]]; then
+  install -d -o root -g root -m 0700 "$(dirname "$_XRAY_AUTO_MODE")"
+  printf '0\\n' > "$_XRAY_AUTO_MODE"
+  chmod 600 "$_XRAY_AUTO_MODE"
+fi
+
 
 # A clean install ships BOTH VPN engines, independently of whether the operator
 # already has a Mihomo subscription or an AmneziaWG profile. The verified,
