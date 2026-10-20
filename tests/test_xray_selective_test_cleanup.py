@@ -44,6 +44,20 @@ class SelectiveTestCleanup(unittest.TestCase):
         self.assertIn('XRAY_TEST_RECOVER_ACTIVE',CLEAN)
         self.assertIn('EXPERIMENT_WATCHDOG_STILL_ACTIVE',CLEAN)
 
+    def test_second_fault_requires_independent_auto_awg_proof(self):
+        self.assertIn("automatic_awg_recovery_verified(){",RUN)
+        self.assertIn("if automatic_awg_recovery_verified;then second=AWG;break;fi",RUN)
+        self.assertIn("! up awg-xray-vless && ! up awg-mihomo",RUN)
+        self.assertIn("api awg0",RUN)
+        self.assertIn("AWG_ROUTE_POST_",RUN)
+        self.assertIn("! up awg-xray-vless || die XRAY_FAULT_DID_NOT_STOP",RUN)
+        self.assertIn("SELECTIVE_XRAY_AUTO_FAILOVER=NOT_VERIFIED",RUN)
+        self.assertIn('if [[ "$first" != XRAY_TUN || "$second" != AWG ]]',RUN)
+        self.assertLess(RUN.index('echo "SECOND_RESULT=$second"'),
+                        RUN.index('bash "$dir/recover"'))
+        self.assertLess(RUN.index('bash "$dir/recover"'),
+                        RUN.index("SELECTIVE_XRAY_AUTO_FAILOVER=PASS"))
+
     def test_backup_before_removal(self):
         self.assertLess(CLEAN.index('echo XRAY_CLEANUP_BACKUP=VERIFIED'),
                         CLEAN.index('systemctl stop "$XRAY_UNIT"'))
