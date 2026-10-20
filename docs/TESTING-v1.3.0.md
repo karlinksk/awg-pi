@@ -4,6 +4,8 @@ This document is the hardware/release gate for v1.3.0.
 
 **Full 150-case execution matrix (all modes, transports, selectors and negative cases):** [RELEASE-ACCEPTANCE-MATRIX-v1.3.0.md](RELEASE-ACCEPTANCE-MATRIX-v1.3.0.md). Items in that checklist remain unaccepted until scoped evidence is attached to the current candidate.
 
+**Clean-install defaults agreed 2026-10-20:** install AmneziaWG, Mihomo, optional pinned Xray adapter, Stage18 Node.js/yt-dlp and FFmpeg/FFprobe before any VPN profile/subscription exists. Finish in `Selective + unconfigured`, with transport availability-AUTO prepared but **Hot Pool SHADOW timer disabled/inactive and READY priority disabled (`ready-auto.mode=0`)**. Neither is silently enabled by subscription import or reboot; the operator can opt in via the menu after configuration. Xray remains disabled and its guarded live failover is experimental, not an accepted v1.3.0 release feature. Preserve pre-existing Hot Pool/READY choices on upgrades. This is a source contract, not hardware installation proof.
+
 v1.3.0 adds a transport abstraction and an optional Mihomo backend while
 preserving the v1.2 routing semantics:
 
