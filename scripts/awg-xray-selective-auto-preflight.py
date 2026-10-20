@@ -93,7 +93,7 @@ def main():
     if sys.argv[1]=="--scan":
         # The helper stages temporary Xray process/config strictly in RAM;
         # it only persists bounded, credential-fingerprinted network cache.
-        # Five Xray records need at most two batches of <=4.
+        # The installed unified helper bounds each batch at MAX_PROBE=10; five Xray nodes fit in one batch.
         for round_no in (1,2):
             if fingerprint()!=baseline:raise RuntimeError("STATE_CHANGED_BEFORE_SCAN")
             print("SELECTIVE_SCAN_ROUND="+str(round_no),flush=True)
