@@ -153,6 +153,15 @@ Environment="MIHOMO_NODE_POLICY_CLI=$dir/trace-node-policy"
 CONF
 systemctl daemon-reload
 systemctl restart awg-selection-monitor
+# Never inject failure unless systemd actually supplied the three canary
+# environment overrides. Drop-in presence alone does not prove runtime use.
+effective="$(systemctl show awg-selection-monitor.service -p Environment --value)"
+[[ "$effective" == *"MIHOMO_XRAY_AUTO_FAILOVER_CANARY=1"* &&
+   "$effective" == *"MIHOMO_XRAY_SELECTIVE_CANARY=1"* &&
+   "$effective" == *"MIHOMO_POOL_CLI=$dir/native-exhausted"* &&
+   "$effective" == *"MIHOMO_NODE_POLICY_CLI=$dir/trace-node-policy"* ]] ||
+   die CANARY_EFFECTIVE_ENVIRONMENT_NOT_APPLIED
+unset effective
 echo 'CANARY=ACTIVE_MONITOR_ONLY'
 systemctl stop awg-mihomo
 echo 'FAULT=MIHOMO_STOP'
