@@ -284,6 +284,8 @@ class LinuxBackend:
         self.watchdog_unit=None
         self.degraded_fixed=False
         self.degraded_selective=False
+        # In-process evidence: this transaction re-armed Selective after TUN proof.
+        self.selective_rule_rearmed=False
     def preflight(self,failed,candidate):
         operating_mode=MODE.read_text().strip()
         if os.geteuid()!=0 or operating_mode not in ("transit","selective"):
@@ -472,18 +474,28 @@ class LinuxBackend:
                 enabled=any(re.search(r"\bfwmark\s+(?:0x100|256)\s+lookup\s+100\b",line)
                             for line in rules.splitlines())
                 if self.degraded_selective:
-                    # Native fallback left the policy in FAIL-OPEN. Re-arm it
-                    # only after the *new* Xray-backed TUN is verified and
-                    # only while the exact Selective ownership is unchanged.
-                    if (enabled or not self.check_tun_https() or
+                    # Initial postcheck sees FAIL-OPEN (no mark). Commit calls
+                    # this same check again after the first pass re-arms 0x100.
+                    # Reject a PRE-EXISTING rule on the first check, but accept
+                    # our own re-armed rule only while ownership, live TUN
+                    # HTTPS and all safety prerequisites still pass.
+                    if (not self.check_tun_https() or
                         VPN_ENABLED.read_text().strip()!="1" or
                         not verified_selective_route_ownership()):
+                        return False
+                    if self.selective_rule_rearmed:
+                        # The rule cannot be silently recreated or repaired
+                        # by a commit-time check. Losing it is hard failure.
+                        return enabled
+                    if enabled:
                         return False
                     run("ip","-4","rule","add","priority","100","fwmark","0x100",
                         "lookup","100",timeout=8)
                     rules=run("ip","-4","rule","show",timeout=8)
                     enabled=any(re.search(r"\bfwmark\s+(?:0x100|256)\s+lookup\s+100\b",line)
                                 for line in rules.splitlines())
+                    if enabled:
+                        self.selective_rule_rearmed=True
                 return enabled
             except (OSError,RuntimeError,subprocess.TimeoutExpired):
                 return False
