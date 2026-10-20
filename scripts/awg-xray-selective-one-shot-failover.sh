@@ -135,6 +135,11 @@ chmod 0700 "$dir/exec-preflight"
 "$dir/exec-preflight" || die TEMP_RUNTIME_NOEXEC
 rm -f "$dir/exec-preflight"
 echo 'CANARY_TMPFS_EXEC=PASS'
+# Verify that the exact AUTO eligibility probe works with the injected helper.
+# This runs before arming the timer or stopping Mihomo.
+MIHOMO_POOL_CLI="$dir/native-exhausted" /usr/local/sbin/awg-mihomo-node-policy enabled >/dev/null ||
+  die NODE_AUTO_PRECHECK_NOT_ENABLED
+echo 'NODE_AUTO_PRECHECK=PASS'
 systemd-run --quiet --collect --unit=awg-xray-auto-test-recover --on-active=420s /bin/bash "$dir/recover" || die WATCHDOG_NOT_ARMED
 up "$timer" || die WATCHDOG_NOT_ACTIVE
 echo 'WATCHDOG=ARMED_420S'
