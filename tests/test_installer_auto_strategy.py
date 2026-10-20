@@ -43,6 +43,7 @@ systemctl(){
    fi;;
   is-active)
    [[ "$2" == --quiet ]] || exit 33
+   if [[ "$3" == awg-mihomo-hot-pool.service ]]; then return 1; fi
    if [[ "$3" != awg-mihomo-hot-pool.timer ]]; then return 0; fi
    [[ -f "$TEST_ACTIVE" ]] && [[ "$(cat "$TEST_ACTIVE")" == 1 ]];;
   is-enabled)
@@ -59,13 +60,13 @@ systemctl(){
         TEST_ACTIVE=str(active),TEST_CALLS=str(log)))
    return result,(ready.read_text().strip() if ready.exists() else "UNTOUCHED"),\
      log.read_text(),(enabled.read_text().strip() if enabled.exists() else "UNTOUCHED")
- def test_default_auto_installs_ready_and_timer(self):
+ def test_default_auto_keeps_ready_and_hot_pool_off(self):
   for mode in ("auto",None):
    with self.subTest(mode=mode):
     r,ready,calls,enabled=self.run_case(mode)
     self.assertEqual(r.returncode,0,r.stderr)
-    self.assertEqual((ready,enabled),("enable","1"))
-    self.assertIn("enable --now awg-mihomo-hot-pool.timer",calls)
+    self.assertEqual((ready,enabled),("disable","0"))
+    self.assertIn("disable --now awg-mihomo-hot-pool.timer",calls)
     self.assertIn("enable --now awg-mihomo-pool-refresh.timer",calls)
  def test_clean_install_does_not_choose_fixed_until_postinstall(self):
   self.assertNotIn('"$FIRST_RUN_CLI" wizard',INS)
@@ -74,7 +75,7 @@ systemctl(){
   self.assertIn('Deferred VPN and Operating Mode configuration',INS)
   r,ready,calls,enabled=self.run_case("auto")
   self.assertEqual(r.returncode,0,r.stderr)
-  self.assertEqual((ready,enabled),("enable","1"))
+  self.assertEqual((ready,enabled),("disable","0"))
  def test_upgrade_never_overwrites_active_settings(self):
   for mode in ("fixed","auto",None):
    r,ready,calls,enabled=self.run_case(mode,upgrade=True)
