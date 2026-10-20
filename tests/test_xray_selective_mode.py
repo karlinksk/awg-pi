@@ -161,5 +161,77 @@ class SelectiveXraySafety(unittest.TestCase):
                 m.watchdog(snap)
                 restore.assert_not_called()
 
+
+    def test_degraded_selective_requires_testpi_auto_dead_mihomo_and_safe_awg(self):
+        with tempfile.TemporaryDirectory() as d:
+            root=Path(d)
+            mode=self.modefile(root)
+            nodepolicy=root/"node-policy.mode";nodepolicy.write_text("auto")
+            vpn=root/"vpn-enabled";vpn.write_text("1")
+            services={"ssh.service","dnsmasq.service","awg-pbr-health.service","awg-quick@awg0.service"}
+            def run(*args,**kw):
+                if args[0]=="ip" and args[2]=="rule":return "0: from all lookup local"
+                if args[0]=="ip" and args[2]=="route":return "default dev mihomo0 scope link"
+                if args[-1]=="get":return "mihomo"
+                if args[-2:]==("check","awg"):return "healthy"
+                raise AssertionError(args)
+            with (mock.patch.object(m,"MODE",mode),
+                  mock.patch.object(m,"NODE_POLICY_MODE",nodepolicy),
+                  mock.patch.object(m,"VPN_ENABLED",vpn),
+                  mock.patch.object(m.socket,"gethostname",return_value="awg-upgrade"),
+                  mock.patch.object(m,"active",side_effect=lambda s:s in services),
+                  mock.patch.object(m,"run",side_effect=run),
+                  mock.patch.dict(m.os.environ,{"MIHOMO_XRAY_SELECTIVE_CANARY":"1",
+                                               "MIHOMO_XRAY_AUTO_FAILOVER_CANARY":"1"})):
+                self.assertTrue(m.verified_degraded_selective_baseline())
+                with mock.patch.dict(m.os.environ,{"MIHOMO_XRAY_SELECTIVE_CANARY":"0"}):
+                    self.assertFalse(m.verified_degraded_selective_baseline())
+                with mock.patch.object(m,"active",return_value=True):
+                    self.assertFalse(m.verified_degraded_selective_baseline())
+                with mock.patch.object(m,"run",side_effect=lambda *a,**kw:
+                    "100: from all fwmark 0x100 lookup 100" if a[:4]==("ip","-4","rule","show") else run(*a,**kw)):
+                    self.assertFalse(m.verified_degraded_selective_baseline())
+                with mock.patch.object(m,"run",side_effect=lambda *a,**kw:
+                    "default dev awg0" if a[:4]==("ip","-4","route","show") else run(*a,**kw)):
+                    self.assertFalse(m.verified_degraded_selective_baseline())
+                vpn.write_text("0")
+                self.assertFalse(m.verified_degraded_selective_baseline())
+
+    def test_degraded_selective_rearms_mark_only_after_verified_new_tun(self):
+        with tempfile.TemporaryDirectory() as d:
+            root=Path(d);mode=self.modefile(root);vpn=root/"vpn-enabled";vpn.write_text("1")
+            backend=m.LinuxBackend("dead","vless")
+            backend.degraded_selective=True
+            state={"enabled":False}; calls=[]
+            def run(*args,**kw):
+                calls.append(args)
+                if args[:4]==("ip","-4","rule","show"):
+                    return ("100: from all fwmark 0x100 lookup 100" if state["enabled"] else
+                            "0: from all lookup local")
+                if args[:4]==("ip","-4","rule","add"):
+                    state["enabled"]=True
+                    return ""
+                if args[-1]=="get":return "mihomo"
+                raise AssertionError(args)
+            with (mock.patch.object(m,"MODE",mode),
+                  mock.patch.object(m,"VPN_ENABLED",vpn),
+                  mock.patch.object(m,"routes_ok",return_value=True),
+                  mock.patch.object(m,"verified_selective_route_ownership",return_value=True),
+                  mock.patch.object(m,"active",return_value=True),
+                  mock.patch.object(m,"run",side_effect=run),
+                  mock.patch.object(backend,"check_tun_https",return_value=True)):
+                self.assertTrue(backend.check_policy_routes())
+                self.assertTrue(state["enabled"])
+                self.assertEqual(sum(1 for a in calls if a[:4]==("ip","-4","rule","add")),1)
+                state["enabled"]=False;calls.clear()
+                with mock.patch.object(backend,"check_tun_https",return_value=False):
+                    self.assertFalse(backend.check_policy_routes())
+                self.assertFalse(state["enabled"])
+                self.assertFalse(any(a[:4]==("ip","-4","rule","add") for a in calls))
+                with mock.patch.object(m,"verified_selective_route_ownership",return_value=False):
+                    self.assertFalse(backend.check_policy_routes())
+                vpn.write_text("0")
+                self.assertFalse(backend.check_policy_routes())
+
 if __name__=="__main__":
     unittest.main()
