@@ -693,10 +693,13 @@ auto_xray_candidate(){
   fi
   # A standby repair while AWG is active MUST NOT mutate its routes.
   # READY has a distinct evidence contract and is not covered by this canary.
+  local operating_mode
+  operating_mode="$(cat "$MIHOMO_AUTO_MODE_FILE" 2>/dev/null || true)"
   if [[ "${MIHOMO_STANDBY_REPAIR:-0}" == 1 ||
         "$MIHOMO_READY_AUTO_CANARY" != 0 ||
         "$(hostname)" != awg-upgrade ||
-        "$(cat "$MIHOMO_AUTO_MODE_FILE" 2>/dev/null)" != transit ||
+        ( "$operating_mode" != transit && "$operating_mode" != selective ) ||
+        ( "$operating_mode" == selective && "${MIHOMO_XRAY_SELECTIVE_CANARY:-0}" != 1 ) ||
         "$(sed -n 's/^NODE_BASIC_NETWORK=//p' <<<"$resolved")" != NETWORK_OK ]]; then
     echo "MIHOMO_NODE_FAILOVER=XRAY_AUTO_PREFLIGHT_REJECTED" >&2
     return 2
