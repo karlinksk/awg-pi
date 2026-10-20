@@ -47,6 +47,7 @@ MIHOMO_READY_GUARD="/usr/local/sbin/awg-mihomo-ready-live-match"
 MIHOMO_READY_POSTCHECK="/usr/local/sbin/awg-mihomo-ready-postcheck-tun"
 MIHOMO_TUN_CHECK="/usr/local/sbin/awg-mihomo-tun-check"
 DC_CLI="/usr/local/bin/awg-dc"
+GPT_CLI="/usr/local/sbin/awg-gpt"
 SYSTEM_NODE_SCRIPT="/usr/local/sbin/awg-system-node"
 DC_UNIT="/etc/systemd/system/awg-dc-remote@.service"
 UPDATE_SCRIPT="/usr/local/sbin/awg-update"
@@ -894,6 +895,18 @@ install_project_helper src/awg-mihomo-ready-postcheck-tun "$MIHOMO_READY_POSTCHE
 install_project_helper src/awg-mihomo-tun-check "$MIHOMO_TUN_CHECK"
 # DC is optional: stage the commands and an INACTIVE service template only.
 install_project_helper src/awg-dc "$DC_CLI"
+install_project_helper src/awg-gpt "$GPT_CLI"
+# Permit only the pinned, hash-verified menu repair, never generic root commands.
+if [[ ! -e /etc/sudoers.d/awg-gpt-menu ]]; then
+  printf '%%sudo ALL=(root) NOPASSWD: /usr/local/sbin/awg-gpt menu-update\n' >/etc/sudoers.d/awg-gpt-menu.tmp
+  chmod 0440 /etc/sudoers.d/awg-gpt-menu.tmp
+  if visudo -cf /etc/sudoers.d/awg-gpt-menu.tmp >/dev/null 2>&1; then
+    mv /etc/sudoers.d/awg-gpt-menu.tmp /etc/sudoers.d/awg-gpt-menu
+  else
+    rm -f /etc/sudoers.d/awg-gpt-menu.tmp
+    warn "Ограниченное sudo для awg-gpt не установлено; используется обычный sudo."
+  fi
+fi
 install_project_unit units/awg-dc-remote@.service "$DC_UNIT"
 install_project_helper src/awg-mihomo-node-policy "$MIHOMO_NODE_POLICY_CLI"
 # Opt-in only: default OFF on clean installation; preserve on upgrades.
