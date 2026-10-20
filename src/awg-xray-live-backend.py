@@ -234,8 +234,17 @@ class LinuxBackend:
         self.watchdog_unit=None
         self.degraded_fixed=False
     def preflight(self,failed,candidate):
-        if os.geteuid()!=0 or MODE.read_text().strip()!="transit":
-            raise RuntimeError("ROOT_TRANSIT_REQUIRED")
+        operating_mode=MODE.read_text().strip()
+        if os.geteuid()!=0 or operating_mode not in ("transit","selective"):
+            raise RuntimeError("ROOT_SUPPORTED_MODE_REQUIRED")
+        if operating_mode=="selective":
+            # Separate, explicit Selective authorization. The Transit
+            # experiment must never implicitly enable Selective.
+            if (os.environ.get("MIHOMO_XRAY_SELECTIVE_CANARY")!="1" or
+                NODE_POLICY_MODE.read_text().strip()!="auto" or
+                run("/usr/local/sbin/awg-transport","get",timeout=10)!="mihomo" or
+                not all(active(x) for x in ("ssh.service","dnsmasq.service","awg-pbr-health.service"))):
+                raise RuntimeError("SELECTIVE_AUTO_BASELINE_NOT_AUTHORIZED")
         if CURRENT.read_text().strip()!=failed or failed==candidate:
             raise RuntimeError("FAILED_NODE_IDENTITY_CHANGED")
         if not candidate_allowed_by_policy(failed,candidate):
@@ -280,14 +289,15 @@ class LinuxBackend:
             raise RuntimeError("XRAY_CANDIDATE_NOT_FRESHLY_NETWORK_QUALIFIED")
         # Do not call awg-route while holding the maintenance lock: that CLI
         # acquires the same flock. The transit-routing helper is lock-free.
-        policy=run("/usr/local/sbin/awg-transit-routing","status",timeout=10)
-        lines=policy.splitlines()
-        if self.degraded_fixed:
-            if ("Transit policy rule: INACTIVE" not in lines or
-                not any(x in lines for x in ("Transit guard: SAFE","Transit guard: LOCKDOWN"))):
-                raise RuntimeError("DEGRADED_TRANSIT_GUARD_UNSAFE")
-        elif "Transit guard: SAFE" not in lines or "Transit policy rule: ACTIVE" not in lines:
-            raise RuntimeError("TRANSIT_GUARD_NOT_SAFE")
+        if operating_mode=="transit":
+            policy=run("/usr/local/sbin/awg-transit-routing","status",timeout=10)
+            lines=policy.splitlines()
+            if self.degraded_fixed:
+                if ("Transit policy rule: INACTIVE" not in lines or
+                    not any(x in lines for x in ("Transit guard: SAFE","Transit guard: LOCKDOWN"))):
+                    raise RuntimeError("DEGRADED_TRANSIT_GUARD_UNSAFE")
+            elif "Transit guard: SAFE" not in lines or "Transit policy rule: ACTIVE" not in lines:
+                raise RuntimeError("TRANSIT_GUARD_NOT_SAFE")
     def arm_watchdog(self):
         if not self.provider_hash:raise RuntimeError("PREFLIGHT_NOT_COMPLETE")
         self.snapshot=BASE/("xray-failover-"+str(int(time.time()))+"-"+str(os.getpid()))
