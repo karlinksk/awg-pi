@@ -712,7 +712,7 @@ auto_xray_candidate(){
   operating_mode="$(cat "$MIHOMO_AUTO_MODE_FILE" 2>/dev/null || true)"
   if [[ "${MIHOMO_STANDBY_REPAIR:-0}" == 1 ||
         "$MIHOMO_READY_AUTO_CANARY" != 0 ||
-        "$_xray_auto_mode" != 1 ||
+        ( "$_xray_auto_mode" != 1 && "$(hostname)" != awg-upgrade ) ||
         ( "$operating_mode" != transit && "$operating_mode" != selective ) ||
         ( "$operating_mode" == selective && "${MIHOMO_XRAY_SELECTIVE_CANARY:-0}" != 1 ) ||
         "$(sed -n 's/^NODE_BASIC_NETWORK=//p' <<<"$resolved")" != NETWORK_OK ]]; then
