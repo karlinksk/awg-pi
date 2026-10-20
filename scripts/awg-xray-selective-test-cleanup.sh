@@ -26,8 +26,14 @@ for tab in 100 101;do
   ip -4 route show table "$tab" | grep -Eq '^default[[:space:]]+dev[[:space:]]+awg0([[:space:]]|$)' || die "AWG_ROUTE_$tab"
 done
 [[ ! -e /run/systemd/system/awg-selection-monitor.service.d/95-xray-selective-canary.conf ]] || die TEST_CANARY_STILL_ACTIVE
-if systemctl list-timers --all --no-pager --no-legend | grep -Eq 'awg-xray-(auto-test-recover|failover-[0-9]+)\.timer';then
+# An internal transaction watchdog must be quiesced before cleanup.
+# The *outer one-shot* timer is intentionally armed until recover completes.
+if systemctl list-timers --all --no-pager --no-legend | grep -Eq 'awg-xray-failover-[0-9]+\.timer';then
   die EXPERIMENT_WATCHDOG_STILL_ACTIVE
+fi
+if [[ "${XRAY_TEST_RECOVER_ACTIVE:-0}" != 1 ]] &&
+   systemctl list-timers --all --no-pager --no-legend | grep -Eq 'awg-xray-auto-test-recover\.timer';then
+  die EXTERNAL_TEST_STILL_ACTIVE
 fi
 [[ -s "$CURRENT" && -f "$CURRENT" && ! -L "$CURRENT" ]] || die CURRENT_NODE_FILE_INVALID
 [[ -s "$OLD_NODE" && -f "$OLD_NODE" && ! -L "$OLD_NODE" ]] || die ORIGINAL_NODE_PROOF_MISSING
@@ -50,11 +56,9 @@ done
 install -d -m 0700 -o root -g root "$BACKUP"
 cp -a -- "$CURRENT" "$BACKUP/node-name.before"
 cp -a -- "$OLD_NODE" "$BACKUP/node-name.saved-before-test"
-for entry in "$PERSISTENT" "$RUNTIME" "$SELECTED";do
-  if [[ -f "$entry" ]];then
-    cp -a -- "$entry" "$BACKUP/$(basename "$entry")"
-  fi
-done
+[[ ! -f "$PERSISTENT" ]] || cp -a -- "$PERSISTENT" "$BACKUP/bridge.persistent"
+[[ ! -f "$RUNTIME" ]] || cp -a -- "$RUNTIME" "$BACKUP/bridge.runtime"
+[[ ! -f "$SELECTED" ]] || cp -a -- "$SELECTED" "$BACKUP/selected.json"
 echo XRAY_CLEANUP_BACKUP=VERIFIED
 systemctl stop "$XRAY_UNIT" || die XRAY_STOP_FAILED
 systemctl disable "$XRAY_UNIT" >/dev/null || die XRAY_DISABLE_FAILED
