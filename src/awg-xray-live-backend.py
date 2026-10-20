@@ -117,30 +117,42 @@ def verified_awg_backup_safe():
         return False
 
 def failclosed():
-    # Transit remains subject to existing nft drop guard; never open DIRECT.
-    if MODE.read_text().strip()!="transit":return False
-    # The selection monitor may have already selected a healthy AWG backup.
-    # Do NOT disable its SAFE guard, stop its transport or rewrite AWG routes.
-    # Test-only rescue separately clears its endpoint blocks and opt-in.
+    """Mode-specific abort, never disrupting an independently healthy AWG."""
+    operating_mode=MODE.read_text().strip()
+    if operating_mode not in ("transit","selective"):return False
     if verified_awg_backup_safe():return True
     try:
-        run("/usr/local/sbin/awg-transit-routing","disable",timeout=16)
+        # Refuse other components' bridge files BEFORE changing routes.
+        for overlay in (BRIDGE_RUNTIME,BRIDGE):
+            if overlay.exists() and (
+                overlay.is_symlink() or
+                b"MIHOMO_XRAY_VLESS_BRIDGE=1" not in overlay.read_bytes()
+            ):
+                return False
+        if operating_mode=="transit":
+            # Existing FAIL-CLOSED guard; never route selected clients direct.
+            run("/usr/local/sbin/awg-transit-routing","disable",timeout=16)
+        else:
+            # Reuse Selective FAIL-OPEN (drops the 0x100 policy rule).
+            run("/usr/local/sbin/awg-pbr-failopen",timeout=16)
         for service in (MIHOMO,XRAY):
             run("systemctl","stop",service,timeout=20)
-        # The live candidate was not certified. Do not leave a persistent
-        # bridge pointing at its unverified sidecar on the next reboot.
         for overlay in (BRIDGE_RUNTIME,BRIDGE):
-            if overlay.exists():
-                if overlay.is_symlink() or b"MIHOMO_XRAY_VLESS_BRIDGE=1" not in overlay.read_bytes():
-                    return False
-                overlay.unlink()
+            overlay.unlink(missing_ok=True)
         run("systemctl","disable",XRAY,timeout=15)
         run("systemctl","daemon-reload",timeout=15)
-        SELECTED.unlink(missing_ok=True)  # preflight requires it absent
-        proof=run("/usr/local/sbin/awg-transit-routing","status",timeout=10)
-        return (not active(MIHOMO) and
-                "Transit policy rule: INACTIVE" in proof and
-                ("Transit guard: SAFE" in proof or "Transit guard: LOCKDOWN" in proof))
+        SELECTED.unlink(missing_ok=True)
+        if operating_mode=="transit":
+            proof=run("/usr/local/sbin/awg-transit-routing","status",timeout=10)
+            return (not active(MIHOMO) and
+                    "Transit policy rule: INACTIVE" in proof and
+                    ("Transit guard: SAFE" in proof or "Transit guard: LOCKDOWN" in proof))
+        # A broken TUN cannot own the Selective 0x100 policy rule.
+        rules=run("ip","-4","rule","show",timeout=8)
+        leaked=any(re.search(r"\bfwmark\s+(?:0x100|256)\s+lookup\s+100\b",line)
+                   for line in rules.splitlines())
+        return (not leaked and not active(MIHOMO) and not active(XRAY) and
+                active("ssh.service") and active("dnsmasq.service"))
     except Exception:
         return False
 
