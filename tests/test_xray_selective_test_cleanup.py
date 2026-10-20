@@ -1,0 +1,43 @@
+#!/usr/bin/env python3
+"""One-shot Xray Selective success and passive cleanup static safety gates."""
+from pathlib import Path
+import subprocess
+import unittest
+ROOT=Path(__file__).resolve().parents[1]
+RUN=(ROOT/"scripts/awg-xray-selective-one-shot-failover.sh").read_text()
+CLEAN=(ROOT/"scripts/awg-xray-selective-test-cleanup.sh").read_text()
+
+class SelectiveTestCleanup(unittest.TestCase):
+    def test_shell_syntax(self):
+        for name in ("awg-xray-selective-one-shot-failover.sh",
+                     "awg-xray-selective-test-cleanup.sh"):
+            p=subprocess.run(["bash","-n",str(ROOT/"scripts"/name)],
+                             capture_output=True,text=True,timeout=5)
+            self.assertEqual(p.returncode,0,p.stderr)
+    def test_no_literal_newline_command_in_tun_gate(self):
+        self.assertIn('api mihomo0 &&\n     xray_transaction_committed;then first=XRAY_TUN',RUN)
+        self.assertNotIn('&&\\n     xray_transaction_committed',RUN)
+    def test_cleanup_only_test_pi_and_verified_awg(self):
+        for key in ("TESTPI_ROOT_REQUIRED","NOT_SELECTIVE",
+                    "AWG_NOT_HEALTHY_SELECTED","AWG_ROUTE_",
+                    "AWG_CHANGED_UNDER_LOCK","ACTIVE_MIHOMO_UNEXPECTED",
+                    "EXPERIMENT_WATCHDOG_STILL_ACTIVE","TEST_CANARY_STILL_ACTIVE",
+                    "FOREIGN_BRIDGE_CONTENT","ORIGINAL_NODE_PROOF_MISSING"):
+            self.assertIn(key,CLEAN)
+    def test_cleanup_preserves_independent_awg(self):
+        self.assertIn('systemctl stop "$XRAY_UNIT"',CLEAN)
+        self.assertIn('systemctl disable "$XRAY_UNIT"',CLEAN)
+        self.assertNotIn('systemctl stop awg-quick',CLEAN)
+        self.assertNotIn('awg-transport select',CLEAN)
+        self.assertNotIn('awg-pbr-failopen',CLEAN)
+        self.assertNotIn('awg-transit-routing',CLEAN)
+        self.assertNotIn('systemctl start awg-mihomo',CLEAN)
+        self.assertIn('ACTIVE_TRANSPORT=AWG_UNCHANGED',CLEAN)
+    def test_backup_before_removal(self):
+        self.assertLess(CLEAN.index('echo XRAY_CLEANUP_BACKUP=VERIFIED'),
+                        CLEAN.index('systemctl stop "$XRAY_UNIT"'))
+        self.assertLess(CLEAN.index('cp -a -- "$OLD_NODE"'),
+                        CLEAN.index('mv -f -- "$CURRENT.test-restore.$$" "$CURRENT"'))
+        self.assertIn('NATIVE_NODE_SELECTION=RESTORED_NOT_LIVE_TESTED',CLEAN)
+if __name__=="__main__":
+    unittest.main()
