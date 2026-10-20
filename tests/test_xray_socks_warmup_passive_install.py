@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Passive Xray SOCKS-warmup patch safety contract (rootless/static)."""
+"""Passive Xray one-file incremental patch safety contract (rootless/static)."""
 from pathlib import Path
 import hashlib
 import subprocess
@@ -14,7 +14,7 @@ class WarmupPassiveInstaller(unittest.TestCase):
         self.assertEqual(p.returncode,0,p.stderr)
     def test_pinned_source(self):
         self.assertIn("NEW="+hashlib.sha256(BACKEND.read_bytes()).hexdigest(),S)
-        self.assertIn("OLD=99652708de8db0efaffd2af6ffe22ecf31b263224fe27ba5a8dfe7efcaf992bc",S)
+        self.assertIn("OLD=ee60c9736c162475923d580d88e7b10ae95db2020abb74b2d1887ef973c889cc",S)
         self.assertIn('[[ "$(hash "$TARGET")" == "$OLD" ]]',S)
         self.assertIn('[[ "$(hash "$SOURCE")" == "$NEW" ]]',S)
         self.assertIn('BACKUP_INTEGRITY',S)
