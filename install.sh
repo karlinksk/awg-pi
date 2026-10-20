@@ -47,6 +47,8 @@ MIHOMO_READY_GUARD="/usr/local/sbin/awg-mihomo-ready-live-match"
 MIHOMO_READY_POSTCHECK="/usr/local/sbin/awg-mihomo-ready-postcheck-tun"
 MIHOMO_TUN_CHECK="/usr/local/sbin/awg-mihomo-tun-check"
 DC_CLI="/usr/local/bin/awg-dc"
+DC_ADMIN_HELPER="/usr/local/sbin/awg-dc-admin"
+DC_ADMIN_ACCESS="/usr/local/sbin/awg-dc-admin-access"
 SYSTEM_NODE_SCRIPT="/usr/local/sbin/awg-system-node"
 DC_UNIT="/etc/systemd/system/awg-dc-remote@.service"
 UPDATE_SCRIPT="/usr/local/sbin/awg-update"
@@ -891,6 +893,10 @@ install_project_helper src/awg-mihomo-tun-check "$MIHOMO_TUN_CHECK"
 # DC is optional: stage the commands and an INACTIVE service template only.
 install_project_helper src/awg-dc "$DC_CLI"
 install_project_unit units/awg-dc-remote@.service "$DC_UNIT"
+# Optional narrowly scoped root diagnostics: install binaries only. No sudoers
+# grant, no DC command-unblocking and no remote pairing on install/upgrade.
+install_project_python_helper src/awg-dc-admin.py "$DC_ADMIN_HELPER"
+install_project_helper src/awg-dc-admin-access "$DC_ADMIN_ACCESS"
 install_project_helper src/awg-mihomo-node-policy "$MIHOMO_NODE_POLICY_CLI"
 
 # A clean install ships BOTH VPN engines, independently of whether the operator
@@ -1155,6 +1161,9 @@ bash -n "$MIHOMO_READY_POSTCHECK" || die "READY postcheck: синтаксиче�
 bash -n "$MIHOMO_TUN_CHECK" || die "TUN diagnostic: синтаксическая ошибка"
 [[ -x "$DC_CLI" ]] || die "Не установлен optional DC helper: $DC_CLI"
 bash -n "$DC_CLI" || die "DC helper: синтаксическая ошибка"
+[[ -x "$DC_ADMIN_HELPER" && -x "$DC_ADMIN_ACCESS" ]] || die "DC limited admin helpers are missing"
+python3 -c 'import ast,sys; ast.parse(open(sys.argv[1]).read())' "$DC_ADMIN_HELPER" || die "DC limited admin Python: syntax error"
+bash -n "$DC_ADMIN_ACCESS" || die "DC limited admin access: syntax error"
 [[ -x "$SYSTEM_NODE_SCRIPT" ]] || die "Не установлен Node.js runtime installer: $SYSTEM_NODE_SCRIPT"
 bash -n "$SYSTEM_NODE_SCRIPT" || die "Node.js runtime installer: синтаксическая ошибка"
 [[ -f "$DC_UNIT" ]] || die "Не установлен optional DC unit template: $DC_UNIT"
