@@ -324,6 +324,12 @@ if [[ "$first" == XRAY_TUN ]];then
     if automatic_awg_recovery_verified;then second=AWG;break;fi
     sleep 3
   done
+  # A completed recovery can become observable immediately after the last
+  # scheduled poll. One final complete predicate before declaring TIMEOUT.
+  if [[ "$second" == TIMEOUT ]] && automatic_awg_recovery_verified;then
+    second=AWG
+    echo SECOND_RESULT_SOURCE=FINAL_POST_POLL_VERIFICATION
+  fi
   echo "SECOND_RESULT=$second"
   echo "=== SECOND_FAULT_DIAGNOSTIC ==="
   transit_recovery_diagnostic
