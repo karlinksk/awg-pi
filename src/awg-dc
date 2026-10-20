@@ -12,7 +12,7 @@ usage(){
 Usage:
   awg-dc doctor [USER]       Read-only runtime/pairing/service diagnosis
   sudo awg-dc prepare USER   Bootstrap isolated Node.js 22 + DC agent in user npm cache
-  awg-dc pair                Interactive device authorization, never as root
+  awg-dc pair                Authorize device, then automatically enable boot service
   sudo awg-dc enable USER    Persistent boot-time service AFTER pairing
   sudo awg-dc disable USER   Disable service without deleting authorization
   sudo awg-dc status USER    Safe status (no private credentials)
@@ -101,6 +101,26 @@ show_status(){
   fi
   echo 'AWG_DC_REMOTE_CONNECTIVITY=CHECK_DASHBOARD'
 }
+# Pairing remains an explicit user action. A successful device-code login writes
+# device.json; only after the foreground pairing command exits do we enable
+# the existing non-root service. Do not start a duplicate while pairing.
+post_pair_enable(){
+  local saved_rc=$?
+  trap - EXIT
+  if session_ok; then
+    echo 'AWG_DC_PAIRING=LOCAL_SESSION_VERIFIED'
+    echo 'AWG_DC_AUTOSTART=ENABLING_AFTER_PAIRING'
+    if sudo /usr/local/bin/awg-dc enable "$DC_USER"; then
+      echo 'AWG_DC_AUTOSTART=ENABLED_AFTER_PAIRING'
+    else
+      echo 'AWG_DC_AUTOSTART=MANUAL_ENABLE_REQUIRED' >&2
+      printf 'Run: sudo awg-dc enable %s\\n' "$DC_USER" >&2
+    fi
+  else
+    echo 'AWG_DC_AUTOSTART=NOT_CHANGED_NO_VERIFIED_PAIRING'
+  fi
+  return "$saved_rc"
+}
 case "${1:-}" in
   help|-h|--help) usage ;;
   doctor|status)
@@ -166,7 +186,9 @@ case "${1:-}" in
     deps_ok || fail BOOTSTRAP_NODE18_NPM_NOT_READY
     echo 'AWG_DC_PAIRING=INTERACTIVE_OAUTH'
     echo 'AWG_DC_NOTICE=VERIFY_BROWSER_DEVICE_CODE_THEN_STOP_WITH_CTRL_C'
-    run_agent
+    echo 'AWG_DC_NOTICE=AFTER_PAIRING_AGENT_AUTOSTART_WILL_BE_ENABLED'
+    trap post_pair_enable EXIT
+    (run_agent)
     ;;
   agent)
     (( EUID != 0 )) || fail AGENT_AS_NONROOT_USER
