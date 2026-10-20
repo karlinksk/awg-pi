@@ -113,6 +113,14 @@ for i in $(seq 1 60);do
   sleep 3
 done
 echo "FIRST_RESULT=$first"
+echo '=== XRAY_SELECTIVE_PREACTIVATION_DIAGNOSTIC ==='
+# Fixed status strings only, no subscription URLs, node names or credentials.
+if journalctl -t awg-xray-auto --since '-9 minutes' -o cat --no-pager 2>/dev/null | grep -F 'SELECTIVE_FAILOPEN=PREPARED_BEFORE_XRAY' >/dev/null; then
+  echo 'XRAY_SELECTIVE_PREACTIVATION=OBSERVED'
+else
+  echo 'XRAY_SELECTIVE_PREACTIVATION=NOT_OBSERVED'
+fi
+
 if [[ "$first" == XRAY_TUN ]];then
   echo 'XRAY_TUN_HTTPS=PASS'
   systemctl stop awg-xray-vless
