@@ -949,7 +949,19 @@ node_select(){
     restore_path "$MIHOMO_NODE_NAME_FILE" node "$snapshot"
     restore_path "$MIHOMO_CONFIG_FILE" config "$snapshot"
     "$SYSTEMCTL_BIN" daemon-reload >/dev/null 2>&1 || true
-    restore_unit_state "$MIHOMO_SERVICE" "$service_enabled" "$service_active"
+    if [[ "${MIHOMO_NODE_FAILOVER_RECOVERY:-0}" == 1 && "$current" == mihomo ]]; then
+      # The old node was already declared failed. Restore its config for
+      # consistency, but do NOT restart it while another READY is attempted.
+      # The caller alone selects a fresh verified candidate or enters
+      # the existing fail-closed transport recovery path.
+      if (( service_enabled == 1 )); then
+        "$SYSTEMCTL_BIN" enable "$MIHOMO_SERVICE" >/dev/null 2>&1 || true
+      else
+        "$SYSTEMCTL_BIN" disable "$MIHOMO_SERVICE" >/dev/null 2>&1 || true
+      fi
+    else
+      restore_unit_state "$MIHOMO_SERVICE" "$service_enabled" "$service_active"
+    fi
     if [[ "$current" == mihomo && "$health_was_active" == 1 ]]; then
       "$SYSTEMCTL_BIN" restart "$HEALTH_SERVICE" >/dev/null 2>&1 || true
     fi

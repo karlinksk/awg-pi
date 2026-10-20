@@ -12,13 +12,14 @@ grep -Fq 'MIHOMO_INSTALLER=/usr/local/sbin/awg-mihomo-install' src/awg-update
 grep -Fq '"$MIHOMO_INSTALLER" status || true' src/awg-update
 grep -Fq '"$MIHOMO_INSTALLER" ensure' src/awg-update
 grep -Fq 'mihomo)' src/awg-update
-grep -Fq 'Использование: awg-update [--yes] {status|gateway|core|mihomo|all}' src/awg-update
+grep -Fq 'Использование: awg-update [--yes] {status|backup|gateway|core|mihomo|all}' src/awg-update
 grep -Fq '"$ROUTE_CLI" mode transit' install.sh
 grep -Fq '"$ROUTE_CLI" mode selective' install.sh
 grep -Fq 'TRANSPORT_FILE="$PBR_DIR/transport"' install.sh
 grep -Fq "printf '%s\\n' unconfigured >\"\$TRANSPORT_FILE\"" install.sh
 grep -Fq 'FIRST_RUN_CLI="/usr/local/sbin/awg-first-run"' install.sh
-grep -Fq '"$FIRST_RUN_CLI" wizard' install.sh
+! grep -Fq '"$FIRST_RUN_CLI" wizard' install.sh
+grep -Fq 'No VPN onboarding during clean install' install.sh
 grep -Fq 'Active transport не настроен. Это допустимое recovery-состояние' install.sh
 
 # Installed version is public metadata. Keep /etc/awg-pbr private and
@@ -38,7 +39,7 @@ grep -Fq 'usr/share/awg-pbr' src/awg-update
 confirm_parser="$(awk '/^confirm_yes\(\)\{/{capture=1} capture{print} capture && /^}$/{exit}' install.sh)"
 eval "$confirm_parser"
 cr="$(printf '\r')"
-for answer in y Y yes Yes YES д Д да Да ДА "y${cr}" ' y ' "да${cr}"; do
+for answer in y Y yes Yes YES у У д Д да Да ДА "y${cr}" "у${cr}" ' y ' ' у ' "да${cr}"; do
   confirm_yes "$answer" || { echo "FAIL: affirmative confirmation rejected: [$answer]" >&2; exit 1; }
 done
 for answer in n N no No NO нет Нет '' '   '; do
@@ -48,12 +49,12 @@ for answer in n N no No NO нет Нет '' '   '; do
   fi
 done
 
-# Fresh installs stage in Selective + unconfigured, configure/recover the
-# first transport, then choose Operating Mode explicitly.
+# Fresh install installs engines and leaves first VPN configuration for the menu.
 grep -Fq "printf '%s\\n' selective >\"\$MODE_FILE\"" install.sh
-grep -Fq 'log "[11a/12] First transport wizard"' install.sh
-grep -Fq 'log "[11b/12] Operating Mode selection"' install.sh
-grep -Fq '2) MikroTik Transit / Backup VPN — transport DOWN/not-ready => FAIL-CLOSED/LOCKDOWN' install.sh
+grep -Fq 'log "[11a/12] No VPN onboarding during clean install"' install.sh
+grep -Fq 'log "[11b/12] Deferred VPN and Operating Mode configuration"' install.sh
+grep -Fq '"$(cat "$TRANSPORT_FILE")" == unconfigured' install.sh
+! grep -Fq 'ask "Режим работы" "1"' install.sh
 grep -Fq 'elif (( ACTIVATE_TRANSIT_AFTER_INSTALL == 1 )); then' install.sh
 
 # Existing v1.2+ mode and v1.3 transport state are preserved during upgrade.

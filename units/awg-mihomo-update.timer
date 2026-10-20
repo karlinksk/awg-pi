@@ -3,6 +3,8 @@ Description=Periodic Mihomo provider update for AWG Pi Gateway
 
 [Timer]
 OnBootSec=15min
+# Enables first refresh when the timer is started after boot (e.g. new provider).
+OnActiveSec=15min
 OnUnitActiveSec=24h
 RandomizedDelaySec=30min
 Persistent=true

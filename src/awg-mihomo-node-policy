@@ -9,19 +9,52 @@ MIHOMO_NODE_NAME_FILE="${MIHOMO_NODE_NAME_FILE:-/etc/awg-pbr/transports/mihomo/n
 MIHOMO_CONFIGURE="${MIHOMO_CONFIGURE_BIN:-/usr/local/sbin/awg-mihomo-configure}"
 MIHOMO_POOL_CLI="${MIHOMO_POOL_CLI:-/usr/local/sbin/awg-mihomo-pool}"
 MIHOMO_HOT_POOL_CLI="${MIHOMO_HOT_POOL_CLI:-/usr/local/sbin/awg-mihomo-hot-pool}"
-MIHOMO_READY_AUTO_CANARY="${MIHOMO_READY_AUTO_CANARY:-0}"
+# Persist Hot Pool READY-priority independently of the node's AUTO/FIXED mode.
+# Existing installations remain OFF until explicitly enabled. A clean
+# installation enables this after all guarded helpers have been provisioned.
+MIHOMO_READY_AUTO_MODE_FILE="${MIHOMO_READY_AUTO_MODE_FILE:-/etc/awg-pbr/transports/mihomo/ready-auto.mode}"
+if [[ -z "${MIHOMO_READY_AUTO_CANARY+x}" ]]; then
+  MIHOMO_READY_AUTO_CANARY="$(cat "$MIHOMO_READY_AUTO_MODE_FILE" 2>/dev/null || echo 0)"
+fi
+[[ "$MIHOMO_READY_AUTO_CANARY" == 0 || "$MIHOMO_READY_AUTO_CANARY" == 1 ]] || {
+  echo 'Invalid Hot Pool READY policy state' >&2
+  exit 2
+}
 MIHOMO_READY_GUARD_BIN="${MIHOMO_READY_GUARD_BIN:-/usr/local/sbin/awg-mihomo-ready-live-match}"
-MIHOMO_READY_POSTCHECK_BIN="${MIHOMO_READY_POSTCHECK_BIN:-}"
+MIHOMO_READY_POSTCHECK_BIN="${MIHOMO_READY_POSTCHECK_BIN:-/usr/local/sbin/awg-mihomo-ready-postcheck-tun}"
 MIHOMO_READY_LIVE_PROVIDER="${MIHOMO_READY_LIVE_PROVIDER:-/var/lib/awg-pbr/mihomo/providers/subscription.yaml}"
 MIHOMO_READY_UNION_PROVIDER="${MIHOMO_READY_UNION_PROVIDER:-/run/awg-pbr/hot-pool/continuity/provider.yaml}"
 MIHOMO_READY_UNION_POOL="${MIHOMO_READY_UNION_POOL:-/run/awg-pbr/hot-pool/continuity/pool.json}"
 MIHOMO_READY_UNION_STATE="${MIHOMO_READY_UNION_STATE:-/run/awg-pbr/hot-pool/continuity/state.json}"
+# Used only after every service-qualified candidate has been rejected. Never
+# re-enable a broken Mihomo dataplane merely to restore its previous name.
+MIHOMO_AUTO_MODE_FILE="${MIHOMO_AUTO_MODE_FILE:-/etc/awg-pbr/mode}"
+MIHOMO_AUTO_TRANSIT_ROUTING="${MIHOMO_AUTO_TRANSIT_ROUTING:-/usr/local/sbin/awg-transit-routing}"
+MIHOMO_AUTO_FAILOPEN="${MIHOMO_AUTO_FAILOPEN:-/usr/local/sbin/awg-pbr-failopen}"
+MIHOMO_AUTO_SYSTEMCTL="${MIHOMO_AUTO_SYSTEMCTL:-systemctl}"
+MIHOMO_AUTO_SERVICE="${MIHOMO_AUTO_SERVICE:-awg-mihomo.service}"
+MIHOMO_STRATEGY_SYSTEMCTL="${MIHOMO_STRATEGY_SYSTEMCTL:-systemctl}"
+MIHOMO_HOT_TIMER="${MIHOMO_HOT_TIMER:-awg-mihomo-hot-pool.timer}"
+MIHOMO_HOT_SERVICE="${MIHOMO_HOT_SERVICE:-awg-mihomo-hot-pool.service}"
+
+# Explicit one-shot standby repair MUST NOT alter a healthy AWG transport.
+MIHOMO_AUTO_TRANSPORT_CLI="${MIHOMO_AUTO_TRANSPORT_CLI:-/usr/local/sbin/awg-transport}"
+MIHOMO_STANDBY_CURL_BIN="${MIHOMO_STANDBY_CURL_BIN:-curl}"
+MIHOMO_STANDBY_TUN_IF="${MIHOMO_STANDBY_TUN_IF:-mihomo0}"
 
 # OFF preserves the pre-existing live policy until service gating is explicitly
 # enabled, tested and approved. REQUIRE rejects stale/missing/UNKNOWN results.
 MIHOMO_SERVICE_GATE_MODE_FILE="${MIHOMO_SERVICE_GATE_MODE_FILE:-/etc/awg-pbr/transports/mihomo/service-eligibility.mode}"
 if [[ -z "${MIHOMO_SERVICE_GATE_MODE+x}" ]]; then
   MIHOMO_SERVICE_GATE_MODE="$(cat "$MIHOMO_SERVICE_GATE_MODE_FILE" 2>/dev/null || echo off)"
+  # READY-priority never falls back to an UNQUALIFIED low-latency node.
+  # If no READY is available, each fallback candidate must pass a fresh,
+  # isolated OpenAI + ChatGPT + 24-frame YouTube medium-confidence scan.
+  # Only the node selector uses this override: the live monitor's health
+  # policy remains unchanged, preventing false failover on Cloudflare 403.
+  if [[ "$MIHOMO_READY_AUTO_CANARY" == 1 && "$MIHOMO_SERVICE_GATE_MODE" == off ]]; then
+    MIHOMO_SERVICE_GATE_MODE=balanced
+  fi
 fi
 MIHOMO_SERVICE_GATE_BIN="${MIHOMO_SERVICE_GATE_BIN:-/usr/local/sbin/awg-mihomo-service-eligibility.py}"
 MIHOMO_SERVICE_QUICKCHECK_BIN="${MIHOMO_SERVICE_QUICKCHECK_BIN:-/usr/local/sbin/awg-mihomo-smart}"
@@ -34,6 +67,9 @@ Usage:
   awg-mihomo-node-policy mode manual
   awg-mihomo-node-policy mode fixed NODE [FALLBACK_NODE...]
   awg-mihomo-node-policy mode auto
+  awg-mihomo-node-policy ready-auto enable|disable|status
+  awg-mihomo-node-policy auto-strategy status|ready|classic
+  awg-mihomo-node-policy standby-repair  # AWG must be healthy and active; no route change
   awg-mihomo-node-policy manual-selection preview NODE
   awg-mihomo-node-policy manual-selection apply NODE
 
@@ -46,10 +82,111 @@ This policy never infers country from a node name and never adds an unlisted
 node. Therefore a country change can happen automatically only if the user
 explicitly placed a node from another country in the fallback list.
 
-AUTO uses the live Mihomo health pool, prefers the lowest-latency healthy node,
-honors the optional Europe-only pool filter, and places failed nodes in a
-temporary cooldown before trying another node.
+AUTO with ready-auto ENABLED prefers twice-confirmed, service-qualified
+Hot Pool READY nodes (current live credentials must match). If no READY exists,
+every health-pool alternative needs a NEW isolated service scan and post-switch
+TUN validation before being used. On a confirmed active-node failure, a
+rejected READY candidate is skipped in favor of another READY candidate;
+the original broken node is never reactivated as the recovery result.
+When no verified Mihomo candidate remains, the dataplane is quiesced and
+Transit remains FAIL-CLOSED. Configured standby AWG may then be tried. A healthy
+active Mihomo is NEVER changed for speed. Disable ready-auto explicitly to
+retain legacy network-only fallback behavior.
 USAGE
+}
+
+# A strategy changes only the READY priority and SHADOW timer. Existing
+# manual/FIXED chains are never overwritten. Service gate remains independent.
+strategy_enabled(){ "$MIHOMO_STRATEGY_SYSTEMCTL" is-enabled --quiet "$MIHOMO_HOT_TIMER"; }
+strategy_active(){ "$MIHOMO_STRATEGY_SYSTEMCTL" is-active --quiet "$MIHOMO_HOT_TIMER"; }
+strategy_status(){
+  local priority policy timer=inactive enabled=disabled
+  priority="$(cat "$MIHOMO_READY_AUTO_MODE_FILE" 2>/dev/null || echo 0)"
+  strategy_active && timer=active
+  strategy_enabled && enabled=enabled
+  policy="$(mode_get 2>/dev/null || echo invalid)"
+  local result=MIXED_CONFIGURATION
+  case "$priority:$timer:$enabled" in
+    1:active:enabled) result=HOT_POOL_READY ;;
+    0:inactive:disabled) result=CLASSIC_AUTO ;;
+  esac
+  printf 'MIHOMO_AUTO_STRATEGY=%s\n' "$result"
+  printf 'MIHOMO_NODE_POLICY=%s\n' "$policy"
+  printf 'MIHOMO_HOT_TIMER_ACTIVE=%s\n' "$timer"
+  printf 'MIHOMO_HOT_TIMER_ENABLED=%s\n' "$enabled"
+  printf 'MIHOMO_READY_AUTO=%s\n' "$priority"
+  printf 'MIHOMO_SERVICE_GATE=%s\n' "$MIHOMO_SERVICE_GATE_MODE"
+}
+strategy_restore(){
+  local enabled="$1" active="$2" fail=0
+  if [[ "$enabled" == yes ]]; then
+    "$MIHOMO_STRATEGY_SYSTEMCTL" enable "$MIHOMO_HOT_TIMER" >/dev/null || fail=1
+  else
+    "$MIHOMO_STRATEGY_SYSTEMCTL" disable "$MIHOMO_HOT_TIMER" >/dev/null || fail=1
+  fi
+  if [[ "$active" == yes ]]; then
+    "$MIHOMO_STRATEGY_SYSTEMCTL" start "$MIHOMO_HOT_TIMER" >/dev/null || fail=1
+  else
+    "$MIHOMO_STRATEGY_SYSTEMCTL" stop "$MIHOMO_HOT_TIMER" >/dev/null || fail=1
+  fi
+  (( fail == 0 ))
+}
+select_auto_strategy(){
+  local target="$1" was_ready was_active=no was_enabled=no wanted=0 fail=0
+  [[ "$target" == ready || "$target" == classic ]] || return 2
+  if [[ "$(mode_get 2>/dev/null || echo invalid)" != auto ]]; then
+    echo 'MIHOMO_AUTO_STRATEGY=REQUIRES_NODE_POLICY_AUTO' >&2
+    return 2
+  fi
+  if "$MIHOMO_STRATEGY_SYSTEMCTL" is-active --quiet "$MIHOMO_HOT_SERVICE"; then
+    echo 'MIHOMO_AUTO_STRATEGY=SCANNER_RUNNING_RETRY_LATER' >&2
+    return 2
+  fi
+  was_ready="$(cat "$MIHOMO_READY_AUTO_MODE_FILE" 2>/dev/null || echo 0)"
+  [[ "$was_ready" == 0 || "$was_ready" == 1 ]] || return 2
+  strategy_active && was_active=yes
+  strategy_enabled && was_enabled=yes
+  [[ "$target" == ready ]] && wanted=1
+  if [[ "$wanted" == 1 ]]; then
+    local helper
+    for helper in "$MIHOMO_HOT_POOL_CLI" "$MIHOMO_POOL_CLI"       "$MIHOMO_READY_GUARD_BIN" "$MIHOMO_READY_POSTCHECK_BIN"       "$MIHOMO_SERVICE_QUICKCHECK_BIN" "$MIHOMO_NETWORK_GATE_BIN"; do
+      [[ -x "$helper" ]] || {
+        echo 'MIHOMO_AUTO_STRATEGY=REJECTED_MISSING_GUARD' >&2
+        return 2
+      }
+    done
+    "$MIHOMO_STRATEGY_SYSTEMCTL" enable --now "$MIHOMO_HOT_TIMER" >/dev/null || fail=1
+    if (( fail == 0 )); then set_ready_auto enable >/dev/null || fail=1; fi
+  else
+    set_ready_auto disable >/dev/null || fail=1
+    if (( fail == 0 )); then
+      "$MIHOMO_STRATEGY_SYSTEMCTL" disable --now "$MIHOMO_HOT_TIMER" >/dev/null || fail=1
+    fi
+  fi
+  # Timer may have raced into a new scan. Never silently claim a safe change.
+  if "$MIHOMO_STRATEGY_SYSTEMCTL" is-active --quiet "$MIHOMO_HOT_SERVICE"; then fail=1; fi
+  local actual="$(cat "$MIHOMO_READY_AUTO_MODE_FILE" 2>/dev/null || echo invalid)"
+  local live_timer=0 enabled_timer=0
+  strategy_active && live_timer=1
+  strategy_enabled && enabled_timer=1
+  if [[ "$actual" != "$wanted" || "$live_timer" != "$wanted" ||
+        "$enabled_timer" != "$wanted" ]]; then fail=1; fi
+  if (( fail )); then
+    local rollback=0
+    if [[ "$was_ready" == 1 ]]; then
+      set_ready_auto enable >/dev/null || rollback=1
+    else
+      set_ready_auto disable >/dev/null || rollback=1
+    fi
+    strategy_restore "$was_enabled" "$was_active" || rollback=1
+    if (( rollback )); then
+      echo 'MIHOMO_AUTO_STRATEGY=ROLLBACK_FAILED_MANUAL_REVIEW' >&2
+    else
+      echo 'MIHOMO_AUTO_STRATEGY=FAILED_ROLLED_BACK' >&2
+    fi
+    return 1
+  fi
+  strategy_status
 }
 
 mode_get(){
@@ -136,6 +273,38 @@ set_auto(){
   atomic_mode auto
   printf 'MIHOMO_NODE_POLICY=auto\n'
   "$MIHOMO_POOL_CLI" policy status 2>/dev/null || true
+}
+
+set_ready_auto(){
+  local value="${1:-}"
+  case "$value" in
+    enable)
+      for helper in "$MIHOMO_HOT_POOL_CLI" "$MIHOMO_POOL_CLI" \
+                    "$MIHOMO_READY_GUARD_BIN" "$MIHOMO_READY_POSTCHECK_BIN" \
+                    "$MIHOMO_SERVICE_QUICKCHECK_BIN" "$MIHOMO_NETWORK_GATE_BIN"; do
+        [[ -x "$helper" ]] || {
+          echo "READY_AUTO=REJECTED_MISSING_GUARD" >&2
+          return 2
+        }
+      done
+      value=1
+      ;;
+    disable) value=0 ;;
+    *) echo 'Usage: awg-mihomo-node-policy ready-auto enable|disable|status' >&2; return 2 ;;
+  esac
+  local dir tmp
+  dir="$(dirname "$MIHOMO_READY_AUTO_MODE_FILE")"
+  mkdir -p "$dir"; chmod 700 "$dir"
+  tmp="$(mktemp "$dir/.ready-auto.XXXXXXXX")"
+  printf '%s\n' "$value" >"$tmp"
+  chmod 600 "$tmp"
+  mv -fT -- "$tmp" "$MIHOMO_READY_AUTO_MODE_FILE"
+  if [[ "$value" == 1 ]]; then
+    printf 'MIHOMO_READY_AUTO=enabled\n'
+    printf 'CANDIDATE_ORDER=HOT_POOL_READY_FIRST_THEN_FRESH_SERVICE_CHECK\n'
+  else
+    printf 'MIHOMO_READY_AUTO=disabled\n'
+  fi
 }
 
 manual_selection_order(){
@@ -245,7 +414,12 @@ status(){
       printf 'Pool region filter: ignored by explicit FIXED chain\n'
       ;;
     auto)
-      printf 'Automatic Mihomo node switching: health-pool AUTO\n'
+      if [[ "$MIHOMO_READY_AUTO_CANARY" == 1 ]]; then
+        printf 'Automatic Mihomo node switching: Hot Pool READY-priority AUTO\n'
+        printf 'Fallback candidates: fresh service scan mandatory\n'
+      else
+        printf 'Automatic Mihomo node switching: health-pool AUTO\n'
+      fi
       printf 'Automatic trigger: repeated active-Mihomo health failure\n'
       if [[ -x "$MIHOMO_POOL_CLI" ]]; then
         "$MIHOMO_POOL_CLI" policy status 2>/dev/null || true
@@ -256,6 +430,7 @@ status(){
       printf 'Automatic Mihomo node switching: disabled\n'
       ;;
   esac
+  printf 'Hot Pool READY priority: %s\n' "$([[ "$MIHOMO_READY_AUTO_CANARY" == 1 ]] && echo enabled || echo disabled)"
   printf 'Service eligibility gate: %s\n' "$MIHOMO_SERVICE_GATE_MODE"
   printf 'Country inference from node names: disabled\n'
 }
@@ -285,7 +460,26 @@ service_candidate_allowed(){
       # and a NEW actual 24-frame Stage18 video decode for this exact node.
       [[ -x "$MIHOMO_SERVICE_QUICKCHECK_BIN" && -x "$MIHOMO_NETWORK_GATE_BIN" ]] || return 1
       response="$("$MIHOMO_SERVICE_QUICKCHECK_BIN" service-scan --node "$candidate" 2>/dev/null)" || true
-      printf '%s\n' "$response" | "$MIHOMO_NETWORK_GATE_BIN" >/dev/null 2>&1
+      # service-scan also emits safe diagnostic metadata such as
+      # SERVICE_IP_CONNECT_STATE / SERVICE_REASON_YOUTUBE_VIDEO. The strict
+      # network gate accepts EXACTLY five service-evidence fields and rejects
+      # unknown fields. Feed ONLY those five, preserving their original
+      # values and duplicate lines so the gate still rejects malformed input.
+      # Hot Pool scan_one() already follows this same verified contract.
+      local gate_output gate_reason
+      if gate_output="$(printf '%s\n' "$response" | awk -F= '
+        $1 == "SERVICE_ELIGIBILITY" ||
+        $1 == "SERVICE_CHECK_OPENAI_API" ||
+        $1 == "SERVICE_CHECK_CHATGPT_WEB" ||
+        $1 == "SERVICE_CHECK_YOUTUBE_VIDEO" ||
+        $1 == "SERVICE_REASON_CHATGPT_WEB" { print }
+      ' | "$MIHOMO_NETWORK_GATE_BIN" 2>/dev/null)"; then
+        return 0
+      fi
+      gate_reason="$(sed -nE 's/^NETWORK_REASON=([A-Z0-9_]{1,64})$/\1/p' <<<"$gate_output" | head -1)"
+      [[ -n "$gate_reason" ]] || gate_reason=UNKNOWN
+      printf 'READY_AUTO=CANDIDATE_SERVICE_REJECTED REASON=%s\n' "$gate_reason" >&2
+      return 1
       ;;
     require)
       [[ -x "$MIHOMO_SERVICE_GATE_BIN" ]] || return 1
@@ -329,8 +523,109 @@ failover_fixed(){
   return 1
 }
 
+# In conservative AUTO, AWG can be the healthy active transport while Mihomo
+# standby's formerly selected endpoint has gone offline. Requalify at most the
+# existing READY/fresh fallback bound WITHOUT changing active transport/rules.
+standby_routes_safe(){
+  local tbl route
+  [[ "$("$MIHOMO_AUTO_TRANSPORT_CLI" get 2>/dev/null)" == awg ]] || return 1
+  for tbl in 100 101; do
+    route="$(ip -4 route show table "$tbl" 2>/dev/null)" || return 1
+    awk '$1 == "default" && $2 == "dev" && $3 == "awg0" {ok=1} END {exit !ok}' <<<"$route" || return 1
+  done
+  "$MIHOMO_AUTO_TRANSPORT_CLI" check awg >/dev/null 2>&1
+}
+standby_postcheck(){
+  local node="$1" code addr
+  [[ "$(cat "$MIHOMO_NODE_NAME_FILE" 2>/dev/null || true)" == "$node" ]] || {
+    echo 'READY_TUN_CHECK=NODE_CHANGED'
+    return 1
+  }
+  standby_routes_safe || { echo 'READY_TUN_CHECK=ROUTE_MISSING'; return 1; }
+  ip link show dev "$MIHOMO_STANDBY_TUN_IF" >/dev/null 2>&1 || {
+    echo 'READY_TUN_CHECK=IF_DOWN'; return 1
+  }
+  # No HTTP_PROXY inheritance and no global routing change. This validates
+  # the actual Pi-bound TUN, independently of the localhost proxy preflight.
+  code="$("$MIHOMO_STANDBY_CURL_BIN" -q -4 -sS --noproxy '*' \
+    --interface "$MIHOMO_STANDBY_TUN_IF" --connect-timeout 5 --max-time 12 \
+    -o /dev/null -w '%{http_code}' https://api.openai.com/v1/models 2>/dev/null)" || {
+      echo 'READY_TUN_CHECK=OPENAI_NETWORK_FAILED'; return 1
+    }
+  [[ "$code" == 401 ]] || { echo 'READY_TUN_CHECK=OPENAI_NOT_QUALIFIED'; return 1; }
+  addr="$("$MIHOMO_STANDBY_CURL_BIN" -q -4 -fsS --noproxy '*' \
+    --interface "$MIHOMO_STANDBY_TUN_IF" --connect-timeout 5 --max-time 12 \
+    https://api.ipify.org 2>/dev/null)" || {
+      echo 'READY_TUN_CHECK=EGRESS_FAILED'; return 1
+    }
+  python3 -c 'import ipaddress,sys
+try:
+ a=ipaddress.IPv4Address(sys.stdin.read().strip())
+ sys.exit(0 if a.is_global else 1)
+except ValueError:
+ sys.exit(1)' <<<"$addr" || { echo 'READY_TUN_CHECK=EGRESS_INVALID'; return 1; }
+  standby_routes_safe || { echo 'READY_TUN_CHECK=MARK_MISMATCH'; return 1; }
+  echo READY_TUN_CHECK=PASS
+}
+standby_repair(){
+  local previous
+  standby_routes_safe || {
+    echo 'STANDBY_REPAIR=REFUSED_AWG_NOT_HEALTHY_OR_ROUTE_NOT_SAFE' >&2
+    return 1
+  }
+  [[ "$(cat "$MIHOMO_AUTO_MODE_FILE" 2>/dev/null || true)" == transit ||
+     "$(cat "$MIHOMO_AUTO_MODE_FILE" 2>/dev/null || true)" == selective ]] || {
+    echo 'STANDBY_REPAIR=INVALID_MODE' >&2; return 1
+  }
+  [[ "$(mode_get 2>/dev/null)" == auto ]] || {
+    echo 'STANDBY_REPAIR=REQUIRES_NODE_AUTO_POLICY' >&2; return 1
+  }
+  previous="$(cat "$MIHOMO_NODE_NAME_FILE" 2>/dev/null || true)"
+  [[ -n "$previous" ]] || { echo 'STANDBY_REPAIR=NO_SELECTED_NODE' >&2; return 1; }
+  # No background task and no performance-based switching: explicit one-shot.
+  if MIHOMO_STANDBY_REPAIR=1 failover_auto "$previous"; then
+    standby_routes_safe || {
+      echo 'STANDBY_REPAIR=AWG_ROUTE_CHANGED' >&2; return 1
+    }
+    echo 'STANDBY_REPAIR=PASS_AWG_STILL_ACTIVE'
+    return 0
+  fi
+  standby_routes_safe || {
+    echo 'STANDBY_REPAIR=AWG_ROUTE_CHANGED' >&2; return 1
+  }
+  echo 'STANDBY_REPAIR=NO_VERIFIED_NODE_AWG_UNCHANGED' >&2
+  return 1
+}
+
+# On an exhausted recovery path, stop the unverified backend instead of
+# returning to the originally failed node. Do not touch router, DNS or SSH.
+# In Transit, remove the policy rule under the existing nftables drop guard
+# BEFORE stopping the interface. Never claim a successful node failover here.
+quiesce_failed_mihomo(){
+  local mode
+  mode="$(cat "$MIHOMO_AUTO_MODE_FILE" 2>/dev/null || true)"
+  case "$mode" in
+    transit)
+      "$MIHOMO_AUTO_TRANSIT_ROUTING" disable >/dev/null || return 1
+      ;;
+    selective)
+      "$MIHOMO_AUTO_FAILOPEN" >/dev/null || return 1
+      ;;
+    *)
+      echo 'READY_AUTO=INVALID_OPERATING_MODE' >&2
+      return 1
+      ;;
+  esac
+  "$MIHOMO_AUTO_SYSTEMCTL" stop "$MIHOMO_AUTO_SERVICE" >/dev/null || return 1
+  echo 'READY_AUTO=NO_WORKING_MIHOMO_NODE' >&2
+}
+
 failover_auto(){
   local current="$1" candidate item attempts=0 from_ready=0
+  # Keep the legacy non-READY AUTO bound unchanged. READY AUTO may inspect
+  # all four prepared reserves before a small fresh-qualified fallback.
+  local max_checks=3
+  [[ "$MIHOMO_READY_AUTO_CANARY" == 1 ]] && max_checks=6
   local -a excludes=("$current") best_args=() hot_args=()
   local -a union_args=(--provider "$MIHOMO_READY_UNION_PROVIDER"
      --pool "$MIHOMO_READY_UNION_POOL" --state "$MIHOMO_READY_UNION_STATE")
@@ -373,6 +668,13 @@ failover_auto(){
     fi
     [[ -n "$candidate" ]] || break
     validate_node_name "$candidate" || return 1
+    # A faulty pool helper must not return an excluded dead/failed node.
+    for item in "${excludes[@]}"; do
+      [[ "$candidate" != "$item" ]] || {
+        echo 'READY_AUTO=EXCLUDED_NODE_RETURNED' >&2
+        return 1
+      }
+    done
 
     # READY only: reject missing/renamed/duplicated or credential-changed
     # profiles. Staged/archived nodes are NOT automatically live-selectable.
@@ -388,18 +690,28 @@ failover_auto(){
     fi
 
     if [[ "$MIHOMO_SERVICE_GATE_MODE" == require || "$MIHOMO_SERVICE_GATE_MODE" == balanced ]]; then
-      (( attempts < 3 )) || break
+      # Four prepared READY reserves plus bounded freshly checked fallback.
+      (( attempts < max_checks )) || break
       attempts=$((attempts + 1))
     fi
-    if ! service_candidate_allowed "$candidate"; then
-      if [[ "$MIHOMO_SERVICE_GATE_MODE" == balanced ]]; then
-        "$MIHOMO_POOL_CLI" cooldown add "$candidate" --seconds 180 >/dev/null 2>&1 || true
+    # READY already has TWO fresh isolated OpenAI/ChatGPT-network/YouTube24
+    # proofs, and its exact live credentials were matched above. Don't rerun
+    # the expensive media scan for that same READY proof during an outage.
+    # Freshly discovered non-READY candidates (and strict REQUIRE mode) still
+    # must pass an independent new service check before touching live traffic.
+    if (( from_ready == 0 )) || [[ "$MIHOMO_SERVICE_GATE_MODE" == require ]]; then
+      if ! service_candidate_allowed "$candidate"; then
+        if [[ "$MIHOMO_SERVICE_GATE_MODE" == balanced ]]; then
+          "$MIHOMO_POOL_CLI" cooldown add "$candidate" --seconds 180 >/dev/null 2>&1 || true
+        fi
+        excludes+=("$candidate")
+        continue
       fi
-      excludes+=("$candidate")
-      continue
     fi
 
-    if "$MIHOMO_CONFIGURE" node select-auto "$candidate" >/dev/null; then
+    # When recovering from an already FAILED live node, the configure
+    # transaction must not restart that old node if candidate activation fails.
+    if MIHOMO_NODE_FAILOVER_RECOVERY="$MIHOMO_READY_AUTO_CANARY"       "$MIHOMO_CONFIGURE" node select-auto "$candidate" >/dev/null; then
       # Only the canary adds this additional validation; the underlying
       # configure command already provides its own rollback on failure.
       if [[ "$MIHOMO_READY_AUTO_CANARY" != 1 ]]; then
@@ -408,7 +720,12 @@ failover_auto(){
       fi
       local post_summary="" post_reason="NODE_CHANGED"
       if [[ "$(cat "$MIHOMO_NODE_NAME_FILE" 2>/dev/null || true)" == "$candidate" ]]; then
-        if post_summary="$("$MIHOMO_READY_POSTCHECK_BIN" "$candidate" 2>&1)"; then
+        if [[ "${MIHOMO_STANDBY_REPAIR:-0}" == 1 ]]; then
+          post_summary="$(standby_postcheck "$candidate" 2>&1)" && post_rc=0 || post_rc=$?
+        else
+          post_summary="$("$MIHOMO_READY_POSTCHECK_BIN" "$candidate" 2>&1)" && post_rc=0 || post_rc=$?
+        fi
+        if (( post_rc == 0 )); then
           printf 'READY_AUTO_POSTCHECK=PASS\n' >&2
           printf 'MIHOMO_NODE_FAILOVER=%s->%s\n' "$current" "$candidate"
           return 0
@@ -436,16 +753,14 @@ failover_auto(){
           # Infrastructure readiness; no candidate penalty.
           ;;
       esac
-      # Do not leave an unverified node live. If rollback itself fails,
-      # return failure to the transport selector (AWG/FAIL-CLOSED).
-      if ! "$MIHOMO_CONFIGURE" node select-auto "$current" >/dev/null; then
-        echo "READY_AUTO=ROLLBACK_FAILED" >&2
-        return 1
-      fi
-      echo "READY_AUTO=ROLLBACK_COMPLETED" >&2
-      # Canary safety: do not start a second disruptive live switchover
-      # after a failed TUN postcheck. The transport monitor owns AWG fallback.
-      return 1
+      # The previous node was already declared FAILED by selection-monitor.
+      # Never switch back to it as a supposed recovery. Reject this candidate,
+      # keep it excluded, and try the next READY candidate in the same event.
+      # Transient infrastructure errors are not grounds for quarantining the
+      # shared endpoint. Bound all attempts and keep the Transit guard.
+      excludes+=("$candidate")
+      echo "READY_AUTO=RETRY_NEXT_READY REASON=$post_reason" >&2
+      continue
     else
       if (( from_ready == 1 )); then
         "$MIHOMO_HOT_POOL_CLI" "${union_args[@]}" quarantine "$candidate" --reason activation-failed >/dev/null 2>&1 || true
@@ -454,6 +769,24 @@ failover_auto(){
     "$MIHOMO_POOL_CLI" cooldown add "$candidate" >/dev/null 2>&1 || true
     excludes+=("$candidate")
   done
+  # If a candidate activated but failed the *actual TUN* postcheck (or the
+  # original node has failed and no candidate could be committed), do not
+  # leave that unverified transport serving forwarded traffic. The transport
+  # monitor can now activate a configured AWG, otherwise Transit stays closed.
+  if [[ "${MIHOMO_STANDBY_REPAIR:-0}" == 1 ]]; then
+    # The active transport is AWG. Never disable AWG Transit routing or
+    # fail-open the healthy dataplane when repairing an unused standby.
+    standby_routes_safe || { echo 'STANDBY_REPAIR=AWG_ROUTE_CHANGED' >&2; return 1; }
+    "$MIHOMO_AUTO_SYSTEMCTL" stop "$MIHOMO_AUTO_SERVICE" >/dev/null || return 1
+    echo 'STANDBY_REPAIR=UNVERIFIED_STANDBY_STOPPED' >&2
+    return 1
+  fi
+  if [[ "$MIHOMO_READY_AUTO_CANARY" == 1 ]]; then
+    quiesce_failed_mihomo || {
+      echo 'READY_AUTO=QUIESCE_FAILED' >&2
+      return 1
+    }
+  fi
   return 1
 }
 
@@ -470,6 +803,26 @@ failover(){
 }
 
 case "${1:-status}" in
+  standby-repair)
+    [[ $# -eq 1 ]] || { usage >&2; exit 2; }
+    standby_repair
+    ;;
+  auto-strategy)
+    [[ $# -eq 2 ]] || { usage >&2; exit 2; }
+    case "$2" in
+      status) strategy_status ;;
+      ready|classic) select_auto_strategy "$2" ;;
+      *) usage >&2; exit 2 ;;
+    esac
+    ;;
+  ready-auto)
+    [[ $# -eq 2 ]] || { usage >&2; exit 2; }
+    case "$2" in
+      enable|disable) set_ready_auto "$2" ;;
+      status) printf 'MIHOMO_READY_AUTO=%s\n' "$([[ "$MIHOMO_READY_AUTO_CANARY" == 1 ]] && echo enabled || echo disabled)" ;;
+      *) usage >&2; exit 2 ;;
+    esac
+    ;;
   status)
     [[ $# -eq 1 ]] || { usage >&2; exit 2; }
     status

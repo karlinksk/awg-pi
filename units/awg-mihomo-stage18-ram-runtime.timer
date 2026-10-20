@@ -1,9 +1,11 @@
 [Unit]
-Description=Retry-safe Stage18 RAM-only runtime bootstrap when balanced service-gate is enabled
+Description=Retry-safe Stage18 RAM-only runtime bootstrap for Mihomo service checks
 
 [Timer]
 OnBootSec=2min
-OnUnitInactiveSec=1h
+# OnActiveSec also covers enabling this timer after the boot deadline passed.
+OnActiveSec=2min
+OnUnitActiveSec=1h
 RandomizedDelaySec=2min
 Persistent=false
 Unit=awg-mihomo-stage18-ram-runtime.service

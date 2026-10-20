@@ -162,6 +162,14 @@ try_failover(){
   IFS=',' read -ra _items <<<"$csv"
   for candidate in "${_items[@]}"; do
     [[ -n "$candidate" && "$candidate" != "$current" ]] || continue
+    # An unconfigured AWG backend is NOT a standby. In particular, don't
+    # attempt awg-quick every ten seconds when awg0.conf is absent.
+    # A configured cold standby may still be started by awg-transport,
+    # which validates its handshake/preflight before making it active.
+    if [[ "$candidate" == awg &&
+          ! -s "${AWG_AUTO_AWG_CONFIG:-/etc/amnezia/amneziawg/awg0.conf}" ]]; then
+      continue
+    fi
     # A fallback backend may be intentionally stopped while on standby.
     # awg-transport select starts it, validates health/preflight and rolls
     # back safely if activation fails.
@@ -194,6 +202,14 @@ selection_cycle(){
   current="$(awg_transport_get 2>/dev/null || echo unconfigured)"
 
   if [[ "$current" == unconfigured ]]; then
+    # Do not poll unavailable transports on a freshly installed gateway with
+    # neither private configuration supplied yet. The same policy becomes
+    # effective automatically after the operator adds the first backend.
+    if [[ ! -s "${AWG_AUTO_AWG_CONFIG:-/etc/amnezia/amneziawg/awg0.conf}" &&
+          ! -s "${AWG_AUTO_MIHOMO_NODE:-/etc/awg-pbr/transports/mihomo/node-name}" ]]; then
+      reset_failures
+      return 0
+    fi
     if [[ "$SELECTION_MODE" != manual ]] && try_failover unconfigured; then
       return 0
     fi

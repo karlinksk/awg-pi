@@ -1,0 +1,28 @@
+[Unit]
+Description=AWG Pi optional Remote Desktop Commander agent for %i (user-authorized)
+Documentation=https://github.com/wonderwhy-er/DesktopCommanderMCP/blob/main/src/remote-device/README.md
+Wants=network-online.target
+After=network-online.target
+# The unit is enabled only after the owner has approved DC device pairing.
+# Keep the agent separate from gateway routing, VPN and DNS units.
+ConditionPathExists=/home/%i/.desktop-commander-device/device.json
+
+[Service]
+Type=simple
+User=%i
+WorkingDirectory=/home/%i
+Environment=HOME=/home/%i
+Environment=XDG_CACHE_HOME=/home/%i/.cache
+Environment=PATH=/usr/local/bin:/usr/bin:/bin
+UMask=0077
+# Use verified system-wide Node 22 if installed; otherwise isolated npm Node 22.
+# The wrapper rejects root and does not change gateway network configuration.
+ExecStart=/usr/local/bin/awg-dc agent
+Restart=always
+RestartSec=20s
+# Recovery after graceful remote disconnect and transient network outages.
+# The agent uses pre-fetched npm packages: boot does not need npm registry access.
+TimeoutStopSec=15s
+
+[Install]
+WantedBy=multi-user.target

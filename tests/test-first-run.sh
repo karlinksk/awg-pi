@@ -96,10 +96,24 @@ BIN
 chmod 755 "${MIHOMO_BIN:?}"
 MOCK
 
+cat >"$TMP/bin/node-policy" <<'MOCK'
+#!/usr/bin/env bash
+set -Eeuo pipefail
+printf 'node-policy:%s\n' "$*" >>"${MOCK_LOG:?}"
+MOCK
+
+cat >"$TMP/bin/mihomo-pool" <<'MOCK'
+#!/usr/bin/env bash
+set -Eeuo pipefail
+printf 'pool:%s\n' "$*" >>"${MOCK_LOG:?}"
+[[ "${1:-}" == best ]] && { printf 'Finland\n'; exit 0; }
+exit 2
+MOCK
+
 chmod +x "$TMP/bin/"*
 
 run_first(){
-  sudo env     AWG_ROUTE_BIN="$TMP/bin/route"     AWG_TRANSPORT_BIN="$TMP/bin/transport"     MIHOMO_CONFIGURE_BIN="$TMP/bin/mihomo-configure"     MIHOMO_INSTALLER_BIN="$TMP/bin/mihomo-install"     MIHOMO_ENV_FILE="$TMP/etc/provider.env"     MIHOMO_BIN="$TMP/bin/mihomo"     AWG_FIRST_RUN_NODE=Finland     MOCK_TRANSPORT_STATE="$TMP/transport"     MOCK_LOG="$TMP/log"     bash "$ROOT/src/awg-first-run" "$@"
+  sudo env     AWG_ROUTE_BIN="$TMP/bin/route"     AWG_TRANSPORT_BIN="$TMP/bin/transport"     MIHOMO_CONFIGURE_BIN="$TMP/bin/mihomo-configure"     MIHOMO_INSTALLER_BIN="$TMP/bin/mihomo-install"     MIHOMO_ENV_FILE="$TMP/etc/provider.env"     MIHOMO_BIN="$TMP/bin/mihomo"     MIHOMO_NODE_POLICY_BIN="$TMP/bin/node-policy"     MIHOMO_POOL_BIN="$TMP/bin/mihomo-pool"     AWG_FIRST_RUN_NODE="${AWG_FIRST_RUN_NODE-Finland}"     MOCK_TRANSPORT_STATE="$TMP/transport"     MOCK_LOG="$TMP/log"     bash "$ROOT/src/awg-first-run" "$@"
 }
 
 echo "=== AWG first transport ==="
@@ -130,6 +144,15 @@ grep -Fqx 'mihomo:provider candidate list' "$TMP/log"
 grep -Fqx 'mihomo:provider candidate commit-auto Finland' "$TMP/log"
 grep -Fqx 'transport-select:mihomo' "$TMP/log"
 grep -Fqx mihomo "$TMP/transport"
+grep -Fqx 'node-policy:mode auto' "$TMP/log"
+
+echo "=== Mihomo automatically chooses best healthy candidate ==="
+printf '%s\n' unconfigured >"$TMP/transport"
+: >"$TMP/log"
+out="$(AWG_FIRST_RUN_NODE= run_first mihomo-url 'https://subscription.example/token' standard auto)"
+grep -Fqx 'pool:best candidate' "$TMP/log"
+grep -Fqx 'mihomo:provider candidate commit-auto Finland' "$TMP/log"
+grep -Fqx 'node-policy:mode auto' "$TMP/log"
 
 echo "=== Mihomo local provider first transport ==="
 printf '%s\n' unconfigured >"$TMP/transport"
@@ -163,11 +186,11 @@ printf 'asset\n' >"$TMP/local-mihomo.gz"
 out="$(run_first mihomo-engine-file "$TMP/local-mihomo.gz")"
 grep -Fqx "mihomo-install:--file $TMP/local-mihomo.gz" "$TMP/log"
 
-echo "=== installer orders first transport before Operating Mode ==="
-first_line="$(grep -n -F '"$FIRST_RUN_CLI" wizard' "$ROOT/install.sh" | head -1 | cut -d: -f1)"
-mode_line="$(grep -n -F 'log "[11b/12] Operating Mode selection"' "$ROOT/install.sh" | head -1 | cut -d: -f1)"
-[[ -n "$first_line" && -n "$mode_line" ]]
-(( first_line < mode_line ))
+echo "=== installer keeps profile wizard for POST-install menu only ==="
+! grep -Fq '"$FIRST_RUN_CLI" wizard' "$ROOT/install.sh"
+grep -Fq 'log "[11a/12] No VPN onboarding during clean install"' "$ROOT/install.sh"
+grep -Fq 'log "[11b/12] Deferred VPN and Operating Mode configuration"' "$ROOT/install.sh"
+grep -Fq 'transport=unconfigured' "$ROOT/install.sh"
 
 grep -Fq '1) AmneziaWG / WireGuard .conf — файл' "$ROOT/src/awg-first-run"
 grep -Fq '2) AmneziaWG / WireGuard .conf — вставить текст' "$ROOT/src/awg-first-run"
@@ -189,11 +212,11 @@ grep -Fq 'Mihomo YAML, VLESS URI или Base64-подписку (ввод ото
 grep -Fq '4) Mihomo — профиль/подписка из локального файла' "$ROOT/src/awg-first-run"
 grep -Fq '5) Mihomo — вставить профиль/подписку текстом' "$ROOT/src/awg-first-run"
 grep -Fq '6) Пока ничего не настраивать' "$ROOT/src/awg-first-run"
-grep -Fq 'Настроить резервную цепочку узлов Mihomo сейчас?' "$ROOT/src/awg-first-run"
+grep -Fq 'Задать фиксированную резервную цепочку вместо автоматического подбора?' "$ROOT/src/awg-first-run"
 grep -Fq 'Следующий резервный узел (номер или ТОЧНОЕ имя; пусто = закончить)' "$ROOT/src/awg-first-run"
-grep -Fq 'Введите номер или точное имя первого узла Mihomo' "$ROOT/src/awg-first-run"
+grep -Fq 'Автоматически выбран доступный узел:' "$ROOT/src/awg-first-run"
 grep -Fq 'resolve_node_choice' "$ROOT/src/awg-first-run"
-grep -Fq 'первый транспорт Mihomo остаётся рабочим, политика узлов = MANUAL' "$ROOT/src/awg-first-run"
+grep -Fq 'первый транспорт Mihomo остаётся рабочим, политика узлов = AUTO' "$ROOT/src/awg-first-run"
 grep -Fq '"$MIHOMO_NODE_POLICY" mode fixed "${nodes[@]}"' "$ROOT/src/awg-first-run"
 grep -Fq 'Итоговая цепочка узлов' "$ROOT/src/awg-first-run"
 grep -Fq '=== Первичная настройка транспорта ===' "$ROOT/src/awg-first-run"

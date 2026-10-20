@@ -58,6 +58,76 @@ class HotPoolTests(unittest.TestCase):
         self.assertTrue(hot.is_ready(n, self.state, self.now + 660))
         self.assertFalse(hot.is_ready(n, self.state, self.now + 4261))
 
+    def _run_synthetic_warm_scan(self, details):
+        """Run actual warm branch: an operational exit must not penalize proof."""
+        import contextlib
+        import io
+        import sys
+        from unittest.mock import patch
+
+        node = self.nodes[3]
+        hot.record_scan(self.state, node, True, self.now - 1300)
+        hot.record_scan(self.state, node, True, self.now - 650)
+        before = json.dumps(self.state, sort_keys=True)
+        output = io.StringIO()
+        with patch.object(hot, "pool_policy", return_value=("all", "all")), \
+             patch.object(hot, "load_nodes", return_value=("digest", [node])), \
+             patch.object(hot, "load_state", return_value=self.state), \
+             patch.object(hot, "shortlist", return_value=[node]), \
+             patch.object(hot, "select_probes", return_value=[("RENEW", node)]), \
+             patch.object(hot, "scan_one", return_value=(False, details)), \
+             patch.object(hot, "append_geo_observation") as geo, \
+             patch.object(hot, "save_state") as save, \
+             patch.object(hot, "CURRENT_FILE", Path("/nonexistent")), \
+             patch.object(sys, "argv",
+                          ["awg-mihomo-hot-pool", "--current", "different",
+                           "--now", str(self.now), "warm"]), \
+             contextlib.redirect_stdout(output):
+            status = hot.main()
+        return status, before, output.getvalue(), save.call_count, geo.call_count
+
+    def test_operational_scanner_error_is_sanitized(self):
+        import subprocess
+        from unittest.mock import patch
+        def fake(argv, **kwargs):
+            if argv[0] == hot.SCAN:
+                return subprocess.CompletedProcess(
+                    argv, 2, 'SERVICE_SHADOW_ERROR=LOCK_BUSY\nSECRET=token-redacted\n', '')
+            if argv[0] == hot.GATE:
+                return subprocess.CompletedProcess(argv, 2,
+                    'NETWORK_ELIGIBILITY=UNKNOWN\nNETWORK_REASON=BAD_CHECK_FORMAT\n', '')
+            raise AssertionError('unexpected executable')
+        with patch.object(hot.subprocess, 'run', side_effect=fake):
+            ok, summary = hot.scan_one('vless-a')
+        self.assertFalse(ok)
+        self.assertIn('SCAN_RC=2', summary)
+        self.assertIn('SCAN_ERROR=LOCK_BUSY', summary)
+        self.assertNotIn('token-redacted', summary)
+        self.assertIn('GATE_REASON=BAD_CHECK_FORMAT', summary)
+
+    def test_scanner_exit_2_during_lock_collision_skips_without_penalty(self):
+        status, before, output, saved, geo = self._run_synthetic_warm_scan(
+            "SCAN_RC=2 OPENAI=MISSING CHATGPT=MISSING "
+            "YOUTUBE24=MISSING GATE_REASON=BAD_CHECK_FORMAT")
+        self.assertEqual(status, 0)
+        self.assertEqual(json.dumps(self.state, sort_keys=True), before)
+        self.assertEqual(saved, 0)
+        self.assertEqual(geo, 0)
+        self.assertIn("RESULT=SKIPPED STATE_UNCHANGED=PASS", output)
+        self.assertNotIn("RESULT=NOT_CONFIRMED", output)
+        self.assertTrue(hot.is_ready(self.nodes[3], self.state, self.now))
+
+    def test_scanner_exit_1_still_preserves_conservative_unknown_policy(self):
+        status, before, output, saved, geo = self._run_synthetic_warm_scan(
+            "SCAN_RC=1 OPENAI=UNKNOWN CHATGPT=UNKNOWN "
+            "YOUTUBE24=UNKNOWN GATE_REASON=OPENAI_API_NOT_CONFIRMED")
+        self.assertEqual(status, 0)
+        self.assertNotEqual(json.dumps(self.state, sort_keys=True), before)
+        self.assertEqual(saved, 1)
+        self.assertEqual(geo, 1)
+        self.assertIn("RESULT=NOT_CONFIRMED STATE=SUSPECT", output)
+        self.assertFalse(hot.is_ready(self.nodes[3], self.state, self.now))
+
     def test_single_unknown_keeps_proof_but_never_selects_suspect(self):
         n = self.nodes[0]
         hot.record_scan(self.state, n, True, self.now)
@@ -250,7 +320,7 @@ class HotPoolTests(unittest.TestCase):
         self.assertIn('YOUTUBE24=PASS', detail)
         self.assertNotIn('private_data_must_not_leak', detail)
 
-    def test_legacy_scanner_without_ip_proof_never_ready(self):
+    def test_service_qualified_scanner_without_ip_diagnostic_can_be_ready(self):
         import subprocess
         from unittest.mock import patch
         raw = ('SERVICE_ELIGIBILITY=UNKNOWN\\n'
@@ -266,8 +336,8 @@ class HotPoolTests(unittest.TestCase):
             raise AssertionError('Unexpected executable')
         with patch.object(hot.subprocess, 'run', side_effect=fake):
             allowed, detail = hot.scan_one('vless-a')
-        self.assertFalse(allowed)
-        self.assertIn('IP_GATE=UNVERIFIED', detail)
+        self.assertTrue(allowed)
+        self.assertNotIn('IP_GATE=UNVERIFIED', detail)
 
     def test_cold_metadata_is_not_forwarded_to_strict_gate(self):
         import subprocess
@@ -748,6 +818,91 @@ class HotPoolTests(unittest.TestCase):
                 hot.record_scan(self.state,n,True,now)
         self.assertGreaterEqual(discovery_count,2)
         self.assertGreaterEqual(peak_ready,4)
+
+
+    @staticmethod
+    def _adaptive_history(proto, ids, now, *, passed=False):
+        return [{'at': now - 600,
+                 'identity': hashlib.sha256(name.encode()).hexdigest(),
+                 'protocol': proto, 'eligible': passed}
+                for name in ids]
+
+    def _adaptive_nodes(self):
+        return [
+            dict(name=f'vless-{i}', type='vless', server=f'198.51.100.{i+1}',
+                 port=10000+i, healthy=True, delay_ms=50+i, index=i)
+            for i in range(4)
+        ] + [
+            dict(name=f'ss-{i}', type='ss', server=f'198.51.100.{i+1}',
+                 port=10000+i, healthy=True, delay_ms=90+i, index=i)
+            for i in range(4,8)
+        ]
+
+    def test_adaptive_drops_new_vless_behind_untried_shadowsocks(self):
+        self.state['geo_history'] = self._adaptive_history(
+            'vless', [f'failed-{i}' for i in range(5)], self.now)
+        candidates=hot.shortlist(self._adaptive_nodes(),self.state,'',now=self.now)
+        plan=hot.select_probes(candidates,self.state,self.now)
+        self.assertEqual(len(plan),2)
+        self.assertEqual([n['type'] for _,n in plan],['ss','ss'])
+        self.assertEqual([kind for kind,_ in plan],['DISCOVER','DISCOVER'])
+
+    def test_adaptive_no_history_follows_old_latency_order(self):
+        candidates=hot.shortlist(self._adaptive_nodes(),self.state,'',now=self.now)
+        plan=hot.select_probes(candidates,self.state,self.now)
+        self.assertEqual([n['type'] for _,n in plan],['vless','vless'])
+
+    def test_adaptive_one_bad_identity_not_counted_multiple_times(self):
+        self.state['geo_history']=self._adaptive_history('vless',['single']*40,self.now)
+        self.assertEqual(hot.protocol_discovery_penalties(self.state,self.now),set())
+
+    def test_adaptive_positive_identity_clears_penalty(self):
+        self.state['geo_history']=self._adaptive_history(
+            'vless',[f'failed-{i}' for i in range(5)],self.now)
+        self.state['geo_history']+=self._adaptive_history(
+            'vless',['worked'],self.now,passed=True)
+        self.assertEqual(hot.protocol_discovery_penalties(self.state,self.now),set())
+
+    def test_adaptive_old_negative_expires_45min_after_last_check(self):
+        self.state['geo_history']=self._adaptive_history(
+            'vless',[f'failed-{i}' for i in range(5)],self.now)
+        self.assertEqual(hot.protocol_discovery_penalties(self.state,self.now+46*60),set())
+
+    def test_adaptive_malformed_history_is_ignored(self):
+        self.state['geo_history']=[None,{},dict(at=self.now,identity='broken',
+               protocol='vless',eligible=False),dict(at='bad',
+               identity='a'*64,protocol='vless',eligible=False)]
+        self.assertEqual(hot.protocol_discovery_penalties(self.state,self.now),set())
+
+    def test_adaptive_first_pass_vless_still_gets_confirmation(self):
+        ns=self._adaptive_nodes()
+        self.state['geo_history']=self._adaptive_history(
+            'vless',[f'failed-{i}' for i in range(5)],self.now)
+        hot.record_scan(self.state,ns[0],True,self.now-1200)
+        plan=hot.select_probes(hot.shortlist(ns,self.state,'',now=self.now),
+                               self.state,self.now)
+        self.assertEqual(plan[0][1]['name'],ns[0]['name'])
+
+    def test_adaptive_only_vless_remains_testable(self):
+        ns=self._adaptive_nodes()[:4]
+        self.state['geo_history']=self._adaptive_history(
+            'vless',[f'failed-{i}' for i in range(5)],self.now)
+        plan=hot.select_probes(hot.shortlist(ns,self.state,'',now=self.now),
+                               self.state,self.now)
+        self.assertEqual(len(plan),2)
+        self.assertEqual([n['type'] for _,n in plan],['vless','vless'])
+
+    def test_adaptive_urgent_ready_renewal_has_priority(self):
+        ns=self._adaptive_nodes()+[self.nodes[0]]
+        self.state['geo_history']=self._adaptive_history(
+            'vless',[f'failed-{i}' for i in range(5)],self.now)
+        ready=self.nodes[0]
+        hot.record_scan(self.state,ready,True,self.now-2700)
+        hot.record_scan(self.state,ready,True,self.now-1500)
+        plan=hot.select_probes(hot.shortlist(ns,self.state,'',now=self.now),
+                               self.state,self.now)
+        self.assertEqual((plan[0][0],plan[0][1]['name']),('RENEW',ready['name']))
+
 
 if __name__ == '__main__':
     unittest.main()

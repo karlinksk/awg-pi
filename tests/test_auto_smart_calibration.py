@@ -151,6 +151,7 @@ class CalibrationTests(unittest.TestCase):
               sustained_upload_bytes=2000000,
               sustained_timeout=20,confirm_timeout=20)
         pool={'provider_sha256':'subscription-test-hash'}
+        # Calibration fixture only: live-identity guard is tested separately.
         with tempfile.TemporaryDirectory(dir='/dev/shm') as scratch:
             d=Path(scratch)
             with patch.object(smart,'STATE_DIR',d), \
@@ -161,6 +162,10 @@ class CalibrationTests(unittest.TestCase):
                      assess=lambda request:{'status':'PASS','checks':{key:{'state':'PASS','reason':'fixture'} for key in ('openai_api','chatgpt_web','youtube_video')}},
                      fetch=lambda *a,**kw:None)), \
                  patch.object(smart,'current_name',return_value='SS'), \
+                 patch.object(smart,'shadow_guard_reason',return_value=None), \
+                 patch.object(smart,'assess_services_with_stage18',return_value={
+                     'status':'PASS','checks':{key:{'state':'PASS','reason':'fixture'}
+                       for key in ('openai_api','chatgpt_web','youtube_video')}}), \
                  patch.object(smart,'probe_http',side_effect=probe), \
                  patch.object(smart.subprocess,'Popen',DummyPopen):
                 smart.shadow_scan(args)

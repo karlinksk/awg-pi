@@ -30,6 +30,8 @@ class SafeChain(unittest.TestCase):
         self.health.write_text("down\n")
         self.awg=self.root/"awg-health"
         self.awg.write_text("up\n")
+        self.awg_profile=self.root/"awg0.conf"
+        self.awg_profile.write_text("mock AWG standby profile\n")
         self.cool=self.root/"cooldown"
         self.trace=self.root/"trace"
         self.trace.write_text("")
@@ -127,6 +129,7 @@ printf '%s\\n' "$3" >"$MOCK_NODE_NAME_FILE"
           AWG_LOCK_FILE=str(self.run/"maintenance.lock"),
           AWG_SELECTION_ONCE="1",
           AWG_SELECTION_FAILURE_THRESHOLD="3",
+          AWG_AUTO_AWG_CONFIG=str(self.awg_profile),
           MIHOMO_SERVICE_GATE_MODE="balanced",
           MIHOMO_SERVICE_CHECK_BIN=str(self.bin/"service-active"),
           MIHOMO_SERVICE_NODE_FILE=str(self.node),
@@ -186,6 +189,14 @@ printf '%s\\n' "$3" >"$MOCK_NODE_NAME_FILE"
         self.assertIn("transport:awg",self.trace.read_text())
         self.assertEqual(self.node_trace.read_text(),"")
         self.assertEqual((self.run/"failures").read_text().strip(),"0")
+
+    def test_unconfigured_awg_is_not_retried_after_node_exhaustion(self):
+        self.fixtures.write_text("")
+        self.awg_profile.unlink()
+        self.cycles(5)
+        self.assertEqual(self.selected.read_text().strip(),"mihomo")
+        self.assertNotIn("transport:awg",self.trace.read_text())
+        self.assertEqual((self.run/"failures").read_text().strip(),"3")
 
     def test_failed_awg_rollback_keeps_mihomo_and_saturates(self):
         self.fixtures.write_text("")

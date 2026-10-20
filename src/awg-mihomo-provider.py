@@ -159,7 +159,7 @@ def parse_vless_uri(uri: str, index: int):
     network = first_query(query, "type", "network", default="tcp").lower()
     if network in ("", "none"):
         network = "tcp"
-    if network not in ("tcp", "ws", "grpc"):
+    if network not in ("tcp", "ws", "grpc", "xhttp"):
         die(f"VLESS URI #{index} uses unsupported transport type={network!r}")
 
     security = first_query(query, "security", default="none").lower()
@@ -229,6 +229,19 @@ def parse_vless_uri(uri: str, index: int):
         service = first_query(query, "serviceName", "service-name", "grpc-service-name")
         if service:
             proxy["grpc-opts"] = {"grpc-service-name": service}
+    elif network == "xhttp":
+        xopts = {}
+        path = first_query(query, "path")
+        if path:
+            xopts["path"] = unquote(path)
+        host = first_query(query, "host")
+        if host:
+            xopts["host"] = host
+        mode = first_query(query, "mode", default="auto")
+        if mode not in ("auto", "stream-one", "stream-up", "packet-up"):
+            die(f"VLESS URI #{index} uses unsupported xhttp mode")
+        xopts["mode"] = mode
+        proxy["xhttp-opts"] = xopts
 
     return proxy
 
@@ -245,6 +258,62 @@ def parse_vless_text(text: str):
     if not all(line.lower().startswith("vless://") for line in lines):
         return None
     return [parse_vless_uri(line, idx) for idx, line in enumerate(lines, start=1)]
+
+
+def parse_hysteria2_uri(uri: str, index: int):
+    """Safely convert standard Hysteria2 URI, including userpass authentication."""
+    try:
+        parts = urlsplit(uri.strip())
+        host = parts.hostname
+        port = parts.port or 443
+    except ValueError:
+        die(f"Invalid Hysteria2 URI #{index}")
+    if parts.scheme.lower() not in ("hysteria2", "hy2") or not host or not (1 <= port <= 65535):
+        die(f"Invalid Hysteria2 URI #{index}")
+    if "@" not in parts.netloc:
+        die(f"Hysteria2 URI #{index} has no auth component")
+    auth = unquote(parts.netloc.rsplit("@", 1)[0])
+    if not auth or any(c in auth for c in "\r\n\t"):
+        die(f"Hysteria2 URI #{index} has invalid auth")
+    query = parse_qs(parts.query, keep_blank_values=True)
+    name = unquote(parts.fragment).strip() or f"Hysteria2 {host}:{port}"
+    if any(c in name for c in "\r\n\t"):
+        die(f"Hysteria2 URI #{index} has invalid name")
+    proxy = {"name": name, "type": "hysteria2", "server": host,
+             "port": port, "password": auth, "udp": True}
+    sni = first_query(query, "sni", "peer")
+    if sni:
+        proxy["sni"] = sni
+    insecure = first_query(query, "insecure", "allowInsecure")
+    if insecure:
+        proxy["skip-cert-verify"] = bool_query(insecure)
+    obfs = first_query(query, "obfs")
+    if obfs:
+        if obfs not in ("salamander", "gecko"):
+            die(f"Hysteria2 URI #{index} uses unsupported obfs")
+        password = first_query(query, "obfs-password")
+        if not password:
+            die(f"Hysteria2 URI #{index} lacks obfs-password")
+        proxy["obfs"] = obfs
+        proxy["obfs-password"] = password
+    return proxy
+
+
+def parse_supported_uri_text(text: str):
+    lines = [line.strip() for line in text.splitlines()
+             if line.strip() and not line.strip().startswith("#")]
+    if not lines:
+        return None
+    protocols = ("vless://", "hysteria2://", "hy2://")
+    if not all(line.lower().startswith(protocols) for line in lines):
+        return None
+    result = []
+    for i, line in enumerate(lines, 1):
+        if line.lower().startswith("vless://"):
+            result.append(parse_vless_uri(line, i))
+        else:
+            result.append(parse_hysteria2_uri(line, i))
+    return result
 
 
 def decode_base64_text(text: str):
@@ -270,7 +339,7 @@ def decode_base64_text(text: str):
             decoded = raw.decode("utf-8-sig")
         except UnicodeDecodeError:
             continue
-        if parse_vless_text(decoded) is not None:
+        if parse_supported_uri_text(decoded) is not None:
             return decoded
     return None
 
@@ -287,7 +356,7 @@ def normalize_provider(text: str, requested_format: str):
             die("Input is not a Mihomo/Clash YAML provider with a non-empty proxies list")
 
     if requested_format in ("auto", "vless"):
-        proxies = parse_vless_text(text)
+        proxies = parse_supported_uri_text(text) if requested_format == "auto" else parse_vless_text(text)
         if proxies is not None:
             return "vless", proxies
         if requested_format == "vless":
@@ -296,7 +365,7 @@ def normalize_provider(text: str, requested_format: str):
     if requested_format in ("auto", "base64"):
         decoded = decode_base64_text(text)
         if decoded is not None:
-            proxies = parse_vless_text(decoded)
+            proxies = parse_supported_uri_text(decoded)
             if proxies is None:
                 die("Decoded base64 subscription does not contain VLESS URIs")
             return "base64", proxies

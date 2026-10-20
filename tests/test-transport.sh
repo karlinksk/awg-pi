@@ -29,6 +29,7 @@ cat >"$TMP/bin/curl" <<'MOCK'
 case "$*" in
   *127.0.0.1:9090/version*) echo '{}' ;;
   *api.ipify.org*) echo '45.86.66.170' ;;
+  *api.openai.com*) [[ "${MOCK_TUN_STATE:-up}" == up ]] || exit 35; echo 401 ;;
   *) exit 1 ;;
 esac
 MOCK
@@ -63,6 +64,10 @@ OUT="$($CLI status)"
 grep -Fq 'Transport ID: mihomo' <<<"$OUT"
 OUT="$($CLI check mihomo)"
 [[ "$OUT" == healthy ]]
+if MOCK_TUN_STATE=bad "$CLI" check mihomo >/dev/null 2>&1; then
+  echo 'broken Pi-bound TUN was accepted as a healthy Mihomo transport' >&2
+  exit 1
+fi
 printf '%s\n' broken >"$TMP/transport"
 if $CLI get >/dev/null 2>&1; then
   echo 'invalid transport unexpectedly accepted' >&2

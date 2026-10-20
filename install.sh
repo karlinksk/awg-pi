@@ -45,6 +45,10 @@ MIHOMO_NODE_POLICY_CLI="/usr/local/sbin/awg-mihomo-node-policy"
 # READY AUTO is installed as *passive* opt-in only; no activation on upgrade.
 MIHOMO_READY_GUARD="/usr/local/sbin/awg-mihomo-ready-live-match"
 MIHOMO_READY_POSTCHECK="/usr/local/sbin/awg-mihomo-ready-postcheck-tun"
+MIHOMO_TUN_CHECK="/usr/local/sbin/awg-mihomo-tun-check"
+DC_CLI="/usr/local/bin/awg-dc"
+SYSTEM_NODE_SCRIPT="/usr/local/sbin/awg-system-node"
+DC_UNIT="/etc/systemd/system/awg-dc-remote@.service"
 UPDATE_SCRIPT="/usr/local/sbin/awg-update"
 TRAFFIC_CLI="/usr/local/sbin/awg-traffic"
 SETUP_SERVICE="/etc/systemd/system/awg-pbr-setup.service"
@@ -98,17 +102,28 @@ ask(){
 confirm_yes(){
   local v="$1"
   v="$(printf '%s' "$v" | tr -d '\\015' | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
+  # Cyrillic у is easily confused with Latin y on Russian SSH terminals.
   case "$v" in
-    Y|y|YES|Yes|yes|Д|д|ДА|Да|да) return 0 ;;
+    Y|y|YES|Yes|yes|У|у|Д|д|ДА|Да|да) return 0 ;;
     *) return 1 ;;
   esac
 }
 confirm(){
-  local p="$1" d="${2:-N}" v s
+  local p="$1" d="${2:-N}" v s attempt
   [[ "$d" =~ ^[YyДд]$ ]] && s="Y/n" || s="y/N"
-  read -r -p "$p [$s]: " v <"$TTY"
-  v="${v:-$d}"
-  confirm_yes "$v"
+  for attempt in 1 2 3; do
+    # Read directly from /dev/tty; never expose entered text in logs.
+    IFS= read -r -p "$p [$s]: " v <"$TTY" || return 1
+    v="${v:-$d}"
+    if confirm_yes "$v"; then
+      return 0
+    fi
+    case "$v" in
+      N|n|NO|No|no|Н|н|НЕТ|Нет|нет) return 1 ;;
+    esac
+    printf 'Ответ не распознан. Используйте y/у/да или n/нет.\n' >"$TTY"
+  done
+  return 1
 }
 valid_ipv4(){
   local IFS=. a b c d
@@ -147,7 +162,7 @@ printf "Журнал установки: %s\n\n" "$INSTALL_REPORT"
 
 UPGRADE_EXISTING=0
 # Fresh v1.3 installs stage safely in Selective + transport=unconfigured.
-# The user chooses Operating Mode only after the first transport/recovery step.
+# VPN profiles/subscriptions and Transit activation happen only AFTER install.
 ACTIVATE_TRANSIT_AFTER_INSTALL=0
 AUTO_UPGRADE="${AWG_PI_UPGRADE_AUTO:-0}"
 AUTO_TRANSIT="${AWG_PI_UPGRADE_TRANSIT:-}"
@@ -156,8 +171,8 @@ MODE_PREEXISTED=0
 [[ -f "$MODE_FILE" ]] && MODE_PREEXISTED=1
 # An interrupted fresh install may already have env/mode/transport files
 # from stage 6, but no installed version or live backend yet. Do not mistake
-# this for an existing production installation: it must still reach the
-# first-transport wizard, including the "configure nothing" recovery choice.
+# this for an existing production installation: it must still complete with
+# zero VPN profiles, independently of post-install onboarding.
 # Refuse this path whenever the installation is versioned or any backend/health
 # service is already running.
 PARTIAL_FRESH_RESUME=0
@@ -174,7 +189,7 @@ if (( PARTIAL_FRESH_RESUME == 1 )); then
   warn "Обнаружена незавершённая первоначальная установка (без VPN и версии)."
   confirm "Продолжить установку как fresh install с повторной проверкой LAN/DNS?" "N" ||
     die "Возобновление незавершённой установки отменено"
-  ok "PARTIAL_FRESH_RESUME=YES; first-transport wizard будет запущен"
+  ok "PARTIAL_FRESH_RESUME=YES; установка завершится без VPN-профилей"
 fi
 if [[ -f "$ENV_FILE" && "$PARTIAL_FRESH_RESUME" == 0 ]]; then
   printf "Обнаружена существующая AWG Pi Gateway: %s\n" "${EXISTING_VERSION:-версия до v1.1.0}"
@@ -205,6 +220,61 @@ if [[ -f "$ENV_FILE" && "$PARTIAL_FRESH_RESUME" == 0 ]]; then
   else
     die "Обновление отменено пользователем"
   fi
+fi
+
+# Clean-install contract: no VPN profile is allowed until installation ends.
+# If private profiles already exist on an otherwise unversioned host, require
+# the operator to resolve that state separately; never import, delete or use
+# those credentials inside fresh install.
+if (( UPGRADE_EXISTING == 0 )); then
+  for _existing_vpn_profile in "$CONF_FILE" \
+    "$PBR_DIR/transports/mihomo/provider.env" \
+    /var/lib/awg-pbr/mihomo/providers/subscription.yaml; do
+    if [[ -e "$_existing_vpn_profile" || -L "$_existing_vpn_profile" ]]; then
+      die "Обнаружена ранее настроенная VPN-конфигурация без установленной версии; это не чистая установка. Остановлено без изменения профиля."
+    fi
+  done
+fi
+
+# Snapshot operator-selected transport/node priorities on an UPGRADE, before
+# replacing any binaries or refreshing the control plane. In particular,
+# Transit AUTO "awg,mihomo", READY_AUTO and FIXED chains survive installer runs.
+# An absent policy stays absent (legacy v1.2 MANUAL); new installs are handled
+# separately below. Never log policy contents or private profile credentials.
+upgrade_policy_fingerprint(){
+  local file="$1"
+  if [[ -f "$file" ]]; then
+    sha256sum -- "$file" | cut -d ' ' -f1
+  elif [[ ! -e "$file" && ! -L "$file" ]]; then
+    printf 'ABSENT\n'
+  else
+    return 1
+  fi
+}
+UPGRADE_POLICY_FILES=(
+  "$PBR_DIR/selection.env"
+  "$PBR_DIR/transports/mihomo/node-policy.mode"
+  "$PBR_DIR/transports/mihomo/node-policy.nodes"
+  "$PBR_DIR/transports/mihomo/ready-auto.mode"
+  "$PBR_DIR/transports/mihomo/service-eligibility.mode"
+)
+UPGRADE_POLICY_HASHES=()
+# Capture both systemd enablement (reboot behavior) and runtime state.
+# Legacy installations may not have shipped a Hot Pool unit at all.
+UPGRADE_HOT_TIMER_ENABLEMENT=absent
+UPGRADE_HOT_TIMER_RUNTIME=absent
+if (( UPGRADE_EXISTING == 1 )) && [[ -f /etc/systemd/system/awg-mihomo-hot-pool.timer ]]; then
+  UPGRADE_HOT_TIMER_ENABLEMENT="$(systemctl is-enabled awg-mihomo-hot-pool.timer 2>/dev/null || true)"
+  UPGRADE_HOT_TIMER_RUNTIME="$(systemctl is-active awg-mihomo-hot-pool.timer 2>/dev/null || true)"
+  [[ -n "$UPGRADE_HOT_TIMER_ENABLEMENT" && -n "$UPGRADE_HOT_TIMER_RUNTIME" ]] ||
+    die "Не удалось определить исходное состояние Hot Pool перед upgrade"
+fi
+if (( UPGRADE_EXISTING == 1 )); then
+  for _policy_file in "${UPGRADE_POLICY_FILES[@]}"; do
+    _policy_sha="$(upgrade_policy_fingerprint "$_policy_file")" ||
+      die "Не удалось сохранить контрольную сумму существующей политики перед upgrade"
+    UPGRADE_POLICY_HASHES+=("$_policy_sha")
+  done
 fi
 
 # -----------------------------------------------------------------------------
@@ -268,13 +338,46 @@ apt-get update
 apt-get install -y --no-install-recommends \
   ca-certificates curl git jq build-essential make pkg-config \
   iproute2 iputils-ping iputils-arping dnsutils nftables dnsmasq procps \
-  python3-minimal python3-yaml openssl dialog
+  python3-minimal python3-yaml openssl dialog ffmpeg xz-utils tzdata
 
 command -v nft >/dev/null || die "nft не установлен"
 command -v dnsmasq >/dev/null || die "dnsmasq не установлен"
 command -v dig >/dev/null || die "dig не установлен"
+# Required for the verified 24-frame YouTube media check (Stage18).
+for media_bin in /usr/bin/ffmpeg /usr/bin/ffprobe /usr/bin/xz; do
+  [[ -x "$media_bin" ]] || die "Не установлена обязательная зависимость Stage18: $media_bin"
+done
 dnsmasq --version | grep -qi nftset || die "Установленный dnsmasq собран без поддержки nftset"
 ok "dnsmasq поддерживает nftset"
+
+# BEGIN_FIRST_INSTALL_TIMEZONE
+# Fresh installations default to the correct Novosibirsk IANA zone, not an
+# arbitrary UTC+7 alias (e.g. Asia/Bangkok). Do not surprise existing
+# installations with a timezone change during an upgrade.
+# The operator can override this on a clean install with AWG_PI_TIMEZONE.
+if (( UPGRADE_EXISTING == 0 )); then
+  STAGE="настройка часового пояса"
+  TARGET_TIMEZONE="${AWG_PI_TIMEZONE:-Asia/Novosibirsk}"
+  [[ "$TARGET_TIMEZONE" =~ ^[A-Za-z0-9_+-]+(/[A-Za-z0-9_+.-]+)*$ &&
+     "$TARGET_TIMEZONE" != *".."* ]] ||
+    die "Недопустимый формат AWG_PI_TIMEZONE: используйте IANA-имя (например, Asia/Novosibirsk)"
+  [[ -r "/usr/share/zoneinfo/$TARGET_TIMEZONE" ]] ||
+    die "Часовой пояс отсутствует в tzdata: $TARGET_TIMEZONE"
+  command -v timedatectl >/dev/null || die "Не найден timedatectl для установки часового пояса"
+  CURRENT_TIMEZONE="$(timedatectl show -p Timezone --value 2>/dev/null)" ||
+    die "Не удалось определить текущий системный часовой пояс"
+  if [[ "$CURRENT_TIMEZONE" != "$TARGET_TIMEZONE" ]]; then
+    timedatectl set-timezone "$TARGET_TIMEZONE" ||
+      die "Не удалось установить часовой пояс $TARGET_TIMEZONE"
+  fi
+  [[ "$(timedatectl show -p Timezone --value 2>/dev/null)" == "$TARGET_TIMEZONE" ]] ||
+    die "Проверка системного часового пояса после установки не прошла"
+  ok "Часовой пояс новой системы: $TARGET_TIMEZONE (можно изменить через awg-menu)"
+else
+  CURRENT_TIMEZONE="$(timedatectl show -p Timezone --value 2>/dev/null || echo неизвестно)"
+  ok "Часовой пояс существующей системы сохранён: $CURRENT_TIMEZONE"
+fi
+# END_FIRST_INSTALL_TIMEZONE
 
 # -----------------------------------------------------------------------------
 # 3. Go
@@ -376,7 +479,7 @@ if [[ -f "$CONF_FILE" ]]; then
     fi
     ok "Существующий AWG backend сохранён"
   else
-    warn "На fresh install найден существующий $CONF_FILE; он не будет автоматически выбран. First-run wizard попросит явный выбор."
+    die "При чистой установке AWG-профиль отсутствует до её завершения; импорт доступен после установки через awg-menu."
   fi
 else
   if (( UPGRADE_EXISTING == 1 )); then
@@ -723,12 +826,43 @@ install_project_helper src/awg-selection-monitor "$SELECTION_MONITOR"
 install_project_python_helper src/awg-mihomo-limits.py /usr/local/sbin/awg-mihomo-limits.py
 install_project_python_helper src/awg-mihomo-service-check.py /usr/local/sbin/awg-mihomo-service-check.py
 install_project_python_helper src/awg-mihomo-video-decode.py /usr/local/sbin/awg-mihomo-video-decode.py
-# Optional Stage18 24-frame verification requires FFmpeg. Do not silently
-# install its substantial multimedia dependency tree on an existing gateway.
-if [[ ! -x /usr/bin/ffmpeg ]]; then
-  warn "Stage18 video decode unavailable: FFmpeg missing. Optional: apt-get -s install --no-install-recommends ffmpeg"
-fi
+# FFmpeg/FFprobe and XZ are required system dependencies, installed above.
+# Stage18's pinned Node.js and yt-dlp binaries are then automatically prepared
+# in RAM by the guarded timer after a Mihomo subscription is configured.
 install_project_helper scripts/awg-mihomo-stage18-ram-runtime.sh /usr/local/sbin/awg-mihomo-stage18-ram-runtime
+install_project_helper scripts/awg-system-node.sh "$SYSTEM_NODE_SCRIPT"
+# Store the hash-verified decoder toolchain once during clean installation.
+# Each boot copies verified binaries to RAM, even when GitHub is unavailable.
+# This is provisioning only: no proxy, routes or active transport are changed.
+if (( UPGRADE_EXISTING == 0 )); then
+  STAGE="установка видеодекодера Stage18"
+  /usr/local/sbin/awg-mihomo-stage18-ram-runtime prefetch || die "Не удалось подготовить обязательные Node.js/yt-dlp для проверки YouTube"
+fi
+# Fresh Debian 13 ships Node.js 20 (no global WebSocket); DC needs Node 22+.
+# Reuse the exact independently SHA256-verified Stage18 Node.js 22.16 binary.
+# Preserve APT-owned /usr/bin/node, and NEVER replace active system runtime
+# automatically during an upgrade without an explicit operator opt-in.
+if (( UPGRADE_EXISTING == 0 )); then
+  "$SYSTEM_NODE_SCRIPT" apply || die "Не удалось установить проверенный системный Node.js 22.16"
+  ok "Системный Node.js 22.16 (WebSocket): проверен для DC и Stage18"
+  # npm/npx must accompany the pinned Node 22 on clean installations:
+  # DC pairing should not require installing a SECOND APT-managed Node 20.
+  # The optional DC agent remains uninstalled/unpaired until user opt-in.
+  if "$SYSTEM_NODE_SCRIPT" npm; then
+    ok "npm/npx: готовы из проверенного Node.js 22.16 (без Debian Node 20)"
+  else
+    warn "npm/npx не подготовлены; шлюз продолжит установку без удалённого DC."
+    warn "После восстановления доступа: sudo awg-system-node npm"
+  fi
+elif [[ "${AWG_SYSTEM_NODE_UPGRADE:-0}" == 1 ]]; then
+  "$SYSTEM_NODE_SCRIPT" apply || die "Не удалось безопасно обновить системный Node.js"
+  ok "Системный Node.js 22.16 установлен после явного разрешения обновления"
+elif "$SYSTEM_NODE_SCRIPT" status >/dev/null 2>&1; then
+  ok "Системный Node.js уже соответствует проверенному runtime"
+else
+  warn "Системный Node.js не соответствует эталону 22.16. При upgrade не меняем его автоматически."
+  warn "После проверки совместимости: sudo awg-system-node apply"
+fi
 install_project_python_helper src/awg-mihomo-service-eligibility.py /usr/local/sbin/awg-mihomo-service-eligibility.py
 install_project_python_helper src/awg-mihomo-network-eligibility.py /usr/local/sbin/awg-mihomo-network-eligibility.py
 # Passive bounded numeric-IP HTTPS probe; not scheduled or run during install.
@@ -739,31 +873,130 @@ install_project_python_helper src/awg-mihomo-smart /usr/local/sbin/awg-mihomo-sm
 # The installer never sets MIHOMO_READY_AUTO_CANARY=1.
 install_project_python_helper src/awg-mihomo-ready-live-match "$MIHOMO_READY_GUARD"
 install_project_helper src/awg-mihomo-ready-postcheck-tun "$MIHOMO_READY_POSTCHECK"
+install_project_helper src/awg-mihomo-tun-check "$MIHOMO_TUN_CHECK"
+# DC is optional: stage the commands and an INACTIVE service template only.
+install_project_helper src/awg-dc "$DC_CLI"
+install_project_unit units/awg-dc-remote@.service "$DC_UNIT"
 install_project_helper src/awg-mihomo-node-policy "$MIHOMO_NODE_POLICY_CLI"
 
-# Hot Pool is packaged passively and is SHADOW_ONLY. Never enable/start its
-# timer or run its scanner during installation. Existing *active* shadow
-# deployments are managed independently: preserve their executables and units
-# rather than replacing files beneath a running service.
-# systemctl may print "not-found" AND exit nonzero. Never append a second
-# "not-found": multi-line output would masquerade as a managed external unit.
-_hot_pool_timer_state="$(systemctl is-enabled awg-mihomo-hot-pool.timer 2>/dev/null || true)"
-[[ -n "$_hot_pool_timer_state" ]] || _hot_pool_timer_state=not-found
-if systemctl is-active --quiet awg-mihomo-hot-pool.service ||
-   systemctl is-active --quiet awg-mihomo-hot-pool.timer ||
-   [[ "$_hot_pool_timer_state" != disabled && "$_hot_pool_timer_state" != not-found ]]; then
-  warn "Hot Pool уже управляется отдельно (timer=$_hot_pool_timer_state); сохраняем установленную версию без изменений"
+# A clean install ships BOTH VPN engines, independently of whether the operator
+# already has a Mihomo subscription or an AmneziaWG profile. The verified,
+# pinned Mihomo engine is installed before post-install profile onboarding and
+# does not start a VPN service, change routing, or select a node.
+if (( UPGRADE_EXISTING == 0 )); then
+  STAGE="установка Mihomo engine"
+  "$MIHOMO_INSTALL_SCRIPT" ensure --mode auto || die "Не удалось установить обязательный Mihomo engine"
+  "$MIHOMO_INSTALL_SCRIPT" status || die "Проверка версии Mihomo engine не пройдена"
+  [[ -x /usr/local/bin/mihomo ]] || die "Mihomo engine отсутствует после установки"
+  ok "Mihomo engine установлен заранее; VPN-подписку можно указать позже"
 else
-  install_project_python_helper extras/mihomo-hot-pool-shadow/awg-mihomo-hot-pool.py /usr/local/sbin/awg-mihomo-hot-pool
-  install_project_python_helper extras/mihomo-hot-pool-shadow/awg-mihomo-hot-service-scan.py /usr/local/sbin/awg-mihomo-hot-service-scan
-  install_project_python_helper extras/mihomo-hot-pool-shadow/awg-hot-pool-continuity.py /usr/local/sbin/awg-hot-pool-continuity.py
-  install_project_helper extras/mihomo-hot-pool-shadow/awg-mihomo-hot-continuity-run /usr/local/sbin/awg-mihomo-hot-continuity-run
-  install_project_unit extras/mihomo-hot-pool-shadow/awg-mihomo-hot-pool.service /etc/systemd/system/awg-mihomo-hot-pool.service
-  install_project_unit extras/mihomo-hot-pool-shadow/awg-mihomo-hot-pool.timer /etc/systemd/system/awg-mihomo-hot-pool.timer
-  install -d -o root -g root -m 0700 /var/lib/awg-pbr/hot-pool/continuity /run/awg-pbr/hot-pool/continuity
-  ok "Hot Pool continuity SHADOW_ONLY установлен пассивно; timer NOT ENABLED"
+  # Do not replace a running engine as part of a production upgrade.
+  if ! "$MIHOMO_INSTALL_SCRIPT" status; then
+    warn "Mihomo engine требует отдельного безопасного обновления (активный транспорт не затронут)"
+  fi
 fi
-unset _hot_pool_timer_state
+
+# Hot Pool is SHADOW_ONLY. Fetch verified components from PROJECT_REF on both
+# clean installation and upgrade, even if its timer was previously enabled.
+# Never replace files while an isolated service check is running; stage all
+# candidates first, then temporarily pause only the Hot Pool timer.
+_hot_stage="$(mktemp -d /run/awg-hot-pool-install.XXXXXXXX)"
+install_project_python_helper extras/mihomo-hot-pool-shadow/awg-mihomo-hot-pool.py "$_hot_stage/pool"
+install_project_python_helper extras/mihomo-hot-pool-shadow/awg-mihomo-hot-service-scan.py "$_hot_stage/scan"
+install_project_python_helper extras/mihomo-hot-pool-shadow/awg-hot-pool-continuity.py "$_hot_stage/continuity"
+install_project_helper extras/mihomo-hot-pool-shadow/awg-mihomo-hot-continuity-run "$_hot_stage/runner"
+install_project_unit extras/mihomo-hot-pool-shadow/awg-mihomo-hot-pool.service "$_hot_stage/service"
+install_project_unit extras/mihomo-hot-pool-shadow/awg-mihomo-hot-pool.timer "$_hot_stage/timer"
+
+# Do not overwrite a custom or independently managed Hot Pool service.
+if [[ -f /etc/systemd/system/awg-mihomo-hot-pool.service ]] &&
+   ! grep -Fqx 'ExecStart=/usr/local/sbin/awg-mihomo-hot-continuity-run' \
+      /etc/systemd/system/awg-mihomo-hot-pool.service; then
+  rm -rf -- "$_hot_stage"
+  die "Hot Pool: неизвестная версия службы; автоматическая замена запрещена"
+fi
+_hot_targets=(
+  /usr/local/sbin/awg-mihomo-hot-pool
+  /usr/local/sbin/awg-mihomo-hot-service-scan
+  /usr/local/sbin/awg-hot-pool-continuity.py
+  /usr/local/sbin/awg-mihomo-hot-continuity-run
+  /etc/systemd/system/awg-mihomo-hot-pool.service
+  /etc/systemd/system/awg-mihomo-hot-pool.timer
+)
+_hot_names=(pool scan continuity runner service timer)
+_hot_timer_running=0
+if systemctl is-active --quiet awg-mihomo-hot-pool.service; then
+  rm -rf -- "$_hot_stage"
+  die "Hot Pool: служба сейчас проверяет ноды; повторите upgrade после завершения"
+fi
+if systemctl is-active --quiet awg-mihomo-hot-pool.timer; then
+  _hot_timer_running=1
+  systemctl stop awg-mihomo-hot-pool.timer \
+    || { rm -rf -- "$_hot_stage"; die "Hot Pool: не удалось приостановить таймер"; }
+fi
+# Stopping a timer does not terminate a service that began a moment earlier.
+if systemctl is-active --quiet awg-mihomo-hot-pool.service; then
+  if (( _hot_timer_running )); then systemctl start awg-mihomo-hot-pool.timer || true; fi
+  rm -rf -- "$_hot_stage"
+  die "Hot Pool: проверка началась одновременно с остановкой таймера"
+fi
+_hot_failed=0
+for _hot_i in "${!_hot_targets[@]}"; do
+  _hot_target="${_hot_targets[_hot_i]}"
+  if [[ -e "$_hot_target" ]]; then
+    cp -p -- "$_hot_target" "$_hot_stage/old-$_hot_i" || _hot_failed=1
+  else
+    : >"$_hot_stage/absent-$_hot_i"
+  fi
+done
+# Atomic per-file replacement; never restart Mihomo, AWG or the Hot Pool
+# service. The next timer cycle runs the verified new version.
+if (( !_hot_failed )); then
+  for _hot_i in "${!_hot_targets[@]}"; do
+    _hot_target="${_hot_targets[_hot_i]}"
+    _hot_tmp="${_hot_target}.hot-pool-staged-$$"
+    _hot_mode=755
+    (( _hot_i >= 4 )) && _hot_mode=644
+    if ! install -m "$_hot_mode" "$_hot_stage/${_hot_names[_hot_i]}" "$_hot_tmp" ||
+       ! mv -f -- "$_hot_tmp" "$_hot_target"; then
+      rm -f -- "$_hot_tmp" || true
+      _hot_failed=1
+      break
+    fi
+  done
+fi
+if (( !_hot_failed )); then
+  systemctl daemon-reload || _hot_failed=1
+fi
+if (( !_hot_failed && _hot_timer_running )); then
+  systemctl start awg-mihomo-hot-pool.timer || _hot_failed=1
+fi
+if (( _hot_failed )); then
+  _hot_rollback_failed=0
+  for _hot_i in "${!_hot_targets[@]}"; do
+    if [[ -f "$_hot_stage/old-$_hot_i" ]]; then
+      cp -p -- "$_hot_stage/old-$_hot_i" "${_hot_targets[_hot_i]}" || _hot_rollback_failed=1
+      cmp -s -- "$_hot_stage/old-$_hot_i" "${_hot_targets[_hot_i]}" || _hot_rollback_failed=1
+    elif [[ -f "$_hot_stage/absent-$_hot_i" ]]; then
+      rm -f -- "${_hot_targets[_hot_i]}" || _hot_rollback_failed=1
+      [[ ! -e "${_hot_targets[_hot_i]}" ]] || _hot_rollback_failed=1
+    fi
+  done
+  systemctl daemon-reload || _hot_rollback_failed=1
+  if (( _hot_timer_running )); then
+    systemctl start awg-mihomo-hot-pool.timer || _hot_rollback_failed=1
+  fi
+  if (( _hot_rollback_failed )); then
+    die "Hot Pool: откат требует ручной проверки; копии сохранены в $_hot_stage"
+  fi
+  rm -rf -- "$_hot_stage"
+  die "Hot Pool: обновление не выполнено, прежняя версия восстановлена"
+fi
+install -d -o root -g root -m 0700 /var/lib/awg-pbr/hot-pool/continuity /run/awg-pbr/hot-pool/continuity
+rm -rf -- "$_hot_stage"
+unset _hot_stage _hot_targets _hot_names _hot_timer_running _hot_failed \
+  _hot_i _hot_target _hot_tmp _hot_mode
+ok "Hot Pool continuity SHADOW_ONLY: установлена текущая версия, состояние таймера сохранено"
 install_project_helper src/awg-pbr-setup "$SETUP_SCRIPT"
 install_project_helper src/awg-transit-nft /usr/local/sbin/awg-transit-nft
 install_project_helper src/awg-transit-preflight /usr/local/sbin/awg-transit-preflight
@@ -804,10 +1037,11 @@ install_project_unit units/awg-mihomo-update.timer /etc/systemd/system/awg-mihom
 install_project_unit units/awg-mihomo-pool-refresh.service /etc/systemd/system/awg-mihomo-pool-refresh.service
 install_project_unit units/awg-mihomo-pool-refresh.timer /etc/systemd/system/awg-mihomo-pool-refresh.timer
 install_project_unit units/awg-selection-monitor.service /etc/systemd/system/awg-selection-monitor.service
-# Do not enable this opt-in timer here; default installs avoid downloads
-# and CPU overhead for the pinned decoder runtime.
+# Stage18 is provider-guarded: automatic boot and provider-change recovery,
+# without running an isolated media test during bare installation.
 install_project_unit units/awg-mihomo-stage18-ram-runtime.service /etc/systemd/system/awg-mihomo-stage18-ram-runtime.service
 install_project_unit units/awg-mihomo-stage18-ram-runtime.timer /etc/systemd/system/awg-mihomo-stage18-ram-runtime.timer
+install_project_unit units/awg-mihomo-stage18-ram-runtime.path /etc/systemd/system/awg-mihomo-stage18-ram-runtime.path
 install_project_unit units/awg-traffic.service /etc/systemd/system/awg-traffic.service
 cat >/etc/systemd/system/awg-opencck-update.service <<'EOF'
 [Unit]
@@ -887,6 +1121,13 @@ python3 -B -c 'import ast,sys; ast.parse(open(sys.argv[1],encoding="utf-8").read
   || die "READY guard: синтаксическая ошибка"
 [[ -x "$MIHOMO_READY_POSTCHECK" ]] || die "Не установлен READY postcheck: $MIHOMO_READY_POSTCHECK"
 bash -n "$MIHOMO_READY_POSTCHECK" || die "READY postcheck: синтаксическая ошибка"
+[[ -x "$MIHOMO_TUN_CHECK" ]] || die "Не установлен TUN diagnostic: $MIHOMO_TUN_CHECK"
+bash -n "$MIHOMO_TUN_CHECK" || die "TUN diagnostic: синтаксическая ошибка"
+[[ -x "$DC_CLI" ]] || die "Не установлен optional DC helper: $DC_CLI"
+bash -n "$DC_CLI" || die "DC helper: синтаксическая ошибка"
+[[ -x "$SYSTEM_NODE_SCRIPT" ]] || die "Не установлен Node.js runtime installer: $SYSTEM_NODE_SCRIPT"
+bash -n "$SYSTEM_NODE_SCRIPT" || die "Node.js runtime installer: синтаксическая ошибка"
+[[ -f "$DC_UNIT" ]] || die "Не установлен optional DC unit template: $DC_UNIT"
 [[ -x "$MIHOMO_POOL_CLI" ]] || die "Не установлен исполняемый компонент: $MIHOMO_POOL_CLI"
 python3 -m py_compile "$MIHOMO_POOL_CLI" || die "Синтаксическая проверка компонента не пройдена: $MIHOMO_POOL_CLI"
 ok "Компоненты управления v$AWG_PI_VERSION установлены"
@@ -916,15 +1157,37 @@ fi
 ok "DNS Raspberry Pi работает"
 
 if (( UPGRADE_EXISTING == 0 )); then
-  STAGE="выбор первого transport"
-  log "[11a/12] First transport wizard"
-  if "$FIRST_RUN_CLI" wizard; then
-    ok "Первичная настройка transport завершена"
-  else
-    warn "Первичный transport не удалось настроить. Установка продолжится в recovery-state; повторите настройку через sudo awg-menu."
-    printf '%s\n' unconfigured >"$TRANSPORT_FILE"
-    chmod 600 "$TRANSPORT_FILE"
-  fi
+  STAGE="завершение установки без VPN-профилей"
+  log "[11a/12] No VPN onboarding during clean install"
+  # Never invoke the first-run wizard from install.sh. The installed menu
+  # owns all subsequent AWG and Mihomo onboarding after successful install.
+  [[ "$(cat "$TRANSPORT_FILE")" == unconfigured ]] ||
+    die "Чистая установка неожиданно активировала VPN-транспорт"
+  [[ "$(cat "$MODE_FILE")" == selective ]] ||
+    die "Чистая установка неожиданно активировала Transit"
+  [[ ! -e "$CONF_FILE" ]] ||
+    die "Чистая установка не должна устанавливать AWG-профиль"
+  [[ ! -e "$PBR_DIR/transports/mihomo/provider.env" &&
+     ! -e /var/lib/awg-pbr/mihomo/providers/subscription.yaml ]] ||
+    die "Чистая установка не должна добавлять Mihomo-подписку"
+  ok "Шлюз и оба движка установлены без VPN-профилей; первый транспорт выбирается позднее в sudo awg-menu"
+fi
+
+# Fresh installs PREPARE availability-AUTO only. The selector keeps a healthy
+# active transport sticky, lets Mihomo change nodes first, and falls
+# back to AWG after repeated failures. Neither profile has to be supplied now;
+# the monitor remains passive while both backends are unconfigured.
+if (( UPGRADE_EXISTING == 0 )); then
+  "$SELECTION_CLI" mode auto mihomo awg >/dev/null || die "Не удалось настроить безопасное автоматическое резервирование"
+  # On clean install the user has not configured any profiles or FIXED
+  # chain yet. Install the full READY/Hot Pool capabilities and arm the
+  # SHADOW timer, which remains passive without a provider subscription.
+  # The operator may later disable Hot Pool and choose a FIXED chain via
+  # awg-menu without rerunning install.sh.
+  "$MIHOMO_NODE_POLICY_CLI" ready-auto enable >/dev/null ||
+    die "Не удалось подготовить READY AUTO для настройки после установки"
+  ok "Mihomo READY/Hot Pool подготовлены; без подписки SHADOW-проверки не запускаются"
+  ok "Резервирование транспортов: AUTO Mihomo → AWG (без автоматического возврата ради скорости)"
 fi
 
 ACTIVE_TRANSPORT="$(cat "$TRANSPORT_FILE" 2>/dev/null || echo unconfigured)"
@@ -963,18 +1226,38 @@ systemctl restart awg-pbr-health.service
 systemctl is-active --quiet awg-pbr-health.service || die "health monitor не запустился"
 systemctl restart awg-selection-monitor.service
 systemctl is-active --quiet awg-selection-monitor.service || die "selection monitor не запустился"
+# Proxy/backend health is not proof of actual Pi-bound TUN HTTPS.
+# Warning-only: a bad provider must never trigger installer rollback or SSH loss.
+if [[ "$ACTIVE_TRANSPORT" == mihomo ]]; then
+  if "$MIHOMO_TUN_CHECK" >/dev/null 2>&1; then
+    ok "Mihomo: HTTPS через настоящий TUN подтверждён (только Pi; не LAN-клиент)"
+  else
+    warn "Mihomo backend может работать через локальный прокси, но TUN HTTPS не подтверждён."
+    warn "Проверьте выбранную ноду: sudo awg-mihomo-tun-check."
+  fi
+fi
 systemctl restart awg-traffic.service
 systemctl is-active --quiet awg-traffic.service || warn "traffic accounting не запустился; маршрутизация продолжит работу"
 systemctl start awg-opencck-update.timer
 systemctl is-active --quiet awg-opencck-update.timer || warn "OpenCCK timer не активен; ручное обновление останется доступно"
 
-# The health-pool timer is useful only after a Mihomo provider exists. Keep a
-# fresh AWG-only installation completely passive with respect to Mihomo.
-if [[ -r /var/lib/awg-pbr/mihomo/providers/subscription.yaml ]]; then
-  systemctl enable --now awg-mihomo-pool-refresh.timer >/dev/null
-  systemctl is-active --quiet awg-mihomo-pool-refresh.timer || warn "Mihomo health-pool timer не активен; ручная проверка останется доступна"
+# Install-once, automatic-after-profile: the units themselves require a
+# configured Mihomo provider. Timers can be armed on a fresh AWG-only install
+# without initiating any VPN/route change or trying to select a node.
+# Upgrades preserve the existing operator's enabled/disabled policy.
+if (( UPGRADE_EXISTING == 0 )); then
+  for unit in awg-mihomo-pool-refresh.timer awg-mihomo-stage18-ram-runtime.timer awg-mihomo-stage18-ram-runtime.path; do
+    systemctl enable --now "$unit" >/dev/null || die "Не удалось включить $unit"
+    systemctl is-active --quiet "$unit" || die "Не запущен обязательный таймер $unit"
+  done
+  systemctl enable --now awg-mihomo-hot-pool.timer >/dev/null ||
+    die "Не удалось подготовить Hot Pool timer до ввода подписки"
+  systemctl is-active --quiet awg-mihomo-hot-pool.timer ||
+    die "Hot Pool timer не запущен после установки"
+  ok "Hot Pool SHADOW_ONLY ожидает подписку; READY-проверки начнутся только после её ввода"
+  ok "Mihomo health pool и Stage18 установлены и готовы к подписке"
 else
-  systemctl disable --now awg-mihomo-pool-refresh.timer >/dev/null 2>&1 || true
+  ok "Существующая политика Mihomo-таймеров сохранена при обновлении"
 fi
 
 ACTIVE_TRANSPORT="$(cat "$TRANSPORT_FILE" 2>/dev/null || echo unconfigured)"
@@ -987,30 +1270,12 @@ if [[ "$ACTIVE_TRANSPORT" != unconfigured ]]; then
 fi
 
 if (( UPGRADE_EXISTING == 0 )); then
-  STAGE="выбор Operating Mode"
-  log "[11b/12] Operating Mode selection"
-  printf "\nOperating Mode выбирается независимо от transport:\n"
-  printf "1) Selective Gateway — transport DOWN/not-ready => FAIL-OPEN DIRECT\n"
-  printf "2) MikroTik Transit / Backup VPN — transport DOWN/not-ready => FAIL-CLOSED/LOCKDOWN\n"
-  ask "Режим работы" "1"
-  case "$REPLY" in
-    1)
-      "$ROUTE_CLI" mode selective >/dev/null
-      ok "Operating Mode: Selective Gateway"
-      ;;
-    2)
-      if "$ROUTE_CLI" mode transit; then
-        ok "Operating Mode: MikroTik Transit / Backup VPN"
-      else
-        warn "Transit activation failed; installer restores Selective Gateway."
-        "$ROUTE_CLI" mode selective >/dev/null 2>&1 || true
-      fi
-      ;;
-    *)
-      warn "Неизвестный выбор Operating Mode; безопасно остаёмся в Selective Gateway."
-      "$ROUTE_CLI" mode selective >/dev/null 2>&1 || true
-      ;;
-  esac
+  STAGE="завершение безопасной установки"
+  log "[11b/12] Deferred VPN and Operating Mode configuration"
+  [[ "$(cat "$MODE_FILE")" == selective &&
+     "$(cat "$TRANSPORT_FILE")" == unconfigured ]] ||
+    die "Неверное конечное состояние: до ввода профилей нужен Selective + unconfigured"
+  ok "Operating Mode: Selective Gateway; смена на Transit только после настройки VPN через sudo awg-menu"
 elif (( ACTIVATE_TRANSIT_AFTER_INSTALL == 1 )); then
   STAGE="активация MikroTik Transit"
   log "[11b/12] Legacy upgrade Transit request"
@@ -1020,6 +1285,74 @@ elif (( ACTIVATE_TRANSIT_AFTER_INSTALL == 1 )); then
     warn "Transit activation не прошла. Runtime восстановлен; upgrade продолжится в Selective Gateway."
     "$ROUTE_CLI" mode selective >/dev/null 2>&1 || true
   fi
+fi
+
+# -----------------------------------------------------------------------------
+# Optional Remote Desktop Commander: installed as a non-root, boot-persistent
+# systemd service, independent of SSH sessions, gateway routing and SSTP.
+# NEVER silently enable remote administration before the owner authorized
+# their device and explicitly opted in to persistent remote access.
+#
+# Fresh install, then one-time authorization:
+# sudo env AWG_DC_PREPARE=1 AWG_DC_USER=karlinks bash install.sh
+# awg-dc pair (ordinary user) ; sudo awg-dc enable karlinks
+#
+# Reinstall with already-restored owner-only DC session:
+# sudo env AWG_DC_PREPARE=1 AWG_DC_AUTOSTART=1 AWG_DC_USER=karlinks bash install.sh
+# Existing upgrades preserve the enabled/disabled service state by default.
+# -----------------------------------------------------------------------------
+case "${AWG_DC_PREPARE:-0}" in
+  0) : ;;
+  1)
+    _dc_user="${AWG_DC_USER:-${SUDO_USER:-}}"
+    if [[ -z "$_dc_user" || "$_dc_user" == root ]]; then
+      warn "DC runtime: укажите обычного пользователя через AWG_DC_USER (без активации DC)."
+    elif "$DC_CLI" prepare "$_dc_user"; then
+      ok "DC runtime подготовлен для $_dc_user, включая автономный старт из локального npm cache."
+    else
+      warn "DC runtime не подготовлен; VPN/DNS/SSH не изменены. Повторите: sudo awg-dc prepare USER."
+    fi
+    ;;
+  *) die "AWG_DC_PREPARE должен быть 0 или 1" ;;
+esac
+
+case "${AWG_DC_AUTOSTART:-0}" in
+  0) : ;; # Preserve existing systemd enablement during upgrades.
+  1)
+    _dc_user="${AWG_DC_USER:-${SUDO_USER:-}}"
+    if [[ -z "$_dc_user" || "$_dc_user" == root ]]; then
+      warn "DC autostart: укажите AWG_DC_USER; служба осталась без изменений."
+    elif "$DC_CLI" enable "$_dc_user"; then
+      ok "DC работает независимо от SSH, systemd восстановит его после reboot."
+    else
+      warn "DC autostart не включён: сначала требуется однократная OAuth-авторизация, root-owned systemd unit и кэш агента."
+      warn "После awg-dc pair выполните: sudo awg-dc enable $_dc_user"
+    fi
+    ;;
+  *) die "AWG_DC_AUTOSTART должен быть 0 или 1" ;;
+esac
+
+# An upgrade must preserve explicit manual/FIXED/AUTO transport priority and
+# Mihomo READY policy. Verify AFTER all service/installer stages; fail the
+# transaction rather than silently replacing an operator's tested priorities.
+if (( UPGRADE_EXISTING == 1 )); then
+  for _policy_index in "${!UPGRADE_POLICY_FILES[@]}"; do
+    _policy_sha="$(upgrade_policy_fingerprint "${UPGRADE_POLICY_FILES[_policy_index]}")" ||
+      die "Не удалось проверить состояние политик после upgrade"
+    [[ "$_policy_sha" == "${UPGRADE_POLICY_HASHES[_policy_index]}" ]] ||
+      die "Upgrade изменил сохранённую политику AUTO/FIXED/READY; требуется rollback"
+  done
+  # Installer stages Hot Pool atomically; a disabled timer must remain
+  # disabled (and a previously stopped timer must not start after upgrade).
+  # Only compare units which existed before upgrade: older releases may lack it.
+  if [[ "$UPGRADE_HOT_TIMER_ENABLEMENT" != absent ]]; then
+    _current_hot_enablement="$(systemctl is-enabled awg-mihomo-hot-pool.timer 2>/dev/null || true)"
+    _current_hot_runtime="$(systemctl is-active awg-mihomo-hot-pool.timer 2>/dev/null || true)"
+    [[ "$_current_hot_enablement" == "$UPGRADE_HOT_TIMER_ENABLEMENT" &&
+       "$_current_hot_runtime" == "$UPGRADE_HOT_TIMER_RUNTIME" ]] ||
+      die "Upgrade изменил автозапуск/состояние Hot Pool; требуется rollback"
+  fi
+  ok "Upgrade: FIXED/AUTO, READY, service-gate и состояние таймера Hot Pool сохранены"
 fi
 
 # -----------------------------------------------------------------------------
@@ -1080,6 +1413,7 @@ printf "  DHCP остаётся на LAN router\n"
 printf "\nОсновные команды:\n"
 printf "  sudo awg-route status\n"
 printf "  sudo awg-transport status\n"
+printf "  sudo awg-menu  # после установки: настройка AWG/Mihomo, режим и резервирование\n"
 printf "  sudo awg-route mode status\n"
 printf "  sudo awg-route mode selective\n"
 printf "  sudo awg-route mode transit\n"
@@ -1103,6 +1437,13 @@ printf "  sudo awg-menu\n"
 printf "  sudo awg-update status\n"
 printf "  sudo awg-update gateway\n"
 printf "  sudo awg-update core\n"
+printf "  sudo awg-system-node status  # проверка системного Node.js 22\n"
+printf "  timedatectl                  # часовой пояс (fresh: Asia/Novosibirsk)\n"
+printf "  sudo awg-dc doctor USER      # диагностика Remote DC\n"
+printf "  sudo awg-dc prepare USER     # опциональная установка Node/npm/агента\n"
+printf "  awg-dc pair                 # OAuth от обычного пользователя\n"
+printf "  sudo awg-dc enable USER     # постоянно через systemd, без открытого SSH; после OAuth\n"
+printf "  AWG_DC_PREPARE=1 AWG_DC_AUTOSTART=1  # при повторной установке с сохраненной авторизацией\n"
 
 printf "\nПервичная проверка режима:\n"
 if [[ "$FINAL_MODE" == transit ]]; then

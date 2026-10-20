@@ -37,6 +37,7 @@ NODE_NAME = Path('/etc/awg-pbr/transports/mihomo/node-name')
 LIVE_TRANSPORT = Path('/etc/awg-pbr/transport')
 LIVE_ENDPOINT = Path('/etc/awg-pbr/transports/mihomo/endpoint-ip')
 LIVE_HEALTH = Path('/run/awg-pbr/health.state')
+GATEWAY_MODE = Path('/etc/awg-pbr/mode')
 STATE_DIR = Path('/run/awg-pbr/mihomo-smart')
 MIHOMO = '/usr/local/bin/mihomo'
 CURL = '/usr/bin/curl'
@@ -114,6 +115,47 @@ def ip_connect_shadow_probe(port: int, *, probe=IP_CONNECT_PROBE,
     if check.returncode not in (0, 1):
         return 'UNKNOWN', 'PROBE_UNAVAILABLE'
     return 'UNKNOWN', fields['IP_CONNECT_REASON']
+
+
+def isolated_shadow_ready(fetch, port: int, *, clock=time.monotonic,
+                          pause=time.sleep, attempts=4, budget=20.0) -> tuple[bool, int, int]:
+    """One bounded HTTPS warmup before strict checks on a new shadow instance.
+
+    Controller visibility alone is NOT network readiness. The existing Hot Pool
+    already uses this order; service-scan must be equally cold-start safe.
+    HTTP status is connectivity only, not a ChatGPT/YouTube eligibility PASS.
+    """
+    begin = clock()
+    used = 0
+    for i in range(attempts):
+        left = budget - (clock() - begin)
+        if left <= 0:
+            break
+        used += 1
+        try:
+            status, _, _ = fetch(port, 'https://api.openai.com/v1/models',
+                                 timeout=min(6.0, left), max_bytes=8192)
+            if type(status) is int and 200 <= status < 600:
+                return True, used, round((clock() - begin) * 1000)
+        except Exception:
+            pass
+        left = budget - (clock() - begin)
+        if i + 1 < attempts and left > 0:
+            pause(min(1.0, left))
+    return False, used, round((clock() - begin) * 1000)
+
+
+def strict_ip_connect_required(mode_file: Path = GATEWAY_MODE) -> bool:
+    """Fail closed except verified Transit; preserve Selective IP-address gate.
+
+    Transit also checks the actual TUN before activation. Do not conflate the
+    isolated proxy numeric-IP diagnostic with YouTube24 eligibility.
+    """
+    try:
+        mode = mode_file.read_text().strip()
+    except OSError:
+        return True
+    return mode != 'transit'
 
 
 def load_video_decode_code():
@@ -536,15 +578,33 @@ def service_scan(args):
                     raise RuntimeError("isolated service candidate unavailable")
                 require_shadow_safe(matched[0], raw)
                 helper.select_probe(controller, entries[0]["probe_name"])
-                # Candidate eligibility is IP-based in Selective Gateway.
-                # Reject broken numeric-IP CONNECT *before* costly video decode.
+                # Match the Hot Pool's tested cold-start contract: a visible
+                # selector is not evidence that upstream TLS is ready.
+                warm_ok, warm_attempts, warm_ms = isolated_shadow_ready(gate.fetch, mixed)
+                print('SERVICE_CONNECT_STATE=' + ('PASS' if warm_ok else 'UNKNOWN'))
+                print('SERVICE_CONNECT_ATTEMPTS=' + str(warm_attempts))
+                print('SERVICE_CONNECT_WAIT_MS=' + str(warm_ms), flush=True)
+                require_shadow_safe(matched[0], raw)
+                if not warm_ok:
+                    print('SERVICE_ELIGIBILITY=UNKNOWN')
+                    print('SERVICE_CHECK_OPENAI_API=UNKNOWN')
+                    print('SERVICE_CHECK_CHATGPT_WEB=UNKNOWN')
+                    print('SERVICE_CHECK_YOUTUBE_VIDEO=UNKNOWN')
+                    print('SERVICE_REASON_CHATGPT_WEB=connect_not_ready')
+                    print('SERVICE_REASON_YOUTUBE_VIDEO=not_run_connect')
+                    return 1
+                # Keep numeric-IP CONNECT evidence visible, but never turn it
+                # into a substitute for actual HTTPS/YouTube24 checks. For
+                # Selective, IP-based classification remains strict. Transit
+                # requires an independent, live TUN-bound HTTPS postcheck.
                 ip_state, ip_reason = ip_connect_shadow_probe(mixed)
                 require_shadow_safe(matched[0], raw)
-                # The bounded verifier returns only allow-listed reason codes.
-                # Preserve the exact failure reason for diagnosis, never raw stderr.
                 print('SERVICE_IP_CONNECT_STATE=' + ip_state)
-                print('SERVICE_IP_CONNECT_REASON=' + ip_reason, flush=True)
-                if ip_state != 'PASS':
+                print('SERVICE_IP_CONNECT_REASON=' + ip_reason)
+                strict_ip = strict_ip_connect_required()
+                print('SERVICE_IP_CONNECT_POLICY=' +
+                      ('STRICT_GATE' if strict_ip else 'TRANSIT_TELEMETRY'), flush=True)
+                if ip_state != 'PASS' and strict_ip:
                     print('SERVICE_ELIGIBILITY=UNKNOWN')
                     print('SERVICE_CHECK_OPENAI_API=UNKNOWN')
                     print('SERVICE_CHECK_CHATGPT_WEB=UNKNOWN')

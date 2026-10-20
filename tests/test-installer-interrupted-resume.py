@@ -26,7 +26,7 @@ def fixture(*, env=True, mode="selective", transport="unconfigured",
             (folder / "version").write_text("1.2.0\n")
         if conf:
             (folder / "awg0.conf").write_text("dummy\n")
-        vals = dict(PUBLIC_VERSION_FILE=folder/"version",
+        vals = dict(PBR_DIR=folder/"private",PUBLIC_VERSION_FILE=folder/"version",
                     VERSION_FILE=folder/"version-private",
                     ENV_FILE=folder/"env",
                     MODE_FILE=folder/"mode",
@@ -42,7 +42,16 @@ warn(){ :; }
 ok(){ :; }
 die(){ echo "INSTALL_ABORT"; exit 77; }
 confirm(){ [[ "${ALLOW_RESUME:-0}" == "1" ]]; }
-systemctl(){ [[ "${SERVICE_ACTIVE:-0}" != "1" ]] && return 3; return 0; }
+systemctl(){
+  case "$1" in
+    is-enabled) echo disabled; return 1 ;;
+    is-active)
+      echo inactive
+      [[ "${SERVICE_ACTIVE:-0}" != "1" ]] && return 3
+      return 0 ;;
+  esac
+  return 3
+}
 """
         shell = "set -Eeuo pipefail\n" + prefix + block + '\nprintf "PARTIAL=%s UPGRADE=%s\\n" "$PARTIAL_FRESH_RESUME" "$UPGRADE_EXISTING"\n'
         proc = subprocess.run(["bash","-c",shell],capture_output=True,text=True,
@@ -64,5 +73,5 @@ assert_case("PARTIAL=0 UPGRADE=1",transport="awg")
 assert_case("PARTIAL=0 UPGRADE=1",active=True)
 refuse=fixture(allow=False)
 assert refuse.returncode==77 and "INSTALL_ABORT" in refuse.stdout
-assert 'PARTIAL_FRESH_RESUME=YES; first-transport wizard' in block
+assert 'PARTIAL_FRESH_RESUME=YES; установка завершится без VPN-профилей' in block
 print("INTERRUPTED_INSTALL_RESUME=PASS (9 cases)")

@@ -10,7 +10,62 @@ if [[ "${AWG_MENU_REEXEC:-0}" != 1 ]]; then
   export AWG_MENU_REEXEC=1
   exec "$_menu_tmp" "$@"
 fi
-command -v dialog >/dev/null 2>&1 || { echo "Не найден dialog" >&2; exit 1; }
+command -v dialog >/dev/null 2>&1 || { echo "Не установлен компонент интерфейса: dialog" >&2; exit 1; }
+
+# SSH sessions may have LANG=C even when Russian text is supported.
+# Change only the menu process locale, never global system settings.
+if [[ "$(locale charmap 2>/dev/null || true)" != UTF-8 ]] &&
+   locale -a 2>/dev/null | grep -Eiq '^C[.]utf8$|^C[.]UTF-8$'; then
+  export LC_ALL=C.UTF-8
+fi
+
+# Preserve the SSH shell for an undersized terminal instead of logging out.
+if [[ -t 0 && -t 1 ]]; then
+  _ui_rows=""; _ui_cols=""
+  read -r _ui_rows _ui_cols < <(stty size </dev/tty 2>/dev/null) || true
+  if [[ "$_ui_rows" =~ ^[0-9]+$ && "$_ui_cols" =~ ^[0-9]+$ ]] &&
+     (( _ui_rows < 22 || _ui_cols < 78 )); then
+    printf 'Для русского меню требуется окно SSH не меньше 78×22. Сейчас: %s×%s.\n' "$_ui_cols" "$_ui_rows" >&2
+    printf 'Вы остаетесь в командной строке SSH. Увеличьте окно и снова запустите awg-menu.\n' >&2
+    exit 10
+  fi
+fi
+
+
+# Shrink oversized dialogs to real SSH TTY; do not modify terminal settings.
+dialog(){
+  local -a args=("$@")
+  local rows cols i hi wi li prompt_lines available
+  if [[ ! -t 0 || ! -t 1 ]]; then command dialog "${args[@]}"; return; fi
+  read -r rows cols < <(stty size </dev/tty 2>/dev/null) || { command dialog "${args[@]}"; return; }
+  [[ "$rows" =~ ^[0-9]+$ && "$cols" =~ ^[0-9]+$ ]] || { command dialog "${args[@]}"; return; }
+  if ((rows < 22 || cols < 78)); then
+    printf 'Увеличьте окно SSH минимум до 78×22 (сейчас %s×%s).\n' "$cols" "$rows" >&2
+    return 1
+  fi
+  for ((i=0;i<${#args[@]};i++)); do
+    case "${args[i]}" in
+      --menu|--msgbox|--yesno|--inputbox|--editbox|--textbox|--infobox)
+        hi=$((i+2)); wi=$((i+3))
+        if [[ "${args[hi]:-}" =~ ^[0-9]+$ && "${args[wi]:-}" =~ ^[0-9]+$ ]]; then
+          ((args[hi] > rows-2)) && args[hi]="$((rows-2))"
+          ((args[wi] > cols-2)) && args[wi]="$((cols-2))"
+          if [[ "${args[i]}" == --menu ]]; then
+            li=$((i+4))
+            # Long Russian header (main dashboard) must not hide every item.
+            prompt_lines="$(printf '%s\n' "${args[i+1]}" | wc -l)"
+            available="$((args[hi]-5-prompt_lines))"
+            ((available < 3)) && available=3
+            if [[ "${args[li]:-}" =~ ^[0-9]+$ ]] && ((args[li] > available)); then
+              args[li]="$available"
+            fi
+          fi
+        fi
+        break;;
+    esac
+  done
+  command dialog "${args[@]}"
+}
 
 AWG_ROUTE=/usr/local/sbin/awg-route
 AWG_TRANSPORT=/usr/local/sbin/awg-transport
@@ -179,6 +234,14 @@ run_with_progress(){
   return "$rc"
 }
 
+show_operation_result(){
+  local rc="$1" heading="$2" label
+  if ((rc == 0)); then label="ВЫПОЛНЕНО"; else label="ОШИБКА (код $rc)"; fi
+  [[ -s "$TMP" ]] || printf '%s\n' "Дополнительных сообщений нет." >"$TMP"
+  sed -i "1iРезультат: $label\\nОперация: $heading\\n" "$TMP"
+  dialog --backtitle "$BACKTITLE" --title "$heading — $label" --textbox "$TMP" 30 110
+}
+
 capture(){
   local rc heading="${title:-Результат}"
   if run_with_progress "$heading" "$@"; then
@@ -186,8 +249,7 @@ capture(){
   else
     rc=$?
   fi
-  [[ -s "$TMP" ]] || printf '%s\n' "Операция завершена без дополнительного текстового вывода." >"$TMP"
-  dialog --backtitle "$BACKTITLE" --title "$heading" --textbox "$TMP" 30 110
+  show_operation_result "$rc" "$heading"
   return "$rc"
 }
 
@@ -199,8 +261,7 @@ capture_mode_change(){
     rc=$?
   fi
   refresh_backtitle
-  [[ -s "$TMP" ]] || printf '%s\n' "Операция завершена без дополнительного текстового вывода." >"$TMP"
-  dialog --backtitle "$BACKTITLE" --title "$heading" --textbox "$TMP" 30 110
+  show_operation_result "$rc" "$heading"
   return "$rc"
 }
 
@@ -213,12 +274,24 @@ localize_status_file(){
     -e 's/  Router:/  Роутер:/' \
     -e 's/  Network:/  Сеть:/' \
     -e 's/^Health state:/Состояние:/' \
+    -e 's/^Active transport: unconfigured$/Активный транспорт: не настроен/' \
     -e 's/^Active transport:/Активный транспорт:/' \
     -e 's/^Transport ID:/ID транспорта:/' \
+    -e 's/^Health state: up$/Состояние: работает/' \
+    -e 's/^Health state: down$/Состояние: ошибка соединения/' \
+    -e 's/^Health state: unknown$/Состояние: не проверено/' \
+    -e 's/^Transport readiness: not-ready$/Транспорт: не настроен/' \
+    -e 's/^Transport health: not-ready$/Состояние транспорта: не настроен/' \
+    -e 's/^VPN policy requested: ON$/VPN-политика: включена/' \
+    -e 's/^VPN policy requested: OFF$/VPN-политика: выключена/' \
+    -e 's/^Policy rule: FAIL-OPEN\/DIRECT$/Правило маршрутизации: DIRECT (FAIL-OPEN)/' \
     -e 's/^Transport health: healthy$/Состояние транспорта: работоспособен/' \
     -e 's/^Transport health: down$/Состояние транспорта: недоступен/' \
     -e 's/^Transport health:/Состояние транспорта:/' \
+    -e 's/^Selective classification: INACTIVE (state preserved)$/Правила SELECTIVE: сохранены, не используются/' \
     -e 's/^Selective classification:/Классификация SELECTIVE:/' \
+    -e 's/^Transit policy: FAIL-CLOSED$/Политика TRANSIT: блокировка трафика (FAIL-CLOSED)/' \
+    -e 's/^Transit policy: ACTIVE$/Политика TRANSIT: активна/' \
     -e 's/^Transit policy:/Политика TRANSIT:/' \
     -e 's/^Transit guard:/Защита TRANSIT:/' \
     -e 's/^Transit policy rule:/Правило TRANSIT:/' \
@@ -253,6 +326,10 @@ localize_status_file(){
     -e 's/^Last fetch path:/Последний канал загрузки:/' \
     -e 's/^Runtime config: ready$/Рабочая конфигурация: готова/' \
     -e 's/^Runtime config: missing$/Рабочая конфигурация: отсутствует/' \
+    -e 's/^Binary: missing$/Mihomo: не установлено/' \
+    -e 's/^Runtime config: missing$/Рабочая конфигурация: не настроена/' \
+    -e 's/^Selected node: unknown$/Выбранный узел: не задан/' \
+    -e 's/^Service: inactive$/Служба: не запущена/' \
     -e 's/^Binary:/Версия Mihomo:/' \
     -e 's/^Service: active$/Служба: активна/' \
     -e 's/^Service: inactive$/Служба: неактивна/' \
@@ -260,6 +337,9 @@ localize_status_file(){
     -e 's/^Update timer: active$/Автообновление подписки: активно/' \
     -e 's/^Update timer: inactive$/Автообновление подписки: неактивно/' \
     -e 's/^Update timer:/Автообновление подписки:/' \
+    -e 's/^\([A-Za-z0-9@._-]*\.service\)[[:space:]]*active$/\1  работает/' \
+    -e 's/^\([A-Za-z0-9@._-]*\.service\)[[:space:]]*inactive$/\1  не запущена/' \
+    -e 's/^\([A-Za-z0-9@._-]*\.service\)[[:space:]]*failed$/\1  ошибка/' \
     -e 's/^Selection mode: manual$/Режим выбора транспорта: MANUAL/' \
     -e 's/^Selection mode: fixed$/Режим выбора транспорта: FIXED/' \
     -e 's/^Selection mode: auto$/Режим выбора транспорта: AUTO/' \
@@ -291,6 +371,10 @@ localize_status_file(){
     -e 's/ state=OK$/ состояние=норма/' \
     -e 's/ state=REPAIR_REQUIRED$/ состояние=требуется восстановление/' \
     "$TMP"
+  # A clean install with no active VPN is awaiting configuration, not broken.
+  if grep -Fqx 'Активный транспорт: не настроен' "$TMP"; then
+    sed -i 's/^Состояние: ошибка соединения$/Состояние: ожидает настройки/' "$TMP"
+  fi
 }
 
 capture_ru(){
@@ -301,14 +385,14 @@ capture_ru(){
     rc=$?
   fi
   localize_status_file
-  [[ -s "$TMP" ]] || printf '%s\n' "Операция завершена без дополнительного текстового вывода." >"$TMP"
-  dialog --backtitle "$BACKTITLE" --title "$heading" --textbox "$TMP" 30 110
+  show_operation_result "$rc" "$heading"
   return "$rc"
 }
 
 run_interactive(){
   local heading="$1"
   shift
+  msg "Переход в SSH-терминал" "Для операции «$heading» откроется текстовый интерфейс SSH.\n\nВыполняйте подсказки на экране. После завершения нажмите Enter — меню восстановится автоматически."
   clear
   printf '=== %s ===\n\n' "$heading"
   printf 'Операция запущена. Сообщения и запросы появятся ниже.\n'
@@ -358,10 +442,51 @@ disk_summary(){
   df -hP / 2>/dev/null | awk 'NR==2{printf "%s/%s (%s)",$3,$2,$5}'
 }
 
+# State is derived from installation + profile + service separately.
+# A missing profile on fresh install is not a failed VPN.
+hot_pool_summary(){
+  if [[ ! -x /usr/local/sbin/awg-mihomo-hot-pool ]]; then
+    printf 'не установлен'
+  elif [[ ! -s /var/lib/awg-pbr/mihomo/providers/subscription.yaml ]]; then
+    printf 'ожидает подписку'
+  elif ! systemctl is-active --quiet awg-mihomo-hot-pool.timer; then
+    printf 'автопроверка выключена'
+  else
+    # This installation uses the continuity union provider/pool/state for
+    # SHADOW checks. The legacy CLI defaults to an independent shadow.json
+    # (possibly missing), which can falsely report READY 0/4 in this menu.
+    # Detect continuity by its installed wrapper; keep older installs working.
+    local info ready target union_dir
+    local -a status_args=(status)
+    if [[ -x /usr/local/sbin/awg-mihomo-hot-continuity-run ]]; then
+      union_dir=/run/awg-pbr/hot-pool/continuity
+      if [[ ! -s "$union_dir/provider.yaml" || ! -s "$union_dir/pool.json" ||
+            ! -s "$union_dir/state.json" ]]; then
+        printf 'ожидает проверки'
+        return
+      fi
+      status_args=(--provider "$union_dir/provider.yaml"
+                   --pool "$union_dir/pool.json"
+                   --state "$union_dir/state.json" status)
+    fi
+    info="$(timeout 3 /usr/local/sbin/awg-mihomo-hot-pool "${status_args[@]}" 2>/dev/null)" || {
+      printf 'не проверено'
+      return
+    }
+    ready="$(sed -n 's/^HOT_POOL_READY=//p' <<<"$info" | head -n1)"
+    target="$(sed -n 's/^HOT_POOL_TARGET_READY=//p' <<<"$info" | head -n1)"
+    if [[ "$ready" =~ ^[0-9]+$ && "$target" =~ ^[1-9][0-9]*$ ]]; then
+      printf 'READY %s/%s' "$ready" "$target"
+    else
+      printf 'ожидает проверки'
+    fi
+  fi
+}
+
 quick_summary(){
-  local health policy dns awg_state hs oc pi router mode mode_label mode_badge transport
-  local now tz temp uptime load mem disk traffic
-  health="$(cat /run/awg-pbr/health.state 2>/dev/null || echo неизвестно)"
+  local health policy dns awg_state mihomo_state hs oc pi router mode mode_label mode_badge transport
+  local now tz temp uptime load mem disk traffic hotpool
+  health="$(cat /run/awg-pbr/health.state 2>/dev/null || echo unknown)"
   mode="$(operating_mode_id)"
   mode_label="$(operating_mode_label "$mode")"
   mode_badge="$(operating_mode_badge "$mode")"
@@ -371,27 +496,50 @@ quick_summary(){
     mihomo) transport="Mihomo" ;;
     unconfigured) transport="не настроен" ;;
   esac
-  case "$health" in
-    up) health="норма" ;;
-    down) health="сбой" ;;
-    unknown|неизвестно) health="н/д" ;;
-  esac
+  if [[ "$transport" == "не настроен" ]]; then
+    health="ожидает настройки"
+  else
+    case "$health" in
+      up) health="норма" ;;
+      down) health="ошибка соединения" ;;
+      unknown|неизвестно) health="не проверено" ;;
+    esac
+  fi
   if ip -4 rule show 2>/dev/null | grep -Eq '(^| )100:.*fwmark (0x100|256).*lookup (100|awgvpn)'; then
-    policy=АКТИВНА
+    policy="активна"
   elif [[ "$mode" == transit ]]; then
-    policy=ЗАКРЫТА
+    policy="блокировка (FAIL-CLOSED)"
   else
-    policy=DIRECT
+    policy="DIRECT (FAIL-OPEN)"
   fi
-  systemctl is-active --quiet dnsmasq.service && dns=OK || dns=FAIL
-  systemctl is-active --quiet awg-quick@awg0.service && awg_state=ВКЛ || awg_state=ВЫКЛ
-  hs="$(awg show awg0 latest-handshakes 2>/dev/null | awk '$2>m{m=$2}END{print m+0}')"
-  if [[ "$hs" -gt 0 ]]; then
-    hs="$(( $(date +%s) - hs ))s"
+  if systemctl is-active --quiet dnsmasq.service; then dns="работает"; else dns="не запущен"; fi
+  if ! command -v awg >/dev/null 2>&1; then
+    awg_state="не установлено"
+    hs="—"
+  elif [[ ! -s /etc/amnezia/amneziawg/awg0.conf ]]; then
+    awg_state="не настроено"
+    hs="—"
   else
-    hs=нет
+    if systemctl is-active --quiet awg-quick@awg0.service; then
+      awg_state="служба запущена"
+    else
+      awg_state="не запущен"
+    fi
+    hs="$(awg show awg0 latest-handshakes 2>/dev/null | awk '$2>m{m=$2}END{print m+0}')"
+    if [[ "$hs" -gt 0 ]]; then hs="$(( $(date +%s) - hs )) с"; else hs="нет"; fi
   fi
-  systemctl is-active --quiet awg-opencck-update.timer && oc=OK || oc=ВЫКЛ
+  if [[ ! -x /usr/local/bin/mihomo ]]; then
+    mihomo_state="не установлено"
+  elif [[ ! -s /etc/awg-pbr/transports/mihomo/node-name ]]; then
+    mihomo_state="не настроено"
+  elif systemctl is-active --quiet awg-mihomo.service; then
+    mihomo_state="служба запущена"
+  elif [[ "$transport" == AWG ]]; then
+    mihomo_state="резерв, не запущен"
+  else
+    mihomo_state="не запущен"
+  fi
+  systemctl is-active --quiet awg-opencck-update.timer && oc="автообновление включено" || oc="автообновление выключено"
   pi="${PI_IP:-?}"
   router="${ROUTER_IP:-?}"
   now="$(date '+%Y-%m-%d %H:%M:%S')"
@@ -402,9 +550,11 @@ quick_summary(){
   mem="$(memory_summary)"
   disk="$(disk_summary)"
   traffic="$("$AWG_TRAFFIC" status compact 2>/dev/null || echo 'Сегодня: н/д | Месяц: н/д')"
-  printf 'ВРЕМЯ: %s | ЧАСОВОЙ ПОЯС: %s\nСИСТЕМА: работает %s | CPU %s | Нагрузка %s\nПАМЯТЬ: %s | Диск /: %s\nРЕЖИМ: [%s] %s | Транспорт: %s\nVPN: состояние %-7s Политика %-7s DNS: %-4s | awg0: %-4s Рукопожатие: %-8s OpenCCK: %s\nТРАФИК: %s\nPi: %-15s Роутер: %s' \
+  hotpool="$(hot_pool_summary)"
+  printf 'ВРЕМЯ: %s | ПОЯС: %s\nСИСТЕМА: %s | CPU %s | Нагрузка %s\nПАМЯТЬ: %s | Диск /: %s\nРЕЖИМ: [%s] %s\nVPN: %s | Транспорт: %s\nПолитика: %s | DNS: %s\nAWG: %s | Рукопожатие: %s\nMihomo: %s | OpenCCK: %s\nГОРЯЧИЙ РЕЗЕРВ: %s\nТРАФИК: %s\nPi: %s | Роутер: %s' \
     "$now" "$tz" "$uptime" "$temp" "$load" "$mem" "$disk" \
-    "$mode_badge" "$mode_label" "$transport" "$health" "$policy" "$dns" "$awg_state" "$hs" "$oc" "$traffic" "$pi" "$router"
+    "$mode_badge" "$mode_label" "$health" "$transport" "$policy" "$dns" \
+    "$awg_state" "$hs" "$mihomo_state" "$oc" "$hotpool" "$traffic" "$pi" "$router"
 }
 
 status_screen(){
@@ -654,7 +804,12 @@ paste_awg_config(){
   if confirm "Установить AmneziaWG" \
     "Проверка файла .conf и ядра AWG пройдена.\n\nСекретные ключи в итоговом окне не отображаются.\nТекущий профиль будет сохранён для быстрого отката.\n\nУстановить проверенную конфигурацию?"; then
     title="Замена профиля"
-    capture "$AWG_ROUTE" config replace "$PASTE_TMP" --yes || true
+    if [[ "$("$AWG_TRANSPORT" get 2>/dev/null || echo unconfigured)" == unconfigured ]]; then
+      # First profile: activate only after the same guarded file validation.
+      capture "$AWG_FIRST_RUN" awg-file "$PASTE_TMP" || true
+    else
+      capture "$AWG_ROUTE" config replace "$PASTE_TMP" --yes || true
+    fi
   fi
 
   rm -f "$PASTE_TMP"
@@ -684,7 +839,11 @@ awg_config_menu(){
         [[ -n "$path" ]] || continue
         confirm "Установить AmneziaWG" "Проверить и установить конфигурацию из файла:\n$path\n\nТекущий профиль будет сохранён для быстрого отката." || continue
         title="Замена профиля"
-        capture "$AWG_ROUTE" config replace "$path" --yes || true
+        if [[ "$("$AWG_TRANSPORT" get 2>/dev/null || echo unconfigured)" == unconfigured ]]; then
+          capture "$AWG_FIRST_RUN" awg-file "$path" || true
+        else
+          capture "$AWG_ROUTE" config replace "$path" --yes || true
+        fi
         ;;
       3)
         if [[ ! -s "$previous" ]]; then
@@ -1077,14 +1236,12 @@ mihomo_node_menu(){
   [[ -n "$node_name" ]] || { msg "Mihomo" "Имя узла не задано."; return 0; }
 
   info_tmp="$(mktemp)"
-  if ! "$MIHOMO_CONFIGURE" node prepare "$node_name" >"$info_tmp" 2>&1; then
-    dialog --backtitle "$BACKTITLE" --title "Подготовка узла" --textbox "$info_tmp" 24 108
-    rm -f "$info_tmp"
+  title="Подготовка узла Mihomo"
+  if ! run_with_progress "$title" "$MIHOMO_CONFIGURE" node prepare "$node_name"; then
+    dialog --backtitle "$BACKTITLE" --title "$title — ошибка" --textbox "$TMP" 24 108
     return 0
   fi
-
-  dialog --backtitle "$BACKTITLE" --title "Подготовка узла" --textbox "$info_tmp" 24 108
-  rm -f "$info_tmp"
+  dialog --backtitle "$BACKTITLE" --title "$title — проверен" --textbox "$TMP" 24 108
 
   preview="$("$MIHOMO_NODE_POLICY" manual-selection preview "$node_name" 2>/dev/null || true)"
   fixed_chain="$(sed -n 's/^FIXED_CHAIN_NEW=//p' <<<"$preview" | head -n1)"
@@ -1128,7 +1285,7 @@ mihomo_candidate_require(){
   if mihomo_candidate_is_staged; then
     return 0
   fi
-  msg "Подготовленный профиль Mihomo" "Подготовленного профиля сейчас нет.\n\nПосле успешного применения временный candidate становится рабочим профилем и автоматически удаляется.\n\nДля фильтрации, поиска, статистики и выбора узлов текущего профиля используйте «Точка выхода / узел»."
+  msg "Подготовленный профиль Mihomo" "Подготовленный профиль отсутствует.\n\nПосле успешного применения подготовленные данные становятся рабочими и удаляются из временного хранилища.\n\nДля фильтрации, поиска, статистики и выбора узлов текущего профиля используйте «Точка выхода / узел»."
   return 1
 }
 
@@ -1136,7 +1293,7 @@ mihomo_open_candidate_after_update(){
   if mihomo_candidate_is_staged; then
     mihomo_candidate_menu
   else
-    msg "Обновление источника Mihomo" "Источник не изменился, поэтому новый подготовленный профиль не создавался. Текущий рабочий профиль и выбранный узел сохранены."
+    msg "Обновление источника Mihomo" "Новых данных в подписке нет: подготовленный профиль не создавался. Текущая подписка и выбранный узел сохранены."
   fi
 }
 
@@ -1152,13 +1309,12 @@ mihomo_candidate_menu(){
   [[ -n "$node_name" ]] || { msg "Mihomo" "Имя узла не задано."; return 0; }
 
   info_tmp="$(mktemp)"
-  if ! "$MIHOMO_CONFIGURE" provider candidate prepare "$node_name" >"$info_tmp" 2>&1; then
-    dialog --backtitle "$BACKTITLE" --title "Узел подготовленного профиля" --textbox "$info_tmp" 24 108
-    rm -f "$info_tmp"
+  title="Проверка узла подготовленного профиля"
+  if ! run_with_progress "$title" "$MIHOMO_CONFIGURE" provider candidate prepare "$node_name"; then
+    dialog --backtitle "$BACKTITLE" --title "$title — ошибка" --textbox "$TMP" 24 108
     return 0
   fi
-  dialog --backtitle "$BACKTITLE" --title "Узел подготовленного профиля" --textbox "$info_tmp" 24 108
-  rm -f "$info_tmp"
+  dialog --backtitle "$BACKTITLE" --title "$title — проверен" --textbox "$TMP" 24 108
 
   confirm "Применить подготовленный профиль?" "Текущий профиль и выбранный узел будут заменены только после успешного запуска и проверки работоспособности.\n\nIPv4 сервера будет выбран автоматически из данных подготовленного профиля — повторно вводить его не нужно.\n\nПроверка Mihomo может занять до ~30 секунд. Нерабочий узел будет автоматически отклонён с восстановлением прежней конфигурации; подготовленный профиль останется для повторной попытки." || return 0
 
@@ -1176,13 +1332,13 @@ mihomo_candidate_menu(){
       if confirm "Резервирование узлов Mihomo" "Настроить резервную цепочку узлов сейчас?\n\nОсновной узел уже выбран: $node_name\nПри отказе переход будет выполняться только слева направо по явно добавленным узлам."; then
         mihomo_node_chain_editor
       else
-        "$MIHOMO_NODE_POLICY" mode manual >/dev/null 2>&1 || true
+        "$MIHOMO_NODE_POLICY" mode auto >/dev/null 2>&1 || true
       fi
     elif [[ "$current" != mihomo ]]; then
       msg "Профиль Mihomo" "Новый профиль и узел применены. Активный транспорт не изменён; переключение выполняется через «VPN-маршрутизация → Активный транспорт»."
     fi
   else
-    msg "Подготовленный профиль Mihomo" "Профиль не применён: выбранный узел не прошёл финальный health-check или запуск Mihomo завершился ошибкой. Предыдущий рабочий профиль и активный транспорт сохранены/восстановлены; подготовленный профиль оставлен для повторной попытки."
+    msg "Подготовленный профиль Mihomo" "Профиль не применён: выбранный узел не прошёл финальную проверку работоспособности или запуск Mihomo завершился ошибкой. Предыдущий рабочий профиль и активный транспорт сохранены/восстановлены; подготовленный профиль оставлен для повторной попытки."
   fi
 }
 
@@ -1331,6 +1487,36 @@ mihomo_node_chain_editor(){
   done
 }
 
+# READY/legacy-AUTO strategy, distinct from manual/fixed node policy.
+mihomo_auto_strategy_menu(){
+  local choice
+  while true; do
+    choice="$(dialog --backtitle "$BACKTITLE" --title "Способ автоматического выбора" --item-help --menu \
+      "Требуется политика узлов AUTO. Активную ноду, транспорт и маршруты не меняем. Дополнительный service-gate, если настроен, сохраняется." 22 110 6 \
+      1 "Текущие настройки" "Показать READY, таймер Hot Pool и независимо настроенный service-gate." \
+      2 "Hot Pool READY" "Включить READY-приоритет и фоновый SHADOW таймер Hot Pool." \
+      3 "Обычный AUTO без Hot Pool" "Отключить READY и фоновый таймер, включая запуск после reboot." \
+      0 "Назад" "Не менять текущие настройки." 3>&1 1>&2 2>&3)" || return 0
+    case "$choice" in
+      1)
+        title="Способ выбора Mihomo"
+        capture "$MIHOMO_NODE_POLICY" auto-strategy status || true
+        ;;
+      2)
+        confirm "Hot Pool READY" "Включить фоновые проверки OpenAI/YouTube24 и READY-приоритет?\n\nТребуется политика узлов AUTO. Активную ноду/транспорт не меняем." || continue
+        title="Hot Pool READY"
+        capture "$MIHOMO_NODE_POLICY" auto-strategy ready || true
+        ;;
+      3)
+        confirm "Обычный AUTO" "Отключить READY-приоритет и таймер Hot Pool, включая запуск после перезагрузки?\n\nОстаётся выбор из проверенного сетевого пула текущей подписки. Настроенный service-gate сохраняется. Активный транспорт не меняем." || continue
+        title="Обычный AUTO"
+        capture "$MIHOMO_NODE_POLICY" auto-strategy classic || true
+        ;;
+      0) return 0 ;;
+    esac
+  done
+}
+
 mihomo_node_policy_menu(){
   local choice
   while true; do
@@ -1342,6 +1528,8 @@ mihomo_node_policy_menu(){
       3 "Редактировать цепочку FIXED" "Добавление, удаление и перестановка узлов в однонаправленной резервной цепочке." \
       4 "AUTO — пул узлов" "При отказе выбирает следующий работоспособный узел текущего протокола по свежести и задержке; неудачные временно исключаются. Фильтры задаются в выборе точки выхода." \
       5 "Выбрать / фильтровать живые узлы" "Открывает пул узлов, поиск и фильтры «Только Европа» / протокол без обязательной смены политики." \
+      6 "Восстановить резерв при AWG" "Однократная проверка и подбор рабочей ноды Mihomo, пока AWG обслуживает трафик. Не переключает транспорт." \
+      7 "Способ AUTO: Hot Pool / обычный" "Включить или выключить фоновый Hot Pool и READY-приоритет, оставить AUTO из подписки." \
       0 "Назад" "Не менять политику узлов." 3>&1 1>&2 2>&3)" || return 0
     case "$choice" in
       1)
@@ -1355,16 +1543,40 @@ mihomo_node_policy_menu(){
         ;;
       3) mihomo_node_chain_editor ;;
       4)
-        confirm "AUTO — пул узлов" "Включить автоматическую смену узлов Mihomo?\n\nПри повторном отказе текущего узла будет выбран следующий работоспособный узел из проверенного пула. Если включены фильтры региона или протокола, AUTO не выйдет за их пределы. Если подходящих узлов не останется, будет разрешён резервный переход транспорта на AmneziaWG." || continue
+        confirm "AUTO — пул узлов" "Включить автоматическую смену узлов Mihomo?\n\nПри повторном отказе текущего узла будет выбран следующий работоспособный узел из проверенного пула. Если включены фильтры региона или протокола, AUTO не выйдет за их пределы. Если подходящих узлов не останется, транспорт может перейти на AWG, только если профиль AWG настроен и работоспособен. В TRANSIT при отсутствии обоих транспортов трафик блокируется." || continue
         title="Политика узлов Mihomo → AUTO"
         capture "$MIHOMO_NODE_POLICY" mode auto || true
         ;;
       5)
         mihomo_node_menu
         ;;
+      6)
+        confirm "Восстановление резерва Mihomo" "Разрешить однократную подготовку резервной ноды?\n\nТребуется активный и работоспособный AWG с сохранёнными маршрутами. Ноды проходят действующие проверки READY/HTTPS/YouTube и контроль реального TUN. При отсутствии подходящей ноды AWG останется активным, резерв — не подтверждённым. В процессе возможен перезапуск только службы Mihomo." || continue
+        title="Проверка и восстановление резерва Mihomo"
+        capture "$MIHOMO_NODE_POLICY" standby-repair || true
+        ;;
+      7) mihomo_auto_strategy_menu ;;
       0) return 0 ;;
     esac
   done
+}
+
+# New provider onboarding is unattended after the user provides the URL.
+# Candidate commit is transactional and verifies the isolated backend first.
+# When no eligible candidate is found, keep the staged source and offer the
+# existing manual recovery UI instead of silently selecting an untested node.
+mihomo_candidate_auto_apply(){
+  local behavior="${1:-secondary}" node current
+  node="$("$MIHOMO_POOL" best candidate 2>/dev/null || true)"
+  [[ -n "$node" ]] || return 1
+  title="Автоматический выбор узла Mihomo"
+  capture "$MIHOMO_CONFIGURE" provider candidate commit-auto "$node" || return 1
+  "$MIHOMO_NODE_POLICY" mode auto >/dev/null || return 1
+  current="$("$AWG_TRANSPORT" get 2>/dev/null || echo unconfigured)"
+  if [[ "$current" == unconfigured ]]; then
+    capture "$AWG_TRANSPORT" select mihomo || return 1
+  fi
+  msg "Mihomo готов" "Подписка применена; выбран доступный узел, политика узлов AUTO. Основной работающий транспорт не переключается ради скорости. Hot Pool и резервирование продолжают работать автоматически."
 }
 
 mihomo_initial_setup_flow(){
@@ -1393,7 +1605,8 @@ mihomo_initial_setup_flow(){
   if capture "$MIHOMO_CONFIGURE" init "$init_tmp"; then
     rm -f "$init_tmp"
     init_tmp=""
-    if confirm "Профиль Mihomo подготовлен" "Источник успешно загружен и проверен. Перейти к выбору основного узла и применению профиля?"; then
+    if ! mihomo_candidate_auto_apply "$behavior"; then
+      msg "Mihomo: автоматический выбор" "Автоматическое применение не удалось. Подготовленная подписка сохранена; можно выбрать работоспособный узел вручную."
       mihomo_candidate_menu "$behavior"
     fi
   else
@@ -1402,13 +1615,29 @@ mihomo_initial_setup_flow(){
   fi
 }
 
+first_transport_setup(){
+  local choice
+  choice="$(dialog --backtitle "$BACKTITLE" --title "Первичная настройка VPN" --item-help --menu \
+    "Движки VPN установлены отдельно от профилей. Выберите первый транспорт. Настройку можно отложить без ошибки; текущие сетевые правила останутся безопасными." 23 106 7 \
+    1 "Настроить AmneziaWG" "Вставить .conf либо выбрать файл на Pi. Проверка профиля предшествует включению." \
+    2 "Настроить Mihomo" "Ввести ссылку подписки, проверить ноды и выбрать рабочий профиль." \
+    3 "Настроить позже" "Оставить VPN без профиля. SELECTIVE использует DIRECT, TRANSIT блокирует транзит." \
+    0 "Назад" "Ничего не менять." 3>&1 1>&2 2>&3)" || return 0
+  case "$choice" in
+    1) awg_config_menu ;;
+    2) mihomo_initial_setup_flow normal ;;
+    3) msg "Первичная настройка" "VPN пока не настроен. Это не ошибка установки.\n\nПрофиль можно добавить позже в разделе «VPN-маршрутизация». В TRANSIT до настройки действует блокировка транзитного трафика (FAIL-CLOSED)." ;;
+    0) return 0 ;;
+  esac
+}
+
 secondary_transport_setup(){
   local current mihomo_status
 
   current="$("$AWG_TRANSPORT" get 2>/dev/null || echo unconfigured)"
   case "$current" in
     unconfigured)
-      run_interactive "Первичная настройка транспорта" "$AWG_FIRST_RUN" wizard
+      first_transport_setup
       ;;
     awg)
       mihomo_status="$("$MIHOMO_CONFIGURE" status 2>/dev/null || true)"
@@ -1648,7 +1877,7 @@ mihomo_menu(){
       1 "Состояние Mihomo" "Показывает текущий профиль, выбранный узел, адрес сервера, состояние службы и последний канал загрузки без вывода секретов." \
       2 "Подписка / источник" "Заменить URL, обновить через AUTO или импортировать профиль/подписку из файла либо текста." \
       3 "Точка выхода / узел" "Показать узлы текущего источника и безопасно выбрать рабочий узел Mihomo." \
-      4 "Резервирование узлов Mihomo" "MANUAL, FIXED или AUTO по проверенному пулу узлов. AUTO может ограничиваться только европейскими точками выхода и при исчерпании разрешает резервный переход транспорта." \
+      4 "Резервирование узлов Mihomo" "MANUAL, FIXED или AUTO по проверенному пулу. При исчерпании нод возможно резервирование на AWG, если он настроен и исправен." \
       5 "Расширенные / восстановление" "Ручной канал загрузки, формат подписки, подготовленный профиль и локальное восстановление Mihomo." \
       0 "Назад" "Вернуться в меню VPN без изменений." 3>&1 1>&2 2>&3)" || return 0
 
@@ -1670,7 +1899,7 @@ selection_policy_menu(){
   local choice
   while true; do
     choice="$(dialog --backtitle "$BACKTITLE" --title "Политика выбора транспорта" --item-help --menu \
-      "MANUAL — безопасный режим по умолчанию. FIXED и AUTO переключают транспорт только после повторных ошибок проверки состояния. Рабочий транспорт ради скорости не меняется; узел и страна Mihomo автоматически не переключаются." \
+      "MANUAL отключает автоматическую смену транспорта. FIXED и AUTO переключают транспорт после повторного отказа, а не ради скорости. Смена узлов Mihomo управляется отдельной политикой. Страна сама по себе не определяет переключение." \
       24 110 9 \
       1 "Показать политику" "Показывает текущий режим, активный транспорт, основной и резервные транспорты, а также порядок AUTO." \
       2 "MANUAL" "Полностью отключает автоматическое переключение транспорта. Ручной выбор всегда имеет приоритет." \
@@ -1700,12 +1929,12 @@ selection_policy_menu(){
         capture "$AWG_SELECTION" mode fixed mihomo awg || true
         ;;
       5)
-        confirm "AUTO" "Разрешить AUTO в порядке AWG → Mihomo? Рабочий транспорт не меняется ради производительности; узел и страна Mihomo не переключаются автоматически." || continue
+        confirm "AUTO" "Разрешить AUTO: AWG → Mihomo? Исправный транспорт не меняется ради скорости. Смена узлов Mihomo управляется отдельно в «Резервирование узлов Mihomo»." || continue
         title="Политика → AUTO AWG→Mihomo"
         capture "$AWG_SELECTION" mode auto awg mihomo || true
         ;;
       6)
-        confirm "AUTO" "Разрешить AUTO в порядке Mihomo → AWG? Рабочий транспорт не меняется ради производительности; узел и страна Mihomo не переключаются автоматически." || continue
+        confirm "AUTO" "Разрешить AUTO: Mihomo → AWG? Резерв AWG используется только при настроенном рабочем профиле. Узлы Mihomo переключаются по собственной политике." || continue
         title="Политика → AUTO Mihomo→AWG"
         capture "$AWG_SELECTION" mode auto mihomo awg || true
         ;;
@@ -1863,11 +2092,12 @@ update_menu(){
       2)
         confirm "Обновление AWG Pi Gateway" "Проверить новый релиз AWG Pi Gateway и установить его при наличии?" || continue
         title="Обновление AWG Pi Gateway"
-        capture "$AWG_UPDATE" --yes gateway || true
-        _old_menu_self="$0"
-        unset AWG_MENU_REEXEC
-        rm -f "$_old_menu_self" 2>/dev/null || true
-        exec /usr/local/sbin/awg-menu
+        if capture "$AWG_UPDATE" --yes gateway; then
+          _old_menu_self="$0"
+          unset AWG_MENU_REEXEC
+          rm -f "$_old_menu_self" 2>/dev/null || true
+          exec /usr/local/sbin/awg-menu
+        fi
         ;;
       3)
         confirm "Обновление AmneziaWG" "Проверить и обновить AmneziaWG при наличии новой поддерживаемой стабильной версии?" || continue
@@ -1882,11 +2112,12 @@ update_menu(){
       5)
         confirm "Полное обновление" "Проверить AWG Pi Gateway, AmneziaWG и поддерживаемую версию Mihomo?" || continue
         title="Полное обновление"
-        capture "$AWG_UPDATE" --yes all || true
-        _old_menu_self="$0"
-        unset AWG_MENU_REEXEC
-        rm -f "$_old_menu_self" 2>/dev/null || true
-        exec /usr/local/sbin/awg-menu
+        if capture "$AWG_UPDATE" --yes all; then
+          _old_menu_self="$0"
+          unset AWG_MENU_REEXEC
+          rm -f "$_old_menu_self" 2>/dev/null || true
+          exec /usr/local/sbin/awg-menu
+        fi
         ;;
       0) return 0 ;;
     esac

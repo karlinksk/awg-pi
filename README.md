@@ -35,6 +35,8 @@ an explicit one-way fallback chain (for example Finland -> Estonia -> Latvia ->
 Sweden). Node failover never infers countries or wraps back to an earlier node.
 Transport FIXED/AUTO policy is independent from the Mihomo node policy.
 
+Fresh Debian installations set the system timezone to **Asia/Novosibirsk** by default (UTC+7), regardless of the OS installer's prior timezone selection. Pass `AWG_PI_TIMEZONE=Etc/UTC` (or another valid IANA zone) to override it on a clean install. **Upgrades never change the existing system timezone.** The system timezone remains editable from the TUI.
+
 The SSH TUI also includes a system dashboard (clock/timezone, uptime, CPU
 temperature/load, RAM and disk), timezone management, unified VPN
 destination/OpenCCK entry, and low-write today/month transport traffic
@@ -49,6 +51,8 @@ complete. Do not treat develop/v1.3.0 as a stable installation source without an
 explicit ref and rollback plan.
 
 Release/hardware gate: [TESTING-v1.3.0.md](docs/TESTING-v1.3.0.md)
+
+Maintenance rule: [Installer-first change policy](docs/INSTALLER-CHANGE-POLICY.md) — every confirmed test-stand fix must be included in the installer/upgrade source, regression tests and documentation before it is considered closed.
 
 Real Raspberry Pi validation now includes live VLESS, Trojan, Hysteria2,
 Shadowsocks and VMess transports, plus all-protocol AUTO failover across protocol

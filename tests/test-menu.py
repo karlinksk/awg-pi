@@ -102,7 +102,8 @@ assert 'config-paste-result.XXXXXX.conf' in menu
 assert 'mihomo-paste-result.XXXXXX' in menu
 
 # Every dialog menu has item help.
-assert menu.count("--menu") == menu.count("--item-help --menu")
+menu_calls = [line for line in menu.splitlines() if "dialog " in line and "--menu" in line]
+assert len(menu_calls) == menu.count("--item-help --menu")
 
 # Main menu: compact and Russian-first.
 main_start = menu.index('while true; do\n  refresh_backtitle', menu.index('system_menu(){'))
@@ -139,7 +140,7 @@ assert 'Текущий URL подставлен в поле, если он со�
 assert '"$MIHOMO_CONFIGURE" provider stage-url-file "$url_tmp"' in menu
 assert '"$MIHOMO_CONFIGURE" provider stage-file "$path" "$source_mode"' in menu
 assert '"$MIHOMO_CONFIGURE" provider candidate commit-auto "$node_name"' in menu
-assert 'не прошёл финальный health-check' in menu
+assert 'не прошёл финальную проверку работоспособности' in menu
 assert 'provider-url set-file "$url_tmp"' not in menu
 assert '"$MIHOMO_CONFIGURE" provider update auto' in menu
 assert '4 "Протокол пула узлов"' in menu
@@ -151,8 +152,12 @@ assert 'Рабочий профиль не меняется до выбора у
 assert 'mktemp /run/awg-pbr/mihomo-paste.XXXXXX' in menu
 assert '"$MIHOMO_CONFIGURE" provider stage-file "$PASTE_TMP" "$source_mode"' in menu
 
-# Manual transport switching exists only in the dedicated VPN-routing menu.
-assert menu.count('"$AWG_TRANSPORT" select mihomo') == 1
+# Manual switching stays in the VPN menu; a clean first-time Mihomo setup
+# may also activate its backend automatically when no transport exists.
+assert menu.count('"$AWG_TRANSPORT" select mihomo') == 2
+assert 'mihomo_candidate_auto_apply(){' in menu
+assert '"$MIHOMO_POOL" best candidate' in menu
+assert 'mihomo_candidate_auto_apply "$behavior"' in menu
 assert menu.count('"$AWG_TRANSPORT" select awg') == 1
 assert 'active_transport_menu' in menu
 assert 'mihomo_active_transport_menu' not in menu
@@ -160,7 +165,7 @@ assert 'mihomo_active_transport_menu' not in menu
 # Mihomo node selection and DIRECT invariant.
 assert '"$MIHOMO_CONFIGURE" node select-auto "$node_name"' in menu
 assert '--direct-confirmed' not in menu
-assert '"$MIHOMO_CONFIGURE" node prepare "$node_name"' in menu
+assert 'run_with_progress "$title" "$MIHOMO_CONFIGURE" node prepare "$node_name"' in menu
 assert 'Отдельное правило MikroTik для этого IP не требуется' in menu
 assert 'постоянное DIRECT-исключение на уровне шлюза' in menu
 assert 'Введите один из показанных выше IPv4-адресов сервера:' not in menu
@@ -168,7 +173,9 @@ assert 'повторно вводить его не нужно' in menu
 
 # Secondary-transport onboarding is state-aware; first-run is not called directly
 # by the normal VPN menus.
-assert '"$AWG_FIRST_RUN" wizard' in menu
+assert 'first_transport_setup(){' in menu
+assert '"$AWG_FIRST_RUN" awg-file "$path"' in menu
+assert '"$AWG_FIRST_RUN" awg-file "$PASTE_TMP"' in menu
 assert 'secondary_transport_setup' in menu
 assert 'rollback_state="доступен"' in menu
 assert 'rollback_state="нет предыдущего профиля"' in menu
@@ -194,7 +201,7 @@ for command in (
     '"$AWG_SELECTION" mode auto mihomo awg',
 ):
     assert command in menu
-assert 'узел и страна Mihomo не переключаются автоматически' in menu
+assert 'Смена узлов Mihomo управляется отдельной политикой' in menu
 
 # Mihomo exact-node failover editor.
 assert 'MIHOMO_NODE_POLICY=/usr/local/sbin/awg-mihomo-node-policy' in menu
@@ -241,10 +248,10 @@ assert 'if ! mihomo_pool_pick candidate' in menu
 assert 'mihomo_candidate_is_staged(){' in menu
 assert "grep -Fqx 'Provider candidate: staged'" in menu
 assert 'mihomo_candidate_require || return 0' in menu
-assert 'Подготовленного профиля сейчас нет.' in menu
+assert 'Подготовленный профиль отсутствует.' in menu
 assert 'Для фильтрации, поиска, статистики и выбора узлов текущего профиля используйте «Точка выхода / узел».' in menu
 assert 'mihomo_open_candidate_after_update' in menu
-assert 'Источник не изменился, поэтому новый подготовленный профиль не создавался.' in menu
+assert 'Новых данных в подписке нет: подготовленный профиль не создавался.' in menu
 assert 'candidate_label="Подготовленный профиль [ЕСТЬ]"' in menu
 assert 'candidate_label="Подготовленный профиль [НЕТ]"' in menu
 assert 'Пул: $target_ru' in menu
@@ -395,7 +402,7 @@ mode_change_start = menu.index('capture_mode_change(){')
 mode_change_end = menu.index('localize_status_file(){', mode_change_start)
 mode_change_block = menu[mode_change_start:mode_change_end]
 assert 'refresh_backtitle' in mode_change_block
-assert 'dialog --backtitle "$BACKTITLE"' in mode_change_block
+assert 'show_operation_result "$rc" "$heading"' in mode_change_block
 
 # Mode indicators remain explicit technical IDs, but labels/help are Russian.
 for needle in (

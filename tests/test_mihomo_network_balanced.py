@@ -90,7 +90,10 @@ class NetworkCandidatePolicyTests(unittest.TestCase):
         for block in (fixed,auto):
             self.assertLess(block.index("service_candidate_allowed"),block.index("node select-auto"))
         self.assertIn('attempts < 3',fixed)
-        self.assertIn('attempts < 3',auto)
+        self.assertIn('attempts < max_checks',auto)
+        self.assertIn('local max_checks=3',auto)
+        self.assertIn('max_checks=6',auto)
+        self.assertIn('from_ready == 0',auto)
 
     def exercise(self,probe):
         src=POLICY.read_text()

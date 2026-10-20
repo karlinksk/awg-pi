@@ -81,8 +81,11 @@ class QuickServiceTests(unittest.TestCase):
         source=NODE.read_text()
         fixed=source.split("failover_fixed(){",1)[1].split("failover_auto(){",1)[0]
         auto=source.split("failover_auto(){",1)[1].split("failover(){",1)[0]
+        self.assertIn("attempts < 3",fixed)
+        self.assertIn("attempts < max_checks",auto)
+        self.assertIn("local max_checks=3",auto)
+        self.assertIn("max_checks=6",auto)
         for section in (fixed,auto):
-            self.assertIn("attempts < 3",section)
             self.assertIn("service_candidate_allowed",section)
 
 if __name__=="__main__":
