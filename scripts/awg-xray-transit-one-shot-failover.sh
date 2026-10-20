@@ -292,7 +292,7 @@ if [[ "$second" == AWG ]];then
   status="$(/usr/local/sbin/awg-transit-routing status)"
   grep -Fqx 'Transit policy rule: INACTIVE' <<<"$status" || die FAILCLOSED_RULE_STILL_ACTIVE
   grep -Eq '^Transit guard: (SAFE|LOCKDOWN)$' <<<"$status" || die FAILCLOSED_GUARD_MISSING
-  echo TRANSIT_FAIL_CLOSED_GUARD=PASS
+  echo TRANSIT_FAIL_CLOSED_GUARD_STATE=PASS_NOT_PACKET_TEST
   failclosed_checked=1
   /usr/local/sbin/awg-transit-routing apply || die TRANSIT_REARM_FAILED
 fi
@@ -311,6 +311,7 @@ if [[ "$first" != XRAY_TUN || "$second" != AWG || "$failclosed_checked" != 1 ]];
   echo 'TRANSIT_XRAY_AUTO_FAILOVER=NOT_VERIFIED'
   exit 1
 fi
-echo 'TRANSIT_XRAY_AUTO_FAILOVER=PASS'
+echo 'TRANSIT_XRAY_AUTO_FAILOVER=PASS_PI_TUN_AND_GUARD_ONLY'
+echo 'TRANSIT_LAN_PACKET_FAILCLOSED=NOT_TESTED'
 echo "REPORT_DIR=$dir"
 echo 'RESTORE_ORIGINAL_MIHOMO_NODE=FOLLOWUP'
