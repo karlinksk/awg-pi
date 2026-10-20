@@ -91,6 +91,7 @@ class DCLimitedAdminTests(unittest.TestCase):
         self.assertIn("policy_text_v1", src)
         self.assertIn("POLICY_CHANGED_DURING_UPGRADE", src)
         self.assertIn("known_policy || fail FOREIGN_POLICY_REFUSED", src)
+        self.assertIn("STOP_DC_AGENT_BEFORE_REVOKING_TIMESTAMP_GUARD", src)
 
     def test_real_sudoers_policy_syntax(self):
         import os
