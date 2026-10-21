@@ -45,7 +45,7 @@ POLICY_FILE = Path(os.environ.get("MIHOMO_POOL_POLICY_FILE", "/etc/awg-pbr/trans
 COOLDOWN_FILE = Path(os.environ.get("MIHOMO_POOL_COOLDOWN_FILE", str(POOL_DIR / "cooldown.json")))
 HEALTH_URL = os.environ.get("MIHOMO_POOL_HEALTH_URL", "https://www.gstatic.com/generate_204")
 GEO_URL = os.environ.get("MIHOMO_POOL_GEO_URL", "https://www.cloudflare.com/cdn-cgi/trace")
-DELAY_TIMEOUT_MS = int(os.environ.get("MIHOMO_POOL_DELAY_TIMEOUT_MS", "4500"))
+DELAY_TIMEOUT_MS = int(os.environ.get("MIHOMO_POOL_DELAY_TIMEOUT_MS", "7000"))
 WORKERS_OVERRIDE = os.environ.get("MIHOMO_POOL_WORKERS")
 READY_TIMEOUT = max(1.0, float(os.environ.get("MIHOMO_POOL_READY_TIMEOUT", "15")))
 COOLDOWN_SECONDS = int(os.environ.get("MIHOMO_POOL_COOLDOWN_SECONDS", "900"))
@@ -78,12 +78,14 @@ def effective_worker_count(node_count: int, override: str | None = None) -> int:
     if selected is not None:
         return max(1, min(64, int(selected)))
     if node_count >= 1000:
-        return 64
-    if node_count >= 500:
         return 32
-    if node_count >= 200:
+    if node_count >= 500:
         return 16
-    return 8
+    if node_count >= 200:
+        return 8
+    if node_count > 20:
+        return 4
+    return 3
 
 
 def target_paths(target: str) -> tuple[Path, Path]:
@@ -359,6 +361,18 @@ def wait_probe_inventory(proc: subprocess.Popen, port: int, expected_names: list
     die(f"Isolated Mihomo probe inventory is unavailable: {detail}", 1)
 
 
+def uses_xray_sidecar(raw: object) -> bool:
+    """Profiles assigned to Xray must never receive a Mihomo FAIL probe."""
+    if not isinstance(raw,dict) or raw.get("type")!="vless" or raw.get("tls") is not True:
+        return False
+    if raw.get("network") not in ("xhttp","grpc"):
+        return False
+    if isinstance(raw.get("reality-opts"),dict):
+        return True
+    return (raw.get("network")=="grpc" and "reality-opts" not in raw
+            and raw.get("skip-cert-verify") is not True)
+
+
 def make_probe_config(raw_nodes: list[dict], mixed_port: int, controller_port: int) -> tuple[dict, list[dict]]:
     seen_names: dict[str, int] = {}
     clean: list[dict] = []
@@ -374,6 +388,12 @@ def make_probe_config(raw_nodes: list[dict], mixed_port: int, controller_port: i
     probe_names: list[str] = []
     for item in clean:
         if not item.get("valid"):
+            continue
+        if uses_xray_sidecar(item["raw"]):
+            item["delegated_to_xray"]=True
+            item["healthy"]=None
+            item["delay_ms"]=None
+            item["error"]=""
             continue
         probe = copy.deepcopy(item["raw"])
         probe_name = f"AWG-PROBE-{item['index']:06d}"
@@ -489,6 +509,26 @@ def scan(target: str, geo: bool) -> dict:
     if not raw_nodes:
         die(f"Mihomo provider has no nodes for protocol: {protocol_filter}", 1)
 
+    if all(uses_xray_sidecar(node) for node in raw_nodes):
+        # An Xray-only subscription is valid: do not feed unsupported
+        # VLESS transports into temporary Mihomo or manufacture failures.
+        now=int(time.time())
+        rows=[]
+        for ix,node in enumerate(raw_nodes,1):
+            meta=clean_node(node,ix)
+            rows.append({"index":ix,"name":meta.get("name",f"(invalid #{ix})"),
+                         "type":meta.get("type","invalid"),"server":meta.get("server",""),
+                         "port":meta.get("port",0),"engine":"XRAY","healthy":None,
+                         "delay_ms":None,"egress_ip":"","country_code":"",
+                         "europe":False,"geo_checked":False,"error":""})
+        payload={"version":2,"target":target,"provider_sha256":sha256_file(provider),
+                 "scanned_at":now,"geo_enriched":False,
+                 "protocol_filter":protocol_filter,"source_total":source_total,
+                 "total":len(rows),"healthy":0,"europe":0,"nodes":rows}
+        atomic_json(pool_path,payload)
+        print(f"MIHOMO_POOL_XRAY_ONLY={len(rows)}")
+        return payload
+
     mixed_port = choose_free_port()
     controller_port = choose_free_port()
     while controller_port == mixed_port:
@@ -511,7 +551,8 @@ def scan(target: str, geo: bool) -> dict:
         )
         try:
             wait_controller(proc, controller_port)
-            probeable = [item for item in nodes if item.get("valid")]
+            probeable = [item for item in nodes
+                         if item.get("valid") and not item.get("delegated_to_xray")]
             loaded = wait_probe_inventory(
                 proc,
                 controller_port,
@@ -545,6 +586,24 @@ def scan(target: str, geo: bool) -> dict:
                     if completed == 1 or completed % 25 == 0 or completed == len(probeable):
                         print(f"MIHOMO_POOL_HEALTH_PROGRESS={completed}/{len(probeable)}", flush=True)
 
+            # An isolated timeout is not a confirmed dead exit. Re-test
+            # only the failed candidates after a short shared delay rather
+            # than blocking the pool for 15 seconds per node.
+            failed=[item for item in ready_probeable if item.get("healthy") is False]
+            if failed:
+                print(f"MIHOMO_POOL_RECHECK_FAILED_COUNT={len(failed)}",flush=True)
+                time.sleep(15)
+                with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as retry_executor:
+                    retry_futures={retry_executor.submit(probe_delay,controller_port,item):item for item in failed}
+                    for future in concurrent.futures.as_completed(retry_futures):
+                        item=retry_futures[future]
+                        ok,delay,error=future.result()
+                        if ok:
+                            item["healthy"]=True
+                            item["delay_ms"]=delay
+                            item["error"]=""
+                        else:
+                            item["error"]="confirmed-"+str(error)[:50]
             for item in nodes:
                 if not item.get("valid"):
                     item["healthy"] = False
@@ -601,7 +660,9 @@ def scan(target: str, geo: bool) -> dict:
             "server": item["server"],
             "port": item["port"],
             "duplicate_name": bool(item.get("duplicate_name")),
-            "healthy": bool(item.get("healthy")),
+            "healthy": (None if item.get("delegated_to_xray")
+                        else bool(item.get("healthy"))),
+            "engine": ("XRAY" if item.get("delegated_to_xray") else "MIHOMO"),
             "delay_ms": item.get("delay_ms"),
             "egress_ip": item.get("egress_ip", ""),
             "country_code": item.get("country_code", ""),
@@ -630,6 +691,10 @@ def scan(target: str, geo: bool) -> dict:
     print(f"MIHOMO_POOL_TOTAL={payload['total']}")
     print(f"MIHOMO_POOL_HEALTHY={payload['healthy']}")
     print(f"MIHOMO_POOL_EUROPE={payload['europe']}")
+    if target=="live":
+        # Latest completed scan is UI evidence, including all-dead scans.
+        # Keep the last-known-good AUTO recovery pool untouched.
+        atomic_json(pool_path.with_name("live-lastscan.json"),payload)
     persist_healthy_pool(pool_path, payload)
     print(f"MIHOMO_POOL_FILE={pool_path}")
     return payload
