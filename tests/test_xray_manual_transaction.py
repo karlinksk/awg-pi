@@ -149,6 +149,49 @@ class ManualSwitchContract(unittest.TestCase):
             self.assertEqual(current.read_bytes(),b"XrayNode\n")
             self.assertIn(b"AWG_XRAY_MANUAL=1",boot.read_bytes())
 
+    def test_local_xray_waits_for_listener_and_tries_https_twice(self):
+        fake_socket=mock.MagicMock()
+        with mock.patch.object(mod,"unit_active",return_value=True), \
+             mock.patch.object(mod.socket,"create_connection",return_value=fake_socket), \
+             mock.patch.object(mod,"https_ok",side_effect=[False,True]) as https, \
+             mock.patch.object(mod.time,"sleep"):
+            mod.prove_local_xray()
+        self.assertEqual(https.call_count,2)
+        self.assertEqual(fake_socket.__enter__.call_count,1)
+
+    def test_local_xray_reports_service_inactive(self):
+        with mock.patch.object(mod,"unit_active",return_value=False), \
+             mock.patch.object(mod.time,"monotonic",side_effect=[0,11]), \
+             mock.patch.object(mod.time,"sleep"):
+            with self.assertRaisesRegex(RuntimeError,"XRAY_SERVICE_NOT_ACTIVE"):
+                mod.prove_local_xray()
+
+    def test_local_xray_reports_missing_fixed_socks_listener(self):
+        with mock.patch.object(mod,"unit_active",return_value=True), \
+             mock.patch.object(mod.socket,"create_connection",side_effect=OSError("unavailable")), \
+             mock.patch.object(mod.time,"monotonic",side_effect=[0,11]), \
+             mock.patch.object(mod.time,"sleep"):
+            with self.assertRaisesRegex(RuntimeError,"XRAY_SOCKS_PORT_NOT_LISTENING"):
+                mod.prove_local_xray()
+
+    def test_local_xray_reports_https_failure_before_selector_change(self):
+        fake_socket=mock.MagicMock()
+        with mock.patch.object(mod,"unit_active",return_value=True), \
+             mock.patch.object(mod.socket,"create_connection",return_value=fake_socket), \
+             mock.patch.object(mod,"https_ok",return_value=False), \
+             mock.patch.object(mod.time,"sleep"):
+            with self.assertRaisesRegex(RuntimeError,"XRAY_SOCKS_HTTPS_NOT_VERIFIED"):
+                mod.prove_local_xray()
+
+    def test_local_xray_reports_process_exit_during_https(self):
+        fake_socket=mock.MagicMock()
+        with mock.patch.object(mod,"unit_active",side_effect=[True,True,False]), \
+             mock.patch.object(mod.socket,"create_connection",return_value=fake_socket), \
+             mock.patch.object(mod,"https_ok",return_value=False), \
+             mock.patch.object(mod.time,"sleep"):
+            with self.assertRaisesRegex(RuntimeError,"XRAY_SERVICE_EXITED_DURING_HTTPS"):
+                mod.prove_local_xray()
+
     def test_prearm_error_never_stages_candidate(self):
         with tempfile.TemporaryDirectory() as d:
             p=Path(d)
