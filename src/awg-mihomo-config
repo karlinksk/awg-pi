@@ -84,6 +84,7 @@ done
 _provider_path_yaml="$(yaml_sq "$MIHOMO_PROVIDER_FILE")"
 _node_filter_yaml="$(yaml_sq "$MIHOMO_NODE_FILTER")"
 _health_url_yaml="$(yaml_sq "$MIHOMO_PROVIDER_HEALTH_URL")"
+_xray_current=""
 case "$MIHOMO_XRAY_VLESS_BRIDGE" in
   0) _bridge_ready=0 ;;
   auto)
@@ -103,6 +104,7 @@ case "$MIHOMO_XRAY_VLESS_BRIDGE" in
       exit 2
     }
     _bridge_ready=1
+    _xray_current="AWG-XRAY-VLESS-LOCAL"
     ;;
   *) echo "MIHOMO_XRAY_VLESS_BRIDGE must be 0, 1 or auto" >&2; exit 2 ;;
 esac
