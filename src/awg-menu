@@ -1526,6 +1526,13 @@ mihomo_node_menu(){
   node_name="$MIHOMO_POOL_PICKED_NODE"
   [[ -n "$node_name" ]] || { msg "Выбор узла" "Имя узла не задано."; return 0; }
 
+  # Do not begin a manual Mihomo/Xray node transaction while AUTO is on AWG.
+  # The current AWG is intentionally sticky; only the operator may restore Mihomo.
+  if [[ "$(cat /etc/awg-pbr/transport 2>/dev/null)" != mihomo ]]; then
+    msg "Ручной выбор ноды" "Сейчас активен не Mihomo, а другой VPN-транспорт (например, AWG). Сначала вручную выберите транспорт Mihomo в меню VPN, затем повторите выбор ноды. Действующий VPN не изменён."
+    return 0
+  fi
+
   resolver="$("$MIHOMO_UNIFIED" resolve "$node_name" 2>/dev/null)" || {
     msg "Выбор узла" "Профиль изменился или имя неоднозначно. Обновите проверку; переключения не было."
     return 0
