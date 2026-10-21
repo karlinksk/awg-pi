@@ -107,20 +107,21 @@ quick_summary
         self.assertLessEqual(int(args[at + 2]), 22)
         self.assertLessEqual(int(args[at + 3]), 78)
         self.assertLessEqual(int(args[at + 4]), 6)
-        self.assertGreaterEqual(int(args[at + 4]), 3)
+        # Synthetic test has one menu item; no need for fake spacer rows.
+        self.assertEqual(int(args[at + 4]), 1)
 
     def test_menu_fits_real_71_by_33_ssh(self):
         rc, args = self.run_dialog(33, 71, "Выберите узел.")
         self.assertEqual(rc, 0)
         at = args.index("--menu")
-        self.assertEqual(args[at + 2:at + 4], ["31", "69"])
-        self.assertEqual(args[at + 4], "14")
+        self.assertEqual(args[at + 2:at + 4], ["12", "69"])
+        self.assertEqual(args[at + 4], "1")
 
-    def test_full_size_dialog_is_not_shrunk(self):
+    def test_sparse_menu_centers_compact_dialog(self):
         rc, args = self.run_dialog(40, 140, "Выберите действие.")
         self.assertEqual(rc, 0)
         at = args.index("--menu")
-        self.assertEqual(args[at + 2:at + 5], ["31", "116", "14"])
+        self.assertEqual(args[at + 2:at + 5], ["12", "116", "1"])
 
     def test_too_small_terminal_is_rejected_without_running_dialog(self):
         rc, args = self.run_dialog(18, 64, "Введите настройку.")

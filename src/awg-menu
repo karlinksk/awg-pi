@@ -157,6 +157,7 @@ awg_dialog_breadcrumb_title(){
 dialog(){
   local -a args=("$@")
   local rows cols i hi wi li prompt_lines available
+  local line line_width line_rows item_fields item_count remaining desired visible has_help
   # A dialog --stdout form returns values via fd1 pipe, painting on fd2.
   # Ordinary selection menus swap fds. Both require breadcrumb rendering.
   if [[ ! -t 0 || ( ! -t 1 && ! -t 2 ) ]]; then command dialog "${args[@]}"; return; fi
@@ -175,11 +176,40 @@ dialog(){
           ((args[wi] > cols-2)) && args[wi]="$((cols-2))"
           if [[ "${args[i]}" == --menu ]]; then
             li=$((i+4))
-            # Long Russian header (main dashboard) must not hide every item.
-            prompt_lines="$(printf '%s\n' "${args[i+1]}" | wc -l)"
+            # Count actual entries; the AWG menus use (tag,item,help).
+            # Fake selectable spacer items would break numeric navigation.
+            has_help=0
+            for ((item_fields=0;item_fields<i;item_fields++)); do
+              [[ "${args[item_fields]}" == --item-help ]] && has_help=1
+            done
+            item_fields=2
+            ((has_help)) && item_fields=3
+            remaining=$((${#args[@]}-li-1))
+            item_count=0
+            if ((remaining>0 && remaining%item_fields==0)); then
+              item_count=$((remaining/item_fields))
+            fi
+            # Account for wrapped Russian descriptions at terminal width.
+            line_width=$((args[wi]-8))
+            ((line_width<18)) && line_width=18
+            prompt_lines=0
+            while IFS= read -r line; do
+              line_rows=$(((${#line}+line_width-1)/line_width))
+              ((line_rows<1)) && line_rows=1
+              prompt_lines=$((prompt_lines+line_rows))
+            done <<<"${args[i+1]}"
+            if ((item_count>0 && ${args[li]:-0}>0)); then
+              visible=$((item_count < args[li] ? item_count : args[li]))
+              # ncurses top-aligns rows inside oversized menus; fit the
+              # window to its contents so the whole widget centers on screen.
+              desired=$((visible+prompt_lines+6))
+              ((desired<12)) && desired=12
+              ((desired<args[hi])) && args[hi]="$desired"
+              ((args[li]>visible)) && args[li]="$visible"
+            fi
             available="$((args[hi]-5-prompt_lines))"
-            ((available < 3)) && available=3
-            if [[ "${args[li]:-}" =~ ^[0-9]+$ ]] && ((args[li] > available)); then
+            ((available<3)) && available=3
+            if [[ "${args[li]:-}" =~ ^[0-9]+$ ]] && ((args[li]>available)); then
               args[li]="$available"
             fi
           fi
