@@ -32,6 +32,61 @@ if [[ -t 0 && -t 1 ]]; then
 fi
 
 
+# Consistent 8-color dialog palette for every AWG menu widget. The generated
+# design uses richer shades; native Debian dialog supports terminal colors,
+# so this is a faithful light-panel/dark-selection approximation, not RGB.
+# A process-owned rc file is necessary because the menu can be launched via
+# sudo from arbitrary SSH accounts and must not mutate ~/.dialogrc or /etc.
+AWG_DIALOG_STYLE=""
+awg_dialog_theme_init(){
+  AWG_DIALOG_STYLE="$(mktemp /tmp/awg-dialogrc.XXXXXXXX)"
+  chmod 600 "$AWG_DIALOG_STYLE"
+  cat > "$AWG_DIALOG_STYLE" <<'AWG_DIALOG_PALETTE'
+use_colors = ON
+use_shadow = ON
+use_scrollbar = ON
+screen_color = (CYAN,BLUE,OFF)
+shadow_color = (BLACK,BLACK,ON)
+dialog_color = (BLACK,CYAN,OFF)
+title_color = (BLUE,CYAN,ON)
+border_color = (BLUE,CYAN,ON)
+border2_color = border_color
+menubox_color = dialog_color
+menubox_border_color = border_color
+menubox_border2_color = border_color
+item_color = dialog_color
+item_selected_color = (WHITE,BLUE,ON)
+tag_color = (BLUE,CYAN,ON)
+tag_selected_color = (CYAN,BLUE,ON)
+tag_key_color = tag_color
+tag_key_selected_color = tag_selected_color
+itemhelp_color = (BLACK,CYAN,OFF)
+button_active_color = (WHITE,BLUE,ON)
+button_inactive_color = (BLUE,CYAN,ON)
+button_key_active_color = button_active_color
+button_key_inactive_color = button_inactive_color
+button_label_active_color = (YELLOW,BLUE,ON)
+button_label_inactive_color = (BLUE,CYAN,ON)
+inputbox_color = dialog_color
+inputbox_border_color = border_color
+inputbox_border2_color = border_color
+searchbox_color = dialog_color
+searchbox_title_color = title_color
+searchbox_border_color = border_color
+searchbox_border2_color = border_color
+position_indicator_color = title_color
+uarrow_color = (BLUE,CYAN,ON)
+darrow_color = uarrow_color
+check_color = dialog_color
+check_selected_color = button_active_color
+form_active_text_color = button_active_color
+form_text_color = dialog_color
+gauge_color = title_color
+AWG_DIALOG_PALETTE
+  export DIALOGRC="$AWG_DIALOG_STYLE"
+}
+
+
 # Shrink oversized dialogs to real SSH TTY; do not modify terminal settings.
 dialog(){
   local -a args=("$@")
@@ -95,9 +150,11 @@ cleanup(){
   [[ -z "$PASTE_TMP" ]] || rm -f "$PASTE_TMP" 2>/dev/null || true
   [[ -z "$PASTE_OUT" ]] || rm -f "$PASTE_OUT" 2>/dev/null || true
   rm -f "$TMP" 2>/dev/null || true
+  [[ -z "$AWG_DIALOG_STYLE" ]] || rm -f "$AWG_DIALOG_STYLE" 2>/dev/null || true
   [[ -z "$SELF_TMP" ]] || rm -f "$SELF_TMP" 2>/dev/null || true
 }
 trap cleanup EXIT
+awg_dialog_theme_init
 
 # shellcheck disable=SC1091
 [[ -r /etc/awg-pbr/env ]] && source /etc/awg-pbr/env
@@ -1665,15 +1722,12 @@ mihomo_node_policy_menu(){
   while true; do
     choice="$(dialog --backtitle "$BACKTITLE" --title "Резервирование узлов Mihomo" --item-help --menu \
       "MANUAL — ручной выбор. FIXED — явно заданная однонаправленная цепочка. AUTO — следующий лучший работоспособный узел из проверенного пула с учётом фильтров региона и протокола." \
-      24 112 9 \
+      24 112 7 \
       1 "Показать политику" "Показывает текущий режим, FIXED-цепочку либо состояние AUTO и пула узлов." \
       2 "MANUAL" "Отключает автоматическую смену узла Mihomo и удаляет сохранённую резервную цепочку." \
       3 "Редактировать цепочку FIXED" "Добавление, удаление и перестановка узлов в однонаправленной резервной цепочке." \
-      4 "AUTO — пул узлов" "При отказе выбирает следующий работоспособный узел текущего протокола по свежести и задержке; неудачные временно исключаются. Фильтры задаются в выборе точки выхода." \
-      5 "Выбрать / фильтровать живые узлы" "Открывает пул узлов, поиск и фильтры «Только Европа» / протокол без обязательной смены политики." \
-      6 "Восстановить резерв при AWG" "Однократная проверка и подбор рабочей ноды Mihomo, пока AWG обслуживает трафик. Не переключает транспорт." \
-      7 "Способ AUTO: Hot Pool / обычный" "Включить или выключить фоновый Hot Pool и READY-приоритет, оставить AUTO из подписки." \
-      8 "Xray VLESS в AUTO: включить / выключить" "Разрешить подтверждённый guarded Xray fallback после Mihomo. Требует отдельного явного включения." \
+      4 "AUTO — пул узлов" "Настроить автоматический выбор нод Mihomo; участие Xray VLESS в AUTO разрешается отдельно внутри." \
+      5 "Способ AUTO: Hot Pool / обычный" "Включить или выключить Hot Pool и READY-приоритет, не затрагивая ручной выбор Xray." \
       0 "Назад" "Не менять политику узлов." 3>&1 1>&2 2>&3)" || return 0
     case "$choice" in
       1)
@@ -1686,24 +1740,41 @@ mihomo_node_policy_menu(){
         capture "$MIHOMO_NODE_POLICY" mode manual || true
         ;;
       3) mihomo_node_chain_editor ;;
-      4)
+      4) mihomo_node_auto_menu ;;
+      5) mihomo_auto_strategy_menu ;;
+      0) return 0 ;;
+    esac
+  done
+}
+
+
+# AUTO setup is independent of installing or manually selecting Xray.
+# No policy changes occur merely by opening this submenu.
+mihomo_node_auto_menu(){
+  local choice
+  while true; do
+    choice="$(dialog --backtitle "$BACKTITLE" --title "AUTO — пул узлов" --item-help --menu \
+      "Автоматические переходы Mihomo настраиваются отдельно от ручного выбора ноды. Xray доступен вручную всегда; в AUTO только после явного разрешения." 22 108 6 \
+      1 "Включить AUTO Mihomo" "Выбор следующей работоспособной ноды из проверенного пула. AWG fallback только если настроен." \
+      2 "Xray VLESS в AUTO" "Разрешить или запретить Xray после отказа нод Mihomo; ручной выбор не отключается." \
+      0 "Назад" "Оставить настройки без изменения." 3>&1 1>&2 2>&3)" || return 0
+    case "$choice" in
+      1)
         confirm "AUTO — пул узлов" "Включить автоматическую смену узлов Mihomo?\n\nПри повторном отказе текущего узла будет выбран следующий работоспособный узел из проверенного пула. Если включены фильтры региона или протокола, AUTO не выйдет за их пределы. Если подходящих узлов не останется, транспорт может перейти на AWG, только если профиль AWG настроен и работоспособен. В TRANSIT при отсутствии обоих транспортов трафик блокируется." || continue
         title="Политика узлов Mihomo → AUTO"
         capture "$MIHOMO_NODE_POLICY" mode auto || true
         ;;
-      5)
-        mihomo_node_menu
-        ;;
-      6)
-        confirm "Восстановление резерва Mihomo" "Разрешить однократную подготовку резервной ноды?\n\nТребуется активный и работоспособный AWG с сохранёнными маршрутами. Ноды проходят действующие проверки READY/HTTPS/YouTube и контроль реального TUN. При отсутствии подходящей ноды AWG останется активным, резерв — не подтверждённым. В процессе возможен перезапуск только службы Mihomo." || continue
-        title="Проверка и восстановление резерва Mihomo"
-        capture "$MIHOMO_NODE_POLICY" standby-repair || true
-        ;;
-      7) mihomo_auto_strategy_menu ;;
-      8) mihomo_xray_auto_menu ;;
+      2) mihomo_xray_auto_menu ;;
       0) return 0 ;;
     esac
   done
+}
+
+# Recovery prepares standby Mihomo while AWG remains active and unmodified.
+mihomo_standby_repair_menu(){
+  confirm "Восстановление резерва Mihomo" "Разрешить однократную подготовку резервной ноды?\n\nТребуется активный и работоспособный AWG с сохранёнными маршрутами. Ноды проходят действующие проверки READY/HTTPS/YouTube и контроль реального TUN. При отсутствии подходящей ноды AWG останется активным, резерв — не подтверждённым. В процессе возможен перезапуск только службы Mihomo." || return 0
+  title="Проверка и восстановление резерва Mihomo"
+  capture "$MIHOMO_NODE_POLICY" standby-repair || true
 }
 
 # New provider onboarding is unattended after the user provides the URL.
@@ -1989,6 +2060,7 @@ mihomo_advanced_menu(){
       2 "Формат подписки" "Вручную выбрать AUTO / Mihomo YAML / VLESS URI / Base64 VLESS, если автоопределение работает неоднозначно." \
       3 "$candidate_label" "$candidate_help" \
       4 "Локальное восстановление Mihomo (.gz)" "Установить локальный архив только для поддерживаемой версии Mihomo после проверки версии и SHA256." \
+      5 "Восстановить резерв Mihomo при AWG" "Однократная проверка и подготовка резервной ноды без переключения работающего AWG." \
       0 "Назад" "Вернуться в меню Mihomo." 3>&1 1>&2 2>&3)" || return 0
 
     case "$choice" in
@@ -2009,6 +2081,7 @@ mihomo_advanced_menu(){
         title="Установка Mihomo из локального архива"
         capture "$MIHOMO_INSTALLER" --file "$path" || true
         ;;
+      5) mihomo_standby_repair_menu ;;
       0) return 0 ;;
     esac
   done
