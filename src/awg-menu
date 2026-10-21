@@ -32,11 +32,137 @@ if [[ -t 0 && -t 1 ]]; then
 fi
 
 
+# Consistent 8-color dialog palette for every AWG menu widget. The generated
+# design uses richer shades; native Debian dialog supports terminal colors,
+# so this is a faithful light-panel/dark-selection approximation, not RGB.
+# A process-owned rc file is necessary because the menu can be launched via
+# sudo from arbitrary SSH accounts and must not mutate ~/.dialogrc or /etc.
+AWG_DIALOG_STYLE=""
+awg_dialog_theme_init(){
+  AWG_DIALOG_STYLE="$(mktemp /tmp/awg-dialogrc.XXXXXXXX)"
+  chmod 600 "$AWG_DIALOG_STYLE"
+  cat > "$AWG_DIALOG_STYLE" <<'AWG_DIALOG_PALETTE'
+use_colors = ON
+use_shadow = ON
+use_scrollbar = ON
+screen_color = (CYAN,BLUE,OFF)
+shadow_color = (BLACK,BLACK,ON)
+dialog_color = (BLACK,CYAN,OFF)
+title_color = (BLUE,CYAN,ON)
+border_color = (BLUE,CYAN,ON)
+border2_color = border_color
+menubox_color = dialog_color
+menubox_border_color = border_color
+menubox_border2_color = border_color
+item_color = dialog_color
+item_selected_color = (WHITE,BLUE,ON)
+tag_color = (BLUE,CYAN,ON)
+tag_selected_color = (CYAN,BLUE,ON)
+tag_key_color = tag_color
+tag_key_selected_color = tag_selected_color
+itemhelp_color = (BLACK,CYAN,OFF)
+button_active_color = (WHITE,BLUE,ON)
+button_inactive_color = (BLUE,CYAN,ON)
+button_key_active_color = button_active_color
+button_key_inactive_color = button_inactive_color
+button_label_active_color = (YELLOW,BLUE,ON)
+button_label_inactive_color = (BLUE,CYAN,ON)
+inputbox_color = dialog_color
+inputbox_border_color = border_color
+inputbox_border2_color = border_color
+searchbox_color = dialog_color
+searchbox_title_color = title_color
+searchbox_border_color = border_color
+searchbox_border2_color = border_color
+position_indicator_color = title_color
+uarrow_color = (BLUE,CYAN,ON)
+darrow_color = uarrow_color
+check_color = dialog_color
+check_selected_color = button_active_color
+form_active_text_color = button_active_color
+form_text_color = dialog_color
+gauge_color = title_color
+AWG_DIALOG_PALETTE
+  export DIALOGRC="$AWG_DIALOG_STYLE"
+}
+
+
+# Breadcrumbs appear in the window title/border, not the dialog body.
+# This preserves vertical space on compact 70x22 SSH terminals.
+# Derive the path from the Bash call stack to avoid stale navigation state.
+awg_dialog_breadcrumb_title(){
+  local title="$1" limit="$2" fn label i part route
+  shift 2
+  [[ "$title" == "Главное меню"* ]] && { printf '%s' "$title"; return; }
+  local -a crumbs=("Главная")
+  for ((i=$#;i>=1;i--)); do
+    fn="${!i}"
+    label=""
+    case "$fn" in
+      vpn_menu) label="VPN" ;;
+      mihomo_menu) label="Mihomo" ;;
+      mihomo_subscription_menu|mihomo_import_menu) label="Подписка" ;;
+      mihomo_node_menu) label="Точка выхода" ;;
+      mihomo_node_policy_menu) label="Резервирование" ;;
+      mihomo_node_auto_menu) label="AUTO" ;;
+      mihomo_xray_auto_menu) label="Xray AUTO" ;;
+      mihomo_auto_strategy_menu) label="Hot Pool" ;;
+      mihomo_node_chain_editor) label="FIXED" ;;
+      mihomo_advanced_menu) label="Восстановление" ;;
+      mihomo_xray_vless_menu) label="Xray" ;;
+      awg_config_menu) label="AWG" ;;
+      active_transport_menu) label="Транспорт" ;;
+      selection_policy_menu) label="Политика транспорта" ;;
+      vpn_destination_menu) label="VPN-домены" ;;
+      opencck_menu) label="OpenCCK" ;;
+      domain_menu) label="Домены" ;;
+      client_menu) label="Клиенты" ;;
+      system_menu) label="Система" ;;
+      dns_menu) label="DNS" ;;
+      timezone_menu) label="Часовой пояс" ;;
+      operating_mode_menu) label="Режим" ;;
+      desktop_commander_menu) label="Desktop Commander" ;;
+      update_menu) label="Обновления" ;;
+      mihomo_pool_pick) label="Каталог" ;;
+    esac
+    if [[ -n "$label" && "${crumbs[-1]}" != "$label" ]]; then
+      crumbs+=("$label")
+    fi
+  done
+  # The menu title often expands its section label, e.g. "AUTO — пул".
+  # Avoid repeating the section in a path like AUTO › AUTO — пул узлов.
+  if [[ "$title" != "${crumbs[-1]}" &&
+        "$title" != "${crumbs[-1]} "* &&
+        "$title" != "${crumbs[-1]} —"* ]]; then
+    crumbs+=("$title")
+  fi
+  route="${crumbs[0]}"
+  for ((i=1;i<${#crumbs[@]};i++)); do route+=" › ${crumbs[i]}"; done
+  # Preserve current and immediate parent on narrow terminal widths.
+  if (( ${#route} > limit && ${#crumbs[@]} > 3 )); then
+    route="Главная › … › ${crumbs[-2]} › ${crumbs[-1]}"
+  fi
+  if (( ${#route} > limit )); then
+    part="${crumbs[-1]}"
+    local prefix="Главная › … › "
+    if (( ${#part} + ${#prefix} > limit )); then
+      part="${part:0:$((limit-${#prefix}-1))}…"
+    fi
+    route="$prefix$part"
+  fi
+  printf '%s' "$route"
+}
+
 # Shrink oversized dialogs to real SSH TTY; do not modify terminal settings.
 dialog(){
   local -a args=("$@")
   local rows cols i hi wi li prompt_lines available
-  if [[ ! -t 0 || ! -t 1 ]]; then command dialog "${args[@]}"; return; fi
+  local line line_width line_rows item_fields item_count remaining desired visible has_help
+  # Use Russian button labels in every widget, including --stdout forms.
+  args=(--ok-label "ОК" --cancel-label "Отмена" --yes-label "Да" --no-label "Нет" --exit-label "Закрыть" "${args[@]}")
+  # A dialog --stdout form returns values via fd1 pipe, painting on fd2.
+  # Ordinary selection menus swap fds. Both require breadcrumb rendering.
+  if [[ ! -t 0 || ( ! -t 1 && ! -t 2 ) ]]; then command dialog "${args[@]}"; return; fi
   read -r rows cols < <(stty size </dev/tty 2>/dev/null) || { command dialog "${args[@]}"; return; }
   [[ "$rows" =~ ^[0-9]+$ && "$cols" =~ ^[0-9]+$ ]] || { command dialog "${args[@]}"; return; }
   if ((rows < 22 || cols < 70)); then
@@ -52,11 +178,40 @@ dialog(){
           ((args[wi] > cols-2)) && args[wi]="$((cols-2))"
           if [[ "${args[i]}" == --menu ]]; then
             li=$((i+4))
-            # Long Russian header (main dashboard) must not hide every item.
-            prompt_lines="$(printf '%s\n' "${args[i+1]}" | wc -l)"
+            # Count actual entries; the AWG menus use (tag,item,help).
+            # Fake selectable spacer items would break numeric navigation.
+            has_help=0
+            for ((item_fields=0;item_fields<i;item_fields++)); do
+              [[ "${args[item_fields]}" == --item-help ]] && has_help=1
+            done
+            item_fields=2
+            ((has_help)) && item_fields=3
+            remaining=$((${#args[@]}-li-1))
+            item_count=0
+            if ((remaining>0 && remaining%item_fields==0)); then
+              item_count=$((remaining/item_fields))
+            fi
+            # Account for wrapped Russian descriptions at terminal width.
+            line_width=$((args[wi]-8))
+            ((line_width<18)) && line_width=18
+            prompt_lines=0
+            while IFS= read -r line; do
+              line_rows=$(((${#line}+line_width-1)/line_width))
+              ((line_rows<1)) && line_rows=1
+              prompt_lines=$((prompt_lines+line_rows))
+            done <<<"${args[i+1]}"
+            if ((item_count>0 && ${args[li]:-0}>0)); then
+              visible=$((item_count < args[li] ? item_count : args[li]))
+              # ncurses top-aligns rows inside oversized menus; fit the
+              # window to its contents so the whole widget centers on screen.
+              desired=$((visible+prompt_lines+6))
+              ((desired<12)) && desired=12
+              ((desired<args[hi])) && args[hi]="$desired"
+              ((args[li]>visible)) && args[li]="$visible"
+            fi
             available="$((args[hi]-5-prompt_lines))"
-            ((available < 3)) && available=3
-            if [[ "${args[li]:-}" =~ ^[0-9]+$ ]] && ((args[li] > available)); then
+            ((available<3)) && available=3
+            if [[ "${args[li]:-}" =~ ^[0-9]+$ ]] && ((args[li]>available)); then
               args[li]="$available"
             fi
           fi
@@ -64,6 +219,30 @@ dialog(){
         break;;
     esac
   done
+  # The title is available on menus, confirmations, input, and textboxes.
+  # The main dashboard remains untouched.
+  local title_index=-1 max_title=64
+  for ((i=0;i<${#args[@]};i++)); do
+    if [[ "${args[i]}" == --title && -n "${args[i+1]:-}" ]]; then
+      title_index=$((i+1))
+      break
+    fi
+  done
+  if ((title_index>=0)); then
+    for ((i=0;i<${#args[@]};i++)); do
+      if [[ "${args[i]}" == --menu || "${args[i]}" == --msgbox ||
+            "${args[i]}" == --yesno || "${args[i]}" == --inputbox ||
+            "${args[i]}" == --editbox || "${args[i]}" == --textbox ||
+            "${args[i]}" == --infobox ]]; then
+        if [[ "${args[i+3]:-}" =~ ^[0-9]+$ ]]; then
+          max_title=$((args[i+3]-7))
+        fi
+        break
+      fi
+    done
+    ((max_title>12)) || max_title=12
+    args[title_index]="$(awg_dialog_breadcrumb_title "${args[title_index]}" "$max_title" "${FUNCNAME[@]:1}")"
+  fi
   command dialog "${args[@]}"
 }
 
@@ -95,9 +274,11 @@ cleanup(){
   [[ -z "$PASTE_TMP" ]] || rm -f "$PASTE_TMP" 2>/dev/null || true
   [[ -z "$PASTE_OUT" ]] || rm -f "$PASTE_OUT" 2>/dev/null || true
   rm -f "$TMP" 2>/dev/null || true
+  [[ -z "$AWG_DIALOG_STYLE" ]] || rm -f "$AWG_DIALOG_STYLE" 2>/dev/null || true
   [[ -z "$SELF_TMP" ]] || rm -f "$SELF_TMP" 2>/dev/null || true
 }
 trap cleanup EXIT
+awg_dialog_theme_init
 
 # shellcheck disable=SC1091
 [[ -r /etc/awg-pbr/env ]] && source /etc/awg-pbr/env
@@ -237,12 +418,32 @@ run_with_progress(){
   return "$rc"
 }
 
+# The SSH client may apply its own bright-green word highlighting to
+# literal OK/yes. Native ncurses renders them black-on-cyan, but some
+# clients override those tokens. Normalize only a temporary UI copy.
+awg_readable_status_text(){
+  sed -E \
+    -e 's/(^|[[:space:]:=])OK($|[[:space:]])/\1ИСПРАВНО\2/g' \
+    -e 's/(:[[:space:]]*|=[[:space:]]*)yes($|[[:space:]])/\1ДА\2/g' "$1"
+}
+
 show_operation_result(){
-  local rc="$1" heading="$2" label
+  local rc="$1" heading="$2" label view_tmp dialog_rc=0
   if ((rc == 0)); then label="ВЫПОЛНЕНО"; else label="ОШИБКА (код $rc)"; fi
   [[ -s "$TMP" ]] || printf '%s\n' "Дополнительных сообщений нет." >"$TMP"
   sed -i "1iРезультат: $label\\nОперация: $heading\\n" "$TMP"
-  dialog --backtitle "$BACKTITLE" --title "$heading — $label" --textbox "$TMP" 30 110
+  view_tmp="$(mktemp)" || return 1
+  if ! awg_readable_status_text "$TMP" >"$view_tmp"; then
+    rm -f "$view_tmp"
+    return 1
+  fi
+  if dialog --backtitle "$BACKTITLE" --title "$heading — $label" --textbox "$view_tmp" 30 110; then
+    dialog_rc=0
+  else
+    dialog_rc=$?
+  fi
+  rm -f "$view_tmp"
+  return "$dialog_rc"
 }
 
 capture(){
@@ -1665,15 +1866,12 @@ mihomo_node_policy_menu(){
   while true; do
     choice="$(dialog --backtitle "$BACKTITLE" --title "Резервирование узлов Mihomo" --item-help --menu \
       "MANUAL — ручной выбор. FIXED — явно заданная однонаправленная цепочка. AUTO — следующий лучший работоспособный узел из проверенного пула с учётом фильтров региона и протокола." \
-      24 112 9 \
+      24 112 7 \
       1 "Показать политику" "Показывает текущий режим, FIXED-цепочку либо состояние AUTO и пула узлов." \
       2 "MANUAL" "Отключает автоматическую смену узла Mihomo и удаляет сохранённую резервную цепочку." \
       3 "Редактировать цепочку FIXED" "Добавление, удаление и перестановка узлов в однонаправленной резервной цепочке." \
-      4 "AUTO — пул узлов" "При отказе выбирает следующий работоспособный узел текущего протокола по свежести и задержке; неудачные временно исключаются. Фильтры задаются в выборе точки выхода." \
-      5 "Выбрать / фильтровать живые узлы" "Открывает пул узлов, поиск и фильтры «Только Европа» / протокол без обязательной смены политики." \
-      6 "Восстановить резерв при AWG" "Однократная проверка и подбор рабочей ноды Mihomo, пока AWG обслуживает трафик. Не переключает транспорт." \
-      7 "Способ AUTO: Hot Pool / обычный" "Включить или выключить фоновый Hot Pool и READY-приоритет, оставить AUTO из подписки." \
-      8 "Xray VLESS в AUTO: включить / выключить" "Разрешить подтверждённый guarded Xray fallback после Mihomo. Требует отдельного явного включения." \
+      4 "AUTO — пул узлов" "Настроить автоматический выбор нод Mihomo; участие Xray VLESS в AUTO разрешается отдельно внутри." \
+      5 "Способ AUTO: Hot Pool / обычный" "Включить или выключить Hot Pool и READY-приоритет, не затрагивая ручной выбор Xray." \
       0 "Назад" "Не менять политику узлов." 3>&1 1>&2 2>&3)" || return 0
     case "$choice" in
       1)
@@ -1686,24 +1884,41 @@ mihomo_node_policy_menu(){
         capture "$MIHOMO_NODE_POLICY" mode manual || true
         ;;
       3) mihomo_node_chain_editor ;;
-      4)
+      4) mihomo_node_auto_menu ;;
+      5) mihomo_auto_strategy_menu ;;
+      0) return 0 ;;
+    esac
+  done
+}
+
+
+# AUTO setup is independent of installing or manually selecting Xray.
+# No policy changes occur merely by opening this submenu.
+mihomo_node_auto_menu(){
+  local choice
+  while true; do
+    choice="$(dialog --backtitle "$BACKTITLE" --title "AUTO — пул узлов" --item-help --menu \
+      "Автоматические переходы Mihomo настраиваются отдельно от ручного выбора ноды. Xray доступен вручную всегда; в AUTO только после явного разрешения." 22 108 6 \
+      1 "Включить AUTO Mihomo" "Выбор следующей работоспособной ноды из проверенного пула. AWG fallback только если настроен." \
+      2 "Xray VLESS в AUTO" "Разрешить или запретить Xray после отказа нод Mihomo; ручной выбор не отключается." \
+      0 "Назад" "Оставить настройки без изменения." 3>&1 1>&2 2>&3)" || return 0
+    case "$choice" in
+      1)
         confirm "AUTO — пул узлов" "Включить автоматическую смену узлов Mihomo?\n\nПри повторном отказе текущего узла будет выбран следующий работоспособный узел из проверенного пула. Если включены фильтры региона или протокола, AUTO не выйдет за их пределы. Если подходящих узлов не останется, транспорт может перейти на AWG, только если профиль AWG настроен и работоспособен. В TRANSIT при отсутствии обоих транспортов трафик блокируется." || continue
         title="Политика узлов Mihomo → AUTO"
         capture "$MIHOMO_NODE_POLICY" mode auto || true
         ;;
-      5)
-        mihomo_node_menu
-        ;;
-      6)
-        confirm "Восстановление резерва Mihomo" "Разрешить однократную подготовку резервной ноды?\n\nТребуется активный и работоспособный AWG с сохранёнными маршрутами. Ноды проходят действующие проверки READY/HTTPS/YouTube и контроль реального TUN. При отсутствии подходящей ноды AWG останется активным, резерв — не подтверждённым. В процессе возможен перезапуск только службы Mihomo." || continue
-        title="Проверка и восстановление резерва Mihomo"
-        capture "$MIHOMO_NODE_POLICY" standby-repair || true
-        ;;
-      7) mihomo_auto_strategy_menu ;;
-      8) mihomo_xray_auto_menu ;;
+      2) mihomo_xray_auto_menu ;;
       0) return 0 ;;
     esac
   done
+}
+
+# Recovery prepares standby Mihomo while AWG remains active and unmodified.
+mihomo_standby_repair_menu(){
+  confirm "Восстановление резерва Mihomo" "Разрешить однократную подготовку резервной ноды?\n\nТребуется активный и работоспособный AWG с сохранёнными маршрутами. Ноды проходят действующие проверки READY/HTTPS/YouTube и контроль реального TUN. При отсутствии подходящей ноды AWG останется активным, резерв — не подтверждённым. В процессе возможен перезапуск только службы Mihomo." || return 0
+  title="Проверка и восстановление резерва Mihomo"
+  capture "$MIHOMO_NODE_POLICY" standby-repair || true
 }
 
 # New provider onboarding is unattended after the user provides the URL.
@@ -1758,50 +1973,6 @@ mihomo_initial_setup_flow(){
     rm -f "$init_tmp"
     init_tmp=""
   fi
-}
-
-first_transport_setup(){
-  local choice
-  choice="$(dialog --backtitle "$BACKTITLE" --title "Первичная настройка VPN" --item-help --menu \
-    "Движки VPN установлены отдельно от профилей. Выберите первый транспорт. Настройку можно отложить без ошибки; текущие сетевые правила останутся безопасными." 23 106 7 \
-    1 "Настроить AmneziaWG" "Вставить .conf либо выбрать файл на Pi. Проверка профиля предшествует включению." \
-    2 "Настроить Mihomo" "Ввести ссылку подписки, проверить ноды и выбрать рабочий профиль." \
-    3 "Настроить позже" "Оставить VPN без профиля. SELECTIVE использует DIRECT, TRANSIT блокирует транзит." \
-    0 "Назад" "Ничего не менять." 3>&1 1>&2 2>&3)" || return 0
-  case "$choice" in
-    1) awg_config_menu ;;
-    2) mihomo_initial_setup_flow normal ;;
-    3) msg "Первичная настройка" "VPN пока не настроен. Это не ошибка установки.\n\nПрофиль можно добавить позже в разделе «VPN-маршрутизация». В TRANSIT до настройки действует блокировка транзитного трафика (FAIL-CLOSED)." ;;
-    0) return 0 ;;
-  esac
-}
-
-secondary_transport_setup(){
-  local current mihomo_status
-
-  current="$("$AWG_TRANSPORT" get 2>/dev/null || echo unconfigured)"
-  case "$current" in
-    unconfigured)
-      first_transport_setup
-      ;;
-    awg)
-      mihomo_status="$("$MIHOMO_CONFIGURE" status 2>/dev/null || true)"
-      if grep -Fqx 'Configured: yes' <<<"$mihomo_status"; then
-        msg "Второй транспорт" "Mihomo уже настроен как дополнительный транспорт.\n\nАктивный транспорт: AWG.\nMihomo не будет настраиваться заново. Открываю обычное меню управления Mihomo."
-        mihomo_menu
-      else
-        confirm "Добавить Mihomo" "AWG уже работает и останется активным транспортом.\n\nНастроить Mihomo как второй транспорт: подписка → основной узел → необязательная резервная цепочка?" || return 0
-        mihomo_initial_setup_flow secondary
-      fi
-      ;;
-    mihomo)
-      msg "Второй транспорт" "Mihomo уже активен. Для добавления или обновления AmneziaWG используйте раздел конфигурации AWG. Транспорт автоматически не переключается."
-      awg_config_menu
-      ;;
-    *)
-      msg "Транспорт" "Неизвестное состояние активного транспорта: $current"
-      ;;
-  esac
 }
 
 mihomo_replace_subscription(){
@@ -1989,6 +2160,8 @@ mihomo_advanced_menu(){
       2 "Формат подписки" "Вручную выбрать AUTO / Mihomo YAML / VLESS URI / Base64 VLESS, если автоопределение работает неоднозначно." \
       3 "$candidate_label" "$candidate_help" \
       4 "Локальное восстановление Mihomo (.gz)" "Установить локальный архив только для поддерживаемой версии Mihomo после проверки версии и SHA256." \
+      5 "Восстановить резерв Mihomo при AWG" "Однократная проверка и подготовка резервной ноды без переключения работающего AWG." \
+      6 "Xray VLESS: диагностика" "Состояние Xray, VLESS-профили и изолированная проверка HTTPS. Не является ручным выбором точки выхода." \
       0 "Назад" "Вернуться в меню Mihomo." 3>&1 1>&2 2>&3)" || return 0
 
     case "$choice" in
@@ -2009,6 +2182,8 @@ mihomo_advanced_menu(){
         title="Установка Mihomo из локального архива"
         capture "$MIHOMO_INSTALLER" --file "$path" || true
         ;;
+      5) mihomo_standby_repair_menu ;;
+      6) mihomo_xray_vless_menu ;;
       0) return 0 ;;
     esac
   done
@@ -2076,13 +2251,12 @@ mihomo_menu(){
   local choice
   while true; do
     choice="$(dialog --backtitle "$BACKTITLE" --title "Mihomo" --item-help --menu \
-      "Повседневное управление Mihomo: источник подписки, узлы, резервирование узлов и восстановление. Активный транспорт выбирается уровнем выше." 24 110 8 \
+      "Повседневное управление Mihomo: подписка, выбор Mihomo/Xray, резервирование. Диагностика Xray — в «Расширенные / восстановление»; активный транспорт выбирается уровнем выше." 24 110 7 \
       1 "Состояние Mihomo" "Показывает текущий профиль, выбранный узел, адрес сервера, состояние службы и последний канал загрузки без вывода секретов." \
       2 "Подписка / источник" "Заменить URL, обновить через AUTO или импортировать профиль/подписку из файла либо текста." \
-      3 "Точка выхода Mihomo / Xray" "Единый список: Mihomo применяет ноду, Ручной выбор Xray подготавливает профиль; живое переключение выполняет только защищённый AUTO после отказа." \
+      3 "Точка выхода Mihomo / Xray" "Единый ручной выбор обеих нод с защищённой проверкой TUN и откатом при ошибке." \
       4 "Политика узлов Mihomo (FIXED/AUTO)" "Mihomo резервирует исправные ноды и AWG; Xray AUTO включается отдельно; применяются TUN-проверка и безопасный откат." \
-      5 "Расширенные / восстановление" "Ручной канал загрузки, формат подписки, подготовленный профиль и локальное восстановление Mihomo." \
-      6 "Xray VLESS: диагностика" "Отдельный Xray Reality XHTTP/gRPC, HTTPS-проверка, подготовка профиля и локальный SOCKS. Без смены работающего TUN." \
+      5 "Расширенные / восстановление" "Восстановление Mihomo, технические настройки и диагностика Xray VLESS." \
       0 "Назад" "Вернуться в меню VPN без изменений." 3>&1 1>&2 2>&3)" || return 0
 
     case "$choice" in
@@ -2094,7 +2268,6 @@ mihomo_menu(){
       3) mihomo_node_menu ;;
       4) mihomo_node_policy_menu ;;
       5) mihomo_advanced_menu ;;
-      6) mihomo_xray_vless_menu ;;
       0) return 0 ;;
     esac
   done
@@ -2161,7 +2334,7 @@ restart_active_transport(){
       label="Mihomo"
       ;;
     unconfigured|"")
-      msg "VPN" "Активный транспорт пока не настроен.\n\nСначала используйте «Добавить / настроить транспорт». Перезапуск не требуется."
+      msg "VPN" "Активный транспорт пока не настроен.\n\nОткройте «Конфигурация AmneziaWG» либо «Mihomo» → «Подписка / источник». Движки установлены, профили можно добавить позже. Перезапуск не требуется."
       return 0
       ;;
     *)
@@ -2195,9 +2368,8 @@ vpn_menu(){
         2 "Перезапустить активный транспорт и монитор состояния" "Перезапускает текущий активный транспорт (AWG или Mihomo) и монитор состояния. Если транспорт не настроен, ничего не запускается." \
         3 "Конфигурация AmneziaWG" "Установка нового файла .conf текстом или из файла, а также откат к предыдущему профилю." \
         4 "Mihomo" "Управление подпиской, узлами, резервированием узлов и восстановлением Mihomo. Активный транспорт меняется отдельным пунктом ниже." \
-        5 "Добавить / настроить транспорт" "Мастер учитывает текущее состояние: при первой настройке выбирает транспорт, а затем позволяет добавить или настроить второй." \
-        6 "Активный транспорт" "Ручное безопасное переключение трафика между AWG и Mihomo. Показывает, какой транспорт используется сейчас." \
-        7 "Политика выбора транспорта" "MANUAL / FIXED / AUTO. Определяет, когда разрешено автоматическое переключение между AWG и Mihomo." \
+        5 "Активный транспорт" "Ручное безопасное переключение трафика между AWG и Mihomo. Показывает, какой транспорт используется сейчас." \
+        6 "Политика выбора транспорта" "MANUAL / FIXED / AUTO. Определяет, когда разрешено автоматическое переключение между AWG и Mihomo." \
         0 "Назад" "Возвращает в главное меню без изменений." 3>&1 1>&2 2>&3)" || return 0
       case "$choice" in
         1)
@@ -2209,9 +2381,8 @@ vpn_menu(){
           ;;
         3) awg_config_menu ;;
         4) mihomo_menu ;;
-        5) secondary_transport_setup ;;
-        6) active_transport_menu ;;
-        7) selection_policy_menu ;;
+        5) active_transport_menu ;;
+        6) selection_policy_menu ;;
         0) return 0 ;;
       esac
       continue
@@ -2224,9 +2395,8 @@ vpn_menu(){
       3 "Перезапустить активный транспорт и монитор состояния" "Перезапускает текущий активный транспорт (AWG или Mihomo) и монитор состояния. При отсутствии транспорта SELECTIVE остаётся в FAIL-OPEN/DIRECT." \
       4 "Конфигурация AmneziaWG" "Установка нового файла .conf текстом или из файла, а также откат к предыдущему профилю." \
       5 "Mihomo" "Управление подпиской, узлами, резервированием узлов и восстановлением Mihomo. Активный транспорт меняется отдельным пунктом ниже." \
-      6 "Добавить / настроить транспорт" "Мастер учитывает текущее состояние: при первой настройке выбирает транспорт, а затем позволяет добавить или настроить второй." \
-      7 "Активный транспорт" "Ручное безопасное переключение трафика между AWG и Mihomo. Показывает, какой транспорт используется сейчас." \
-      8 "Политика выбора транспорта" "MANUAL / FIXED / AUTO. Определяет, когда разрешено автоматическое переключение между AWG и Mihomo." \
+      6 "Активный транспорт" "Ручное безопасное переключение трафика между AWG и Mihomo. Показывает, какой транспорт используется сейчас." \
+      7 "Политика выбора транспорта" "MANUAL / FIXED / AUTO. Определяет, когда разрешено автоматическое переключение между AWG и Mihomo." \
       0 "Назад" "Возвращает в главное меню без изменений." 3>&1 1>&2 2>&3)" || return 0
     case "$choice" in
       1)
@@ -2243,9 +2413,8 @@ vpn_menu(){
         ;;
       4) awg_config_menu ;;
       5) mihomo_menu ;;
-      6) secondary_transport_setup ;;
-      7) active_transport_menu ;;
-      8) selection_policy_menu ;;
+      6) active_transport_menu ;;
+      7) selection_policy_menu ;;
       0) return 0 ;;
     esac
   done

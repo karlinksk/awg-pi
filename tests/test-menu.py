@@ -33,7 +33,7 @@ required = [
     '"Точка выхода Mihomo / Xray"',
     '"Активный транспорт"',
     '"Расширенные / восстановление"',
-    '"Добавить / настроить транспорт"',
+    '"Конфигурация AmneziaWG"',
     '"Политика выбора транспорта"',
     '"Citadel / Remnawave"',
     '"AUTO — пул узлов"',
@@ -163,30 +163,30 @@ assert 'active_transport_menu' in menu
 assert 'mihomo_active_transport_menu' not in menu
 
 # Mihomo node selection and DIRECT invariant.
-assert '"$MIHOMO_CONFIGURE" node select-auto "$node_name"' in menu
+assert '"$XRAY_MANUAL_SWITCH" native-apply "$node_name"' in menu
 assert '--direct-confirmed' not in menu
 assert 'run_with_progress "$title" "$MIHOMO_CONFIGURE" node prepare "$node_name"' in menu
-assert 'Отдельное правило MikroTik для этого IP не требуется' in menu
-assert 'постоянное DIRECT-исключение на уровне шлюза' in menu
+assert 'Адрес сервера в списке — не IP выхода' in menu
+assert 'TUN HTTPS подтверждён' in menu
 assert 'Введите один из показанных выше IPv4-адресов сервера:' not in menu
 assert 'повторно вводить его не нужно' in menu
 
 # Secondary-transport onboarding is state-aware; first-run is not called directly
 # by the normal VPN menus.
-assert 'first_transport_setup(){' in menu
+assert 'first_transport_setup(){' not in menu
 assert '"$AWG_FIRST_RUN" awg-file "$path"' in menu
 assert '"$AWG_FIRST_RUN" awg-file "$PASTE_TMP"' in menu
-assert 'secondary_transport_setup' in menu
+assert 'secondary_transport_setup' not in menu
 assert 'rollback_state="доступен"' in menu
 assert 'rollback_state="нет предыдущего профиля"' in menu
 assert 'Предыдущий AWG-профиль для быстрого отката отсутствует.' in menu
 assert 'Архивные резервные копии установки и обновлений' in menu
 assert 'if [[ ! -s "$previous" ]]' in menu
-assert '5) secondary_transport_setup' in menu
-assert '6) secondary_transport_setup' in menu
+assert '5) active_transport_menu' in menu
+assert '6) active_transport_menu' in menu
 assert 'mihomo_initial_setup_flow secondary' in menu
-assert 'Mihomo уже настроен как дополнительный транспорт' in menu
-assert 'Активный транспорт: AWG' in menu
+assert 'mihomo_initial_setup_flow secondary' in menu
+assert 'Конфигурация AmneziaWG' in menu
 assert 'не изменён' in menu
 vpn_function = menu[menu.index('vpn_menu(){'):menu.index('dns_menu(){')]
 assert 'run_interactive "Первичная настройка транспорта" "$AWG_FIRST_RUN" wizard' not in vpn_function
@@ -233,7 +233,7 @@ assert 'select_tsv_node_dialog' in menu
 assert 'Введите номер или ТОЧНОЕ имя узла из списка выше:' not in menu
 assert 'Введите номер или ТОЧНОЕ имя узла из списка:' not in menu
 assert 'Точка выхода Mihomo / Xray' in menu
-assert 'Xray VLESS — пока только безопасная подготовка профиля.' in menu
+assert 'Xray VLESS — выбран' in menu
 assert 'Выберите основной живой узел подготовленной подписки.' in menu
 assert '🔎 Поиск / фильтр' in menu
 assert 'grep -iF -- "$query"' in menu
@@ -273,11 +273,11 @@ assert 'mihomo_pool_results_dialog live' in menu
 assert 'Причина:' in Path('src/awg-mihomo-results-view.py').read_text()
 assert 'Состояние' in menu
 assert 'Задержка' in Path('src/awg-mihomo-results-view.py').read_text()
-assert '"$MIHOMO_NODE_POLICY" manual-selection preview "$node_name"' in menu
-assert '"$MIHOMO_NODE_POLICY" manual-selection apply "$node_name"' in menu
-assert 'После успешной проверки выбранный узел автоматически станет первым элементом цепочки' in menu
-assert 'FIXED-цепочка автоматически обновлена:' in menu
-assert 'предыдущая конфигурация и FIXED-цепочка сохранены' in menu
+assert '"$XRAY_MANUAL_SWITCH" native-preview "$node_name"' in menu
+assert '"$XRAY_MANUAL_SWITCH" native-apply "$node_name"' in menu
+assert 'Ручной выбор Mihomo — предварительная проверка' in menu
+assert 'Защищённый выбор ноды Mihomo' in menu
+assert 'Действующий выход и политика резервирования не изменены.' in menu
 
 # Existing-item operations use selectors instead of asking the user to
 # remember and retype values already known to the gateway.
@@ -377,10 +377,10 @@ vpn_start = menu.index('vpn_menu(){')
 vpn_end = menu.index('dns_menu(){', vpn_start)
 vpn_block = menu[vpn_start:vpn_end]
 assert vpn_block.count('"Активный транспорт"') == 2
+assert '5 "Активный транспорт"' in vpn_block
 assert '6 "Активный транспорт"' in vpn_block
-assert '7 "Активный транспорт"' in vpn_block
+assert '5) active_transport_menu' in vpn_block
 assert '6) active_transport_menu' in vpn_block
-assert '7) active_transport_menu' in vpn_block
 
 # Restart action is transport-aware and safe in fresh/recovery installs.
 assert 'restart_active_transport(){' in menu
@@ -388,11 +388,11 @@ assert menu.count('"Перезапустить активный транспор
 assert 'service="awg-quick@awg0.service"' in menu
 assert 'service="awg-mihomo.service"' in menu
 assert 'Активный транспорт пока не настроен.' in menu
-assert 'Сначала используйте «Добавить / настроить транспорт».' in menu
+assert 'Откройте «Конфигурация AmneziaWG» либо «Mihomo»' in menu
 assert 'systemctl restart awg-quick@awg0.service awg-pbr-health.service' not in vpn_block
 assert 'Перезапустить awg0 и монитор состояния' not in vpn_block
+assert '6 "Политика выбора транспорта"' in vpn_block
 assert '7 "Политика выбора транспорта"' in vpn_block
-assert '8 "Политика выбора транспорта"' in vpn_block
 
 # Mode-change result dialogs refresh the header after the command, so the
 # backtitle cannot show the previous SELECTIVE/TRANSIT state.

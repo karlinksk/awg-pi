@@ -384,7 +384,11 @@ fi
 # no subscription is supplied. This must NOT activate the Mihomo transport.
 # Existing-upgrade timer enablement is preserved rather than overwritten.
 grep -Fq 'if (( UPGRADE_EXISTING == 0 )); then' "$repo_root/install.sh"
-grep -Fq 'for unit in awg-mihomo-pool-refresh.timer awg-mihomo-stage18-ram-runtime.timer awg-mihomo-stage18-ram-runtime.path awg-mihomo-hot-pool.timer; do' "$repo_root/install.sh"
+grep -Fq 'for unit in awg-mihomo-pool-refresh.timer awg-mihomo-stage18-ram-runtime.timer awg-mihomo-stage18-ram-runtime.path; do' "$repo_root/install.sh"
+# Hot Pool is opt-in at clean install. Unlike the provider-guarded base pool
+# refresh, it MUST stay disabled/inactive until the owner enables it.
+grep -Fq 'systemctl disable --now awg-mihomo-hot-pool.timer' "$repo_root/install.sh"
+grep -Fq 'Hot Pool должен остаться выключенным после чистой установки' "$repo_root/install.sh"
 grep -Fq 'systemctl enable --now "$unit"' "$repo_root/install.sh"
 grep -Fq 'Существующая политика Mihomo-таймеров сохранена при обновлении' "$repo_root/install.sh"
 grep -Fq 'ACTIVE_TRANSPORT="$(cat "$TRANSPORT_FILE" 2>/dev/null || echo unconfigured)"' "$repo_root/install.sh"

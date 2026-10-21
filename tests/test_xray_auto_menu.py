@@ -31,7 +31,7 @@ class XrayAutoMenu(unittest.TestCase):
         for line in continuation:
             self.assertTrue(line.endswith(chr(92)), repr(line))
             self.assertFalse(line.endswith(chr(92) * 2), repr(line))
-        self.assertIn("8) mihomo_xray_auto_menu ;;", MENU.read_text())
+        self.assertIn("2) mihomo_xray_auto_menu ;;", MENU.read_text())
 
     def test_dialog_receives_complete_menu(self):
         # The double-slash bug made --menu the last useful dialog argument.

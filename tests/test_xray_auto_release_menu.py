@@ -24,7 +24,8 @@ class XrayAutoReleaseMenu(unittest.TestCase):
         self.assertIn("mihomo_xray_auto_menu(){",s)
         self.assertIn('"$MIHOMO_NODE_POLICY" xray-auto enable',s)
         self.assertIn('"$MIHOMO_NODE_POLICY" xray-auto disable',s)
-        self.assertIn('8) mihomo_xray_auto_menu ;;',s)
+        self.assertIn('2) mihomo_xray_auto_menu ;;',s)
+        self.assertIn('4) mihomo_node_auto_menu ;;',s)
     def test_portable_authorization_not_only_test_hostname(self):
         backend=(ROOT/"src/awg-xray-live-backend.py").read_text()
         policy=(ROOT/"src/awg-mihomo-node-policy").read_text()

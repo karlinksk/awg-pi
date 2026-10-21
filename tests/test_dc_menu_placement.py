@@ -23,10 +23,12 @@ class DcMenuPlacement(unittest.TestCase):
     def test_policy_menu_dialog_has_valid_continuations(self):
         s=(ROOT/"src/awg-menu").read_text()
         section=s.split("mihomo_node_policy_menu(){",1)[1].split("\\nmihomo_candidate_auto_apply(){",1)[0]
-        line=next(x for x in section.splitlines() if '8 "Xray VLESS в AUTO:' in x)
+        line=next(x for x in section.splitlines() if '4 "AUTO — пул узлов"' in x)
         self.assertTrue(line.endswith(chr(92)), line)
         self.assertFalse(line.endswith(chr(92)*2), line)
         self.assertIn('0 "Назад"',section)
+        self.assertIn('2 "Xray VLESS в AUTO"',s)
+        self.assertNotIn('8 "Xray VLESS в AUTO:',section)
     def test_bash_syntax(self):
         p=subprocess.run(["bash","-n",str(ROOT/"src/awg-menu")],capture_output=True,text=True)
         self.assertEqual(p.returncode,0,p.stderr)
