@@ -85,7 +85,7 @@ def entries(rows,profiles,inventory,protocol="all",region="all"):
             h="DUPLICATE"
         fields=(str(pos),name,str(profile.get("type","")),
                 str(profile.get("server",""))+":"+str(profile.get("port","")),
-                "DUPLICATE" if h=="DUPLICATE" else "",h,
+                "DUPLICATE" if h=="DUPLICATE" else "-",h,
                 str(country or "??"),delay)
         if any(any(c in field for c in ("\t","\r","\n")) for field in fields):
             continue
@@ -102,7 +102,7 @@ def legacy_entries(rows,protocol="all",region="all"):
         if not isinstance(name,str) or not name:continue
         fields=(str(row.get("index","")),name,str(row.get("type","")),
                 str(row.get("server",""))+":"+str(row.get("port","")),
-                "DUPLICATE" if row.get("duplicate_name") else "",
+                "DUPLICATE" if row.get("duplicate_name") else "-",
                 ("MIHOMO_OK" if row.get("healthy") is True else
                  "MIHOMO_FAIL" if row.get("healthy") is False else
                  "MIHOMO_UNTESTED"),"??","-")

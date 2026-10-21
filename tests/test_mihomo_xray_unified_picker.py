@@ -2,6 +2,7 @@
 """Read-only, engine-specific output for the user-facing unified node picker."""
 import importlib.util
 import sys
+import subprocess
 from pathlib import Path
 import unittest
 from unittest import mock
@@ -60,6 +61,11 @@ class UnifiedPicker(unittest.TestCase):
         self.assertEqual(sum("\tXRAY_HTTPS\t" in r for r in rows),6)
         self.assertEqual(sum("\tMIHOMO_OK\t" in r for r in rows),4)
         self.assertEqual(sum("\tMIHOMO_FAIL\t" in r for r in rows),3)
+        bash_parsed=self.parse_with_real_bash(rows)
+        self.assertEqual(len(bash_parsed),13)
+        self.assertEqual(sum(v[2]=="XRAY_HTTPS" for v in bash_parsed),6)
+        self.assertEqual(sum(v[2]=="MIHOMO_OK" for v in bash_parsed),4)
+        self.assertEqual(sum(v[2]=="MIHOMO_FAIL" for v in bash_parsed),3)
         self.assertEqual(len(picker.entries([],[],[])),0)
 
     def test_mihomo_and_xray_visible_in_one_list(self):
@@ -106,6 +112,35 @@ class UnifiedPicker(unittest.TestCase):
         self.assertEqual(len(self.rows(protocol="vless")),1)
         self.assertIn("XRAY_HTTPS",self.rows(protocol="vless")[0])
         self.assertEqual(len(self.rows(protocol="hysteria2")),1)
+
+    @staticmethod
+    def parse_with_real_bash(records):
+        # Bash IFS treats TAB as whitespace: an empty field disappears.
+        # Regression ensures eight TSV columns survive a real shell read.
+        script=(r"""while IFS=$'\t' read -r idx name kind endpoint dup health country delay; do
+  printf '%s|%s|%s|%s|%s\n' "$idx" "$dup" "$health" "$country" "$delay"
+done""")
+        p=subprocess.run(["bash","-c",script],
+                         input="\n".join(records)+"\n",
+                         capture_output=True,text=True,timeout=4,check=True)
+        return [line.split("|") for line in p.stdout.splitlines()]
+
+    def test_tsv_has_nonempty_duplicate_column_for_real_bash_reader(self):
+        parsed=self.parse_with_real_bash(self.rows())
+        self.assertEqual(parsed,[
+            ["1","-","MIHOMO_OK","DE","440ms"],
+            ["2","-","XRAY_HTTPS","??","-"]])
+        staged=self.parse_with_real_bash(self.rows(source=[],proofs=[]))
+        self.assertEqual([x[2] for x in staged],
+                         ["MIHOMO_OK","MIHOMO_FAIL"])
+        dup=[profiles[0],profiles[1],{**profiles[1],"port":8443}]
+        inv=inventory+[{**inventory[1],"index":3}]
+        parsed_dups=self.parse_with_real_bash(self.rows(source=dup,proofs=inv))
+        self.assertEqual(len(parsed_dups),3)
+        self.assertEqual([x[1] for x in parsed_dups],
+                         ["-","DUPLICATE","DUPLICATE"])
+        self.assertEqual([x[2] for x in parsed_dups],
+                         ["MIHOMO_OK","DUPLICATE","DUPLICATE"])
 
     def test_europe_filter_does_not_infer_xray_country(self):
         # The provider's 'Finland' name alone is not verified GeoIP evidence.

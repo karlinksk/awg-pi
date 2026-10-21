@@ -1160,8 +1160,8 @@ select_tsv_node_dialog(){
       [[ -z "$country" || "$country" == "??" ]] || description="$description | страна выхода: $country"
       [[ -z "$delay" || "$delay" == "-" ]] || description="$description | $delay"
       case "$health" in
-        MIHOMO_OK) description="$description | Mihomo: работает" ;;
-        MIHOMO_FAIL) description="$description | Mihomo: НЕ работает" ;;
+        MIHOMO_OK) description="$description | Mihomo: тест пройден" ;;
+        MIHOMO_FAIL) description="$description | Mihomo: тест не пройден" ;;
         MIHOMO_UNTESTED) description="$description | Mihomo: ещё не проверен" ;;
         UNSUPPORTED) description="$description | НЕ ПОДДЕРЖИВАЕТСЯ" ;;
         DUPLICATE) description="$description | ДУБЛИКАТ: выбор запрещён" ;;
@@ -1175,8 +1175,8 @@ select_tsv_node_dialog(){
       [[ "$health" == DEAD ]] && description="$description | НЕДОСТУПЕН"
       [[ "$duplicate" == DUPLICATE ]] && description="$description | ДУБЛИКАТ ИМЕНИ"
       case "$health" in
-        MIHOMO_OK) state_label="Mihomo работает" ;;
-        MIHOMO_FAIL) state_label="Mihomo отказ" ;;
+        MIHOMO_OK) state_label="Mihomo тест OK" ;;
+        MIHOMO_FAIL) state_label="Mihomo тест FAIL" ;;
         MIHOMO_UNTESTED) state_label="Mihomo не проверен" ;;
         XRAY_HTTPS) state_label="Xray HTTPS" ;;
         XRAY_UNTESTED) state_label="Xray не проверен" ;;
@@ -1186,7 +1186,7 @@ select_tsv_node_dialog(){
       esac
       items+=("$ui_idx" "$display_name [$state_label] — $description" "Статус виден, но не является гарантией LAN/TUN. Проверка безопасности перед переключением обязательна.")
     done <<<"$filtered"
-    search_prompt="$prompt\n\nПоказано: $count из $shown_total | Mihomo работают: $eligible | Xray HTTPS: $xray_count | Mihomo отказ: $fail_count"
+    search_prompt="$prompt\n\nПоказано: $count из $shown_total | Mihomo тест OK: $eligible | Xray HTTPS: $xray_count | Mihomo тест FAIL: $fail_count"
     if [[ "$scope" == fixed ]]; then
       search_prompt="$prompt\n\nПоказано: $count из $shown_total | Для FIXED допустимы только исправные Mihomo: $eligible"
     fi
