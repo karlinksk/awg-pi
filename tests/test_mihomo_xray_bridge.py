@@ -40,6 +40,29 @@ class TestXrayConfig(unittest.TestCase):
   self.assertNotIn("proxies",d)
   self.assertEqual(d["proxy-groups"][0]["use"],["subscription"])
   self.assertNotIn("proxies",d["proxy-groups"][0])
+ def test_default_auto_stages_dormant_xray_alias(self):
+  # No selected Xray profile yet: importing a subscription must not require one.
+  self.selected.unlink()
+  env={**self.env}
+  env.pop("MIHOMO_XRAY_VLESS_BRIDGE",None)
+  r=subprocess.run(["bash",str(CONFIG)],capture_output=True,text=True,env=env,timeout=6)
+  self.assertEqual(r.returncode,0,r.stderr)
+  d=yaml.safe_load(r.stdout)
+  self.assertEqual(d["proxies"][0]["name"],"AWG-XRAY-VLESS-LOCAL")
+  self.assertEqual(d["proxy-groups"][0]["proxies"],["AWG-XRAY-VLESS-LOCAL"])
+  self.assertEqual(d["proxy-groups"][0]["use"],["subscription"])
+  self.assertFalse(d["tun"]["auto-route"])
+
+ def test_auto_without_core_keeps_native_mihomo(self):
+  self.xray.unlink()
+  env={**self.env}
+  env.pop("MIHOMO_XRAY_VLESS_BRIDGE",None)
+  r=subprocess.run(["bash",str(CONFIG)],capture_output=True,text=True,env=env,timeout=6)
+  self.assertEqual(r.returncode,0,r.stderr)
+  d=yaml.safe_load(r.stdout)
+  self.assertNotIn("proxies",d)
+  self.assertEqual(d["proxy-groups"][0]["use"],["subscription"])
+
  def test_explicit_optin_bridge(self):
   r=self.config("1")
   self.assertEqual(r.returncode,0,r.stderr)
