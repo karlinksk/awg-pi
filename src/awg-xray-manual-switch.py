@@ -82,6 +82,38 @@ def https_ok(via):
     except (OSError,subprocess.TimeoutExpired):
         return False
 
+def prove_local_xray():
+    """Bounded readiness + two HTTPS probes, before the TUN selector changes.
+
+    An isolated candidate can pass when the systemd service has not yet bound
+    its fixed SOCKS port. Do not conflate service crashes, missing listener and
+    an actual HTTPS failure; expose a stable error code, never credentials.
+    """
+    until=time.monotonic()+10
+    listener=False
+    while time.monotonic()<until:
+        if unit_active(XRAY):
+            try:
+                with socket.create_connection(("127.0.0.1",17892),timeout=.4):
+                    listener=True
+                    break
+            except OSError:
+                pass
+        time.sleep(.3)
+    if not unit_active(XRAY):
+        refuse("XRAY_SERVICE_NOT_ACTIVE")
+    if not listener:
+        refuse("XRAY_SOCKS_PORT_NOT_LISTENING")
+    for attempt in range(2):
+        if https_ok("socks"):
+            return
+        if not unit_active(XRAY):
+            refuse("XRAY_SERVICE_EXITED_DURING_HTTPS")
+        if attempt==0:
+            time.sleep(1)
+    refuse("XRAY_SOCKS_HTTPS_NOT_VERIFIED")
+
+
 def atomic(path,data,mode=0o600):
     import tempfile
     path.parent.mkdir(mode=0o700,parents=True,exist_ok=True)
@@ -196,7 +228,10 @@ def restore(path,state):
         if data is None:refuse("PREVIOUS_XRAY_PROFILE_MISSING")
         atomic(SELECTED,data)
         cmd("systemctl","start",XRAY)
-        if not https_ok("socks"):refuse("PREVIOUS_XRAY_RESTORE_FAILED")
+        try:
+            prove_local_xray()
+        except RuntimeError:
+            refuse("PREVIOUS_XRAY_RESTORE_FAILED")
         choose(ALIAS)
     else:
         choose(previous)
@@ -246,8 +281,11 @@ def apply(index):
             if state["previous_xray"]:cmd("systemctl","stop",XRAY)
             cmd(str(ADAPTER),"select",str(index))
             cmd("systemctl","start",XRAY)
-            if not unit_active(XRAY) or not https_ok("socks"):
-                refuse("NEW_XRAY_LOCAL_HTTPS_FAILED")
+            # systemctl start only confirms the launch was queued, not that
+            # the SOCKS listener or outbound HTTPS is ready. This probe uses
+            # the same local-socks path as isolated validation, with a bounded
+            # startup wait and actionable failure codes.
+            prove_local_xray()
             if source_node(index)[1:]!=(info["sha"],info["fingerprint"]):
                 refuse("PROVIDER_CHANGED")
             choose(ALIAS)
