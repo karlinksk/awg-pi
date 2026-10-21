@@ -66,7 +66,8 @@ class UnifiedPicker(unittest.TestCase):
         self.assertEqual(sum(v[2]=="XRAY_HTTPS" for v in bash_parsed),6)
         self.assertEqual(sum(v[2]=="MIHOMO_OK" for v in bash_parsed),4)
         self.assertEqual(sum(v[2]=="MIHOMO_FAIL" for v in bash_parsed),3)
-        self.assertEqual(len(picker.entries([],[],[])),0)
+        with mock.patch.object(picker,"load_view",return_value=view):
+            self.assertEqual(len(picker.entries([],[],[])),0)
 
     def test_mihomo_and_xray_visible_in_one_list(self):
         data=self.rows()
