@@ -16,7 +16,10 @@ MIHOMO_PROVIDER_HEALTH_INTERVAL="${MIHOMO_PROVIDER_HEALTH_INTERVAL:-300}"
 MIHOMO_NODE_FILTER="${MIHOMO_NODE_FILTER:-}"
 MIHOMO_ENDPOINT_IP="${MIHOMO_ENDPOINT_IP:-}"
 # Disabled by default. Optional manually selected local SOCKS5 route.
-MIHOMO_XRAY_VLESS_BRIDGE="${MIHOMO_XRAY_VLESS_BRIDGE:-0}"
+# Include a dormant Xray SOCKS alias whenever the core is installed.
+# Explicit bridge=1 retains stricter selected-profile requirement for the
+# experimental AUTO transaction, which must never silently activate Xray.
+MIHOMO_XRAY_VLESS_BRIDGE="${MIHOMO_XRAY_VLESS_BRIDGE:-auto}"
 MIHOMO_XRAY_SELECTED="${MIHOMO_XRAY_SELECTED:-/var/lib/awg-pbr/xray-vless/selected.json}"
 MIHOMO_XRAY_CORE="${MIHOMO_XRAY_CORE:-/usr/local/bin/awg-xray-vless-core}"
 
@@ -85,6 +88,123 @@ _node_filter_yaml="$(yaml_sq "$MIHOMO_NODE_FILTER")"
 _health_url_yaml="$(yaml_sq "$MIHOMO_PROVIDER_HEALTH_URL")"
 case "$MIHOMO_XRAY_VLESS_BRIDGE" in
   0) _xray_proxy_yaml="" ; _xray_group_yaml="" ;;
+  auto)
+    if [[ -x "$MIHOMO_XRAY_CORE" ]]; then
+      _xray_proxy_yaml=
+    _xray_proxy_yaml=$'proxies:\n  - name: AWG-XRAY-VLESS-LOCAL\n    type: socks5\n    server: 127.0.0.1\n    port: 17892\n    udp: false'
+    _xray_group_yaml=$'    proxies:\n      - AWG-XRAY-VLESS-LOCAL'
+    ;;
+  *) echo "MIHOMO_XRAY_VLESS_BRIDGE must be 0 or 1" >&2; exit 2 ;;
+esac
+
+
+cat <<YAML
+mixed-port: $MIHOMO_MIXED_PORT
+allow-lan: false
+bind-address: 127.0.0.1
+mode: rule
+log-level: warning
+ipv6: false
+external-controller: $MIHOMO_CONTROLLER
+
+profile:
+  store-selected: true
+  store-fake-ip: false
+
+proxy-providers:
+  $MIHOMO_PROVIDER_NAME:
+    type: file
+    path: $_provider_path_yaml
+    filter: $_node_filter_yaml
+    override:
+      override-expr:
+        - '.server = "$MIHOMO_ENDPOINT_IP"'
+    health-check:
+      enable: true
+      url: $_health_url_yaml
+      interval: $MIHOMO_PROVIDER_HEALTH_INTERVAL
+      lazy: true
+
+$_xray_proxy_yaml
+proxy-groups:
+  - name: $MIHOMO_GROUP_NAME
+    type: select
+    use:
+      - $MIHOMO_PROVIDER_NAME
+$_xray_group_yaml
+
+rules:
+  - MATCH,$MIHOMO_GROUP_NAME
+
+tun:
+  enable: true
+  device: $MIHOMO_TUN_IF
+  stack: mips
+  auto-route: false
+  auto-redirect: false
+  auto-detect-interface: true
+YAML
+proxies:\n  - name: AWG-XRAY-VLESS-LOCAL\n    type: socks5\n    server: 127.0.0.1\n    port: 17892\n    udp: false'
+      _xray_group_yaml=
+    _xray_proxy_yaml=$'proxies:\n  - name: AWG-XRAY-VLESS-LOCAL\n    type: socks5\n    server: 127.0.0.1\n    port: 17892\n    udp: false'
+    _xray_group_yaml=$'    proxies:\n      - AWG-XRAY-VLESS-LOCAL'
+    ;;
+  *) echo "MIHOMO_XRAY_VLESS_BRIDGE must be 0 or 1" >&2; exit 2 ;;
+esac
+
+
+cat <<YAML
+mixed-port: $MIHOMO_MIXED_PORT
+allow-lan: false
+bind-address: 127.0.0.1
+mode: rule
+log-level: warning
+ipv6: false
+external-controller: $MIHOMO_CONTROLLER
+
+profile:
+  store-selected: true
+  store-fake-ip: false
+
+proxy-providers:
+  $MIHOMO_PROVIDER_NAME:
+    type: file
+    path: $_provider_path_yaml
+    filter: $_node_filter_yaml
+    override:
+      override-expr:
+        - '.server = "$MIHOMO_ENDPOINT_IP"'
+    health-check:
+      enable: true
+      url: $_health_url_yaml
+      interval: $MIHOMO_PROVIDER_HEALTH_INTERVAL
+      lazy: true
+
+$_xray_proxy_yaml
+proxy-groups:
+  - name: $MIHOMO_GROUP_NAME
+    type: select
+    use:
+      - $MIHOMO_PROVIDER_NAME
+$_xray_group_yaml
+
+rules:
+  - MATCH,$MIHOMO_GROUP_NAME
+
+tun:
+  enable: true
+  device: $MIHOMO_TUN_IF
+  stack: mips
+  auto-route: false
+  auto-redirect: false
+  auto-detect-interface: true
+YAML
+    proxies:\n      - AWG-XRAY-VLESS-LOCAL'
+    else
+      _xray_proxy_yaml=""
+      _xray_group_yaml=""
+    fi
+    ;;
   1)
     [[ -r "$MIHOMO_XRAY_SELECTED" && -x "$MIHOMO_XRAY_CORE" ]] || {
       echo "Xray bridge selected but helper/core not installed" >&2
