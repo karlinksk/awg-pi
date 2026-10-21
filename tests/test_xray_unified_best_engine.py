@@ -36,6 +36,13 @@ class EngineBest(unittest.TestCase):
         self.assertEqual(self.best("--engine","XRAY"),"VLESS current")
     def test_xray_exclude_next_exact_profile(self):
         self.assertEqual(self.best("--engine","XRAY","--exclude","VLESS current"),"VLESS second")
+    def test_auto_rotation_can_reach_all_xray_candidates(self):
+        seen=set()
+        for bucket in range(12):
+            with mock.patch.object(m.time,"time",return_value=float(bucket*300)):
+                seen.add(self.best("--engine","XRAY","--rotate"))
+        self.assertEqual(seen,{"VLESS current","VLESS second"})
+
     def test_existing_default_preserves_provider_order(self):
         self.assertEqual(self.best(),"HY2 healthy")
     def test_mihomo_filter_excludes_xray(self):
@@ -46,11 +53,11 @@ class EngineBest(unittest.TestCase):
     def test_auto_dispatch_only_after_native_budget(self):
         source=(ROOT/"src/awg-mihomo-node-policy").read_text()
         body=source.split("failover_auto(){",1)[1].split("\n}\n",1)[0]
-        self.assertIn('xray_nomination_used=0 max_candidate_visits=3',body)
+        self.assertIn('xray_visits=0 max_xray_visits=2 max_candidate_visits=3',body)
         self.assertIn('candidate_visits" -lt "$max_checks"',body)
-        self.assertIn('local -a unified_args=(best --engine XRAY)',body)
-        self.assertIn('max_candidate_visits=$((max_checks + 1))',body)
-        self.assertIn('xray_nomination_used=1',body)
+        self.assertIn('local -a unified_args=(best --engine XRAY --rotate)',body)
+        self.assertIn('max_candidate_visits=$((max_checks + max_xray_visits))',body)
+        self.assertIn('xray_visits=$((xray_visits+1))',body)
         self.assertIn('for item in "${excludes[@]}"',body)
 
 if __name__=="__main__":
