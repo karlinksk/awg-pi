@@ -220,7 +220,11 @@ echo "systemctl:$*" >> "$LOG"
    p=pathlib.Path(d)
    (p/'mode').write_text('auto\n')
    (p/'node').write_text('original\n')
-   env=dict(os.environ, MIHOMO_NODE_POLICY_MODE_FILE=str(p/'mode'),
+   fake_systemctl=p/'systemctl'
+   fake_systemctl.write_text('#!/bin/sh\nif [ "$1" = is-active ] && [ "$3" = awg-xray-vless.service ]; then exit 1; fi\nexec /usr/bin/systemctl "$@"\n')
+   fake_systemctl.chmod(0o755)
+   env=dict(os.environ, PATH=str(p)+os.pathsep+os.environ.get('PATH',''),
+     MIHOMO_NODE_POLICY_MODE_FILE=str(p/'mode'),
      MIHOMO_NODE_NAME_FILE=str(p/'node'), MIHOMO_READY_AUTO_CANARY='1',
      MIHOMO_POOL_CLI='/bin/true',
      MIHOMO_READY_POSTCHECK_BIN='/bin/true',
