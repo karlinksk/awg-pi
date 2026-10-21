@@ -433,6 +433,35 @@ class ManualSwitchContract(unittest.TestCase):
         self.assertIn('Actual outbound engine: XRAY',status)
         self.assertIn('Actual outbound engine: MIHOMO',status)
 
+    def test_native_watchdog_not_armed_never_stops_healthy_xray(self):
+        import json
+        with tempfile.TemporaryDirectory() as td:
+            p=Path(td);snap=p/"snapshot";snap.mkdir()
+            info={"candidate":"NL native","previous":mod.ALIAS,
+                  "previous_xray":True,"sha":"digest",
+                  "fingerprint":"a"*64,"xray_enabled":True}
+            state={"phase":"pending",**info,"watchdog":"awg-xray-manual-test"}
+            commands=[]
+            def fake_cmd(*args,**kwargs):
+                commands.append(args)
+                return ""
+            with mock.patch.multiple(mod,LOCK=p/"lock"), \
+                 mock.patch.object(mod.os,"geteuid",return_value=0), \
+                 mock.patch.object(mod,"inspect_native",return_value=info), \
+                 mock.patch.object(mod,"save_snap",return_value=(snap,state)), \
+                 mock.patch.object(mod,"cmd",side_effect=fake_cmd), \
+                 mock.patch.object(mod,"unit_active",return_value=False), \
+                 mock.patch.object(mod,"choose") as choose, \
+                 mock.patch.object(mod,"restore") as restore:
+                with self.assertRaisesRegex(RuntimeError,"WATCHDOG_NOT_ARMED"):
+                    mod.native_return("NL native")
+                choose.assert_not_called()
+                restore.assert_not_called()
+            record=json.loads((snap/"state.json").read_text())
+            self.assertEqual(record["phase"],"cancelled")
+            self.assertFalse(any(a[:2]==("systemctl","stop") and
+                                 len(a)>2 and a[2]==mod.XRAY for a in commands))
+
     def test_prearm_error_never_stages_candidate(self):
         with tempfile.TemporaryDirectory() as d:
             p=Path(d)
@@ -451,10 +480,11 @@ class ManualSwitchContract(unittest.TestCase):
                  mock.patch.object(mod,"save_snap",return_value=(snap,state)), \
                  mock.patch.object(mod,"cmd",side_effect=fake_cmd), \
                  mock.patch.object(mod,"unit_active",return_value=False), \
-                 mock.patch.object(mod,"restore"), \
+                 mock.patch.object(mod,"restore") as restore, \
                  mock.patch.object(mod,"stored"):
                 with self.assertRaisesRegex(RuntimeError,"WATCHDOG_NOT_ARMED"):
                     mod.apply(1)
+                restore.assert_not_called()
             self.assertFalse(any(a[:2]==(str(mod.ADAPTER),"select") for a in calls))
             self.assertFalse(any(a[:2]==("systemctl","start") for a in calls))
 
