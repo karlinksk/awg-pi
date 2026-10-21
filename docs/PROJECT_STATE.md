@@ -58,3 +58,12 @@
 4. После существенного результата обновлять **только проверенные факты** и статус следующего шага здесь; детали доказательств — в тестовой документации/PR. **Не плодить новые планы и документы вместо завершения шлюза.**
 
 См. [политику installer-first](INSTALLER-CHANGE-POLICY.md), [release gate](TESTING-v1.3.0.md), [правила для агентов](../AGENTS.md), [PR #115](https://github.com/karlinksk/awg-pi/pull/115).
+
+## 2026-10-22 — Dynamic node health v1.3.0 (draft source, not installed)
+
+- New stacked draft PR #152 (`feature/v13-dynamic-node-health-20261021`, above #151) implements subscription-size/name-independent Mihomo/Xray node monitoring by compatible engine and existing transport fingerprints. Changes to URL, node count, ordering, and names must not be treated as a fixed catalogue; changed credentials require fresh proof.
+- User-facing lists use only verified `OK` or confirmed `FAIL`; an untested candidate receives **no fabricated verdict** while the initial check is pending. Internal UNKNOWN/UNTESTED classifications remain necessary for safe logic.
+- Timers aim for 5-minute per-node qualification; bounded batches/parallelism apply to larger subscriptions. Failures are retried; cache expiry is not itself a FAIL. A separate latest-scan record keeps current UI evidence apart from last-known-good recovery pool.
+- Manual node choice receives fresh isolated HTTPS preflight via its compatible engine **before** changing live transport; existing TUN postcheck, watchdog and rollback remain. AUTO Xray can nominate up to two bounded candidates with rotation across incidents, retaining AWG fallback and Selective FAIL-OPEN / Transit FAIL-CLOSED. Hot Pool / READY settings remain independently opt-in.
+- Evidence: 787/787 Python unit tests PASS and legacy Mihomo, installer, upgrade fixture checks PASS on test Pi source checkout; PR #152 is draft, **not merged, released or installed**. No live switch, Pi-bound TUN, LAN-client, outage/failover, reboot or resource-load gate claimed PASS. Review GitHub CI independently; tests on checkout are not hardware acceptance.
+- Next: review CI/source and controlled backup/rollback; validate test Pi with exact provider identities, real HTTPS proxy vs TUN vs LAN, manual fail/success, AUTO exhaustion/AWG fallback, reboot, then PR #115 consolidation and release gate. Protect current service, SSH, independent DNS, MikroTik/SSTP and production media. Do not expose profile credentials.
