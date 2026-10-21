@@ -431,6 +431,27 @@ show_operation_result(){
   local rc="$1" heading="$2" label view_tmp dialog_rc=0
   if ((rc == 0)); then label="ВЫПОЛНЕНО"; else label="ОШИБКА (код $rc)"; fi
   [[ -s "$TMP" ]] || printf '%s\n' "Дополнительных сообщений нет." >"$TMP"
+  # Present an actionable human explanation before the retained diagnostics.
+  # Never interpret a failed operation as success solely from its exit code.
+  if ((rc != 0)); then
+    local explanation
+    if grep -Eq 'XRAY_MANUAL_ERROR=MANAGEMENT_OR_MIHOMO_UNHEALTHY|XRAY_MANUAL_ERROR=ACTIVE_TRANSPORT_NOT_MIHOMO' "$TMP"; then
+      explanation="Ручной выбор ноды требует активного и исправного Mihomo. Откройте раздел VPN, выберите транспорт Mihomo и повторите операцию. Действующий VPN не изменён."
+    elif grep -Eq 'XRAY_MANUAL_ERROR=FOREIGN_TRANSPORT_DURING_RECOVERY' "$TMP"; then
+      explanation="Во время восстановления транспорт уже изменился. Для безопасности рабочий VPN оставлен без изменений. Проверьте активный транспорт в главном меню."
+    elif grep -Eq 'XRAY_MANUAL_ERROR=XRAY_ISOLATED_HTTPS_NOT_VERIFIED|UNIFIED_PROBE.*NETWORK_FAIL' "$TMP"; then
+      explanation="Выбранная нода не прошла проверку HTTPS. Переключение не выполнено; выберите другую ноду или повторите проверку позднее."
+    elif grep -Eq 'XRAY_MANUAL_ERROR=PROVIDER_CHANGED|UNIFIED_ERROR=PROVIDER_CHANGED_DURING_PROBE' "$TMP"; then
+      explanation="Подписка изменилась во время проверки. Обновите список нод и повторите выбор."
+    elif grep -Eq 'XRAY_MANUAL_ERROR=XRAY_MANUAL_ROLLBACK_UNCONFIRMED|XRAY_MANUAL_ERROR=FOREIGN_' "$TMP"; then
+      explanation="Не удалось подтвердить завершение восстановления. Не повторяйте переключения; проверьте активный VPN и состояние шлюза."
+    elif grep -Eq 'XRAY_MANUAL_ERROR=|NATIVE_RETURN_ERROR=|UNIFIED_ERROR=' "$TMP"; then
+      explanation="Проверка или переключение ноды завершилось ошибкой. Работоспособность выбранной ноды не подтверждена. Проверьте текущий транспорт и технические подробности ниже."
+    else
+      explanation="Операция не завершилась успешно. Проверьте текущий статус шлюза и прочитайте подробности ниже. Если ошибка повторяется, сохраните её технический код для диагностики."
+    fi
+    sed -i "1iЧто произошло: $explanation\\nЧто делать: сведения о причине и коде приведены ниже.\\n" "$TMP"
+  fi
   sed -i "1iРезультат: $label\\nОперация: $heading\\n" "$TMP"
   view_tmp="$(mktemp)" || return 1
   if ! awg_readable_status_text "$TMP" >"$view_tmp"; then
