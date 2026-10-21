@@ -8,7 +8,14 @@ class ReadyAutoV2(unittest.TestCase):
   line='[[ ${EUID:-$(id -u)} -eq 0 ]] || exec sudo "$0" "$@"'
   assert source.count(line)==1
   outfile=path/'rootless-policy'
-  outfile.write_text(source.replace(line,': # isolated mocked fixture'))
+  source=source.replace(line,': # isolated mocked fixture')
+  # Prevent a live selected Xray profile on the test Pi from contaminating
+  # synthetic READY and failover tests.
+  for fixed in ('/etc/systemd/system/awg-mihomo.service.d/61-awg-xray-bridge.conf',
+                '/run/systemd/system/awg-mihomo.service.d/61-awg-xray-bridge.conf',
+                '/var/lib/awg-pbr/xray-vless/selected.json'):
+   source=source.replace(fixed,str(path/'nonexistent-xray-fixture'/pathlib.Path(fixed).name))
+  outfile.write_text(source)
   return str(outfile)
  def case(self, ready='1', guard='1', activate='1', post='1', rollback='1', gate='balanced', checker='1',canary='1',post_reason='EGRESS_FAILED',strict_gate='0',api_state='PASS',second_ready='0',post_second='1',fallback_available='1'):
   with tempfile.TemporaryDirectory(prefix='ready-v2-') as d:
@@ -110,7 +117,8 @@ echo "systemctl:$*" >> "$LOG"
     params.pop('MIHOMO_SERVICE_GATE_MODE')
     params['MIHOMO_SERVICE_GATE_MODE_FILE']=str(p/'absent-service-mode')
    r=subprocess.run(['bash',self.rootless_script(p),'failover'],
-      env=dict(os.environ,**params),text=True,capture_output=True,timeout=12)
+      env=dict(os.environ,**params,PATH=str(p)+os.pathsep+os.environ.get('PATH','')),
+      text=True,capture_output=True,timeout=12)
    return r,(p/'events').read_text(),(p/'node').read_text().strip()
  def test_ready_first(self):
   r,log,node=self.case();self.assertEqual(r.returncode,0,r.stderr);self.assertEqual(node,'standby');self.assertNotIn('config:node select-auto ordinary',log);self.assertEqual(r.stdout.strip(),'MIHOMO_NODE_FAILOVER=original->standby')
