@@ -51,6 +51,8 @@ class ManualSwitchContract(unittest.TestCase):
         self.assertIn('"$XRAY_MANUAL_SWITCH" preview "$index"',menu)
         self.assertIn('"$XRAY_MANUAL_SWITCH" apply "$index"',menu)
         self.assertIn('confirm "Переключение на Xray"',menu)
+        self.assertIn('if [[ "$(cat /etc/awg-pbr/transport 2>/dev/null)" != mihomo ]]; then',menu)
+        self.assertIn("Сначала вручную выберите транспорт Mihomo",menu)
         self.assertNotIn("awg-transport select awg",SCRIPT.read_text())
 
     def test_does_not_reuse_failed_incumbent_auto_executor(self):
