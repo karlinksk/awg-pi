@@ -52,7 +52,15 @@ class AdapterTests(unittest.TestCase):
             self.a.secure_read=fake_read
             self.a.atomic_json=fake_atomic
     def call(self,*args):
-        with mock.patch.object(sys,"argv",["awg-xray-vless",*args]):
+        # Never consult a real systemd service in a synthetic adapter test:
+        # CI may run on the test Pi while the authorized Xray sidecar is live.
+        original_run=self.a.subprocess.run
+        def isolated_service_check(argv,*a,**kw):
+            if argv==["systemctl","is-active","--quiet","awg-xray-vless.service"]:
+                return self.a.subprocess.CompletedProcess(argv,1)
+            return original_run(argv,*a,**kw)
+        with mock.patch.object(sys,"argv",["awg-xray-vless",*args]), \
+             mock.patch.object(self.a.subprocess,"run",side_effect=isolated_service_check):
             return self.a.run()
     def test_select_renders_xhttp_without_touching_provider(self):
         original=self.provider.read_bytes()

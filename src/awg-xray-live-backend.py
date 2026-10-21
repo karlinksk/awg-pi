@@ -26,6 +26,14 @@ MODE=Path("/etc/awg-pbr/mode")
 VPN_ENABLED=Path("/etc/awg-pbr/vpn-enabled")
 CURRENT=Path("/etc/awg-pbr/transports/mihomo/node-name")
 NODE_POLICY_MODE=Path("/etc/awg-pbr/transports/mihomo/node-policy.mode")
+XRAY_AUTO_MODE=Path("/etc/awg-pbr/transports/mihomo/xray-auto.mode")
+def xray_auto_authorized():
+    try:
+        return ((XRAY_AUTO_MODE.is_file() and not XRAY_AUTO_MODE.is_symlink() and XRAY_AUTO_MODE.read_text().strip()=="1") or
+                (socket.gethostname()=="awg-upgrade" and os.environ.get("MIHOMO_XRAY_AUTO_FAILOVER_CANARY")=="1"))
+    except OSError:
+        return False
+
 NODE_POLICY_ORDER=Path("/etc/awg-pbr/transports/mihomo/node-policy.nodes")
 BRIDGE=Path("/etc/systemd/system/awg-mihomo.service.d/61-awg-xray-bridge.conf")
 BRIDGE_RUNTIME=Path("/run/systemd/system/awg-mihomo.service.d/61-awg-xray-bridge.conf")
@@ -201,7 +209,7 @@ def verified_degraded_fixed_baseline():
 
 def verified_degraded_auto_transit_baseline():
     """AUTO Transit candidate after native exhaustion: protected FAIL-CLOSED only."""
-    if (socket.gethostname()!="awg-upgrade" or
+    if (not xray_auto_authorized() or
         MODE.read_text().strip()!="transit" or
         NODE_POLICY_MODE.read_text().strip()!="auto" or
         os.environ.get("MIHOMO_XRAY_AUTO_FAILOVER_CANARY")!="1" or
@@ -247,7 +255,7 @@ def verified_degraded_selective_baseline():
     This guarded state is eligible only when the separate AWG standby is healthy
     and a temporary test-Pi AUTO canary explicitly authorized the transaction.
     """
-    if (socket.gethostname()!="awg-upgrade" or
+    if (not xray_auto_authorized() or
         MODE.read_text().strip()!="selective" or
         NODE_POLICY_MODE.read_text().strip()!="auto" or
         os.environ.get("MIHOMO_XRAY_AUTO_FAILOVER_CANARY")!="1" or
@@ -642,8 +650,8 @@ def cli():
         raise SystemExit("Usage: awg-xray-live-backend apply FAILED_NODE CANDIDATE (disabled until explicit test authorization)")
     if os.environ.get("AWG_XRAY_EXPERIMENTAL_APPLY")!="TEST_PI_AUTHORIZED":
         raise SystemExit("EXPERIMENTAL_APPLY_DISABLED")
-    if socket.gethostname()!="awg-upgrade":
-        raise SystemExit("TEST_PI_ONLY")
+    if not xray_auto_authorized() and socket.gethostname()!="awg-upgrade":
+        raise SystemExit("XRAY_AUTO_NOT_ENABLED")
     from importlib.machinery import SourceFileLoader
     loader=SourceFileLoader("awg_xray_activation", "/usr/local/sbin/awg-xray-activation-transaction")
     import types

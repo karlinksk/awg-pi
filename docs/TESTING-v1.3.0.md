@@ -667,3 +667,196 @@ updater target at v1.2.0. No speculative PASS entries.
 On `awg-upgrade`, the authorized owner ran `scripts/awg-xray-transit-gate-from-awg.sh` with independently armed 600s/420s recovery timers. `TRANSIT_BASELINE=PASS`, `FAULT=MIHOMO_STOP`, `FIRST_RESULT=XRAY_TUN`, `XRAY_TUN_HTTPS=PASS`; then `FAULT=XRAY_STOP`, `SECOND_RESULT=AWG`, `SECOND_LAST_PREDICATE=PASS`. Before scripted rollback the observer confirmed AWG selected, healthy Xray/Mihomo shutdown, Transit guard SAFE, policy ACTIVE, VPN table READY, both route tables 100/101 through AWG, and HTTPS through awg0 PASS. Native Transit policy disable produced `TRANSIT_POLICY=DISABLED_FAIL_CLOSED` and `TRANSIT_FAIL_CLOSED_GUARD_STATE=PASS_NOT_PACKET_TEST`; reapply produced `TRANSIT_POLICY=ACTIVE`. Test reported `TRANSIT_XRAY_AUTO_FAILOVER=PASS_PI_TUN_AND_GUARD_ONLY`; two recovery layers and Selective restoration PASS. Independent posttest observation found AWG active, SSH/DNS/monitor active, Mihomo/Xray inactive, both tables through awg0 and zero failed services.
 
 **Scope:** this is real test-Pi engine/TUN HTTPS and protective nft/policy state evidence, **not** a LAN-client packet-level FAIL-CLOSED test. No clean-install/reboot proof, no production media/MikroTik modification, and the restored native Mihomo node was **not live retested**. Xray experimental PR #141 remains separate from installer PR #115; do not call v1.3.0 released, merged, clean-installed, or fully accepted on this receipt alone.
+
+### Unified subscription inventory and manual Xray selection (pending live gate)
+
+The user-facing node list must show **all uniquely identified, supported Mihomo
+and Xray profiles from the current loaded subscription**, including Xray profiles
+with `UNTESTED` / failed basic network status. Visibility is not eligibility.
+No false READY, network, TUN or LAN PASS is inferred from importing a profile.
+Do not leak UUID, Reality keys, provider URLs or subscription credentials.
+A rotated source URL or changed node count invalidates cached candidate proof
+unless the exact transport fingerprint is unchanged.
+
+The current candidate implements unified subscription inventory and an
+isolated automatic scanner (provider-directory path watch plus periodic timer)
+that checks bounded groups of Xray candidates after subscription import.
+A dormant local Xray SOCKS alias is present in Mihomo's generated configuration
+when the Xray core is installed; this does **not** start the Xray service.
+**Guarded manual Xray activation code is now present in the candidate**, including
+native/Xray previous-node snapshots, fresh-network preflight, bounded TUN probe,
+independent watchdog and intended recovery. This is **not installed, hardware
+validated or accepted** yet; the real manual transitions/rollback/reboot/LAN
+release gate remains pending.
+A separate root-only guarded manual transaction is required before exposing
+"activate" in the TUI. It must provide a recoverable previous healthy Mihomo
+or Xray node, independent timeout rollback/watchdog, fresh subscription-identity
+validation, live TUN postcheck, LAN forwarding checks, safe reboot restoration,
+and independent SSH/DNS/MikroTik/SSTP protections. It must handle Mihomo→Xray,
+Xray→Xray, and where configured AWG→Xray without using the failed-incumbent
+AUTO transaction to interrupt a healthy node.
+
+Until the above transaction and negative tests pass on the **test Pi**, leave
+manual activation disabled. Preserve Selective FAIL-OPEN, Transit FAIL-CLOSED
+and the opt-in READY/Hot Pool/Xray AUTO policies. No PR merge or release PASS
+is implied by passing inventory unit tests.
+
+### 2026-10-21 candidate code verification (not a release acceptance)
+
+Candidate `8266bb0` integrates Xray-core install, a bounded provider-change/periodic
+background scanner, unified Mihomo/Xray catalog (including UNTESTED rows), a
+dormant localhost SOCKS5 bridge rendered with Mihomo, and an explicit guarded
+manual selection CLI. On `awg-upgrade`, **693 of 693 Python tests passed**,
+Bash syntax, unit file parsing and real Mihomo binary config parsing checked. The current native/default node is preserved on clean import, and a saved Xray selection is mapped to the SOCKS alias only when the exact credential fingerprint matches; removed provider profiles never cause a dead alias to become the new default. The live installed menu remained the
+prior candidate, Xray service inactive, ssh/dnsmasq/Mihomo active. No true manual
+Mihomo→Xray→Xray→native transition, LAN-client forwarding, reboot persistence,
+Transit/Selective live failover, or clean install of this revision was run.
+Unit tests alone do NOT certify the rollback watchdog. No merge/release PASS.
+
+### 2026-10-21 post-install Xray bridge application checkpoint
+
+- Test Pi installed candidate `3943118`; user-confirmed root render with `XRAY_BRIDGE=PRESENT`, `DEFAULT_IS_XRAY=False`, `MIHOMO_TEST_RC=0` and active SSH/dnsmasq/Mihomo. **Running Mihomo controller still lacks alias**: upgrade did not automatically restart healthy TUN (intentionally).
+- Installed background isolated Xray scanner path/timer active; actual service ran 5/5 Xray OpenAI HTTPS 401 probes successfully (basic proxy only). Xray live service inactive; no manual Xray selection or LAN/reboot tests yet.
+- Existing full snapshot created by operator: `gateway-manual-20261021-095559-T51z9AsE/gateway-state.tgz`, `BACKUP=VERIFIED`, 124000831 bytes. Restore execution not independently tested.
+- Test-only bridge reload helper in `scripts/awg-xray-bridge-reload-test.py`: user ran initial `preflight` (native TUN healthy and Transit SAFE, no restart). During review we identified a critical rollback failure: normal Mihomo ExecStartPre regenerates the new Xray bridge even if old config.yaml is restored. Fixed by a runtime-only, marker-checked systemd ExecStartPre override while restoring the exact original config; the override is removed after recovery. Mock guard/restore tests and full Python suite **707/707 PASS** at source commit `ce07458323b08edcb2365e62a62fd879cbb7dd39`. This newer helper is not yet installed; no real manual restart or rollback PASS is claimed. Use root-only pinned install then repeat preflight before supervised apply. Keep reboot blocked until after recovery validation.
+
+### 2026-10-21 supervised Mihomo bridge activation: live verified, Xray switch pending
+
+Operator installed the reviewed bridge-reload test helper on test Pi `awg-upgrade` and ran `preflight` and `apply`. Actual output: `BRIDGE_RELOAD_PREFLIGHT=PASS`, `ACTIVE_NATIVE_NODE=HEALTHY`, `TRANSIT_GUARD=SAFE`, `XRAY_BRIDGE_LIVE=PASS`, `PREVIOUS_NODE=UNCHANGED`, `TRANSIT_GUARD=VERIFIED`; local protected snapshot under `/var/backups/awg-gateway/xray-bridge-1792553379-648409`. After apply, independent read-only check confirmed running controller `BRIDGE_LIVE=True`, `BRIDGE_SELECTED=False`, original choice present in controller options, SSH/dnsmasq/Mihomo/health/selection monitor active, Xray inactive, both VPN policy routing tables default via `mihomo0`, and zero systemd failed units; no armed bridge rollback timer remained. This is a **live bridge reload PASS only**, not a tested forced rollback or an Xray TUN PASS.
+
+The isolated Xray scanner had previously recorded 5/5 `NETWORK_OK` using HTTPS OpenAI probe on the Xray SOCKS sidecar. Those results are transient (600-second cache) and do **not** establish Xray as a live TUN node. Next gate: refresh one indexed Xray profile via `awg-mihomo-unified-nodes probe INDEX`, run `awg-xray-manual-switch preview INDEX`, review rollback and reboot behavior, then supervised first manual Xray activation/TUN test. Reboot and LAN forwarded traffic remain untested. No production SD or MikroTik changes.
+
+### 2026-10-21 first manual Xray candidate preflight
+
+After live Mihomo bridge reload PASS, the operator ran `awg-mihomo-unified-nodes probe 1` and `awg-xray-manual-switch preview 1`: `UNIFIED_PROBE_INDEX=1 ENGINE=XRAY BASIC_NETWORK=NETWORK_OK`, `XRAY_MANUAL_PREFLIGHT=PASS`, `XRAY_MANUAL_TUN=NOT_TESTED`. No Xray selection was made; SSH/dnsmasq/Mihomo/health monitor/selection monitor remained active, Xray service inactive, native node still selected. Independent routing checks show VPN mark rules 0x100/0x101 and both tables default dev `mihomo0`.
+
+Review caught a silent policy mutation in the manual switch: on successful Xray selection the script was resetting node policy to manual and deleting the FIXED order. Corrected in source `742655a` to change the current transport exit only and preserve MANUAL/FIXED/AUTO/READY/Hot Pool policy files. Added a mocked successful-transition regression that asserts policy/order/READY byte preservation; rootless suite now **708/708 tests PASS** at `7517dd2a889dd38b3d9ba4e857b4055b0722fbc2`. Corrected manual helper is **not yet installed**; original root preflight belongs to previously installed helper, not the revised one. Next: pinned helper replacement, new probe/preview, then supervised `apply` with live TUN/rollback/Transit validation. No LAN/reboot or forced failure PASS claimed.
+
+### 2026-10-21 first Xray manual apply: local SOCKS readiness race, rollback observed
+
+Test Pi `awg-upgrade` manual activation of indexed Xray profile 1:
+
+- `awg-mihomo-unified-nodes probe 1` reported `BASIC_NETWORK=NETWORK_OK`; `awg-xray-manual-switch preview 1` reported `XRAY_MANUAL_PREFLIGHT=PASS` and `XRAY_MANUAL_TUN=NOT_TESTED`.
+- First supervised `awg-xray-manual-switch apply 1` returned **`XRAY_MANUAL_ERROR=NEW_XRAY_LOCAL_HTTPS_FAILED`** before the Mihomo controller switch. This is a **failed gate**, not Xray TUN PASS.
+- Independent post-failure read-only check confirmed SSH, dnsmasq, Mihomo, health and selection monitor active, controller still on native Mihomo with Xray alias present but unselected; Xray service inactive, no pending Xray-manual watchdog timer, tables 100/101 default dev `mihomo0` and 0x100/0x101 policy rules present. This verifies the **observed safe post-error state**, not a forced watchdog recovery test.
+- Sanitized systemd journal confirmed `awg-xray-vless.service` started 10:38:00.880, Xray-core 26.3.27 logged successful startup at 10:38:01.345, and controlled rollback stopped the service at 10:38:01.800 (about 0.45 seconds after core startup). No kernel/core crash was evident. The old transaction performed a single immediate HTTPS check without waiting for fixed port 17892 to listen; a startup/listener readiness race is **strongly suspected**, but old logs cannot independently prove which HTTP/curl error occurred.
+- Corrected source in candidate branch: bounded 10-second service/listener wait at 127.0.0.1:17892, then at most two bounded HTTPS 401 probes before any native-to-Xray TUN selector change; explicit error categories `XRAY_SERVICE_NOT_ACTIVE`, `XRAY_SOCKS_PORT_NOT_LISTENING`, `XRAY_SERVICE_EXITED_DURING_HTTPS`, `XRAY_SOCKS_HTTPS_NOT_VERIFIED`. Existing native/Xray rollback guard preserved.
+- Test-Pi source suite **713/713 PASS** including 14 targeted manual-transaction tests; corrected live helper **NOT INSTALLED OR LIVE RETESTED YET**. Next gate: pinned install only of revised manual helper, fresh candidate `probe 1` and `preview 1` before a supervised manual Xray apply and TUN/LAN/rollback/reboot verification. No MikroTik/production SD changes.
+
+
+### 2026-10-21 first manual Xray activation — actual Pi TUN HTTPS PASS (not LAN/reboot)
+
+On test Pi `awg-upgrade`, operator installed the revised guarded manual helper and ran `probe 1`, `preview 1`, then supervised `apply 1`. Output:
+`UNIFIED_PROBE_INDEX=1 ENGINE=XRAY BASIC_NETWORK=NETWORK_OK`,
+`XRAY_MANUAL_PREFLIGHT=PASS`, `XRAY_MANUAL_TUN=VERIFIED`,
+`MIHOMO_NODE_POLICY=UNCHANGED`, `XRAY_MANUAL_REBOOT=NOT_TESTED`.
+
+Independent **post-apply live** read-only checks at 10:50 +07 confirmed:
+- Mihomo controller `AWG-XRAY-VLESS-LOCAL` **is the selected outbound** (`ALIAS_PRESENT=True`, `ALIAS_SELECTED=True`); Xray sidecar active, enabled for boot, running with 0 systemd restarts; Mihomo, SSH, dnsmasq, health and selection monitors active.
+- Actual `curl --interface mihomo0 --noproxy '*'` to `https://api.openai.com/v1/models` returned HTTP **401**, curl exit **0**; separate local `curl --socks5-hostname 127.0.0.1:17892` to the same HTTPS endpoint also returned **401**, curl exit **0**. Loopback SOCKS listener `127.0.0.1:17892` present. No browser testing or rejected YouTube HTTP gate used.
+- Both `fwmark 0x100/0x101` rules present and routing tables 100/101 default via `mihomo0`; 0 failed systemd units, no pending manual-switch watchdog timer.
+- **Limitations:** privileged `awg-transit-routing status` (nftables forward guard) could not be independently read by the non-root remote agent after the switch; that specific guard remains to be checked as root. These are Pi-bound TUN and SOCKS observations, **not LAN-client proof**, nor a forced rollback/automatic failover/YouTube 24-frame decode/reboot or full clean-install acceptance. No production microSD or MikroTik configuration changes.
+
+Next gate: root read-only Transit guard status and actual LAN-client experience while Xray is selected, followed by supervised Xray→native/FIXED preserving recovery, forced-failure watchdog validation, reboot and full v1.3.0 release matrix. Keep PR draft until all applicable gates are satisfied.
+
+### 2026-10-21 menu repeat-Xray selection — failed UI transaction, watchdog recovery confirmed
+
+After successful initial Pi-TUN activation, the operator tried manual Xray selection via `awg-menu` while Xray was **already the live selected outbound**. The menu reported generic exit code 2, not a successful switch. Independent unprivileged observation confirmed live Xray, Mihomo, SSH, dnsmasq and health service active; controller `AWG-XRAY-VLESS-LOCAL` selected; `mihomo0` HTTPS OpenAI 401/curl RC0; policy rules 0x100/0x101 via `mihomo0` intact. Journal showed Xray service restarts at 10:55:37 and 10:55:47 and a still-armed autonomous watchdog that fired at 10:58:52 and restarted Xray. Watchdog service result success, no pending timer afterward, Pi-TUN HTTPS passed afterward. Do **not** call menu or rollback path fully PASS: the transition itself failed; root-only snapshot phase, requested profile identity, and `XRAY_MANUAL_ERROR` detail remain to be inspected.
+
+Safety correction **committed to candidate, not installed**: when the requested exact Xray profile fingerprint matches the currently active one and existing TUN HTTPS is healthy, return `XRAY_MANUAL_ALREADY_SELECTED=YES` with no service stop/restart/transaction/watchdog. Menu reports "already active" and exits, protecting the healthy channel. Different profile still requires guarded transaction. Targeted source tests **17/17 PASS** on Pi. Full suite **716 cases attempted, 22 failures and 4 errors** under real active Xray because existing mock fixtures inspect live Xray systemd state (`XRAY_ACTIVE_DEFER_TO_TRANSPORT_AWG`, `SERVICE_RUNNING_STOP_FIRST`); this is not a full regression PASS. Restore a separately isolated test environment rather than switching live Xray just for green test output. No production SD/MikroTik changes.
+
+
+### 2026-10-21 Xray-to-Xray failed menu transition: root snapshot and regression repair
+
+Operator root-only audit of failed menu transaction snapshot \`xray-manual-1792554937-677635\`: \`RECOVERY_PHASE=rolled_back\`, \`PREVIOUS_WAS_XRAY=True\`, **\`REQUESTED_SAME_XRAY=False\`**, \`MENU_ERROR=NOT_FOUND\`. Therefore the attempt targeted a **different Xray profile**, disproving the earlier same-profile re-selection hypothesis for this failure. Privileged \`awg-transit-routing status\` showed \`Transit guard: SAFE\`, \`Transit policy rule: ACTIVE\`, \`Transit VPN table: READY\`. Independent subsequent read-only checks found Xray still selected, Xray/Mihomo/SSH/dnsmasq/health and selection monitor active, mark 0x100/0x101 and tables 100/101 via mihomo0 intact and no pending manual watchdog. The watchdog executed ~10:58:52 and its service finished successfully. **Observed old-Xray restoration** is supported; a successful different-Xray transition is **not** supported.
+
+The old menu displayed only exit code 2 and discarded its temporary capture; the previous snapshot had no persisted safe failure code. Exact failure root cause (new Xray SOCKS HTTPS, Pi-bound TUN, post-commit, or immediate recovery) cannot be recovered from that attempt. No unsupported assertion of root cause or Xray-to-Xray PASS.
+
+Candidate source changes **not installed or live retested yet**: Xray manual transaction persists only sanitized \`failure_code\` / \`failed_at\` / \`rollback_failure_code\` and nonsecret checkpoint fields in the owner-only recovery snapshot, adds root-only \`diagnose\` that prints only safe fields, and performs bounded retry verification of the previous Xray TUN during recovery. Same exact-profile selection is idempotent by fingerprint and does not restart service; this is separate from the failed different-profile path. Dedicated regressions simulate different-Xray failure with successful and failed immediate recovery while ensuring the watchdog remains armed in the latter. Synthetic READY/AUTO/adapter fixtures were isolated from installed live Xray state, so CI no longer depends on Xray being off. **721/721 rootless Python unit tests PASS on test Pi with Xray live at commit \`e1003b264c566e7dbb9255e29e50da53b753a9fa\`**; previous full suite had 22 failures/4 errors due solely to fixture pollution.
+
+Next: pinned install corrected manual switch helper, root-only \`diagnose\` and read-only exact candidate selection and \`preview\`; do not repeat different-Xray \`apply\` until operator agrees to a supervised guarded test. Keep LAN forward, cross-Xray hardware PASS, intentional failure/watchdog, reboot and clean install release gate open. No production SD or MikroTik changes.
+
+### 2026-10-21 Xray-to-Xray manual switch — test Pi TUN PASS
+
+User executed on the **test Pi** `awg-upgrade` with previously healthy and actively selected Xray: `awg-mihomo-unified-nodes probe 3` → `UNIFIED_PROBE_INDEX=3 ENGINE=XRAY BASIC_NETWORK=NETWORK_OK`, `awg-xray-manual-switch preview 3` → `XRAY_MANUAL_PREFLIGHT=PASS`, then guarded `awg-xray-manual-switch apply 3` → **`XRAY_MANUAL_TUN=VERIFIED`**, `MIHOMO_NODE_POLICY=UNCHANGED`, `XRAY_MANUAL_REBOOT=NOT_TESTED`. This is the first successful **different Xray profile → Xray index 3**, after an earlier attempt through the menu had failed with code 2 and rolled back. It is a supervised manual switch, not automatic failover.
+
+Independent read-only confirmation at **2026-10-21 11:21 +07**:
+- Mihomo controller `AWG-XRAY-VLESS-LOCAL` remains selected; Xray service active and enabled with `NRestarts=0` and unit `Result=success`, `ActiveEnterTimestamp=11:20:02 +07`; loopback `127.0.0.1:17892` listening.
+- HTTPS `curl --interface mihomo0 --noproxy '*'` to `https://api.openai.com/v1/models` returned **401, curl exit 0**; separate Xray SOCKS5 probe of the same endpoint also **401, exit 0**. This verifies Pi-originated actual TUN egress as well as SOCKS, not forwarded LAN.
+- SSH, dnsmasq, Mihomo, pbr-health and selection-monitor active. Both policy `fwmark 0x100/0x101` rules present and tables 100/101 default via `mihomo0`. No pending `awg-xray-manual-*` recovery timer, zero failed systemd units.
+- **Post-switch root checks now PASS (operator 2026-10-21):** `sudo awg-transit-routing status` reported `Transit guard: SAFE`, `Transit policy rule: ACTIVE`, `Transit VPN table: READY`; independently recomputed SHA256 fingerprint for current provider `proxies[2]` (index 3, excluding `name`) exactly matched the root-owned `xray-vless/selected.json`: `XRAY_NODE_3_SELECTED=True`. This establishes correct Xray profile identity and current root Transit guard after the successful switch; it is not a forced failure / forwarded LAN traffic test.
+- **PASS scope:** supervised Xray-to-different-Xray manual selection and real Pi TUN HTTPS; no LAN client, forced rollback/failover, YouTube 24-frame media/ChatGPT Web, reboot, or clean-install acceptance claimed. No changes to production microSD or MikroTik/SSTP.
+
+
+### 2026-10-21 native Mihomo menu appears selected while Xray remains actual outbound
+
+Operator evidence: `Состояние Mihomo` screenshot displayed saved `Selected node: NL Netherlands 1 Hysteria2`; Windows IP-check screenshot showed the previous Xray exit IP. Independent **read-only** test Pi inspection at 11:30 +07 verified live `AWG-MIHOMO` controller `now=AWG-XRAY-VLESS-LOCAL`, Xray and Mihomo active, mark rules 0x100/0x101 and both routes via `mihomo0`, no pending recovery timers or failed systemd units. Pi direct vs Xray bound egress through `https://api.ipify.org`: `--interface mihomo0` and `--socks5-hostname 127.0.0.1:17892` **both matched** the public IP visible on Windows, while Pi DIRECT did **not**. This demonstrates the **Pi TUN was still using Xray**, and the Mihomo status' named native node was not the live outbound. Matching Windows egress IP alone does **not** prove its forwarding path through Pi rather than MikroTik SSTP; LAN still unverified.
+
+Source root cause: `src/awg-mihomo-configure status_cmd` printed only the stored `node-name`; `awg-menu` translated it to **Выбранный узел**, even when controller still selected the live Xray SOCKS alias. The ordinary manual Mihomo choice called `node select-auto` which can update `node-name`/endpoint and restart Mihomo while `profile.store-selected=true` continues selecting `AWG-XRAY-VLESS-LOCAL`. Hence UI metadata may diverge from dataplane.
+
+Candidate fixes (**committed in draft PR, NOT installed / NOT Pi-live-tested**):
+- Status now queries the **actual local Mihomo controller**, displays `Actual outbound engine: XRAY|MIHOMO|UNKNOWN` and distinguishes saved native metadata from live selection; if controller fails, no false successful live status.
+- Manual menu selection of Mihomo while Xray is selected routes through the existing `awg-xray-manual-switch` root-only `native-preview NAME` / guarded `native-apply NAME`, **not** ordinary unguarded `node select-auto`. Strict preview requires the native node already loaded in the current controller AND matching the stored configured native node; reject unsupported different native choice without any dataplane mutation.
+- Guarded native return snapshots previous Xray, holds maintenance lock, arms independent watchdog, switches actual controller to native, confirms OpenAI HTTPS 401 through Pi `mihomo0` and routes/Transit SAFE, only then detaches persistent Xray boot dependency/staged selection and stops/disables the optional sidecar. If validation fails, roll back to original Xray; no code claims LAN/reboot. Pre-arm errors do not restart the healthy incumbent. Does not change Mikrotik/SSTP, DNS, or FIXED/AUTO/READY/Hot Pool.
+- **26/26 targeted mocked manual switch tests PASS** and `bash -n` of modified scripts PASS on Pi at `ac39026` before the last pre-arm guard refinement. The new pre-arm negative regression was committed afterward; full suite outcome **not yet independently verified** because test Pi remote commander monthly quota was reached while a full run was executing. Obtain the rootless test result before proposing a live native-return apply, and perform separate root-only `native-preview`.
+
+Status: screenshot/UI mismatch **REPRODUCED/EXPLAINED**; source fix **COMMITTED ONLY**; actual Xray→native switch, Windows LAN client path, forced rollback, and reboot **NOT YET PASS**.
+
+
+### 2026-10-21 generalized manual Mihomo/Xray node switch — source candidate, test gate pending
+
+User requirement: any current exact provider node must be manually selectable regardless of whether the current outbound is Mihomo or Xray, without lying about the selected exit or overwriting unrelated FIXED/AUTO/READY policies. The observed `XRAY_MANUAL_ERROR=XRAY_NOT_ACTIVE` came from the earlier `native-preview` requiring **Xray service active AND controller selector on the Xray alias**, even after the controller/sidecar state changed. Old native `node select-auto` could update `node-name` and restart Mihomo but still leave the Xray alias selected, as independently observed via Pi TUN/socks egress.
+
+**Candidate source only, NOT installed/NOT hardware PASS:**
+
+- `src/awg-menu` resolves the engine from the existing unified provider catalog. Xray target keeps previously-tested guarded `preview/apply INDEX`; **every** Mihomo target now invokes `native-preview/native-apply NAME` in the guarded manual helper, not the unguarded `node select-auto` path. Target native profile can be loaded from current provider, rather than required to already exist in a controller filtered to a different node.
+- `src/awg-xray-manual-switch.py` generalizes native preflight to both **Mihomo→Mihomo** and **Xray→Mihomo**, authoritative live controller selection and current Pi-bound HTTPS, exact profile uniqueness, repository-native provider `info` resolver for `filter_regex` and first IPv4 endpoint. Invalid/unsupported profiles and mismatched service/controller states fail without mutation.
+- Under owner-only snapshot/maintenance lock + 180-s independent systemd watchdog, native candidate changes are made only to Mihomo provider filter, endpoint and node-name; Mihomo restarts with its own `awg-mihomo-prepare` config validation, controller explicitly selects target after startup, and **real Pi `mihomo0` OpenAI API HTTPS** (HTTP 401) and routing/Transit guard are checked before commit. On success the old Xray sidecar (if previous active exit) is detached only after new native TUN has passed. The native→native case leaves unrelated engine policy files untouched. There may be brief TUN downtime during Mihomo restart; Transit must remain FAIL-CLOSED.
+- On any failed transaction after mutation, rollback restores byte copies of previous Mihomo `provider.env`, `config.yaml`, endpoint and expected-egress state, `node-name`, previous Xray selected state and boot override, fixed policy/order, then restarts the old Mihomo controller selection and verifies HTTPS TUN. Failed immediate recovery leaves the independent watchdog armed; later recovery may refuse replacing a newer transport.
+- Synthetic regression tests added/updated for all native-engine starts, no-op, profile rejection, preserved FIXED order, live controller selection, native/Xray error handling, and byte-level rollback. **No full test run or new Pi-live switch has yet been observed after these candidate commits** because remote Pi control is currently unavailable; operator should run pinned `py_compile`, `bash -n`, targeted tests and full suite. Do NOT infer PASS from earlier 726/726 which predates this change.
+- Installer and existing-install upgrade already deliver versioned `src/awg-menu`, `src/awg-xray-manual-switch.py` and `src/awg-mihomo-configure`; no new daemon, dependency or transport engine required.
+
+**Next gate:** test-Pi pinned source checkout, rootless  tests, then nonmutating `native-preview` for a selected native node while controller is actually Xray/native; only after current Transit/SSH checks and operator approval a timed live transition with independent TUN egress observation, valid controller state, rollback, then LAN/failover/reboot. Do not touch MikroTik priority SSTP or production microSD.
+
+### 2026-10-21 first unified-manual full suite FAILED; candidate corrections await rerun
+
+Operator tested pinned source commit `8cce62fa3f1e558cf93c75129871a41851c7cc70` on test Pi: syntax checks completed; full rootless Python suite: **730 cases, FAIL (1 failure + 1 error)**. Named results: `test_rollback_xray_restores_old_profile_before_local_selection` ERROR, `test_initial_setup_is_native_dialog_not_hidden_ssh` FAIL. **Do not install that revision or claim PASS.**
+
+Candidate corrections committed after operator evidence:
+- Xray rollback synthetic fixture now mocks systemd service liveness required by existing bounded previous-Xray TUN recovery (prevents unit test dependence on current running Pi state); no runtime service is changed.
+- The unified native menu restores its preexisting read-only `run_with_progress ... awg-mihomo-configure node prepare` behavior for normal/first-run setup.
+- Explicit **Transit FAIL-CLOSED** quiesce (existing `awg-transit-routing disable` under nft forward DROP guard) *before* stopping Mihomo TUN, followed by `awg-transit-routing apply` after real target node/controller become ready and before HTTPS/TUN postcheck; the same protection is required on native rollback. **Selective FAIL-OPEN** uses existing `awg-pbr-failopen` before any Mihomo TUN stop.
+- Preserves operator `MIHOMO_XRAY_VLESS_BRIDGE` setting instead of forcing `auto`; permits known, installer-owned Xray sidecar active while an actual native node is selected (passive managed Xray), and retains original sidecar state on rollback. Unknown/foreign Xray continues to be rejected before mutation.
+- Synthetic tests assert both Transit quiesce/rearm and Selective failopen happen before service teardown, native state restoration, and no mutable action on invalid provider profiles.
+
+**Corrected source and regression tests have NOT been re-run on test Pi yet**, so current full-suite status is **FAIL pending new run**, independent of the previous 726/726 gate. There is **no** verified live/native↔Xray switch using corrected files, no installer clean-install/LAN/reboot/failover PASS. The candidate remains a **draft PR**, not production or stable release.
+
+### 2026-10-21 unified-manual regression rerun — 731/731 rootless PASS (not hardware)
+
+Operator on test Pi `awg-upgrade` checked pinned candidate commit `9d92f6375a0adc28bd6491f1ecad0cce8d216674`, verified Python `py_compile` for `awg-xray-manual-switch.py` and its tests, `bash -n src/awg-menu`, then ran `python3 -m unittest discover -s tests -q`: **`Ran 731 tests in 26.768s`, `OK`, `TEST_EXIT=0`**. The earlier 730-suite failure/error in the previous candidate were resolved by that tested revision. This is **automated rootless regression PASS**, with no modification of live Xray or Pi VPN dataplane.
+
+Next acceptance gate remains staged **test-Pi install of only versioned manual switch and menu helpers** after verifying no armed recovery timer, followed by read-only `native-preview` (exact current subscription native name) and privileged Transit status. Only after preflight permit supervised native↔Xray real TUN switching, which must check actual selected controller and egress, service health, rollback and guard. LAN/reboot/forced-failure/clean install not PASS. PR #143 remains draft, PR #115 open, no release.
+
+### 2026-10-21 test Pi: AUTO Mihomo→AWG fallback confirmed, manual AWG→Mihomo returned
+
+On test Pi `awg-upgrade` after installation of candidate manual-menu/transaction files (installer and router not modified), operator independently confirmed: `awg-transport status` reports `AmneziaWG/awg healthy`; `awg-transport check awg` returned `healthy`; `awg-quick@awg0.service` is `active`, `Result=success`. `awg-selection status` shows conservative AUTO order `mihomo,awg`, fallback only for repeated health failures. System journal contains `Automatic failover: mihomo -> awg (mode=auto)`. At that moment Mihomo exited cleanly, Xray inactive and `mihomo0` absent; no pending manual transaction watchdog. This was **intended transport fallback**, not a failed installer or confirmed cause of initial Mihomo health failure.
+
+Operator then executed existing versioned `sudo awg-transport select mihomo`; real Transit preflight **OK** (router/LAN/direct endpoint and live `mihomo0`), `Transport activated: Mihomo`, transport status `healthy`, `Transit guard: SAFE`, policy rule `ACTIVE`, VPN table `READY`; `awg-mihomo-configure status` showed saved **and actual controller-selected** `Netherlands 1 Hysteria2`, service active. **Verified:** manual healthy AWG→native Mihomo transport recovery on Pi, in Transit. **Not verified:** arbitrary Mihomo→different Mihomo using new guard, Xray→native return, Xray→Xray after new guard, deliberately induced native switch rollback, LAN-client forwarded route, reboot, clean install. Original reason for node health failure remains undiagnosed; no automatic return to Mihomo is desired in sticky conservative AUTO.
+
+The user reports Desktop Commander remote tooling is quota-limited; GitHub revisions can be reviewed, but live Pi command execution currently requires operator's own SSH session. Preserve current working Mihomo and do not disable MikroTik SSTP. Next controlled gate is exact `native-preview` for current node (expect idempotent already-selected), then choose a different provider-backed native name in the versioned menu and check TUN/controller/guard and failure metadata. An unsuccessful preview is not evidence of a broken current VPN.
+
+### 2026-10-21 direct Desktop Commander validation after UI and Selective health recovery fixes
+
+Test-Pi `awg-upgrade` online again through connected Desktop Commander (device user `karlinks`, unprivileged). Read-only verification: `awg-mihomo.service` active (`NRestarts=0`), Xray inactive, SSH/dnsmasq active; routing tables `100` and `101` default through `mihomo0`, fwmark rules 0x100/0x101 present; genuine `curl -q -4 --interface mihomo0 --noproxy '*'` to OpenAI HTTPS returned HTTP **401** with curl exit **0**. Journal confirms prior fallback `2026-10-21 12:21:24 +07:00 Automatic failover: mihomo -> awg (mode=auto)`. All these readings are **current active Mihomo Pi-TUN evidence**, not a switch to a different node.
+
+After operator's SSH screen rejected 71×33 window as too narrow, candidate `src/awg-menu` lowered minimum terminal width from 78 to 70 and retained clamp-to-actual-terminal dimensions; new pseudo-TTY fixture verifies a 71×33 SSH dialog. Code audit found Selective manual `awg-pbr-failopen` necessarily removes fwmark 0x100, while `awg-pbr-health` independently restores it after health polling; previous postcheck only waited ~1 second. Candidate `src/awg-xray-manual-switch.py` now waits up to 20 seconds for route return before actual TUN HTTPS checks; a missing rule cannot be called a successful switch. Transit continues using independent guarded disable and rearm. Tests cover delayed Selective return and timeout failure.
+
+On test Pi the operator's git checkout now matches candidate `c17e7b619c4b31b2e7d54e950361743060b2ca6f`; Python compile and `bash -n` PASS; independently invoked targeted suites: **34/34 manual-switch PASS**, **9/9 menu PASS**; **full rootless suite 734/734 PASS, 27.267s** on connected Desktop Commander. These test cases use mocks and pseudo terminals; no native `apply` was executed, no production router/SD edits.
+
+**Tooling limitation:** Desktop Commander's current security configuration explicitly blocks `sudo`/root escalation commands. Restoring its monthly usage quota does not itself authorize privileged execution. No removal of that guard or workaround was performed. The root-owned installed manual switch/menu still correspond to the previously installed cbb95a8 candidate, **not these later c17e7b6 changes**; hardware acceptance requires explicit permission for controlled test-Pi privileged commands or a separately authorized operator action. PR #143 remains draft; no live Mihomo→different Mihomo, Xray→Mihomo, LAN or reboot PASS.
+
+### 2026-10-21 test Pi installed candidate c17e7b6 — native same-node PASS, cross-node pending
+
+Operator on test Pi `awg-upgrade` installed root-owned versioned manual-switch + menu from pinned checkout `800762dba6534f80eed2c16d2e81e0fb4682f57a` (implementation code `c17e7b6`, later docs-only). Rollback copies saved in root-only `/var/backups/awg-gateway/manual-unified-v2.NvExf9Y6`. Operator then verified exact saved Netherlands 1 Hysteria2 with `native-preview` output `NATIVE_RETURN_PREFLIGHT=PASS`, `NATIVE_MANUAL_ALREADY_SELECTED=YES`, `NATIVE_RETURN_TUN=EXISTING_HEALTHY_NOT_SWITCHED`, plus live Mihomo healthy and Transit guard SAFE/rule ACTIVE/table READY. Through connected read-only Desktop Commander after install: `awg-mihomo.service` active, Xray inactive, rules 0x100 and 0x101, tables 100 and 101 both `default dev mihomo0`, Pi-bound OpenAI API HTTPS **401** curl exit 0; no armed manual watchdog timer. This validates **installation, current-node no-op, current TUN and Transit**, not a different-node transition.
+
+Desktop Commander `sudo` command block was briefly removed with user's explicit permission, then restored after it became clear Debian still required a password: `sudo -n true` returned `sudo: a password is required`. No sudoers changes or credentials were supplied. Live privileged native apply cannot be executed through DC without the user's authorized sudo session. Next minimal operator action: `sudo /usr/local/sbin/awg-menu` in SSH (71x33 supported) then choose another native Mihomo profile and confirm; assistant can independently observe ongoing Pi routing/HTTP/controller where unprivileged. Record actual switch or rollback before claiming cross-engine PASS. No MikroTik/production microSD changes.

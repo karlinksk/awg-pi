@@ -24,8 +24,8 @@ if [[ -t 0 && -t 1 ]]; then
   _ui_rows=""; _ui_cols=""
   read -r _ui_rows _ui_cols < <(stty size </dev/tty 2>/dev/null) || true
   if [[ "$_ui_rows" =~ ^[0-9]+$ && "$_ui_cols" =~ ^[0-9]+$ ]] &&
-     (( _ui_rows < 22 || _ui_cols < 78 )); then
-    printf 'Для русского меню требуется окно SSH не меньше 78×22. Сейчас: %s×%s.\n' "$_ui_cols" "$_ui_rows" >&2
+     (( _ui_rows < 22 || _ui_cols < 70 )); then
+    printf 'Для русского меню требуется окно SSH не меньше 70×22. Сейчас: %s×%s.\n' "$_ui_cols" "$_ui_rows" >&2
     printf 'Вы остаетесь в командной строке SSH. Увеличьте окно и снова запустите awg-menu.\n' >&2
     exit 10
   fi
@@ -39,8 +39,8 @@ dialog(){
   if [[ ! -t 0 || ! -t 1 ]]; then command dialog "${args[@]}"; return; fi
   read -r rows cols < <(stty size </dev/tty 2>/dev/null) || { command dialog "${args[@]}"; return; }
   [[ "$rows" =~ ^[0-9]+$ && "$cols" =~ ^[0-9]+$ ]] || { command dialog "${args[@]}"; return; }
-  if ((rows < 22 || cols < 78)); then
-    printf 'Увеличьте окно SSH минимум до 78×22 (сейчас %s×%s).\n' "$cols" "$rows" >&2
+  if ((rows < 22 || cols < 70)); then
+    printf 'Увеличьте окно SSH минимум до 70×22 (сейчас %s×%s).\n' "$cols" "$rows" >&2
     return 1
   fi
   for ((i=0;i<${#args[@]};i++)); do
@@ -324,8 +324,14 @@ localize_status_file(){
     -e 's/^Provider cache: missing$/Кэш источника: отсутствует/' \
     -e 's/^Provider candidate: staged$/Подготовленный профиль: есть/' \
     -e 's/^Provider candidate: none$/Подготовленный профиль: нет/' \
-    -e 's/^Selected node:/Выбранный узел:/' \
-    -e 's/^Endpoint:/IPv4 сервера:/' \
+    -e 's/^Selected node:/Сохранённая нода Mihomo:/' \
+     -e 's/^Actual outbound engine: XRAY$/Фактический выход: Xray VLESS/' \
+     -e 's/^Actual outbound engine: MIHOMO$/Фактический выход: Mihomo/' \
+     -e 's/^Actual outbound engine: UNKNOWN$/Фактический выход: не подтверждён/' \
+     -e 's/^Actual outbound detail: Xray VLESS via Mihomo TUN$/Путь: Mihomo TUN → локальный Xray SOCKS5/' \
+     -e 's/^Actual outbound detail: Native Mihomo node$/Путь: нативная нода Mihomo/' \
+     -e 's/^Actual outbound node:/Активная нода Mihomo:/' \
+    -e 's/^Endpoint:/IPv4 сервера сохранённой Mihomo-ноды:/' \
     -e 's/^Last fetch path:/Последний канал загрузки:/' \
     -e 's/^Runtime config: ready$/Рабочая конфигурация: готова/' \
     -e 's/^Runtime config: missing$/Рабочая конфигурация: отсутствует/' \
@@ -934,10 +940,17 @@ select_tsv_node_dialog(){
       description="$type | $endpoint"
       [[ -z "$country" || "$country" == "??" ]] || description="$description | страна выхода: $country"
       [[ -z "$delay" || "$delay" == "-" ]] || description="$description | $delay"
-      [[ "$health" == XRAY_HTTPS ]] && description="$description | Xray: HTTPS OK (не TUN)"
+      case "$health" in
+        XRAY_HTTPS) description="$description | Xray: HTTPS OK (не TUN)" ;;
+        XRAY_UNTESTED) description="$description | Xray: ещё не проверен" ;;
+        XRAY_NETWORK_FAIL) description="$description | Xray: ошибка сети" ;;
+        XRAY_UNKNOWN_HTTP) description="$description | Xray: HTTP не подтверждён" ;;
+        XRAY_UNKNOWN_ERROR) description="$description | Xray: ошибка проверки" ;;
+        XRAY_UNAVAILABLE) description="$description | Xray: движок недоступен" ;;
+      esac
       [[ "$health" == DEAD ]] && description="$description | НЕДОСТУПЕН"
       [[ "$duplicate" == DUPLICATE ]] && description="$description | ДУБЛИКАТ ИМЕНИ"
-      items+=("$ui_idx" "$display_name — $description" "Mihomo: применить; Xray: подготовить профиль без переключения TUN.")
+      items+=("$ui_idx" "$display_name — $description" "Mihomo: выбрать вручную; Xray: проверка, затем защищённое ручное переключение TUN.")
     done <<<"$filtered"
     search_prompt="$prompt\n\nПоказано: $count из $total"
     [[ -z "$query" ]] || search_prompt="$search_prompt | поиск: $query"
@@ -1048,6 +1061,7 @@ mihomo_pool_status_dialog(){
 }
 
 MIHOMO_POOL_PICKED_NODE=""
+XRAY_MANUAL_SWITCH="/usr/local/sbin/awg-xray-manual-switch"
 
 mihomo_pool_pick(){
   local target="$1" dialog_title="$2" prompt="$3" choice region region_label protocol protocol_label selected_protocol listing node node_json pick_rc
@@ -1062,8 +1076,8 @@ mihomo_pool_pick(){
     protocol="$("$MIHOMO_POOL" protocol get 2>/dev/null || echo all)"
     protocol_label="$(mihomo_protocol_label "$protocol")"
     choice="$(dialog --backtitle "$BACKTITLE" --title "$dialog_title" --item-help --menu \
-      "Mihomo: проверка узла. Xray VLESS: изолированный OpenAI HTTPS, НЕ READY/TUN/LAN. Выбор Xray сначала только подготавливает профиль." 26 114 12 \
-      1 "Выбрать узел Mihomo / Xray [$region_label]" "Показать работающие Mihomo и Xray с HTTPS OK; Xray не переключает живой TUN." \
+      "Mihomo: проверка узла. Xray VLESS: изолированный OpenAI HTTPS, НЕ READY/TUN/LAN. Xray проверяется в фоне; переключение требует ручного подтверждения." 26 114 12 \
+      1 "Выбрать узел Mihomo / Xray [$region_label]" "Показать Mihomo и все Xray из подписки, включая ещё не проверенные. Ручное переключение Xray требует подтверждения и проверки TUN." \
       2 "Фильтр: Только Европа [$region_label]" "Для Xray страна без независимого GeoIP не подтверждена — такие ноды скрыты этим фильтром." \
       3 "Протокол [$protocol_label]" "Фильтр выбора: все, VLESS, Trojan, HY2, SS, VMess. Mihomo pool и отдельная Xray HTTPS-проверка независимы." \
       4 "Обновить проверку сейчас" "Проверить Mihomo; на live дополнительно Xray VLESS HTTPS в RAM. Рабочий VPN не переключается." \
@@ -1095,7 +1109,7 @@ mihomo_pool_pick(){
         fi
         rm -f "$node_json"
         [[ -n "$listing" ]] || {
-          msg "$dialog_title" "Нет работоспособных узлов, подходящих под текущие фильтры. Обновите проверку или измените фильтр региона/протокола."
+          msg "$dialog_title" "Нет подходящих узлов. Проверьте подписку и фильтры региона/протокола."
           continue
         }
         node="$(select_tsv_node_dialog "$dialog_title" "$prompt" "$listing")" || continue
@@ -1218,7 +1232,7 @@ select_chain_index(){
 mihomo_node_menu(){
   local node_name info_tmp current rc preview fixed_chain="" confirm_text sync_out updated_chain="" resolver engine index proof
 
-  if ! mihomo_pool_pick live "Точка выхода Mihomo / Xray" "Mihomo — штатное переключение; Xray VLESS — пока только безопасная подготовка профиля."; then
+  if ! mihomo_pool_pick live "Точка выхода Mihomo / Xray" "Mihomo — ручной выбор; Xray VLESS — проверка и защищённое ручное переключение."; then
     return 0
   fi
   node_name="$MIHOMO_POOL_PICKED_NODE"
@@ -1233,17 +1247,29 @@ mihomo_node_menu(){
     proof="$(sed -n 's/^NODE_BASIC_NETWORK=//p' <<<"$resolver" | head -n1)"
     index="$(sed -n 's/^NODE_INDEX=//p' <<<"$resolver" | head -n1)"
     if [[ "$proof" != NETWORK_OK || ! "$index" =~ ^[0-9]+$ ]]; then
-      msg "Xray VLESS" "Профиль изменился или HTTPS-доказательство устарело. Рабочая нода не изменена."
+      msg "Xray VLESS" "Узел есть в подписке, но HTTPS-проверка пока не подтверждена. Можно запустить изолированную проверку без изменения текущего VPN."
+      if [[ "$index" =~ ^[0-9]+$ ]] && confirm "Проверить Xray VLESS" "Запустить изолированную HTTPS-проверку выбранной Xray-ноды? Трафик клиентов и активная нода не меняются."; then
+        title="Проверка Xray VLESS"
+        capture "$MIHOMO_UNIFIED" probe "$index" || true
+      fi
       return 0
     fi
-    if systemctl is-active --quiet awg-xray-vless.service; then
-      msg "Xray VLESS" "Xray уже запущен. Не заменяем профиль активной службы без отдельной транзакции."
+    # Do not reuse AUTO's failed-incumbent transaction against a healthy node.
+    # The dedicated manual transaction must prove the current TUN, a fresh
+    # candidate and independent previous-node rollback before any mutation.
+    title="Ручной Xray — предварительная проверка"
+    if ! run_with_progress "$title" "$XRAY_MANUAL_SWITCH" preview "$index"; then
+      show_operation_result 1 "$title"
       return 0
     fi
-    confirm "Подготовка Xray VLESS" "Сохранить профиль выбранного узла Xray?\\n\\nЭто НЕ переключит живой TUN. Постоянный переход через Xray пока не допущен: автономный откат после выбора узла ещё требует испытания.\\n\\nMihomo, FIXED, DNS и MikroTik остаются прежними." || return 0
-    title="Подготовка профиля Xray"
-    if capture /usr/local/sbin/awg-xray-vless select "$index"; then
-      msg "Xray VLESS" "Профиль подготовлен. Живой трафик остаётся на прежней ноде.\\n\\nHTTPS OK означает только изолированную сетевую проверку, а не TUN/READY."
+    if grep -Fxq 'XRAY_MANUAL_ALREADY_SELECTED=YES' "$TMP"; then
+      msg "Xray VLESS" "Этот Xray-профиль уже выбран, HTTPS через текущий TUN работает. Повторная остановка Xray и переключение не требуются."
+      return 0
+    fi
+    confirm "Переключение на Xray" "Выполнить ручное переключение рабочего VPN на выбранную Xray-ноду?\\n\\nСначала проверяется текущий TUN и резервный путь, затем Xray HTTPS, после переключения — HTTPS через mihomo0. При ошибке выполняется откат к прежней ноде под защитой независимого таймера.\\n\\nDNS, SSH и MikroTik не меняются." || return 0
+    title="Ручной переход на Xray"
+    if capture "$XRAY_MANUAL_SWITCH" apply "$index"; then
+      msg "Xray VLESS" "Ручное переключение выполнено с проверкой TUN. LAN и reboot должны проверяться отдельно."
     fi
     return 0
   fi
@@ -1252,45 +1278,30 @@ mihomo_node_menu(){
     return 0
   }
 
-  info_tmp="$(mktemp)"
+  # One native-target dispatcher from either Mihomo or Xray. It resolves
+  # and prepares the requested provider node, proves actual Pi TUN egress,
+  # and rolls back all of Mihomo's config under an independent watchdog.
+  # Never mistake a stored node-name for the controller's live selection.
   title="Подготовка узла Mihomo"
   if ! run_with_progress "$title" "$MIHOMO_CONFIGURE" node prepare "$node_name"; then
-    dialog --backtitle "$BACKTITLE" --title "$title — ошибка" --textbox "$TMP" 24 108
+    show_operation_result 1 "$title"
+    msg "Ручной выбор Mihomo" "Узел подписки не удалось подготовить. Рабочий транспорт и конфигурация не изменены."
     return 0
   fi
-  dialog --backtitle "$BACKTITLE" --title "$title — проверен" --textbox "$TMP" 24 108
-
-  preview="$("$MIHOMO_NODE_POLICY" manual-selection preview "$node_name" 2>/dev/null || true)"
-  fixed_chain="$(sed -n 's/^FIXED_CHAIN_NEW=//p' <<<"$preview" | head -n1)"
-  confirm_text="Узел: $node_name\nIPv4 сервера будет выбран автоматически из показанных данных профиля — повторно вводить его не нужно.\n\nОтдельное правило MikroTik для этого IP не требуется. Для исходящего трафика самой Pi действует постоянное DIRECT-исключение на уровне шлюза.\n\nЕсли Mihomo сейчас активен, маршрутизация клиентского трафика будет безопасно приостановлена и восстановлена после проверки нового узла."
-  if [[ -n "$fixed_chain" ]]; then
-    confirm_text="$confirm_text\n\nПолитика узлов: FIXED. После успешной проверки выбранный узел автоматически станет первым элементом цепочки, хвост сохранится:\n\n$fixed_chain"
+  title="Ручной выбор Mihomo — предварительная проверка"
+  if ! run_with_progress "$title" "$XRAY_MANUAL_SWITCH" native-preview "$node_name"; then
+    show_operation_result 1 "$title"
+    msg "Ручной выбор Mihomo" "Предварительная проверка не пройдена. Действующий выход и политика резервирования не изменены."
+    return 0
   fi
-  confirm "Применить узел Mihomo?" "$confirm_text" || return 0
-
-  current="$("$AWG_TRANSPORT" get 2>/dev/null || echo unconfigured)"
-  title="Выбор узла Mihomo"
-  if capture "$MIHOMO_CONFIGURE" node select-auto "$node_name"; then
-    rc=0
-  else
-    rc=$?
+  if grep -Fxq 'NATIVE_MANUAL_ALREADY_SELECTED=YES' "$TMP"; then
+    msg "Узел Mihomo" "Этот профиль уже выбран и HTTPS через текущий TUN работает. Повторное переключение не требуется."
+    return 0
   fi
-
-  if (( rc == 0 )) && [[ -n "$fixed_chain" ]]; then
-    if sync_out="$("$MIHOMO_NODE_POLICY" manual-selection apply "$node_name" 2>&1)"; then
-      updated_chain="$(sed -n 's/^MIHOMO_NODE_ORDER=//p' <<<"$sync_out" | head -n1)"
-    else
-      msg "FIXED-цепочка Mihomo" "Узел успешно переключён, но автоматическое обновление головы FIXED-цепочки завершилось ошибкой. Проверьте «Резервирование узлов Mihomo → Показать политику» перед тестом отказоустойчивости."
-      return 0
-    fi
-  fi
-
-  if (( rc == 0 )) && [[ -n "$updated_chain" ]]; then
-    msg "Узел Mihomo" "Новый узел успешно применён.\n\nFIXED-цепочка автоматически обновлена:\n$updated_chain"
-  elif (( rc == 0 )) && [[ "$current" != mihomo ]]; then
-    msg "Узел Mihomo" "Новый узел применён. Активный транспорт не изменён; при необходимости переключите его через «VPN-маршрутизация → Активный транспорт»."
-  elif (( rc != 0 )); then
-    msg "Узел Mihomo" "Новый узел не применён; предыдущая конфигурация и FIXED-цепочка сохранены."
+  confirm "Переключение на Mihomo" "Сделать выбранную ноду рабочим выходом независимо от текущего движка?\n\nНовый профиль и IP подготавливаются под защитой watchdog; возможен короткий перерыв TUN при перезапуске Mihomo. После переключения будет проверено реальное HTTPS через mihomo0.\n\nПри ошибке прежний Xray/Mihomo и конфигурация восстанавливаются. FIXED/AUTO, READY, DNS, SSH и MikroTik не меняются." || return 0
+  title="Защищённый выбор ноды Mihomo"
+  if capture "$XRAY_MANUAL_SWITCH" native-apply "$node_name"; then
+    msg "Mihomo" "Нативная нода действительно выбрана в контроллере и прошла HTTPS через TUN. Проверка LAN и reboot проводится отдельно."
   fi
 }
 
@@ -1534,6 +1545,35 @@ mihomo_auto_strategy_menu(){
   done
 }
 
+mihomo_xray_auto_menu(){
+  local choice status
+  while true; do
+    status="$("$MIHOMO_NODE_POLICY" xray-auto status 2>/dev/null || echo MIHOMO_XRAY_AUTO=unavailable)"
+    choice="$(dialog --backtitle "$BACKTITLE" --title "AUTO Mihomo / Xray" --item-help --menu \
+      "Состояние: $status\\n\\nПри отказе Mihomo сначала проверяются его ноды, затем один свежий Xray VLESS/Reality. Далее — настроенный AWG. Selective FAIL-OPEN, Transit FAIL-CLOSED. READY/Hot Pool управляются отдельно." 24 108 6 \
+      1 "Включить Xray в AUTO" "Требует AUTO нод, отключённого READY и настроенного резервного AWG. Без смены активного транспорта." \
+      2 "Выключить Xray в AUTO" "Отключает будущие автоматические переходы Xray. Текущую ноду и каналы не прерывает." \
+      3 "Показать состояние" "Показывает постоянную настройку AUTO Xray." \
+      0 "Назад" "Сохранить настройки." 3>&1 1>&2 2>&3)" || return 0
+    case "$choice" in
+      1)
+        confirm "Включение Xray AUTO" "Разрешить Xray VLESS как следующий резерв после нод Mihomo? Перед включением требуется исправный AWG и выключенный READY. Активный канал не переключаем." || continue
+        title="Включить Xray AUTO"
+        capture "$MIHOMO_NODE_POLICY" xray-auto enable || true
+        ;;
+      2)
+        title="Выключить Xray AUTO"
+        capture "$MIHOMO_NODE_POLICY" xray-auto disable || true
+        ;;
+      3)
+        title="Состояние Xray AUTO"
+        capture "$MIHOMO_NODE_POLICY" xray-auto status || true
+        ;;
+      0) return 0;;
+    esac
+  done
+}
+
 mihomo_node_policy_menu(){
   local choice
   while true; do
@@ -1547,6 +1587,7 @@ mihomo_node_policy_menu(){
       5 "Выбрать / фильтровать живые узлы" "Открывает пул узлов, поиск и фильтры «Только Европа» / протокол без обязательной смены политики." \
       6 "Восстановить резерв при AWG" "Однократная проверка и подбор рабочей ноды Mihomo, пока AWG обслуживает трафик. Не переключает транспорт." \
       7 "Способ AUTO: Hot Pool / обычный" "Включить или выключить фоновый Hot Pool и READY-приоритет, оставить AUTO из подписки." \
+      8 "Xray VLESS в AUTO: включить / выключить" "Разрешить подтверждённый guarded Xray fallback после Mihomo. Требует отдельного явного включения." \
       0 "Назад" "Не менять политику узлов." 3>&1 1>&2 2>&3)" || return 0
     case "$choice" in
       1)
@@ -1573,6 +1614,7 @@ mihomo_node_policy_menu(){
         capture "$MIHOMO_NODE_POLICY" standby-repair || true
         ;;
       7) mihomo_auto_strategy_menu ;;
+      8) mihomo_xray_auto_menu ;;
       0) return 0 ;;
     esac
   done
@@ -1951,8 +1993,8 @@ mihomo_menu(){
       "Повседневное управление Mihomo: источник подписки, узлы, резервирование узлов и восстановление. Активный транспорт выбирается уровнем выше." 24 110 8 \
       1 "Состояние Mihomo" "Показывает текущий профиль, выбранный узел, адрес сервера, состояние службы и последний канал загрузки без вывода секретов." \
       2 "Подписка / источник" "Заменить URL, обновить через AUTO или импортировать профиль/подписку из файла либо текста." \
-      3 "Точка выхода Mihomo / Xray" "Единый список: Mihomo применяет ноду, Xray VLESS пока только подготавливает профиль. Без автоматического TUN-переключения." \
-      4 "Политика узлов Mihomo (FIXED/AUTO)" "Mihomo резервирует исправные ноды и AWG; автоматический переход на Xray до отдельных испытаний запрещён." \
+      3 "Точка выхода Mihomo / Xray" "Единый список: Mihomo применяет ноду, Ручной выбор Xray подготавливает профиль; живое переключение выполняет только защищённый AUTO после отказа." \
+      4 "Политика узлов Mihomo (FIXED/AUTO)" "Mihomo резервирует исправные ноды и AWG; Xray AUTO включается отдельно; применяются TUN-проверка и безопасный откат." \
       5 "Расширенные / восстановление" "Ручной канал загрузки, формат подписки, подготовленный профиль и локальное восстановление Mihomo." \
       6 "Xray VLESS: диагностика" "Отдельный Xray Reality XHTTP/gRPC, HTTPS-проверка, подготовка профиля и локальный SOCKS. Без смены работающего TUN." \
       0 "Назад" "Вернуться в меню VPN без изменений." 3>&1 1>&2 2>&3)" || return 0
@@ -2316,6 +2358,45 @@ traffic_screen(){
   capture "$AWG_TRAFFIC" status full || true
 }
 
+desktop_commander_menu(){
+  local choice dc_user
+  dc_user="${SUDO_USER:-karlinks}"
+  while true; do
+    choice="$(dialog --backtitle "$BACKTITLE" --title "Desktop Commander (удалённый доступ)" --item-help --menu \
+      "Необязательный удалённый агент. Подключение требует подтверждения в браузере. Для стабильного доступа сервер Desktop Commander должен проходить через настроенный на MikroTik SSTP. VPN-шлюз и DNS здесь не изменяются." 25 108 8 \
+      1 "Подключить / авторизовать устройство" "Запустить штатный awg-dc pair от обычного пользователя; после подтверждения включается автозапуск." \
+      2 "Состояние Desktop Commander" "Проверить авторизацию и службу без раскрытия учётных данных." \
+      3 "Включить автозапуск" "Для уже авторизованного устройства включить systemd-службу." \
+      4 "Выключить автозапуск" "Остановить службу, не удаляя авторизацию." \
+      0 "Назад" "Вернуться к системным функциям." 3>&1 1>&2 2>&3)" || return 0
+    case "$choice" in
+      1)
+        dc_user="$(input "Пользователь Desktop Commander" "Обычный пользователь Debian, который подтвердит подключение. Не root." "$dc_user")" || continue
+        [[ "$dc_user" =~ ^[a-z_][a-z0-9_-]{0,31}$ && "$dc_user" != root ]] || { msg "Desktop Commander" "Недопустимый пользователь."; continue; }
+        id "$dc_user" >/dev/null 2>&1 || { msg "Desktop Commander" "Пользователь не найден."; continue; }
+        confirm "Авторизация DC" "Запустить подключение для $dc_user? После подтверждения кода в браузере нажмите Ctrl+C: штатный awg-dc pair включит постоянную службу." || continue
+        run_interactive "Подготовка Desktop Commander" /usr/local/bin/awg-dc prepare "$dc_user"
+        run_interactive "Авторизация Desktop Commander" runuser -u "$dc_user" -- /usr/local/bin/awg-dc pair
+        ;;
+      2)
+        title="Desktop Commander — состояние"
+        capture /usr/local/bin/awg-dc status "$dc_user" || true
+        ;;
+      3)
+        confirm "Автозапуск DC" "Включить постоянный удалённый доступ для $dc_user после проверки авторизации?" || continue
+        title="Desktop Commander — автозапуск"
+        capture /usr/local/bin/awg-dc enable "$dc_user" || true
+        ;;
+      4)
+        confirm "Отключить DC" "Остановить удалённый агент и выключить автозапуск для $dc_user? Данные авторизации останутся." || continue
+        title="Desktop Commander — отключение"
+        capture /usr/local/bin/awg-dc disable "$dc_user" || true
+        ;;
+      0) return 0 ;;
+    esac
+  done
+}
+
 system_menu(){
   local choice mode_badge
   while true; do
@@ -2330,6 +2411,7 @@ system_menu(){
       6 "Режим работы [$mode_badge]" "Переключение между SELECTIVE и TRANSIT с безопасными предварительными проверками. Метка показывает текущий режим." \
       7 "Часовой пояс" "Просмотр доступных часовых поясов IANA и изменение системного часового пояса." \
       8 "Статистика трафика" "Трафик за сегодня и месяц только по транспортным интерфейсам Pi: awg0 и mihomo0, с отдельной статистикой по AWG и Mihomo." \
+      9 "Desktop Commander — удалённый доступ" "Подключение устройства, проверка авторизации, включение и выключение автозапуска." \
       0 "Назад" "Возвращает в главное меню без изменений." 3>&1 1>&2 2>&3)" || return 0
     case "$choice" in
       1)
@@ -2347,6 +2429,7 @@ system_menu(){
       6) operating_mode_menu ;;
       7) timezone_menu ;;
       8) traffic_screen ;;
+      9) desktop_commander_menu ;;
       0) return 0 ;;
     esac
   done

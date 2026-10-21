@@ -42,19 +42,36 @@ class UnifiedPicker(unittest.TestCase):
         self.assertIn("XRAY_HTTPS",data[1])
         self.assertIn("Finland VLESS",data[1])
 
-    def test_only_fresh_xray_network_ok_is_selectable(self):
+    def test_xray_profiles_visible_before_network_probe(self):
+        # Visibility does not mean a live TUN activation is authorized.
         for status in ("UNTESTED","NETWORK_FAIL","UNKNOWN_HTTP","UNKNOWN_ERROR"):
             with self.subTest(status=status):
                 inv=[inventory[0],{**inventory[1],"basic_network":status}]
-                self.assertEqual(len(self.rows(proofs=inv)),1)
-                self.assertNotIn("Finland VLESS",self.rows(proofs=inv)[0])
+                data=self.rows(proofs=inv)
+                self.assertEqual(len(data),2)
+                self.assertIn("Finland VLESS",data[1])
+                self.assertIn("XRAY_"+status,data[1])
+                self.assertNotIn("XRAY_HTTPS",data[1])
+
+    def test_xray_present_even_when_missing_from_mihomo_scan(self):
+        data=self.rows(pool=[mihomo])
+        self.assertEqual(len(data),2)
+        self.assertIn("Finland VLESS",data[1])
+        self.assertIn("XRAY_HTTPS",data[1])
+
+    def test_stale_pool_does_not_suppress_current_xray(self):
+        stale={**xray,"server":"old.example","healthy":False}
+        data=self.rows(pool=[mihomo,stale])
+        self.assertEqual(len(data),2)
+        self.assertIn("Finland VLESS",data[1])
+        self.assertIn("XRAY_HTTPS",data[1])
 
     def test_duplicate_names_and_provider_churn_never_selected(self):
         duplicate=[profiles[0],profiles[1],{**profiles[1],"port":8443}]
         self.assertEqual(len(self.rows(source=duplicate,proofs=inventory+[
             {**inventory[1],"index":3}])),1)
         rotated=[profiles[0],{**profiles[1],"server":"new.example"}]
-        self.assertEqual(len(self.rows(source=rotated)),1)
+        # A rotated current profile stays visible but loses old HTTPS evidence.\n        data=self.rows(source=rotated,proofs=[inventory[0],{**inventory[1],"basic_network":"UNTESTED"}])\n        self.assertEqual(len(data),2)\n        self.assertIn("XRAY_UNTESTED",data[1])
 
     def test_protocol_filter_preserved(self):
         self.assertEqual(len(self.rows(protocol="vless")),1)
@@ -85,9 +102,10 @@ class UnifiedPicker(unittest.TestCase):
         menu=(ROOT/"src/awg-menu").read_text()
         self.assertIn('MIHOMO_NODE_PICKER=/usr/local/sbin/awg-mihomo-node-picker',menu)
         self.assertIn('if [[ "$engine" == XRAY ]]; then',menu)
-        self.assertIn('awg-xray-vless select "$index"',menu)
+        self.assertIn('"$XRAY_MANUAL_SWITCH" apply "$index"',menu)
+        self.assertIn('"$XRAY_MANUAL_SWITCH" preview "$index"',menu)
         self.assertIn('[[ "$engine" == MIHOMO ]] ||',menu)
-        self.assertIn('Постоянный переход через Xray пока не допущен',menu)
+        self.assertIn('confirm "Переключение на Xray"',menu)
         self.assertIn('MIHOMO_POOL_PICKED_NODE',menu)
         self.assertIn('independent Xray OpenAI network gate remains valid',menu)
         self.assertIn('Reality VLESS may be unusable',menu)

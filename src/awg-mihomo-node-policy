@@ -3,6 +3,19 @@ set -Eeuo pipefail
 
 [[ ${EUID:-$(id -u)} -eq 0 ]] || exec sudo "$0" "$@"
 
+# Persistent explicit user opt-in. Each invocation reloads this file; the monitor
+# invokes node-policy afresh, so no transient systemd environment required.
+MIHOMO_XRAY_AUTO_MODE_FILE="${MIHOMO_XRAY_AUTO_MODE_FILE:-/etc/awg-pbr/transports/mihomo/xray-auto.mode}"
+_xray_auto_mode="$(cat "$MIHOMO_XRAY_AUTO_MODE_FILE" 2>/dev/null || echo 0)"
+[[ "$_xray_auto_mode" == 0 || "$_xray_auto_mode" == 1 ]] || { echo XRAY_AUTO_INVALID_STATE >&2; exit 2; }
+if [[ "$_xray_auto_mode" == 1 ]]; then
+  MIHOMO_XRAY_AUTO_FAILOVER_CANARY=1
+  MIHOMO_XRAY_SELECTIVE_CANARY=1
+elif [[ -z "${MIHOMO_XRAY_AUTO_FAILOVER_CANARY+x}" ]]; then
+  MIHOMO_XRAY_AUTO_FAILOVER_CANARY=0
+fi
+export MIHOMO_XRAY_AUTO_FAILOVER_CANARY MIHOMO_XRAY_SELECTIVE_CANARY
+
 MIHOMO_NODE_POLICY_MODE_FILE="${MIHOMO_NODE_POLICY_MODE_FILE:-/etc/awg-pbr/transports/mihomo/node-policy.mode}"
 MIHOMO_NODE_POLICY_ORDER_FILE="${MIHOMO_NODE_POLICY_ORDER_FILE:-/etc/awg-pbr/transports/mihomo/node-policy.nodes}"
 MIHOMO_NODE_NAME_FILE="${MIHOMO_NODE_NAME_FILE:-/etc/awg-pbr/transports/mihomo/node-name}"
@@ -70,6 +83,7 @@ Usage:
   awg-mihomo-node-policy mode auto
   awg-mihomo-node-policy ready-auto enable|disable|status
   awg-mihomo-node-policy auto-strategy status|ready|classic
+  awg-mihomo-node-policy xray-auto enable|disable|status
   awg-mihomo-node-policy standby-repair  # AWG must be healthy and active; no route change
   awg-mihomo-node-policy manual-selection preview NODE
   awg-mihomo-node-policy manual-selection apply NODE
@@ -698,7 +712,7 @@ auto_xray_candidate(){
   operating_mode="$(cat "$MIHOMO_AUTO_MODE_FILE" 2>/dev/null || true)"
   if [[ "${MIHOMO_STANDBY_REPAIR:-0}" == 1 ||
         "$MIHOMO_READY_AUTO_CANARY" != 0 ||
-        "$(hostname)" != awg-upgrade ||
+        ( "$_xray_auto_mode" != 1 && "$(hostname)" != awg-upgrade ) ||
         ( "$operating_mode" != transit && "$operating_mode" != selective ) ||
         ( "$operating_mode" == selective && "${MIHOMO_XRAY_SELECTIVE_CANARY:-0}" != 1 ) ||
         "$(sed -n 's/^NODE_BASIC_NETWORK=//p' <<<"$resolved")" != NETWORK_OK ]]; then
@@ -998,6 +1012,34 @@ case "${1:-status}" in
   standby-repair)
     [[ $# -eq 1 ]] || { usage >&2; exit 2; }
     standby_repair
+    ;;
+  xray-auto)
+    [[ $# -eq 2 ]] || { usage >&2; exit 2; }
+    case "$2" in
+      status) printf 'MIHOMO_XRAY_AUTO=%s\n' "$([[ "$_xray_auto_mode" == 1 ]] && echo enabled || echo disabled)" ;;
+      enable)
+        [[ "$(mode_get)" == auto ]] || { echo XRAY_AUTO_REQUIRES_NODE_AUTO >&2; exit 1; }
+        [[ "$MIHOMO_READY_AUTO_CANARY" == 0 ]] || { echo XRAY_AUTO_REQUIRES_READY_OFF >&2; exit 1; }
+        for f in /usr/local/sbin/awg-xray-live-backend /usr/local/sbin/awg-xray-activation-transaction /usr/local/sbin/awg-mihomo-unified-nodes /usr/local/sbin/awg-xray-vless;do
+          [[ -x "$f" ]] || { echo XRAY_AUTO_MISSING_ENGINE_COMPONENT >&2;exit 1; }
+        done
+        [[ -s /etc/amnezia/amneziawg/awg0.conf ]] || { echo XRAY_AUTO_REQUIRES_CONFIGURED_AWG_BACKUP >&2;exit 1; }
+        tmp="$(mktemp "${MIHOMO_XRAY_AUTO_MODE_FILE}.XXXXXX")"
+        printf '1\n' > "$tmp"
+        chmod 600 "$tmp"
+        mv -f "$tmp" "$MIHOMO_XRAY_AUTO_MODE_FILE"
+        echo MIHOMO_XRAY_AUTO=enabled
+        ;;
+      disable)
+        mkdir -p "$(dirname "$MIHOMO_XRAY_AUTO_MODE_FILE")"
+        tmp="$(mktemp "${MIHOMO_XRAY_AUTO_MODE_FILE}.XXXXXX")"
+        printf '0\n' > "$tmp"
+        chmod 600 "$tmp"
+        mv -f "$tmp" "$MIHOMO_XRAY_AUTO_MODE_FILE"
+        echo MIHOMO_XRAY_AUTO=disabled
+        ;;
+      *) usage >&2;exit 2;;
+    esac
     ;;
   auto-strategy)
     [[ $# -eq 2 ]] || { usage >&2; exit 2; }

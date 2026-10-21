@@ -1,0 +1,13 @@
+[Unit]
+Description=AWG Pi Gateway periodic bounded Xray subscription scan
+
+[Timer]
+OnBootSec=3min
+OnUnitInactiveSec=10min
+AccuracySec=30s
+RandomizedDelaySec=30s
+Unit=awg-xray-subscription-scan.service
+Persistent=true
+
+[Install]
+WantedBy=timers.target

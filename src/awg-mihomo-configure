@@ -254,6 +254,28 @@ status_cmd(){
   printf 'Provider cache: %s\n' "$([[ -r "$MIHOMO_PROVIDER_FILE" ]] && echo ready || echo missing)"
   printf 'Provider candidate: %s\n' "$([[ -r "$MIHOMO_CANDIDATE_FILE" ]] && echo staged || echo none)"
   printf 'Selected node: %s\n' "$([[ -r "$MIHOMO_NODE_NAME_FILE" ]] && cat "$MIHOMO_NODE_NAME_FILE" || echo unknown)"
+  # This is SAVED native metadata, not necessarily the real selected
+  # controller outbound. Xray's SOCKS alias survives a Mihomo restart and
+  # profile.store-selected may override the textual node-name file.
+  python3 -B - <<'PY'
+import json,urllib.request
+try:
+    op=urllib.request.build_opener(urllib.request.ProxyHandler({}))
+    with op.open("http://127.0.0.1:9090/proxies/AWG-MIHOMO",timeout=3) as resp:
+        group=json.load(resp)
+    current=group.get("now")
+    if current=="AWG-XRAY-VLESS-LOCAL":
+        print("Actual outbound engine: XRAY")
+        print("Actual outbound detail: Xray VLESS via Mihomo TUN")
+    elif isinstance(current,str) and current in group.get("all",[]):
+        print("Actual outbound engine: MIHOMO")
+        print("Actual outbound detail: Native Mihomo node")
+        print("Actual outbound node: "+current)
+    else:
+        print("Actual outbound engine: UNKNOWN")
+except (OSError,ValueError,KeyError,TypeError):
+    print("Actual outbound engine: UNKNOWN")
+PY
   printf 'Endpoint: %s\n' "$([[ -r "$MIHOMO_ENDPOINT_IP_FILE" ]] && cat "$MIHOMO_ENDPOINT_IP_FILE" || echo none)"
   printf 'Last fetch path: %s\n' "$([[ -r "$MIHOMO_LAST_FETCH_FILE" ]] && cat "$MIHOMO_LAST_FETCH_FILE" || echo none)"
   printf 'Runtime config: %s\n' "$([[ -r "$MIHOMO_CONFIG_FILE" ]] && echo ready || echo missing)"
