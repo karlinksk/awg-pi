@@ -24,8 +24,8 @@ if [[ -t 0 && -t 1 ]]; then
   _ui_rows=""; _ui_cols=""
   read -r _ui_rows _ui_cols < <(stty size </dev/tty 2>/dev/null) || true
   if [[ "$_ui_rows" =~ ^[0-9]+$ && "$_ui_cols" =~ ^[0-9]+$ ]] &&
-     (( _ui_rows < 22 || _ui_cols < 78 )); then
-    printf 'Для русского меню требуется окно SSH не меньше 78×22. Сейчас: %s×%s.\n' "$_ui_cols" "$_ui_rows" >&2
+     (( _ui_rows < 22 || _ui_cols < 70 )); then
+    printf 'Для русского меню требуется окно SSH не меньше 70×22. Сейчас: %s×%s.\n' "$_ui_cols" "$_ui_rows" >&2
     printf 'Вы остаетесь в командной строке SSH. Увеличьте окно и снова запустите awg-menu.\n' >&2
     exit 10
   fi
@@ -39,8 +39,8 @@ dialog(){
   if [[ ! -t 0 || ! -t 1 ]]; then command dialog "${args[@]}"; return; fi
   read -r rows cols < <(stty size </dev/tty 2>/dev/null) || { command dialog "${args[@]}"; return; }
   [[ "$rows" =~ ^[0-9]+$ && "$cols" =~ ^[0-9]+$ ]] || { command dialog "${args[@]}"; return; }
-  if ((rows < 22 || cols < 78)); then
-    printf 'Увеличьте окно SSH минимум до 78×22 (сейчас %s×%s).\n' "$cols" "$rows" >&2
+  if ((rows < 22 || cols < 70)); then
+    printf 'Увеличьте окно SSH минимум до 70×22 (сейчас %s×%s).\n' "$cols" "$rows" >&2
     return 1
   fi
   for ((i=0;i<${#args[@]};i++)); do
