@@ -114,6 +114,41 @@ class ManualSwitchContract(unittest.TestCase):
             self.assertIn(("systemctl","start",mod.XRAY),actions)
             choose.assert_called_once_with(mod.ALIAS)
 
+    def test_successful_manual_xray_switch_preserves_fixed_chain_and_ready_policy(self):
+        # All operations are mocked: no live service or network is touched.
+        with tempfile.TemporaryDirectory() as d:
+            p=Path(d)
+            snap=p/"snapshot";snap.mkdir()
+            lock=p/"maintenance.lock"
+            current=p/"current";current.write_text("OldNative\\n")
+            policy=p/"node-policy.mode";policy.write_bytes(b"fixed\\n")
+            order=p/"node-policy.nodes";order.write_bytes(b"OldNative\\nFallback\\n")
+            ready=p/"ready-auto.mode";ready.write_bytes(b"0\\n")
+            boot=p/"systemd"/"62-awg-xray-manual.conf"
+            info={"index":1,"candidate":"XrayNode","sha":"provider-digest",
+                  "fingerprint":"transport-digest","previous":"OldNative",
+                  "previous_xray":False,"xray_enabled":False}
+            state={"phase":"pending",**info,"watchdog":"awg-xray-manual-test"}
+            with mock.patch.multiple(mod,LOCK=lock,CURRENT=current,POLICY=policy,
+                                     ORDER=order,BOOT=boot), \
+                 mock.patch.object(mod.os,"geteuid",return_value=0), \
+                 mock.patch.object(mod,"inspect",return_value=info), \
+                 mock.patch.object(mod,"save_snap",return_value=(snap,state)), \
+                 mock.patch.object(mod,"source_node",return_value=("XrayNode","provider-digest","transport-digest")), \
+                 mock.patch.object(mod,"cmd",return_value=""), \
+                 mock.patch.object(mod,"unit_active",return_value=True), \
+                 mock.patch.object(mod,"unit_enabled",return_value=True), \
+                 mock.patch.object(mod,"https_ok",return_value=True), \
+                 mock.patch.object(mod,"routing_ok",return_value=True), \
+                 mock.patch.object(mod,"invariant"), \
+                 mock.patch.object(mod,"choose"):
+                mod.apply(1)
+            self.assertEqual(policy.read_bytes(),b"fixed\\n")
+            self.assertEqual(order.read_bytes(),b"OldNative\\nFallback\\n")
+            self.assertEqual(ready.read_bytes(),b"0\\n")
+            self.assertEqual(current.read_bytes(),b"XrayNode\\n")
+            self.assertIn(b"AWG_XRAY_MANUAL=1",boot.read_bytes())
+
     def test_prearm_error_never_stages_candidate(self):
         with tempfile.TemporaryDirectory() as d:
             p=Path(d)
