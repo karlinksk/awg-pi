@@ -110,6 +110,15 @@ class UnifiedPicker(unittest.TestCase):
         self.assertIn('independent Xray OpenAI network gate remains valid',menu)
         self.assertIn('Reality VLESS may be unusable',menu)
 
+    def test_direct_live_picker_and_optional_advanced_menu(self):
+        code=(ROOT/"src/awg-menu").read_text()
+        self.assertIn('mihomo_pool_pick live "Точка выхода Mihomo / Xray"',code)
+        self.assertIn('доступны отдельным пунктом списка." direct',code)
+        self.assertIn('if [[ "$direct" == yes && "$target" == live ]]',code)
+        self.assertIn('items+=("__advanced__"',code)
+        self.assertIn('__advanced__) return 42',code)
+        self.assertIn('if (( pick_rc == 42 ))',code)
+
     def test_menu_distinguishes_server_address_from_egress(self):
         menu=(ROOT/"src/awg-menu").read_text()
         self.assertIn('сервер: $endpoint (НЕ IP выхода)',menu)

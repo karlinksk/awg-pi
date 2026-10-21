@@ -912,7 +912,8 @@ mihomo_pool_results_dialog(){
 
 select_tsv_node_dialog(){
   local dialog_title="$1" prompt="$2" listing="$3" pick provider_idx ui_idx name display_name type endpoint duplicate health country delay description tab
-  local query="" filtered count total search_prompt
+  local query="" filtered count total search_prompt advanced=no
+  if (( $# >= 4 )); then advanced="$4"; fi
   local -a items=()
   local -A choice_name=()
   tab="$(printf '\t')"
@@ -929,6 +930,9 @@ select_tsv_node_dialog(){
     )
     if [[ -n "$query" ]]; then
       items+=("__clear__" "Сбросить поиск [$query]" "Вернуть полный список работоспособных узлов текущего географического фильтра.")
+    fi
+    if [[ "$advanced" == yes ]]; then
+      items+=("__advanced__" "⚙ Фильтры / обновление / статистика" "Дополнительные параметры списка; выбор рабочей ноды не меняется.")
     fi
     choice_name=()
     ui_idx=0
@@ -962,6 +966,7 @@ select_tsv_node_dialog(){
       __clear__)
         query=""
         ;;
+      __advanced__) return 42 ;;
       *)
         [[ -n "${choice_name[$pick]:-}" ]] || continue
         printf '%s\n' "${choice_name[$pick]}"
@@ -1065,6 +1070,8 @@ XRAY_MANUAL_SWITCH="/usr/local/sbin/awg-xray-manual-switch"
 
 mihomo_pool_pick(){
   local target="$1" dialog_title="$2" prompt="$3" choice region region_label protocol protocol_label selected_protocol listing node node_json pick_rc
+  local direct=no
+  if (( $# >= 4 )) && [[ "$4" == direct ]]; then direct=yes; fi
   MIHOMO_POOL_PICKED_NODE=""
   while true; do
     region="$("$MIHOMO_POOL" policy get 2>/dev/null || echo all)"
@@ -1075,7 +1082,11 @@ mihomo_pool_pick(){
     fi
     protocol="$("$MIHOMO_POOL" protocol get 2>/dev/null || echo all)"
     protocol_label="$(mihomo_protocol_label "$protocol")"
-    choice="$(dialog --backtitle "$BACKTITLE" --title "$dialog_title" --item-help --menu \
+    if [[ "$direct" == yes && "$target" == live ]]; then
+      # Directly open the unified node list; advanced actions stay opt-in.
+      choice=1
+    else
+      choice="$(dialog --backtitle "$BACKTITLE" --title "$dialog_title" --item-help --menu \
       "Mihomo: проверка узла. Xray VLESS: изолированный OpenAI HTTPS, НЕ READY/TUN/LAN. Xray проверяется в фоне; переключение требует ручного подтверждения." 26 114 12 \
       1 "Выбрать узел Mihomo / Xray [$region_label]" "Показать Mihomo и все Xray из подписки, включая ещё не проверенные. Ручное переключение Xray требует подтверждения и проверки TUN." \
       2 "Фильтр: Только Европа [$region_label]" "Для Xray страна без независимого GeoIP не подтверждена — такие ноды скрыты этим фильтром." \
@@ -1084,6 +1095,7 @@ mihomo_pool_pick(){
       5 "Статистика пула Mihomo" "Счётчики относятся к Mihomo; работающие через Xray ноды отмечены отдельно в результатах." \
       6 "Показать все результаты" "Михомо и Xray раздельно: HTTPS Xray не означает READY/TUN/LAN; просмотр ничего не меняет." \
       0 "Назад" "Вернуться без выбора узла." 3>&1 1>&2 2>&3)" || return 1
+    fi
     case "$choice" in
       1)
         title="Проверка пула Mihomo"
@@ -1100,20 +1112,32 @@ mihomo_pool_pick(){
         if ! "$MIHOMO_POOL" list "$target" --all --ignore-policy --format json >"$node_json" 2>/dev/null; then
           rm -f "$node_json"
           msg "$dialog_title" "Не удалось прочитать текущий пул узлов."
+          [[ "$direct" == yes ]] && return 1
           continue
         fi
         if ! listing="$("$MIHOMO_NODE_PICKER" "$node_json" --target "$target" --protocol "$protocol" --region "$region" 2>/dev/null)"; then
           rm -f "$node_json"
           msg "$dialog_title" "Единый каталог недоступен. Рабочий транспорт не менялся."
+          [[ "$direct" == yes ]] && return 1
           continue
         fi
         rm -f "$node_json"
         [[ -n "$listing" ]] || {
           msg "$dialog_title" "Нет подходящих узлов. Проверьте подписку и фильтры региона/протокола."
+          [[ "$direct" == yes ]] && return 1
           continue
         }
-        node="$(select_tsv_node_dialog "$dialog_title" "$prompt" "$listing")" || continue
-        MIHOMO_POOL_PICKED_NODE="$node"
+        if node="$(select_tsv_node_dialog "$dialog_title" "$prompt" "$listing" "$direct")"; then
+          MIHOMO_POOL_PICKED_NODE="$node"
+        else
+          pick_rc=$?
+          if (( pick_rc == 42 )); then
+            direct=no
+            continue
+          fi
+          [[ "$direct" == yes ]] && return 1
+          continue
+        fi
         return 0
         ;;
       2)
@@ -1245,7 +1269,7 @@ PYEGRESS
 mihomo_node_menu(){
   local node_name info_tmp current rc preview fixed_chain="" confirm_text sync_out updated_chain="" resolver engine index proof egress_ip
 
-  if ! mihomo_pool_pick live "Точка выхода Mihomo / Xray" "Mihomo — ручной выбор; Xray VLESS — проверка и защищённое ручное переключение."; then
+  if ! mihomo_pool_pick live "Точка выхода Mihomo / Xray" "Выберите ноду Mihomo или Xray. Фильтры и диагностика доступны отдельным пунктом списка." direct; then
     return 0
   fi
   node_name="$MIHOMO_POOL_PICKED_NODE"
