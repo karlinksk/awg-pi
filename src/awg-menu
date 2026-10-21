@@ -87,11 +87,79 @@ AWG_DIALOG_PALETTE
 }
 
 
+# Breadcrumbs appear in the window title/border, not the dialog body.
+# This preserves vertical space on compact 70x22 SSH terminals.
+# Derive the path from the Bash call stack to avoid stale navigation state.
+awg_dialog_breadcrumb_title(){
+  local title="$1" limit="$2" fn label i part route
+  shift 2
+  [[ "$title" == "Главное меню"* ]] && { printf '%s' "$title"; return; }
+  local -a crumbs=("Главная")
+  for ((i=$#;i>=1;i--)); do
+    fn="${!i}"
+    label=""
+    case "$fn" in
+      vpn_menu) label="VPN" ;;
+      mihomo_menu) label="Mihomo" ;;
+      mihomo_subscription_menu|mihomo_import_menu) label="Подписка" ;;
+      mihomo_node_menu) label="Точка выхода" ;;
+      mihomo_node_policy_menu) label="Резервирование" ;;
+      mihomo_node_auto_menu) label="AUTO" ;;
+      mihomo_xray_auto_menu) label="Xray AUTO" ;;
+      mihomo_auto_strategy_menu) label="Hot Pool" ;;
+      mihomo_node_chain_editor) label="FIXED" ;;
+      mihomo_advanced_menu) label="Восстановление" ;;
+      mihomo_xray_vless_menu) label="Xray" ;;
+      awg_config_menu) label="AWG" ;;
+      active_transport_menu) label="Транспорт" ;;
+      selection_policy_menu) label="Политика транспорта" ;;
+      vpn_destination_menu) label="VPN-домены" ;;
+      opencck_menu) label="OpenCCK" ;;
+      domain_menu) label="Домены" ;;
+      client_menu) label="Клиенты" ;;
+      system_menu) label="Система" ;;
+      dns_menu) label="DNS" ;;
+      timezone_menu) label="Часовой пояс" ;;
+      operating_mode_menu) label="Режим" ;;
+      desktop_commander_menu) label="Desktop Commander" ;;
+      update_menu) label="Обновления" ;;
+      mihomo_pool_pick) label="Каталог" ;;
+    esac
+    if [[ -n "$label" && "${crumbs[-1]}" != "$label" ]]; then
+      crumbs+=("$label")
+    fi
+  done
+  # The menu title often expands its section label, e.g. "AUTO — пул".
+  # Avoid repeating the section in a path like AUTO › AUTO — пул узлов.
+  if [[ "$title" != "${crumbs[-1]}" &&
+        "$title" != "${crumbs[-1]} "* &&
+        "$title" != "${crumbs[-1]} —"* ]]; then
+    crumbs+=("$title")
+  fi
+  route="${crumbs[0]}"
+  for ((i=1;i<${#crumbs[@]};i++)); do route+=" › ${crumbs[i]}"; done
+  # Preserve current and immediate parent on narrow terminal widths.
+  if (( ${#route} > limit && ${#crumbs[@]} > 3 )); then
+    route="Главная › … › ${crumbs[-2]} › ${crumbs[-1]}"
+  fi
+  if (( ${#route} > limit )); then
+    part="${crumbs[-1]}"
+    local prefix="Главная › … › "
+    if (( ${#part} + ${#prefix} > limit )); then
+      part="${part:0:$((limit-${#prefix}-1))}…"
+    fi
+    route="$prefix$part"
+  fi
+  printf '%s' "$route"
+}
+
 # Shrink oversized dialogs to real SSH TTY; do not modify terminal settings.
 dialog(){
   local -a args=("$@")
   local rows cols i hi wi li prompt_lines available
-  if [[ ! -t 0 || ! -t 1 ]]; then command dialog "${args[@]}"; return; fi
+  # A dialog --stdout form returns values via fd1 pipe, painting on fd2.
+  # Ordinary selection menus swap fds. Both require breadcrumb rendering.
+  if [[ ! -t 0 || ( ! -t 1 && ! -t 2 ) ]]; then command dialog "${args[@]}"; return; fi
   read -r rows cols < <(stty size </dev/tty 2>/dev/null) || { command dialog "${args[@]}"; return; }
   [[ "$rows" =~ ^[0-9]+$ && "$cols" =~ ^[0-9]+$ ]] || { command dialog "${args[@]}"; return; }
   if ((rows < 22 || cols < 70)); then
@@ -119,6 +187,30 @@ dialog(){
         break;;
     esac
   done
+  # The title is available on menus, confirmations, input, and textboxes.
+  # The main dashboard remains untouched.
+  local title_index=-1 max_title=64
+  for ((i=0;i<${#args[@]};i++)); do
+    if [[ "${args[i]}" == --title && -n "${args[i+1]:-}" ]]; then
+      title_index=$((i+1))
+      break
+    fi
+  done
+  if ((title_index>=0)); then
+    for ((i=0;i<${#args[@]};i++)); do
+      if [[ "${args[i]}" == --menu || "${args[i]}" == --msgbox ||
+            "${args[i]}" == --yesno || "${args[i]}" == --inputbox ||
+            "${args[i]}" == --editbox || "${args[i]}" == --textbox ||
+            "${args[i]}" == --infobox ]]; then
+        if [[ "${args[i+3]:-}" =~ ^[0-9]+$ ]]; then
+          max_title=$((args[i+3]-7))
+        fi
+        break
+      fi
+    done
+    ((max_title>12)) || max_title=12
+    args[title_index]="$(awg_dialog_breadcrumb_title "${args[title_index]}" "$max_title" "${FUNCNAME[@]:1}")"
+  fi
   command dialog "${args[@]}"
 }
 
