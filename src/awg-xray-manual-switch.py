@@ -204,12 +204,109 @@ def source_node(index):
     mod=importlib.util.module_from_spec(spec);spec.loader.exec_module(mod)
     mod.validate(node)
     identity=mod.sha_profile(node)
-    cache=json.loads(HEALTH.read_text())
-    proof=cache.get("results",{}).get(identity,{})
-    age=time.time()-proof.get("at",0) if isinstance(proof,dict) else 1e9
-    if not 0<=age<=600 or proof.get("status")!="NETWORK_OK":
-        refuse("XRAY_FRESH_NETWORK_PROOF_REQUIRED")
+    # Cached discovery is advisory. An operator may request a fresh
+    # isolated test of a previously failed, stale or never-tested profile.
     return node["name"],hashlib.sha256(raw).hexdigest(),identity
+
+
+def preflight_xray(index,expected):
+    """Probe exact candidate in RAM without stopping the incumbent sidecar."""
+    from importlib.machinery import SourceFileLoader
+    path=Path("/usr/local/sbin/awg-mihomo-unified-nodes")
+    if not path.is_file() or path.is_symlink() or path.stat().st_uid!=0:
+        refuse("XRAY_ISOLATED_PROBE_MISSING")
+    spec=importlib.util.spec_from_loader("awg_manual_probe",SourceFileLoader("awg_manual_probe",str(path)))
+    module=importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    # Imported test helpers support environment overrides; privileged manual
+    # activation MUST use the pinned root-owned production engine and provider.
+    module.PROVIDER=PROVIDER
+    module.XRAY=Path("/usr/local/bin/awg-xray-vless-core")
+    module.ADAPTER=ADAPTER
+    module.PROBE_URL="https://api.openai.com/v1/models"
+    raw=PROVIDER.read_bytes()
+    if hashlib.sha256(raw).hexdigest()!=expected["sha"]:
+        refuse("PROVIDER_CHANGED_BEFORE_PROBE")
+    profiles=yaml.safe_load(raw).get("proxies",[])
+    if not isinstance(profiles,list) or not 1<=index<=len(profiles):
+        refuse("PROVIDER_CHANGED_BEFORE_PROBE")
+    node=profiles[index-1]
+    adapter=module.load_adapter()
+    if adapter.sha_profile(node)!=expected["fingerprint"]:
+        refuse("PROFILE_CHANGED_BEFORE_PROBE")
+    try:
+        result=module.isolated_probe(adapter,node)
+    except (OSError,ValueError,subprocess.TimeoutExpired,SystemExit):
+        refuse("XRAY_ISOLATED_PROBE_ERROR")
+    if hashlib.sha256(PROVIDER.read_bytes()).hexdigest()!=expected["sha"]:
+        refuse("PROVIDER_CHANGED_DURING_PROBE")
+    if result!="NETWORK_OK":
+        refuse("XRAY_ISOLATED_HTTPS_NOT_VERIFIED")
+
+def preflight_mihomo(name,expected):
+    """Isolated Mihomo HTTPS test; never reconfigure the live TUN."""
+    from importlib.machinery import SourceFileLoader
+    import tempfile
+    pool_path=Path("/usr/local/sbin/awg-mihomo-pool")
+    if not pool_path.is_file() or pool_path.is_symlink() or pool_path.stat().st_uid!=0:
+        refuse("MIHOMO_ISOLATED_PROBE_MISSING")
+    raw=PROVIDER.read_bytes()
+    if hashlib.sha256(raw).hexdigest()!=expected["sha"]:
+        refuse("NATIVE_PROVIDER_CHANGED_BEFORE_PROBE")
+    doc=yaml.safe_load(raw)
+    profiles=doc.get("proxies",[]) if isinstance(doc,dict) else []
+    selected=[p for p in profiles if isinstance(p,dict) and p.get("name")==name]
+    if len(selected)!=1:refuse("NATIVE_PROFILE_CHANGED_BEFORE_PROBE")
+    spec=importlib.util.spec_from_loader("awg_manual_mihomo_probe",
+                                        SourceFileLoader("awg_manual_mihomo_probe",str(pool_path)))
+    module=importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    module.MIHOMO_BIN="/usr/local/bin/mihomo"
+    module.HEALTH_URL="https://www.gstatic.com/generate_204"
+    module.DELAY_TIMEOUT_MS=7000
+    node=selected[0]
+    if module.uses_xray_sidecar(node):refuse("NATIVE_WRONG_PROBE_ENGINE")
+    with tempfile.TemporaryDirectory(prefix="awg-manual-mihomo-",dir="/dev/shm") as tmp:
+        root=Path(tmp);root.chmod(0o700)
+        port=module.choose_free_port()
+        controller_port=module.choose_free_port()
+        while controller_port==port:controller_port=module.choose_free_port()
+        config,rows=module.make_probe_config([node],port,controller_port)
+        if len(rows)!=1 or not rows[0].get("valid"):
+            refuse("NATIVE_INVALID_PROBE_PROFILE")
+        cfg=root/"config.yaml"
+        cfg.write_text(yaml.safe_dump(config,allow_unicode=True,sort_keys=False))
+        cfg.chmod(0o600)
+        with (root/"probe.log").open("wb") as log:
+            process=subprocess.Popen([module.MIHOMO_BIN,"-d",str(root),"-f",str(cfg)],
+                        stdin=subprocess.DEVNULL,stdout=log,stderr=subprocess.STDOUT)
+            try:
+                # Suppress diagnostic output from the embedded scanner:
+                # operator messages must never echo subscription credentials.
+                import contextlib,io
+                try:
+                    with contextlib.redirect_stderr(io.StringIO()):
+                        module.wait_controller(process,controller_port,timeout=12)
+                        loaded=module.wait_probe_inventory(process,controller_port,
+                                            [rows[0]["probe_name"]],timeout=12)
+                except (OSError,ValueError,subprocess.TimeoutExpired,SystemExit):
+                    refuse("NATIVE_ISOLATED_PROBE_START_FAILED")
+                if rows[0]["probe_name"] not in loaded:
+                    refuse("NATIVE_ISOLATED_PROFILE_NOT_LOADED")
+                ok,_,_=module.probe_delay(controller_port,rows[0])
+                if not ok:
+                    time.sleep(15)
+                    ok,_,_=module.probe_delay(controller_port,rows[0])
+                if not ok:refuse("NATIVE_ISOLATED_HTTPS_NOT_VERIFIED")
+            finally:
+                if process.poll() is None:
+                    process.terminate()
+                    try:process.wait(timeout=3)
+                    except subprocess.TimeoutExpired:
+                        process.kill();process.wait(timeout=3)
+    if hashlib.sha256(PROVIDER.read_bytes()).hexdigest()!=expected["sha"]:
+        refuse("NATIVE_PROVIDER_CHANGED_DURING_PROBE")
+
 
 def routing_ok():
     for table in ("100","101"):
@@ -441,6 +538,8 @@ def native_return(name):
             print("NATIVE_MANUAL_ALREADY_SELECTED=YES")
             print("NATIVE_RETURN_TUN=EXISTING_HEALTHY_NOT_SWITCHED")
             return
+        # A manual native target is qualified before live Mihomo is stopped.
+        preflight_mihomo(name,info)
         path,state=save_snap(info)
         timer=state["watchdog"]+".timer"
         mutated=False
@@ -623,6 +722,9 @@ def apply(index):
             print("XRAY_MANUAL_TUN=EXISTING_HEALTHY_NOT_SWITCHED")
             print("MIHOMO_NODE_POLICY=UNCHANGED")
             return
+        # Fresh on-demand HTTPS test comes before snapshot/watchdog and,
+        # critically, before stopping the current Xray process.
+        preflight_xray(index,info)
         path,state=save_snap(info)
         timer=state["watchdog"]+".timer"
         mutated=False

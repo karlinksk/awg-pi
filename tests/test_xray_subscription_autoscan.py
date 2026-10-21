@@ -26,7 +26,7 @@ class XraySubscriptionScanner(unittest.TestCase):
         p=(ROOT/"units/awg-xray-subscription-scan.path").read_text()
         t=(ROOT/"units/awg-xray-subscription-scan.timer").read_text()
         self.assertIn("PathChanged=/var/lib/awg-pbr/mihomo/providers",p)
-        self.assertIn("OnUnitInactiveSec=10min",t)
+        self.assertIn("OnUnitInactiveSec=30s",t)
         self.assertIn("awg-xray-subscription-scan.service",t)
     def test_current_fingerprints_cache_only(self):
         s=(ROOT/"src/awg-mihomo-unified-nodes.py").read_text()

@@ -37,18 +37,16 @@ def state(row,evidence):
     # isolated Xray HTTPS establishes Pi TUN/LAN eligibility.
     if evidence is None:
         if row.get("type")=="vless":
-            return "—","НЕ ПРОВ.","нет независимого Xray-подтверждения"
+            return "—","","нет независимого подтверждения движка"
         healthy=row.get("healthy")
-        status="ТЕСТ OK" if healthy is True else (
-            "ТЕСТ FAIL" if healthy is False else "НЕ ПРОВ.")
+        status="OK" if healthy is True else (
+            "FAIL" if healthy is False else "")
         return "Mihomo",status,(
             "" if healthy is True else str(row.get("error") or row.get("geo_error") or ""))
-    states={"NETWORK_OK":"HTTPS OK","NETWORK_FAIL":"HTTPS FAIL",
-        "UNTESTED":"НЕ ПРОВ.","UNKNOWN_HTTP":"HTTP ?",
-        "UNKNOWN_ERROR":"ОШИБКА","UNAVAILABLE":"НЕТ XRAY",
-        "UNUSABLE_DUPLICATE_OR_MISSING_NAME":"ДУБЛИКАТ"}
+    # Only confirmed network results receive a status. Blank = no verdict.
+    states={"NETWORK_OK":"OK","NETWORK_FAIL":"FAIL"}
     why=str(row.get("error") or "")
-    return "Xray",states.get(evidence,"НЕ ПРОВ."),("Mihomo: "+why if why else "")
+    return "Xray",states.get(evidence,""),("Mihomo: "+why if why else "")
 
 def display_name(value):
     value=str(value or "")
