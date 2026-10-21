@@ -109,6 +109,13 @@ quick_summary
         self.assertLessEqual(int(args[at + 4]), 6)
         self.assertGreaterEqual(int(args[at + 4]), 3)
 
+    def test_menu_fits_real_71_by_33_ssh(self):
+        rc, args = self.run_dialog(33, 71, "Выберите узел.")
+        self.assertEqual(rc, 0)
+        at = args.index("--menu")
+        self.assertEqual(args[at + 2:at + 4], ["31", "69"])
+        self.assertEqual(args[at + 4], "14")
+
     def test_full_size_dialog_is_not_shrunk(self):
         rc, args = self.run_dialog(40, 140, "Выберите действие.")
         self.assertEqual(rc, 0)
