@@ -25,7 +25,7 @@ def protocol_ok(row,flt):
 
 def entries(rows,profiles,inventory,protocol="all",region="all"):
     view=load_view()
-    rows=rows if isinstance(rows,list) else []
+    rows=list(rows) if isinstance(rows,list) else []
     profiles=profiles if isinstance(profiles,list) else []
     inventory=inventory if isinstance(inventory,list) else []
     consistent=len(profiles)==len(inventory) and len(profiles)>0
@@ -57,7 +57,6 @@ def entries(rows,profiles,inventory,protocol="all",region="all"):
         name=row.get("name")
         if not isinstance(name,str) or not name or name in seen or row.get("duplicate_name"):
             continue
-        seen.add(name)
         proof=view.find_xray_evidence(row,profiles,inventory) if consistent else None
         if proof is not None:
             # A provider label/IP country is not independent Xray exit-GeoIP proof.
@@ -87,6 +86,7 @@ def entries(rows,profiles,inventory,protocol="all",region="all"):
         # malformed provider names rather than corrupting selection UI.
         if any(any(c in field for c in ("\t","\r","\n")) for field in fields):continue
         out.append("\t".join(fields))
+        seen.add(name)
     return out
 
 def load_view():
