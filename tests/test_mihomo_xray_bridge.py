@@ -76,6 +76,26 @@ class TestXrayConfig(unittest.TestCase):
   self.assertNotIn("proxies",d)
   self.assertEqual(d["proxy-groups"][0]["use"],["subscription"])
 
+ def test_reboot_maps_exact_selected_xray_profile_to_local_alias(self):
+  import hashlib,json
+  selected_xray={"name":"Finland Reality","type":"vless","network":"xhttp",
+   "tls":True,"server":"example.invalid","port":443}
+  original=yaml.safe_load(self.provider.read_text())
+  original["proxies"].append(selected_xray)
+  self.provider.write_text(yaml.safe_dump(original,allow_unicode=True))
+  encoded=json.dumps({k:v for k,v in selected_xray.items() if k!="name"},
+      sort_keys=True,ensure_ascii=False,separators=(",",":")).encode()
+  self.selected.write_text(json.dumps({"version":1,"sha256":hashlib.sha256(encoded).hexdigest()}))
+  self.current.write_text("Finland Reality\n")
+  env={**self.env};env.pop("MIHOMO_XRAY_VLESS_BRIDGE",None)
+  r=subprocess.run(["bash",str(CONFIG)],capture_output=True,text=True,env=env,timeout=6)
+  self.assertEqual(r.returncode,0,r.stderr)
+  self.assertEqual(yaml.safe_load(r.stdout)["proxy-groups"][0]["default-selected"],"AWG-XRAY-VLESS-LOCAL")
+  self.selected.write_text(json.dumps({"version":1,"sha256":"rotated"}))
+  stale=subprocess.run(["bash",str(CONFIG)],capture_output=True,text=True,env=env,timeout=6)
+  self.assertEqual(stale.returncode,0,stale.stderr)
+  self.assertNotEqual(yaml.safe_load(stale.stdout)["proxy-groups"][0]["default-selected"],"AWG-XRAY-VLESS-LOCAL")
+
  def test_real_mihomo_accepts_config_with_safe_default(self):
   core=Path("/usr/local/bin/mihomo")
   if not core.is_file():self.skipTest("Pinned Mihomo not present on this test system")
