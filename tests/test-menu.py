@@ -222,8 +222,11 @@ assert 'vmess "VMess"' in menu
 assert 'Протокол [$protocol_label]' in menu
 assert 'Узлов в выбранном протоколе: $total' in menu
 assert 'Узлов в источнике: $source_total' in menu
-assert '"$MIHOMO_POOL" list live --ignore-policy' in menu
-assert 'Геофильтр «Только Европа» здесь намеренно не ограничивает список.' in menu
+# FIXED uses the exact same read-only full-provider picker as manual nodes;
+# the backend still rejects all but verified native Mihomo candidates.
+assert '"$MIHOMO_POOL" list live --all --ignore-policy --format json' in menu
+assert '"$MIHOMO_NODE_PICKER" "$node_json" --target live --protocol all --region all' in menu
+assert 'if [[ "$scope" == fixed && "$node_health" != MIHOMO_OK ]]' in menu
 assert '"$MIHOMO_NODE_POLICY" mode auto' in menu
 assert '"$MIHOMO_NODE_POLICY" mode manual' in menu
 assert '"$MIHOMO_NODE_POLICY" mode fixed "${nodes[@]}"' in menu
@@ -237,10 +240,10 @@ assert 'Xray VLESS — выбран' in menu
 assert 'Выберите основной живой узел подготовленной подписки.' in menu
 assert '🔎 Поиск / фильтр' in menu
 assert 'grep -iF -- "$query"' in menu
-assert 'Показано: $count из $total' in menu
+assert 'Показано: $count из $shown_total' in menu
 assert 'ui_idx=$((ui_idx + 1))' in menu
 assert 'choice_name["$ui_idx"]="$name"' in menu
-assert 'items+=("$ui_idx" "$display_name — $description"' in menu
+assert '$display_name [$state_label] — $description' in menu
 assert 'Статистика пула узлов' in menu
 assert 'MIHOMO_POOL_PICKED_NODE=""' in menu
 assert 'MIHOMO_POOL_PICKED_NODE="$node"' in menu
@@ -266,7 +269,7 @@ assert 'mihomo_display_node_name(){' in menu
 assert 'mihomo_display_chain(){' in menu
 assert 'mihomo_pool_results_dialog(){' in menu
 assert 'display_name="$(mihomo_display_node_name "$name")"' in menu
-assert 'items+=("$ui_idx" "$display_name — $description"' in menu
+assert '$display_name [$state_label] — $description' in menu
 assert 'capture "$MIHOMO_POOL" list "$target" --all --ignore-policy' not in menu
 assert 'mihomo_pool_results_dialog "$target"' in menu
 assert 'mihomo_pool_results_dialog live' in menu
