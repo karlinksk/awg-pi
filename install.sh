@@ -1303,6 +1303,22 @@ if [[ "$ACTIVE_TRANSPORT" == mihomo ]]; then
     warn "Mihomo backend может работать через локальный прокси, но TUN HTTPS не подтверждён."
     warn "Проверьте выбранную ноду: sudo awg-mihomo-tun-check."
   fi
+  # An already-running Mihomo still holds the OLD generated config after an
+  # upgrade. Installing a new renderer does not magically add the Xray alias.
+  # Never restart a healthy live TUN silently here: restart drops ifindex and
+  # can leave stale route tables. The controlled TUN/rollback trial follows
+  # as a separate test-Pi acceptance step.
+  if (( UPGRADE_EXISTING == 1 )) && [[ -x /usr/local/bin/awg-xray-vless-core ]]; then
+    _xray_live_alias="$(curl -q -4fsS --noproxy '*' --connect-timeout 2 --max-time 4 \
+      'http://127.0.0.1:9090/proxies/AWG-MIHOMO' 2>/dev/null |
+      jq -r '.all[]? | select(.=="AWG-XRAY-VLESS-LOCAL")' 2>/dev/null || true)"
+    if [[ "$_xray_live_alias" != AWG-XRAY-VLESS-LOCAL ]]; then
+      warn "Xray: движок, фоновая проверка и меню обновлены, но live Mihomo ещё держит старую конфигурацию."
+      warn "XRAY_MANUAL_SWITCH=REQUIRES_CONTROLLED_MIHOMO_CONFIG_RELOAD; не выполняйте Xray manual до живого TUN/recovery испытания."
+    else
+      ok "XRAY_LIVE_BRIDGE_ALIAS=PRESENT (не доказательство Xray TUN/LAN)"
+    fi
+  fi
 fi
 systemctl restart awg-traffic.service
 systemctl is-active --quiet awg-traffic.service || warn "traffic accounting не запустился; маршрутизация продолжит работу"
