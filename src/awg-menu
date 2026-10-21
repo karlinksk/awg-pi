@@ -44,7 +44,7 @@ awg_dialog_theme_init(){
   cat > "$AWG_DIALOG_STYLE" <<'AWG_DIALOG_PALETTE'
 use_colors = ON
 use_shadow = ON
-use_scrollbar = ON
+use_scrollbar = OFF
 screen_color = (CYAN,BLUE,OFF)
 shadow_color = (BLACK,BLACK,ON)
 dialog_color = (BLACK,CYAN,OFF)
