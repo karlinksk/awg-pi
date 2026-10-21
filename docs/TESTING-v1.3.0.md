@@ -712,3 +712,10 @@ prior candidate, Xray service inactive, ssh/dnsmasq/Mihomo active. No true manua
 Mihomo→Xray→Xray→native transition, LAN-client forwarding, reboot persistence,
 Transit/Selective live failover, or clean install of this revision was run.
 Unit tests alone do NOT certify the rollback watchdog. No merge/release PASS.
+
+### 2026-10-21 post-install Xray bridge application checkpoint
+
+- Test Pi installed candidate `3943118`; user-confirmed root render with `XRAY_BRIDGE=PRESENT`, `DEFAULT_IS_XRAY=False`, `MIHOMO_TEST_RC=0` and active SSH/dnsmasq/Mihomo. **Running Mihomo controller still lacks alias**: upgrade did not automatically restart healthy TUN (intentionally).
+- Installed background isolated Xray scanner path/timer active; actual service ran 5/5 Xray OpenAI HTTPS 401 probes successfully (basic proxy only). Xray live service inactive; no manual Xray selection or LAN/reboot tests yet.
+- Existing full snapshot created by operator: `gateway-manual-20261021-095559-T51z9AsE/gateway-state.tgz`, `BACKUP=VERIFIED`, 124000831 bytes. Restore execution not independently tested.
+- Test-only bridge reload helper in `scripts/awg-xray-bridge-reload-test.py`: user ran initial `preflight` (native TUN healthy and Transit SAFE, no restart). During review we identified a critical rollback failure: normal Mihomo ExecStartPre regenerates the new Xray bridge even if old config.yaml is restored. Fixed by a runtime-only, marker-checked systemd ExecStartPre override while restoring the exact original config; the override is removed after recovery. Mock guard/restore tests and full Python suite **707/707 PASS** at source commit `ce07458323b08edcb2365e62a62fd879cbb7dd39`. This newer helper is not yet installed; no real manual restart or rollback PASS is claimed. Use root-only pinned install then repeat preflight before supervised apply. Keep reboot blocked until after recovery validation.
