@@ -36,7 +36,7 @@ def entries(rows,profiles,inventory,protocol="all",region="all"):
     consistent=len(profiles)==len(inventory) and bool(profiles)
     if not consistent:
         # Candidate/import without live unified evidence: fail closed.
-        return legacy_entries(rows,protocol,region)
+        return legacy_entries(rows,protocol,region,view.protocol_label)
     indexed={}
     for r in rows:
         if not isinstance(r,dict):continue
@@ -83,7 +83,7 @@ def entries(rows,profiles,inventory,protocol="all",region="all"):
         if not protocol_ok(profile,protocol):continue
         if seen_names.get(name)!=1:
             h="DUPLICATE"
-        fields=(str(pos),name,str(profile.get("type","")),
+        fields=(str(pos),name,view.protocol_label(profile),
                 str(profile.get("server",""))+":"+str(profile.get("port","")),
                 "DUPLICATE" if h=="DUPLICATE" else "-",h,
                 str(country or "??"),delay)
@@ -92,7 +92,7 @@ def entries(rows,profiles,inventory,protocol="all",region="all"):
         output.append("\t".join(fields))
     return output
 
-def legacy_entries(rows,protocol="all",region="all"):
+def legacy_entries(rows,protocol="all",region="all",format_protocol=None):
     """Unconfirmed candidate: show inventory but never represent it as READY."""
     output=[]
     for row in rows:
@@ -100,7 +100,8 @@ def legacy_entries(rows,protocol="all",region="all"):
             continue
         name=row.get("name")
         if not isinstance(name,str) or not name:continue
-        fields=(str(row.get("index","")),name,str(row.get("type","")),
+        fields=(str(row.get("index","")),name,
+                format_protocol(row) if format_protocol else str(row.get("type","")),
                 str(row.get("server",""))+":"+str(row.get("port","")),
                 "DUPLICATE" if row.get("duplicate_name") else "-",
                 ("MIHOMO_OK" if row.get("healthy") is True else

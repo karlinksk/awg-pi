@@ -206,7 +206,7 @@ done""")
 
     def test_menu_distinguishes_server_address_from_egress(self):
         menu=(ROOT/"src/awg-menu").read_text()
-        self.assertIn('сервер: $endpoint (НЕ IP выхода)',menu)
+        self.assertIn('Сервер = адрес подключения, не IP выхода',menu)
         self.assertIn('"$MIHOMO_UNIFIED" probe "$index"',menu)
         self.assertNotIn('confirm "Проверить Xray VLESS"',menu)
         self.assertIn("mihomo_live_egress_ip()",menu)

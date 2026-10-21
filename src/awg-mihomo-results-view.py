@@ -33,21 +33,38 @@ def find_xray_evidence(node,profiles,inventory):
             and row.get("index")==matches[0]+1 else None)
 
 def state(row,evidence):
+    # These are test results only; neither a positive Mihomo pool result nor
+    # isolated Xray HTTPS establishes Pi TUN/LAN eligibility.
     if evidence is None:
-        healthy=row.get("healthy") is True
-        return "Mihomo","работает" if healthy else "недоступен",(
-            "" if healthy else str(row.get("error") or row.get("geo_error") or ""))
-    states={"NETWORK_OK":"HTTPS OK","NETWORK_FAIL":"сеть ошибка",
-        "UNTESTED":"не проверен","UNKNOWN_HTTP":"HTTP ?",
-        "UNKNOWN_ERROR":"ошибка теста","UNAVAILABLE":"нет Xray",
-        "UNUSABLE_DUPLICATE_OR_MISSING_NAME":"не выбран"}
+        if row.get("type")=="vless":
+            return "—","НЕ ПРОВ.","нет независимого Xray-подтверждения"
+        healthy=row.get("healthy")
+        status="ТЕСТ OK" if healthy is True else (
+            "ТЕСТ FAIL" if healthy is False else "НЕ ПРОВ.")
+        return "Mihomo",status,(
+            "" if healthy is True else str(row.get("error") or row.get("geo_error") or ""))
+    states={"NETWORK_OK":"HTTPS OK","NETWORK_FAIL":"HTTPS FAIL",
+        "UNTESTED":"НЕ ПРОВ.","UNKNOWN_HTTP":"HTTP ?",
+        "UNKNOWN_ERROR":"ОШИБКА","UNAVAILABLE":"НЕТ XRAY",
+        "UNUSABLE_DUPLICATE_OR_MISSING_NAME":"ДУБЛИКАТ"}
     why=str(row.get("error") or "")
-    return "Xray",states.get(evidence,"не проверен"),("Mihomo: "+why if why else "")
+    return "Xray",states.get(evidence,"НЕ ПРОВ."),("Mihomo: "+why if why else "")
 
 def display_name(value):
     value=str(value or "")
     head,sep,tail=value.partition(" ")
     return tail if sep and head and not any(c.isalnum() for c in head) else value
+
+def protocol_label(node):
+    """Human-facing protocol name; never change the provider's real type."""
+    kind=str(node.get("type") or "").lower() if isinstance(node,dict) else ""
+    if kind=="hysteria2":return "HY2"
+    if kind=="shadowsocks":return "SS"
+    if kind=="vless":
+        network=str(node.get("network") or "").lower()
+        return ("VLESS/xHTTP" if network=="xhttp" else
+                "VLESS/gRPC" if network=="grpc" else "VLESS")
+    return {"vmess":"VMess","trojan":"Trojan"}.get(kind,kind.upper() or "—")
 
 def clip(value,width):
     s=str(value or "")
@@ -58,22 +75,28 @@ def render(rows,profiles=None,inventory=None,target="live"):
     inventory=inventory if isinstance(inventory,list) else []
     active=target=="live" and len(profiles)==len(inventory) and bool(profiles)
     result=[
-      "Xray: базовая HTTPS-проверка OpenAI, НЕ READY / TUN / LAN.",
-      "Задержка Xray здесь не измерялась; результат Mihomo — отдельно.",
+      "Сервер = адрес подключения, не публичный IP выхода. RTT = задержка теста, не ICMP ping.",
+      "Статус HTTPS у Xray = изолированный прокси-тест; НЕ READY / TUN / LAN.",
       "",
-      f"{'№':>3}  {'Узел':<19} {'Протокол':<9} {'Движок':<7} {'Сервер':<26} {'Состояние':<13} {'Страна':<6} {'Задержка':>8}",
+      f"{'№':>3}  {'Узел':<20} {'Движок':<7} {'Протокол':<12} {'Сервер':<26} {'RTT':>7} {'Статус':<11}",
       "-"*105]
     for i,row in enumerate(rows,1):
         if not isinstance(row,dict):continue
         evidence=find_xray_evidence(row,profiles,inventory) if active else None
         engine,health,why=state(row,evidence)
-        latency=(str(row.get("delay_ms"))+" мс" if engine=="Mihomo"
+        latency=(str(row.get("delay_ms"))+"мс" if engine=="Mihomo"
           and isinstance(row.get("delay_ms"),int) else "—")
-        result.append(f"{i:>3}  {clip(display_name(row.get('name')),19):<19} "
-          f"{clip(row.get('type'),9):<9} {engine:<7} "
-          f"{clip(str(row.get('server',''))+':'+str(row.get('port','')),26):<26} "
-          f"{health:<13} {clip(row.get('country_code') or '—',6):<6} {latency:>8}")
-        if why:result.append("     Причина: "+clip(why,92))
+        # Prefer the exact current provider record for VLESS transport labels.
+        matches=[p for p in profiles if isinstance(p,dict) and
+            p.get("name")==row.get("name") and p.get("type")==row.get("type") and
+            str(p.get("server"))==str(row.get("server")) and
+            str(p.get("port"))==str(row.get("port"))]
+        proto=protocol_label(matches[0] if active and len(matches)==1 else row)
+        endpoint=str(row.get("server",""))+":"+str(row.get("port",""))
+        result.append(f"{i:>3}  {clip(display_name(row.get('name')),20):<20} "
+          f"{engine:<7} {clip(proto,12):<12} "
+          f"{clip(endpoint,26):<26} {latency:>7} {health:<11}")
+        if why:result.append("     Причина теста: "+clip(why,92))
     if not active and any(isinstance(p,dict) and p.get("type")=="vless" for p in rows):
         result.append("Xray: данных текущего профиля нет; показаны результаты Mihomo.")
     return "\n".join(result)+"\n"

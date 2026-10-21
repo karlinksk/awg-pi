@@ -36,32 +36,39 @@ INVENTORY=[
 ]
 
 class ResultUI(unittest.TestCase):
+    def test_protocol_labels_are_from_transport_metadata(self):
+        self.assertEqual(view.protocol_label({"type":"hysteria2"}),"HY2")
+        self.assertEqual(view.protocol_label({"type":"vless","network":"xhttp"}),"VLESS/xHTTP")
+        self.assertEqual(view.protocol_label({"type":"vless","network":"grpc"}),"VLESS/gRPC")
+        self.assertEqual(view.protocol_label({"type":"vless"}),"VLESS")
+        self.assertEqual(view.protocol_label({"type":"shadowsocks"}),"SS")
+
     def test_old_hysteria_and_new_xray_are_separate(self):
         text=view.render([HYS,VLESS],PROFILES,INVENTORY)
         self.assertIn("Hysteria2",text)
         self.assertIn("Mihomo",text)
-        self.assertIn("работает",text)
+        self.assertIn("ТЕСТ OK",text)
         self.assertIn("Xray",text)
         self.assertIn("HTTPS OK",text)
-        self.assertIn("Причина: Mihomo: http-503",text)
+        self.assertIn("Причина теста: Mihomo: http-503",text)
         self.assertNotIn("READY OK",text)
         self.assertIn("НЕ READY / TUN / LAN",text)
 
     def test_does_not_relabel_failed_mihomo_as_healthy(self):
         text=view.render([HYS,VLESS],[],[])
-        self.assertIn("недоступен",text)
+        self.assertIn("НЕ ПРОВ.",text)
         self.assertNotIn("HTTPS OK",text)
         self.assertIn("данных текущего профиля нет",text)
 
     def test_xray_unchecked_never_pass(self):
         inv=[INVENTORY[0],{**INVENTORY[1],"basic_network":"UNTESTED"}]
         text=view.render([HYS,VLESS],PROFILES,inv)
-        self.assertIn("не проверен",text)
+        self.assertIn("НЕ ПРОВ.",text)
         self.assertNotIn("HTTPS OK",text)
 
     def test_xray_network_fail_never_pass(self):
         inv=[INVENTORY[0],{**INVENTORY[1],"basic_network":"NETWORK_FAIL"}]
-        self.assertIn("сеть ошибка",view.render([VLESS],PROFILES,inv))
+        self.assertIn("HTTPS FAIL",view.render([VLESS],PROFILES,inv))
         self.assertNotIn("HTTPS OK",view.render([VLESS],PROFILES,inv))
 
     def test_http_unknown_does_not_mean_network_ok(self):
@@ -84,12 +91,12 @@ class ResultUI(unittest.TestCase):
     def test_sorted_mihomo_rows_do_not_change_identity(self):
         text=view.render([VLESS,HYS],PROFILES,INVENTORY)
         self.assertIn("HTTPS OK",text)
-        self.assertIn("работает",text)
+        self.assertIn("ТЕСТ OK",text)
 
     def test_candidate_is_not_bound_to_live_evidence(self):
         text=view.render([VLESS],PROFILES,INVENTORY,target="candidate")
         self.assertNotIn("HTTPS OK",text)
-        self.assertIn("недоступен",text)
+        self.assertIn("НЕ ПРОВ.",text)
 
     def test_engine_name_mismatch_cannot_claim_xray(self):
         inv=[INVENTORY[0],{**INVENTORY[1],"engine":"MIHOMO"}]
