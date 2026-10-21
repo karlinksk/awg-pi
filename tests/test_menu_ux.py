@@ -150,18 +150,24 @@ show_operation_result 7 'Проверка подписки'
             self.assertIn(f'if capture "$AWG_UPDATE" --yes {action}; then', SOURCE)
             self.assertNotIn(f'capture "$AWG_UPDATE" --yes {action} || true', SOURCE)
 
-    def test_initial_setup_is_native_dialog_not_hidden_ssh(self):
-        fn = SOURCE[SOURCE.index("first_transport_setup(){"):
-                    SOURCE.index("secondary_transport_setup(){")]
-        self.assertIn('Первичная настройка VPN', fn)
-        self.assertIn('mihomo_initial_setup_flow normal', fn)
-        self.assertIn('awg_config_menu', fn)
-        self.assertIn('Настроить позже', fn)
-        self.assertNotIn('run_interactive', fn)
-        self.assertIn('capture "$AWG_FIRST_RUN" awg-file "$PASTE_TMP"', SOURCE)
-        self.assertIn('capture "$AWG_FIRST_RUN" awg-file "$path"', SOURCE)
-        self.assertIn('run_with_progress "$title" "$MIHOMO_CONFIGURE" node prepare', SOURCE)
-        self.assertIn('run_with_progress "$title" "$MIHOMO_CONFIGURE" provider candidate prepare', SOURCE)
+    def test_fresh_install_onboarding_is_direct_and_installer_first(self):
+        vpn=body("vpn_menu")
+        awg=body("awg_config_menu")
+        mihomo=body("mihomo_replace_subscription")
+        self.assertNotIn("Добавить / настроить транспорт",vpn)
+        self.assertNotIn("secondary_transport_setup",vpn)
+        self.assertNotIn("first_transport_setup(){",SOURCE)
+        self.assertIn('3 "Конфигурация AmneziaWG"',vpn)
+        self.assertIn('4 "Mihomo"',vpn)
+        self.assertIn('4 "Конфигурация AmneziaWG"',vpn)
+        self.assertIn('5 "Mihomo"',vpn)
+        self.assertIn('capture "$AWG_FIRST_RUN" awg-file "$PASTE_TMP"',SOURCE)
+        self.assertIn('capture "$AWG_FIRST_RUN" awg-file "$path"',SOURCE)
+        self.assertIn("mihomo_initial_setup_flow secondary",mihomo)
+        self.assertIn("mihomo_initial_setup_flow(){",SOURCE)
+        self.assertIn('run_with_progress "$title" "$MIHOMO_CONFIGURE" node prepare',SOURCE)
+        self.assertIn('run_with_progress "$title" "$MIHOMO_CONFIGURE" provider candidate prepare',SOURCE)
+        self.assertIn("if [[ ! -s \"$previous\" ]]",awg)
 
     def test_xray_diagnostics_are_advanced_only(self):
         main=body("mihomo_menu")
