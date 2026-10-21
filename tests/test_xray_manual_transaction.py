@@ -464,6 +464,54 @@ class ManualSwitchContract(unittest.TestCase):
             self.assertEqual(record["phase"],"rolled_back")
             self.assertEqual(record["failed_at"],"NATIVE_TUN_PROOF")
 
+    def test_native_restore_replaces_config_env_endpoint_and_original_xray(self):
+        with tempfile.TemporaryDirectory() as d:
+            p=Path(d);snapshot=p/"backup";snapshot.mkdir()
+            targets={key:p/(key+".live") for key in
+                     ("env","config","endpoint","egress","selected","current","boot","policy","order")}
+            for key,target in targets.items():
+                target.write_bytes(b"mutated")
+                (snapshot/(key+".prev")).write_bytes((key+"-previous").encode())
+            selected=targets["selected"]
+            calls=[]
+            def fake_cmd(*args,**kwargs):
+                calls.append(args)
+                return "mihomo" if args[:2]==("/usr/local/sbin/awg-transport","get") else ""
+            state={"previous":mod.ALIAS,"previous_xray":True,"xray_enabled":True}
+            with mock.patch.multiple(mod,MIHOMO_ENV=targets["env"],
+                     MIHOMO_CONFIG=targets["config"],MIHOMO_ENDPOINT=targets["endpoint"],
+                     MIHOMO_EGRESS=targets["egress"],SELECTED=selected,
+                     CURRENT=targets["current"],BOOT=targets["boot"],
+                     POLICY=targets["policy"],ORDER=targets["order"]), \
+                 mock.patch.object(mod,"cmd",side_effect=fake_cmd), \
+                 mock.patch.object(mod,"unit_active",return_value=False), \
+                 mock.patch.object(mod,"prove_local_xray"), \
+                 mock.patch.object(mod,"wait_native_controller"), \
+                 mock.patch.object(mod,"native_tun_proof"), \
+                 mock.patch.object(mod,"choose") as choose, \
+                 mock.patch.object(mod,"invariant"):
+                mod.restore_native(snapshot,state)
+            choose.assert_called_once_with(mod.ALIAS)
+            for key,target in targets.items():
+                self.assertEqual(target.read_bytes(),(key+"-previous").encode())
+            self.assertIn(("systemctl","stop",mod.MIHOMO),calls)
+            self.assertIn(("systemctl","start",mod.MIHOMO),calls)
+            self.assertIn(("systemctl","start",mod.XRAY),calls)
+
+    def test_native_invalid_candidate_rejects_without_mutation(self):
+        import yaml
+        with tempfile.TemporaryDirectory() as d:
+            p=Path(d)/"provider.yaml"
+            p.write_text(yaml.safe_dump({"proxies":[{"name":"xray-only","type":"vless",
+                     "network":"xhttp"},{"name":"native","type":"ss"}]}))
+            with mock.patch.object(mod,"PROVIDER",p), \
+                 mock.patch.object(mod,"cmd") as command:
+                with self.assertRaisesRegex(RuntimeError,"XRAY_PROFILE_IS_NOT_NATIVE"):
+                    mod.candidate_native("xray-only")
+                with self.assertRaisesRegex(RuntimeError,"NATIVE_PROFILE_NOT_UNIQUE"):
+                    mod.candidate_native("not-in-provider")
+                command.assert_not_called()
+
     def test_native_menu_dispatches_all_mihomo_from_any_engine(self):
         menu=(ROOT/"src/awg-menu").read_text()
         self.assertIn('"$XRAY_MANUAL_SWITCH" native-preview "$node_name"',menu)
