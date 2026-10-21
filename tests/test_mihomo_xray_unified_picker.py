@@ -71,7 +71,7 @@ class UnifiedPicker(unittest.TestCase):
         self.assertEqual(len(self.rows(source=duplicate,proofs=inventory+[
             {**inventory[1],"index":3}])),1)
         rotated=[profiles[0],{**profiles[1],"server":"new.example"}]
-        self.assertEqual(len(self.rows(source=rotated)),1)
+        # A rotated current profile stays visible but loses old HTTPS evidence.\n        data=self.rows(source=rotated,proofs=[inventory[0],{**inventory[1],"basic_network":"UNTESTED"}])\n        self.assertEqual(len(data),2)\n        self.assertIn("XRAY_UNTESTED",data[1])
 
     def test_protocol_filter_preserved(self):
         self.assertEqual(len(self.rows(protocol="vless")),1)
