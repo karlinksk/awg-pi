@@ -678,9 +678,16 @@ Do not leak UUID, Reality keys, provider URLs or subscription credentials.
 A rotated source URL or changed node count invalidates cached candidate proof
 unless the exact transport fingerprint is unchanged.
 
-The current candidate implements read-only inventory visibility and optional
-isolated per-node OpenAI HTTPS probe. **Manual live Xray activation is not
-implemented or accepted**; choosing a verified Xray profile only stages it.
+The current candidate implements unified subscription inventory and an
+isolated automatic scanner (provider-directory path watch plus periodic timer)
+that checks bounded groups of Xray candidates after subscription import.
+A dormant local Xray SOCKS alias is present in Mihomo's generated configuration
+when the Xray core is installed; this does **not** start the Xray service.
+**Guarded manual Xray activation code is now present in the candidate**, including
+native/Xray previous-node snapshots, fresh-network preflight, bounded TUN probe,
+independent watchdog and intended recovery. This is **not installed, hardware
+validated or accepted** yet; the real manual transitions/rollback/reboot/LAN
+release gate remains pending.
 A separate root-only guarded manual transaction is required before exposing
 "activate" in the TUI. It must provide a recoverable previous healthy Mihomo
 or Xray node, independent timeout rollback/watchdog, fresh subscription-identity
@@ -693,3 +700,15 @@ Until the above transaction and negative tests pass on the **test Pi**, leave
 manual activation disabled. Preserve Selective FAIL-OPEN, Transit FAIL-CLOSED
 and the opt-in READY/Hot Pool/Xray AUTO policies. No PR merge or release PASS
 is implied by passing inventory unit tests.
+
+### 2026-10-21 candidate code verification (not a release acceptance)
+
+Candidate `b7a0666` integrates Xray-core install, a bounded provider-change/periodic
+background scanner, unified Mihomo/Xray catalog (including UNTESTED rows), a
+dormant localhost SOCKS5 bridge rendered with Mihomo, and an explicit guarded
+manual selection CLI. On `awg-upgrade`, **689 of 689 Python tests passed**,
+Bash syntax and unit file parsing checked. The live installed menu remained the
+prior candidate, Xray service inactive, ssh/dnsmasq/Mihomo active. No true manual
+Mihomo→Xray→Xray→native transition, LAN-client forwarding, reboot persistence,
+Transit/Selective live failover, or clean install of this revision was run.
+Unit tests alone do NOT certify the rollback watchdog. No merge/release PASS.
