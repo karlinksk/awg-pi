@@ -1088,6 +1088,13 @@ fi
 install_project_unit units/awg-mihomo.service /etc/systemd/system/awg-mihomo.service
 # Opt-in only. Do not enable or start this unit during installation/update.
 install_project_unit units/awg-xray-vless.service /etc/systemd/system/awg-xray-vless.service
+# Always install the background Xray node scanner even before subscription import.
+# Its .path notices atomic provider changes and timer refreshes cached proofs.
+# The live Xray service itself remains off until an authorized selection.
+install -d -o root -g root -m 0700 /var/lib/awg-pbr/xray-vless
+install_project_unit units/awg-xray-subscription-scan.service /etc/systemd/system/awg-xray-subscription-scan.service
+install_project_unit units/awg-xray-subscription-scan.path /etc/systemd/system/awg-xray-subscription-scan.path
+install_project_unit units/awg-xray-subscription-scan.timer /etc/systemd/system/awg-xray-subscription-scan.timer
 install_project_unit units/awg-mihomo-update.service /etc/systemd/system/awg-mihomo-update.service
 install_project_unit units/awg-mihomo-update.timer /etc/systemd/system/awg-mihomo-update.timer
 install_project_unit units/awg-mihomo-pool-refresh.service /etc/systemd/system/awg-mihomo-pool-refresh.service
@@ -1195,6 +1202,14 @@ STAGE="первый запуск и критические проверки"
 log "[11/12] Первый запуск"
 systemctl daemon-reload
 systemctl enable awg-pbr-setup.service dnsmasq.service awg-pbr-health.service awg-selection-monitor.service awg-traffic.service awg-opencck-update.timer >/dev/null
+# Automatic Xray subscription discovery/probing is independent of READY/Hot Pool.
+# Provider absent: the units idle; import/change triggers isolated proof checks.
+systemctl enable --now awg-xray-subscription-scan.path awg-xray-subscription-scan.timer >/dev/null ||
+  die "Не удалось активировать фоновую проверку Xray-подписки"
+systemctl is-enabled --quiet awg-xray-subscription-scan.path ||
+  die "Xray subscription path watcher не включён"
+systemctl is-enabled --quiet awg-xray-subscription-scan.timer ||
+  die "Xray subscription timer не включён"
 
 # Base control plane comes up before any VPN backend. This is what keeps SSH,
 # TUI, DNS and recovery available even with zero working transports.
