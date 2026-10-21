@@ -82,6 +82,7 @@ class ManualSwitchContract(unittest.TestCase):
                  mock.patch.object(mod,"cmd",side_effect=fake_cmd), \
                  mock.patch.object(mod,"choose") as choose, \
                  mock.patch.object(mod,"https_ok",return_value=True), \
+                 mock.patch.object(mod,"prove_local_xray"), \
                  mock.patch.object(mod,"invariant"):
                 mod.restore(snap,{"previous":"Native","previous_xray":False,
                                   "xray_enabled":False})
@@ -139,6 +140,7 @@ class ManualSwitchContract(unittest.TestCase):
                  mock.patch.object(mod,"unit_active",return_value=True), \
                  mock.patch.object(mod,"unit_enabled",return_value=True), \
                  mock.patch.object(mod,"https_ok",return_value=True), \
+                 mock.patch.object(mod,"prove_local_xray"), \
                  mock.patch.object(mod,"routing_ok",return_value=True), \
                  mock.patch.object(mod,"invariant"), \
                  mock.patch.object(mod,"choose"):
