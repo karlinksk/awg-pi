@@ -60,6 +60,34 @@ class DynamicNodesTests(unittest.TestCase):
     def get_rows(self):
         nodes,sha,pool,cache=self.m.snapshots(self.a)
         return self.m.inventory(nodes,pool,cache,self.a),cache
+    def test_plain_tls_grpc_is_xray_and_retains_fingerprint_evidence(self):
+        tlsgrpc={k:v for k,v in self.vlessb.items() if k!="reality-opts"}
+        tlsgrpc["name"]="Plain TLS/gRPC"
+        tlsgrpc["alpn"]=["h2"]
+        self.publish([tlsgrpc])
+        rows,_=self.get_rows()
+        self.assertEqual(rows[0]["engine"],"XRAY")
+        self.assertEqual(rows[0]["basic_network"],"UNTESTED")
+        self.seed(tlsgrpc)
+        rows,_=self.get_rows()
+        self.assertEqual(rows[0]["basic_network"],"NETWORK_OK")
+        rotated={**tlsgrpc,"uuid":"21234567-89ab-4cde-8f01-23456789abcd"}
+        self.publish([rotated])
+        rows,cache=self.get_rows()
+        self.assertEqual(rows[0]["basic_network"],"UNTESTED")
+        self.assertEqual(cache["results"],{})
+
+    def test_tls_grpc_rejects_invalid_reality_hint_or_unverified_tls(self):
+        tlsgrpc={k:v for k,v in self.vlessb.items() if k!="reality-opts"}
+        cases=[
+            ({**tlsgrpc,"reality-opts":None},"UNSUPPORTED"),
+            ({**tlsgrpc,"skip-cert-verify":True},"UNSUPPORTED"),
+            ({**tlsgrpc,"network":"xhttp"},"UNSUPPORTED"),
+        ]
+        for candidate,engine in cases:
+            with self.subTest(candidate=candidate):
+                self.assertEqual(self.m.transport(candidate),engine)
+
     def test_same_transport_new_url_and_reordered_count_retains_valid_evidence(self):
         self.seed(self.vless)
         self.publish([self.hy2,self.vlessb,{**self.vless,"name":"Renamed A"},

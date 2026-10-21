@@ -66,7 +66,7 @@ def validate(node):
         die("VLESS_ONLY")
     if node.get("network") not in ("xhttp","grpc"):die("UNSUPPORTED_NETWORK")
     if node.get("tls") is not True or node.get("skip-cert-verify") is True:
-        die("REALITY_TLS_REQUIRED")
+        die("VERIFIED_TLS_REQUIRED")
     address=node.get("server")
     if not isinstance(address,str) or not 1<=len(address)<=253:
         die("INVALID_ENDPOINT")
@@ -82,22 +82,37 @@ def validate(node):
     if not isinstance(node.get("servername"),str) or not node["servername"] or len(node["servername"])>253:
         die("SNI_REQUIRED")
     reality=node.get("reality-opts")
-    if not isinstance(reality,dict):die("REALITY_REQUIRED")
-    pbk=reality.get("public-key")
-    if not isinstance(pbk,str) or not re.fullmatch(r"[A-Za-z0-9_-]{40,64}",pbk):
-        die("INVALID_PUBLIC_KEY")
-    sid=reality.get("short-id","")
-    if not isinstance(sid,str) or not re.fullmatch(r"[0-9a-fA-F]{0,16}",sid):
-        die("INVALID_SHORT_ID")
     fp=node.get("client-fingerprint","chrome")
     if fp not in FINGERPRINTS:die("INVALID_FINGERPRINT")
     if node.get("flow") not in (None,"","xtls-rprx-vision"):
         die("UNSUPPORTED_FLOW")
-    stream={
-      "network":node["network"],"security":"reality",
-      "realitySettings":{
-        "fingerprint":fp,"serverName":node["servername"],
-        "publicKey":pbk,"shortId":sid,"spiderX":"/"}}
+    if isinstance(reality,dict):
+        # Preserve original pinned REALITY behaviour for XHTTP/gRPC.
+        pbk=reality.get("public-key")
+        if not isinstance(pbk,str) or not re.fullmatch(r"[A-Za-z0-9_-]{40,64}",pbk):
+            die("INVALID_PUBLIC_KEY")
+        sid=reality.get("short-id","")
+        if not isinstance(sid,str) or not re.fullmatch(r"[0-9a-fA-F]{0,16}",sid):
+            die("INVALID_SHORT_ID")
+        stream={
+          "network":node["network"],"security":"reality",
+          "realitySettings":{
+            "fingerprint":fp,"serverName":node["servername"],
+            "publicKey":pbk,"shortId":sid,"spiderX":"/"}}
+    elif ("reality-opts" not in node and node["network"]=="grpc"):
+        # Ordinary VLESS TLS/gRPC from the SAME provider. Do not accept
+        # insecure TLS, REALITY-like malformed metadata or XHTTP without
+        # REALITY. Standard gRPC requires HTTP/2 ALPN.
+        if node.get("flow") not in (None,""):die("TLS_GRPC_FLOW_UNSUPPORTED")
+        alpn=node.get("alpn",["h2"])
+        if not isinstance(alpn,list) or "h2" not in alpn or any(
+            a not in ("h2","http/1.1") for a in alpn):
+            die("TLS_GRPC_ALPN_REQUIRED")
+        stream={"network":"grpc","security":"tls",
+                "tlsSettings":{"serverName":node["servername"],
+                               "allowInsecure":False,"alpn":alpn}}
+    else:
+        die("REALITY_REQUIRED")
     if node["network"]=="xhttp":
         opts=node.get("xhttp-opts")
         if not isinstance(opts,dict) or not isinstance(opts.get("path"),str) or not opts["path"].startswith("/"):
