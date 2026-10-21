@@ -240,7 +240,7 @@ def inspect_native(name):
     """An already-loaded native Mihomo choice, with active Xray as rollback."""
     if os.geteuid()!=0:refuse("ROOT_REQUIRED")
     if not isinstance(name,str) or not 1<=len(name)<=240 or (
-       "\\n" in name or "\\r" in name or "\\x00" in name):
+       "\n" in name or "\r" in name or "\x00" in name):
         refuse("INVALID_NATIVE_NAME")
     invariant()
     con=controller()
@@ -304,7 +304,7 @@ def native_return(name):
                 refuse("PROVIDER_CHANGED_BEFORE_COMMIT")
             # Only after live native TUN success detach the old Xray sidecar.
             checkpoint(path,state,"NATIVE_COMMIT")
-            atomic(CURRENT,(name+"\\n").encode())
+            atomic(CURRENT,(name+"\n").encode())
             BOOT.unlink(missing_ok=True)
             SELECTED.unlink(missing_ok=True)
             cmd("systemctl","daemon-reload")
