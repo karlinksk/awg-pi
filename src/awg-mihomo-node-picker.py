@@ -29,6 +29,26 @@ def entries(rows,profiles,inventory,protocol="all",region="all"):
     profiles=profiles if isinstance(profiles,list) else []
     inventory=inventory if isinstance(inventory,list) else []
     consistent=len(profiles)==len(inventory) and len(profiles)>0
+    # Build one inventory from the current provider, not only from the last
+    # Mihomo health scan. A freshly imported Reality node can be absent from
+    # Mihomo scan output yet must be visible as UNTESTED (never READY).
+    if consistent:
+        current={(str(r.get("name")),str(r.get("type")),
+                  str(r.get("server")),str(r.get("port")))
+                 for r in rows if isinstance(r,dict)}
+        for pos,(profile,proof) in enumerate(zip(profiles,inventory),1):
+            if not isinstance(profile,dict) or not isinstance(proof,dict):
+                continue
+            if (proof.get("engine")!="XRAY" or proof.get("index")!=pos
+                or proof.get("name")!=profile.get("name")):
+                continue
+            key=(str(profile.get("name")),str(profile.get("type")),
+                 str(profile.get("server")),str(profile.get("port")))
+            if key not in current:
+                rows.append({"index":pos,"name":profile.get("name"),
+                             "type":profile.get("type"),"server":profile.get("server"),
+                             "port":profile.get("port"),"healthy":False})
+                current.add(key)
     out=[]
     seen=set()
     for row in rows:
@@ -42,8 +62,14 @@ def entries(rows,profiles,inventory,protocol="all",region="all"):
         if proof is not None:
             # A provider label/IP country is not independent Xray exit-GeoIP proof.
             if region=="europe":continue
-            if proof!="NETWORK_OK":continue
-            engine="XRAY_HTTPS"
+            # Network evidence is displayed, not assumed. Xray can be
+            # selected only after a fresh independent NETWORK_OK proof.
+            engine={"NETWORK_OK":"XRAY_HTTPS",
+                    "NETWORK_FAIL":"XRAY_NETWORK_FAIL",
+                    "UNKNOWN_HTTP":"XRAY_UNKNOWN_HTTP",
+                    "UNKNOWN_ERROR":"XRAY_UNKNOWN_ERROR",
+                    "UNAVAILABLE":"XRAY_UNAVAILABLE",
+                    "UNTESTED":"XRAY_UNTESTED"}.get(proof,"XRAY_UNTESTED")
             latency="-"
         else:
             if row.get("healthy") is not True:continue
