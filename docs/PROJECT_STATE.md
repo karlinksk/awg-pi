@@ -251,3 +251,33 @@ Pi TUN OpenAI HTTPS HTTP401/curl0, SSH and DNS active.
 Not a visual user-accepted TUI or a live Xray TUN/LAN PASS.
 No manual Xray switching, LAN, failover, reboot tested in this change.
 PR #150 draft; not merged/released. Continue v1.3.0 hardware release gate.
+
+
+### SSH scrollbar artifact correction installed — 2026-10-21
+
+User screenshot on the test Pi showed jagged fragments alongside the
+right border of scrollable dialog menus (including FIXED add-node),
+while individual node rows rendered properly. Root cause: global
+process-owned native ncurses dialog palette had use_scrollbar = ON;
+this draws a separate right-edge scrollbar which does not render
+cleanly in the user's SSH terminal. The fix is the single change
+use_scrollbar = OFF in src/awg-menu, with a theme regression and
+design note. Keyboard scrolling and percentage position indicator
+remain available. Real native dialog PTY on the test Pi: 18 items,
+5 visible rows, selected #14 from initially selected #13 with
+application Down + Enter, exit code 0. No routing/transport or
+policy changes.
+
+Code: draft PR #151, commit
+4bd676119c0f433b89b6d5f21e760c2156a3c710, on top of
+draft PR #150. Local 776 Python tests PASS, two hardware-only
+skipped, legacy test-menu PASS, Bash syntax PASS. Version-controlled
+install.sh already copies src/awg-menu on clean install.
+Installed on test Pi with root-only backup at
+/var/backups/awg-gateway/dialog-scrollbar-20261021.* :
+installed /usr/local/sbin/awg-menu Git blob
+390e4bffdeaada167fa50fe5dbdd09b0f2760028.
+Post-install Mihomo healthy, Xray inactive, SSH/dnsmasq active,
+Pi TUN OpenAI HTTP401/curl0. User's SSH visual acceptance
+and LAN/failover/reboot release gates remain open.
+Code is not merged/released. GitHub CI status must be verified.
