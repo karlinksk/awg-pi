@@ -379,7 +379,7 @@ def native_return(name):
     with LOCK.open("a") as lock:
         fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
         info=inspect_native(name)
-        if info["already_selected"]:
+        if info.get("already_selected"):
             print("NATIVE_MANUAL_ALREADY_SELECTED=YES")
             print("NATIVE_RETURN_TUN=EXISTING_HEALTHY_NOT_SWITCHED")
             return
