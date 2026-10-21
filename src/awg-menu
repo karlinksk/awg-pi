@@ -1278,88 +1278,24 @@ mihomo_node_menu(){
     return 0
   }
 
-  # Never treat saved node-name as the live outbound while Xray owns Mihomo.
-  # Ordinary node select-auto can rewrite metadata and restart Mihomo without
-  # changing the selected Xray controller alias.
-  local live_engine
-  live_engine="$(python3 -B - <<'PY'
-import json,urllib.request
-try:
-    op=urllib.request.build_opener(urllib.request.ProxyHandler({}))
-    with op.open("http://127.0.0.1:9090/proxies/AWG-MIHOMO",timeout=3) as resp:
-        group=json.load(resp)
-    selected=group.get("now")
-    if selected=="AWG-XRAY-VLESS-LOCAL":
-        print("XRAY")
-    elif isinstance(selected,str) and selected in group.get("all",[]):
-        print("MIHOMO")
-    else:
-        print("UNKNOWN")
-except (OSError,ValueError,KeyError,TypeError):
-    print("UNKNOWN")
-PY
-)"
-  case "$live_engine" in
-    XRAY)
-      title="Возврат Xray → Mihomo — предварительная проверка"
-      if ! run_with_progress "$title" "$XRAY_MANUAL_SWITCH" native-preview "$node_name"; then
-        show_operation_result 1 "$title"
-        msg "Возврат к Mihomo" "Рабочий выход остаётся Xray. Нативная Mihomo-нода должна быть уже загружена и соответствовать сохранённой конфигурации. Переключения не было."
-        return 0
-      fi
-      confirm "Возврат Xray → Mihomo" "Переключить реальный выход с Xray на выбранную уже настроенную ноду Mihomo?\\n\\nНовая нода проверяется через TUN. При ошибке watchdog восстановит Xray. После успеха Xray отключится от активного канала. DNS, SSH и MikroTik не меняются." || return 0
-      title="Защищённый возврат на Mihomo"
-      if capture "$XRAY_MANUAL_SWITCH" native-apply "$node_name"; then
-        msg "Mihomo" "Нативный Mihomo выбран в контроллере; HTTPS через TUN подтверждён. Xray-sidecar отключён. Проверка LAN и reboot — отдельно."
-      fi
-      return 0
-      ;;
-    MIHOMO) ;;
-    *)
-      msg "Ручной выбор Mihomo" "Контроллер не подтвердил текущий выход. Чтобы не прервать рабочий VPN, изменение ноды отменено."
-      return 0
-      ;;
-  esac
-
-  info_tmp="$(mktemp)"
-  title="Подготовка узла Mihomo"
-  if ! run_with_progress "$title" "$MIHOMO_CONFIGURE" node prepare "$node_name"; then
-    dialog --backtitle "$BACKTITLE" --title "$title — ошибка" --textbox "$TMP" 24 108
+  # One native-target dispatcher from either Mihomo or Xray. It resolves
+  # and prepares the requested provider node, proves actual Pi TUN egress,
+  # and rolls back all of Mihomo's config under an independent watchdog.
+  # Never mistake a stored node-name for the controller's live selection.
+  title="Ручной выбор Mihomo — предварительная проверка"
+  if ! run_with_progress "$title" "$XRAY_MANUAL_SWITCH" native-preview "$node_name"; then
+    show_operation_result 1 "$title"
+    msg "Ручной выбор Mihomo" "Предварительная проверка не пройдена. Действующий выход и политика резервирования не изменены."
     return 0
   fi
-  dialog --backtitle "$BACKTITLE" --title "$title — проверен" --textbox "$TMP" 24 108
-
-  preview="$("$MIHOMO_NODE_POLICY" manual-selection preview "$node_name" 2>/dev/null || true)"
-  fixed_chain="$(sed -n 's/^FIXED_CHAIN_NEW=//p' <<<"$preview" | head -n1)"
-  confirm_text="Узел: $node_name\nIPv4 сервера будет выбран автоматически из показанных данных профиля — повторно вводить его не нужно.\n\nОтдельное правило MikroTik для этого IP не требуется. Для исходящего трафика самой Pi действует постоянное DIRECT-исключение на уровне шлюза.\n\nЕсли Mihomo сейчас активен, маршрутизация клиентского трафика будет безопасно приостановлена и восстановлена после проверки нового узла."
-  if [[ -n "$fixed_chain" ]]; then
-    confirm_text="$confirm_text\n\nПолитика узлов: FIXED. После успешной проверки выбранный узел автоматически станет первым элементом цепочки, хвост сохранится:\n\n$fixed_chain"
+  if grep -Fxq 'NATIVE_MANUAL_ALREADY_SELECTED=YES' "$TMP"; then
+    msg "Узел Mihomo" "Этот профиль уже выбран и HTTPS через текущий TUN работает. Повторное переключение не требуется."
+    return 0
   fi
-  confirm "Применить узел Mihomo?" "$confirm_text" || return 0
-
-  current="$("$AWG_TRANSPORT" get 2>/dev/null || echo unconfigured)"
-  title="Выбор узла Mihomo"
-  if capture "$MIHOMO_CONFIGURE" node select-auto "$node_name"; then
-    rc=0
-  else
-    rc=$?
-  fi
-
-  if (( rc == 0 )) && [[ -n "$fixed_chain" ]]; then
-    if sync_out="$("$MIHOMO_NODE_POLICY" manual-selection apply "$node_name" 2>&1)"; then
-      updated_chain="$(sed -n 's/^MIHOMO_NODE_ORDER=//p' <<<"$sync_out" | head -n1)"
-    else
-      msg "FIXED-цепочка Mihomo" "Узел успешно переключён, но автоматическое обновление головы FIXED-цепочки завершилось ошибкой. Проверьте «Резервирование узлов Mihomo → Показать политику» перед тестом отказоустойчивости."
-      return 0
-    fi
-  fi
-
-  if (( rc == 0 )) && [[ -n "$updated_chain" ]]; then
-    msg "Узел Mihomo" "Новый узел успешно применён.\n\nFIXED-цепочка автоматически обновлена:\n$updated_chain"
-  elif (( rc == 0 )) && [[ "$current" != mihomo ]]; then
-    msg "Узел Mihomo" "Новый узел применён. Активный транспорт не изменён; при необходимости переключите его через «VPN-маршрутизация → Активный транспорт»."
-  elif (( rc != 0 )); then
-    msg "Узел Mihomo" "Новый узел не применён; предыдущая конфигурация и FIXED-цепочка сохранены."
+  confirm "Переключение на Mihomo" "Сделать выбранную ноду рабочим выходом независимо от текущего движка?\n\nНовый профиль и IP подготавливаются под защитой watchdog; возможен короткий перерыв TUN при перезапуске Mihomo. После переключения будет проверено реальное HTTPS через mihomo0.\n\nПри ошибке прежний Xray/Mihomo и конфигурация восстанавливаются. FIXED/AUTO, READY, DNS, SSH и MikroTik не меняются." || return 0
+  title="Защищённый выбор ноды Mihomo"
+  if capture "$XRAY_MANUAL_SWITCH" native-apply "$node_name"; then
+    msg "Mihomo" "Нативная нода действительно выбрана в контроллере и прошла HTTPS через TUN. Проверка LAN и reboot проводится отдельно."
   fi
 }
 
