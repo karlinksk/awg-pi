@@ -137,7 +137,7 @@ quick_summary
             mock.write_text("#!/bin/sh\nexit 0\n")
             mock.chmod(0o700)
             env = dict(os.environ, PATH=str(root) + ":" + os.environ["PATH"])
-            shell = body("show_operation_result") + f"""
+            shell = body("awg_readable_status_text") + "\n" + body("show_operation_result") + f"""
 TMP='{log}'
 BACKTITLE=Тест
 show_operation_result 7 'Проверка подписки'

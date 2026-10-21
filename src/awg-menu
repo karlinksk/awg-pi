@@ -416,12 +416,32 @@ run_with_progress(){
   return "$rc"
 }
 
+# The SSH client may apply its own bright-green word highlighting to
+# literal OK/yes. Native ncurses renders them black-on-cyan, but some
+# clients override those tokens. Normalize only a temporary UI copy.
+awg_readable_status_text(){
+  sed -E \
+    -e 's/(^|[[:space:]:=])OK($|[[:space:]])/\1ИСПРАВНО\2/g' \
+    -e 's/(:[[:space:]]*|=[[:space:]]*)yes($|[[:space:]])/\1ДА\2/g' "$1"
+}
+
 show_operation_result(){
-  local rc="$1" heading="$2" label
+  local rc="$1" heading="$2" label view_tmp dialog_rc=0
   if ((rc == 0)); then label="ВЫПОЛНЕНО"; else label="ОШИБКА (код $rc)"; fi
   [[ -s "$TMP" ]] || printf '%s\n' "Дополнительных сообщений нет." >"$TMP"
   sed -i "1iРезультат: $label\\nОперация: $heading\\n" "$TMP"
-  dialog --backtitle "$BACKTITLE" --title "$heading — $label" --textbox "$TMP" 30 110
+  view_tmp="$(mktemp)" || return 1
+  if ! awg_readable_status_text "$TMP" >"$view_tmp"; then
+    rm -f "$view_tmp"
+    return 1
+  fi
+  if dialog --backtitle "$BACKTITLE" --title "$heading — $label" --textbox "$view_tmp" 30 110; then
+    dialog_rc=0
+  else
+    dialog_rc=$?
+  fi
+  rm -f "$view_tmp"
+  return "$dialog_rc"
 }
 
 capture(){
