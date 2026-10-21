@@ -117,8 +117,20 @@ printf '%s\\n' "$3" >"$MOCK_NODE_NAME_FILE"
         script=POLICY.read_text()
         guard='[[ ${EUID:-$(id -u)} -eq 0 ]] || exec sudo "$0" "$@"'
         self.assertIn(guard,script)
-        self.put("node-policy",script.replace(guard,": # unprivileged fixture only",1))
+        script=script.replace(guard,": # unprivileged fixture only",1)
+        # The test Pi may have Xray selected; isolate mocked node recovery.
+        for fixed in ("/etc/systemd/system/awg-mihomo.service.d/61-awg-xray-bridge.conf",
+                      "/run/systemd/system/awg-mihomo.service.d/61-awg-xray-bridge.conf",
+                      "/var/lib/awg-pbr/xray-vless/selected.json"):
+            script=script.replace(fixed,str(self.root/"absent-xray-fixture"/Path(fixed).name))
+        self.put("node-policy",script)
+        self.put("systemctl",'''#!/bin/bash
+if [[ "$1" == is-active && "$2" == --quiet &&
+      "$3" == awg-xray-vless.service ]]; then exit 1; fi
+exec /usr/bin/systemctl "$@"
+''')
         self.env=dict(os.environ,
+          PATH=str(self.bin)+os.pathsep+os.environ.get("PATH",""),
           AWG_COMMON_FILE=str(self.root/"common.sh"),
           AWG_TRANSPORT_FILE=str(self.selected),
           AWG_SELECTION_FILE=str(self.root/"selection.env"),
