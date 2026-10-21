@@ -667,3 +667,29 @@ updater target at v1.2.0. No speculative PASS entries.
 On `awg-upgrade`, the authorized owner ran `scripts/awg-xray-transit-gate-from-awg.sh` with independently armed 600s/420s recovery timers. `TRANSIT_BASELINE=PASS`, `FAULT=MIHOMO_STOP`, `FIRST_RESULT=XRAY_TUN`, `XRAY_TUN_HTTPS=PASS`; then `FAULT=XRAY_STOP`, `SECOND_RESULT=AWG`, `SECOND_LAST_PREDICATE=PASS`. Before scripted rollback the observer confirmed AWG selected, healthy Xray/Mihomo shutdown, Transit guard SAFE, policy ACTIVE, VPN table READY, both route tables 100/101 through AWG, and HTTPS through awg0 PASS. Native Transit policy disable produced `TRANSIT_POLICY=DISABLED_FAIL_CLOSED` and `TRANSIT_FAIL_CLOSED_GUARD_STATE=PASS_NOT_PACKET_TEST`; reapply produced `TRANSIT_POLICY=ACTIVE`. Test reported `TRANSIT_XRAY_AUTO_FAILOVER=PASS_PI_TUN_AND_GUARD_ONLY`; two recovery layers and Selective restoration PASS. Independent posttest observation found AWG active, SSH/DNS/monitor active, Mihomo/Xray inactive, both tables through awg0 and zero failed services.
 
 **Scope:** this is real test-Pi engine/TUN HTTPS and protective nft/policy state evidence, **not** a LAN-client packet-level FAIL-CLOSED test. No clean-install/reboot proof, no production media/MikroTik modification, and the restored native Mihomo node was **not live retested**. Xray experimental PR #141 remains separate from installer PR #115; do not call v1.3.0 released, merged, clean-installed, or fully accepted on this receipt alone.
+
+### Unified subscription inventory and manual Xray selection (pending live gate)
+
+The user-facing node list must show **all uniquely identified, supported Mihomo
+and Xray profiles from the current loaded subscription**, including Xray profiles
+with `UNTESTED` / failed basic network status. Visibility is not eligibility.
+No false READY, network, TUN or LAN PASS is inferred from importing a profile.
+Do not leak UUID, Reality keys, provider URLs or subscription credentials.
+A rotated source URL or changed node count invalidates cached candidate proof
+unless the exact transport fingerprint is unchanged.
+
+The current candidate implements read-only inventory visibility and optional
+isolated per-node OpenAI HTTPS probe. **Manual live Xray activation is not
+implemented or accepted**; choosing a verified Xray profile only stages it.
+A separate root-only guarded manual transaction is required before exposing
+"activate" in the TUI. It must provide a recoverable previous healthy Mihomo
+or Xray node, independent timeout rollback/watchdog, fresh subscription-identity
+validation, live TUN postcheck, LAN forwarding checks, safe reboot restoration,
+and independent SSH/DNS/MikroTik/SSTP protections. It must handle Mihomo→Xray,
+Xray→Xray, and where configured AWG→Xray without using the failed-incumbent
+AUTO transaction to interrupt a healthy node.
+
+Until the above transaction and negative tests pass on the **test Pi**, leave
+manual activation disabled. Preserve Selective FAIL-OPEN, Transit FAIL-CLOSED
+and the opt-in READY/Hot Pool/Xray AUTO policies. No PR merge or release PASS
+is implied by passing inventory unit tests.
