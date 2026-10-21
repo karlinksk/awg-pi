@@ -103,8 +103,8 @@ class BridgeReload(unittest.TestCase):
                 seen.append(args)
                 return ""
             with mock.patch.multiple(mod,CONF=live,TRANSPORT=transport,MODE=mode,
-                                     ROLLBACK_OVERRIDE=override), \\
-                 mock.patch.object(mod,"run",side_effect=simulated_systemctl), \\
+                                     ROLLBACK_OVERRIDE=override), \
+                 mock.patch.object(mod,"run",side_effect=simulated_systemctl), \
                  mock.patch.object(mod,"wait_ready"):
                 mod.restore(snap,{"mode":"transit","previous":"NATIVE"})
             self.assertEqual(live.read_bytes(),b"old baseline")
