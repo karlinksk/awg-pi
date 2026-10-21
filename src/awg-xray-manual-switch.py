@@ -256,9 +256,10 @@ def apply(index):
             invariant()
             if source_node(index)[1:]!=(info["sha"],info["fingerprint"]):
                 refuse("PROVIDER_CHANGED_BEFORE_COMMIT")
+            # Manual selection changes the CURRENT exit only. The user's
+            # configured manual/FIXED/AUTO failover and READY/Hot Pool choices
+            # are independent and must never be silently replaced here.
             atomic(CURRENT,(info["candidate"]+"\n").encode())
-            atomic(POLICY,b"manual\n")
-            ORDER.unlink(missing_ok=True)
             BOOT.parent.mkdir(mode=0o755,parents=True,exist_ok=True)
             atomic(BOOT,b'[Unit]\nWants=awg-xray-vless.service\nAfter=awg-xray-vless.service\n# AWG_XRAY_MANUAL=1\n',0o644)
             cmd("systemctl","daemon-reload")
@@ -270,6 +271,7 @@ def apply(index):
             stored(path,state,"committed")
             cmd("systemctl","stop",timer)
             print("XRAY_MANUAL_TUN=VERIFIED")
+            print("MIHOMO_NODE_POLICY=UNCHANGED")
             print("XRAY_MANUAL_REBOOT=NOT_TESTED")
         except Exception:
             try:
