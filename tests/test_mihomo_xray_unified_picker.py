@@ -110,6 +110,13 @@ class UnifiedPicker(unittest.TestCase):
         self.assertIn('independent Xray OpenAI network gate remains valid',menu)
         self.assertIn('Reality VLESS may be unusable',menu)
 
+    def test_stale_xray_proof_auto_refresh_is_bounded(self):
+        code=(ROOT/"src/awg-menu").read_text()
+        self.assertIn('XRAY_MANUAL_ERROR=XRAY_FRESH_NETWORK_PROOF_REQUIRED',code)
+        self.assertIn('"$MIHOMO_UNIFIED" probe "$index"',code)
+        self.assertIn('title="Обновление доказательства Xray HTTPS"',code)
+        self.assertIn('Подписка изменилась; активная нода не переключалась.',code)
+
     def test_direct_live_picker_and_optional_advanced_menu(self):
         code=(ROOT/"src/awg-menu").read_text()
         self.assertIn('mihomo_pool_pick live "Точка выхода Mihomo / Xray"',code)

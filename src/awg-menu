@@ -1311,8 +1311,34 @@ mihomo_node_menu(){
     # candidate and independent previous-node rollback before any mutation.
     title="Ручной Xray — предварительная проверка"
     if ! run_with_progress "$title" "$XRAY_MANUAL_SWITCH" preview "$index"; then
-      show_operation_result 1 "$title"
-      return 0
+      # The catalog may still label a candidate NETWORK_OK even though its
+      # isolated proof is older than the manual transaction's 600s bound.
+      # Refresh only that exact proof and retry once without another menu.
+      if grep -Fxq 'XRAY_MANUAL_ERROR=XRAY_FRESH_NETWORK_PROOF_REQUIRED' "$TMP"; then
+        title="Обновление доказательства Xray HTTPS"
+        if ! run_with_progress "$title" "$MIHOMO_UNIFIED" probe "$index"; then
+          show_operation_result 1 "$title"
+          return 0
+        fi
+        resolver="$("$MIHOMO_UNIFIED" resolve "$node_name" 2>/dev/null)" || {
+          msg "Xray VLESS" "Подписка изменилась; активная нода не переключалась."
+          return 0
+        }
+        [[ "$(sed -n 's/^NODE_ENGINE=//p' <<<"$resolver" | head -n1)" == XRAY &&
+           "$(sed -n 's/^NODE_INDEX=//p' <<<"$resolver" | head -n1)" == "$index" &&
+           "$(sed -n 's/^NODE_BASIC_NETWORK=//p' <<<"$resolver" | head -n1)" == NETWORK_OK ]] || {
+          msg "Xray VLESS" "После обновления не подтверждён тот же Xray-профиль. Переключения нет."
+          return 0
+        }
+        title="Ручной Xray — предварительная проверка"
+        if ! run_with_progress "$title" "$XRAY_MANUAL_SWITCH" preview "$index"; then
+          show_operation_result 1 "$title"
+          return 0
+        fi
+      else
+        show_operation_result 1 "$title"
+        return 0
+      fi
     fi
     if grep -Fxq 'XRAY_MANUAL_ALREADY_SELECTED=YES' "$TMP"; then
       msg "Xray VLESS" "Этот Xray-профиль уже выбран, HTTPS через текущий TUN работает. Повторная остановка Xray и переключение не требуются."
