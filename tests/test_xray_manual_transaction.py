@@ -51,6 +51,8 @@ class ManualSwitchContract(unittest.TestCase):
         self.assertIn('"$XRAY_MANUAL_SWITCH" preview "$index"',menu)
         self.assertIn('"$XRAY_MANUAL_SWITCH" apply "$index"',menu)
         self.assertIn('confirm "Переключение на Xray"',menu)
+        self.assertIn('if [[ "$(cat /etc/awg-pbr/transport 2>/dev/null)" != mihomo ]]; then',menu)
+        self.assertIn("Сначала вручную выберите транспорт Mihomo",menu)
         self.assertNotIn("awg-transport select awg",SCRIPT.read_text())
 
     def test_does_not_reuse_failed_incumbent_auto_executor(self):
@@ -63,6 +65,22 @@ class ManualSwitchContract(unittest.TestCase):
         self.assertNotIn("shell=True",s)
         self.assertNotIn("AWG_XRAY_EXPERIMENTAL_APPLY",s)
         self.assertIn('AWG_XRAY_MANUAL=1',s)
+
+    def test_watchdog_awg_takeover_supersedes_without_mutation(self):
+        with tempfile.TemporaryDirectory() as td:
+            root=Path(td)
+            snap=root/"xray-manual-123-456"
+            snap.mkdir()
+            (snap/"state.json").write_text('{"phase":"armed"}')
+            with mock.patch.object(mod,"ROOT",root), \
+                 mock.patch.object(mod,"LOCK",root/"lock"), \
+                 mock.patch.object(mod,"cmd",side_effect=["awg","healthy"]) as cli, \
+                 mock.patch.object(mod,"restore") as restore:
+                mod.watchdog(snap)
+                self.assertEqual(__import__("json").loads(
+                    (snap/"state.json").read_text())["phase"],"superseded")
+                restore.assert_not_called()
+                self.assertEqual(cli.call_count,2)
 
     @mock.patch.object(mod.os,"geteuid",return_value=1000)
     def test_preview_rejects_nonroot(self,_):

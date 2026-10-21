@@ -151,6 +151,42 @@ show_operation_result 7 'Проверка подписки'
             self.assertIn(f'if capture "$AWG_UPDATE" --yes {action}; then', SOURCE)
             self.assertNotIn(f'capture "$AWG_UPDATE" --yes {action} || true', SOURCE)
 
+    def test_raw_error_codes_have_russian_guidance_before_diagnostics(self):
+        cases = [
+            ("XRAY_MANUAL_ERROR=MANAGEMENT_OR_MIHOMO_UNHEALTHY",
+             "Сначала вручную выберите" if False else "выберите транспорт Mihomo"),
+            ("XRAY_MANUAL_ERROR=FOREIGN_TRANSPORT_DURING_RECOVERY",
+             "рабочий VPN оставлен без изменений"),
+            ("XRAY_MANUAL_ERROR=XRAY_ISOLATED_HTTPS_NOT_VERIFIED",
+             "нода не прошла проверку HTTPS"),
+            ("UNIFIED_ERROR=PROVIDER_CHANGED_DURING_PROBE",
+             "Подписка изменилась"),
+            ("UNRECOGNIZED_INTERNAL_CODE=42", "Операция не завершилась успешно"),
+        ]
+        with tempfile.TemporaryDirectory(prefix="awg-menu-errors-") as td:
+            root=Path(td)
+            d=root/"dialog"
+            d.write_text("#!/bin/sh\nexit 0\n")
+            d.chmod(0o700)
+            for i,(technical,explanation) in enumerate(cases):
+                log=root/f"case{i}"
+                log.write_text(technical+"\n")
+                shell=(body("awg_readable_status_text")+"\n"+
+                       body("show_operation_result")+f"""
+TMP='{log}'
+BACKTITLE=Тест
+show_operation_result 1 'Ручной выбор'
+""")
+                proc=subprocess.run(["bash","-c",shell],capture_output=True,
+                    text=True,timeout=6,env=dict(os.environ,
+                    PATH=str(root)+":"+os.environ["PATH"]))
+                self.assertEqual(proc.returncode,0,proc.stderr)
+                result=log.read_text()
+                self.assertIn("Результат: ОШИБКА",result)
+                self.assertIn("Что произошло:",result)
+                self.assertIn(explanation,result)
+                self.assertIn(technical,result)
+
     def test_fresh_install_onboarding_is_direct_and_installer_first(self):
         vpn=body("vpn_menu")
         awg=body("awg_config_menu")

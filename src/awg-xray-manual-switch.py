@@ -708,6 +708,13 @@ def watchdog(path):
         if state["phase"]=="pending":
             stored(path,state,"cancelled")
             return
+        # AUTO may have selected healthy AWG while the manual transaction failed.
+        # Never overwrite that transport or leave a failing recovery unit.
+        active_transport=cmd("/usr/local/sbin/awg-transport","get")
+        if active_transport=="awg" and cmd(
+                "/usr/local/sbin/awg-transport","check","awg")=="healthy":
+            stored(path,state,"superseded")
+            return
         restore(path,state)
         stored(path,state,"rolled_back")
 
