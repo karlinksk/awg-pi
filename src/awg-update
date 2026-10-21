@@ -233,6 +233,7 @@ restore_gateway(){
     /usr/local/sbin/awg-mihomo-node-picker \
     /usr/local/sbin/awg-xray-activation-transaction \
     /usr/local/sbin/awg-xray-live-backend \
+    /usr/local/sbin/awg-xray-manual-switch \
     /usr/local/sbin/awg-mihomo-ready-live-match \
     /usr/local/sbin/awg-mihomo-ready-postcheck-tun \
     /usr/local/sbin/awg-mihomo-hot-pool \
@@ -270,6 +271,7 @@ restore_gateway(){
     /etc/systemd/system/awg-xray-subscription-scan.service \
     /etc/systemd/system/awg-xray-subscription-scan.path \
     /etc/systemd/system/awg-xray-subscription-scan.timer \
+    /etc/systemd/system/awg-mihomo.service.d/62-awg-xray-manual.conf \
     /etc/systemd/system/awg-mihomo-update.service \
     /etc/systemd/system/awg-mihomo-update.timer \
     /etc/systemd/system/awg-mihomo-hot-pool.service \
