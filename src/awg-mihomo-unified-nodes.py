@@ -155,7 +155,7 @@ def isolated_probe(adapter,node):
                         with socket.create_connection(("127.0.0.1",port),timeout=.15):break
                     except OSError:time.sleep(.12)
                 else:return "NETWORK_FAIL"
-                probe=subprocess.run(["curl","-4","-sS","--socks5-hostname",
+                probe=subprocess.run(["curl","-q","-4","-sS","--socks5-hostname",
                     f"127.0.0.1:{port}","--noproxy","","--connect-timeout","7",
                     "--max-time","21","-o","/dev/null","-w","%{http_code}",
                     PROBE_URL],stdout=subprocess.PIPE,stderr=subprocess.DEVNULL,text=True,timeout=24)
