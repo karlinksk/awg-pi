@@ -74,7 +74,14 @@ class BridgeReload(unittest.TestCase):
             d=Path(td)
             snap=d/"xray-bridge-123-456";snap.mkdir()
             (snap/"state.json").write_text('{"phase":"committed"}')
+            original_stat=type(snap).stat
+            def root_owned_snap(path,*args,**kwargs):
+                if path==snap:
+                    from types import SimpleNamespace
+                    return SimpleNamespace(st_uid=0)
+                return original_stat(path,*args,**kwargs)
             with mock.patch.multiple(mod,BASE=d,LOCK=d/"test.lock"), \
+                 mock.patch.object(type(snap),"stat",autospec=True,side_effect=root_owned_snap), \
                  mock.patch.object(mod,"restore") as restore:
                 mod.recover(snap)
                 restore.assert_not_called()
