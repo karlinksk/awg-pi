@@ -32,7 +32,11 @@ MODE=Path("/etc/awg-pbr/mode")
 SELECTED=Path("/etc/awg-pbr/transports/mihomo/node-name")
 ALIAS="AWG-XRAY-VLESS-LOCAL"
 SERVICE="awg-mihomo.service"
-WATCH=150
+WATCH=180
+# Runtime-only systemd pre-start override: restore EXACT old config without
+# ExecStartPre regenerating the staged Xray bridge during recovery.
+ROLLBACK_OVERRIDE=Path("/run/systemd/system/awg-mihomo.service.d/99-awg-xray-bridge-test.conf")
+ROLLBACK_OVERRIDE_CONTENT=b"[Service]\nExecStartPre=\nExecStartPre=/usr/local/bin/mihomo -t -d /var/lib/awg-pbr/mihomo -f /etc/awg-pbr/transports/mihomo/config.yaml\n# AWG_XRAY_BRIDGE_TEST_ROLLBACK=1\n"
 
 def die(code):
     raise RuntimeError(code)
@@ -100,6 +104,8 @@ def sanity():
         if not active(unit):die("CRITICAL_SERVICE_DOWN")
     if not CONF.is_file() or CONF.is_symlink():die("INVALID_ACTIVE_CONFIG")
     if not SELECTED.is_file():die("CURRENT_NODE_MISSING")
+    if ROLLBACK_OVERRIDE.exists() or ROLLBACK_OVERRIDE.is_symlink():
+        die("RECOVERY_OVERRIDE_STILL_PRESENT")
     if not INSTALL.is_file() or not os.access(INSTALL,os.X_OK):
         die("WATCHDOG_EXECUTOR_MISSING")
     guard()
@@ -158,7 +164,8 @@ def read_state(folder):
     return json.loads((folder/"state.json").read_text())
 
 def wait_ready(name,alias):
-    for _ in range(28):
+    deadline=time.monotonic()+45
+    while time.monotonic()<deadline:
         if not active(SERVICE):
             time.sleep(1);continue
         try:
@@ -182,10 +189,29 @@ def restore(folder,state):
     if TRANSPORT.read_text().strip()!="mihomo":die("FOREIGN_TRANSPORT_ABORT_RECOVERY")
     if MODE.read_text().strip()!=state["mode"]:die("FOREIGN_MODE_ABORT_RECOVERY")
     if CONF.is_symlink():die("CONFIG_SYMLINK_UNSAFE")
-    put(CONF,(folder/"original.yaml").read_bytes())
-    run("systemctl","restart",SERVICE,timeout=45,output=False)
-    wait_ready(state["previous"],False)
-    print("XRAY_BRIDGE_ROLLBACK=VERIFIED")
+    if ROLLBACK_OVERRIDE.is_symlink():die("ROLLBACK_OVERRIDE_SYMLINK_UNSAFE")
+    if ROLLBACK_OVERRIDE.exists():
+        if ROLLBACK_OVERRIDE.read_bytes()!=ROLLBACK_OVERRIDE_CONTENT:
+            die("FOREIGN_ROLLBACK_OVERRIDE")
+    else:
+        ROLLBACK_OVERRIDE.parent.mkdir(parents=True,mode=0o755,exist_ok=True)
+        put(ROLLBACK_OVERRIDE,ROLLBACK_OVERRIDE_CONTENT)
+    try:
+        # Freeze the exact snapshotted Mihomo config while restoring the TUN.
+        # Without this override, ExecStartPre awg-mihomo-prepare would render
+        # the new Xray bridge AGAIN and silently defeat the rollback.
+        put(CONF,(folder/"original.yaml").read_bytes())
+        run("systemctl","daemon-reload",timeout=20,output=False)
+        run("systemctl","restart",SERVICE,timeout=45,output=False)
+        wait_ready(state["previous"],False)
+        print("XRAY_BRIDGE_ROLLBACK=VERIFIED")
+    finally:
+        # If interrupted, independent watchdog can restore again; it uses
+        # the same owner-only override marker and snapshot.
+        if ROLLBACK_OVERRIDE.exists() and (
+            ROLLBACK_OVERRIDE.read_bytes()==ROLLBACK_OVERRIDE_CONTENT):
+            ROLLBACK_OVERRIDE.unlink()
+            run("systemctl","daemon-reload",timeout=20,output=False)
 
 def recover(folder):
     if not re.fullmatch(r"xray-bridge-[0-9]+-[0-9]+",folder.name):
