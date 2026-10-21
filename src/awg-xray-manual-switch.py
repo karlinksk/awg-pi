@@ -114,6 +114,29 @@ def prove_local_xray():
     refuse("XRAY_SOCKS_HTTPS_NOT_VERIFIED")
 
 
+def stable_error_code(exc):
+    """Error metadata must never contain provider URLs, UUIDs or secrets."""
+    value=str(exc)
+    return value if re.fullmatch(r"[A-Z][A-Z0-9_]{2,79}",value) else "UNCLASSIFIED_FAILURE"
+
+def prove_previous_tun():
+    # An Xray service restart can leave the loopback socket ready before the
+    # prior TUN HTTPS flow is re-established; give the proven old node bounded
+    # retry time before treating rollback as failed.
+    for attempt in range(3):
+        if not unit_active(XRAY):
+            refuse("PREVIOUS_XRAY_SERVICE_EXITED")
+        if https_ok("tun"):
+            return
+        if attempt<2:
+            time.sleep(1)
+    refuse("PREVIOUS_TUN_RESTORE_FAILED")
+
+def checkpoint(path,state,step):
+    # Keep phase ARMED at every step, so a crash never disarms the watchdog.
+    state["checkpoint"]=step
+    stored(path,state,state["phase"])
+
 def atomic(path,data,mode=0o600):
     import tempfile
     path.parent.mkdir(mode=0o700,parents=True,exist_ok=True)
@@ -246,9 +269,10 @@ def restore(path,state):
         except RuntimeError:
             refuse("PREVIOUS_XRAY_RESTORE_FAILED")
         choose(ALIAS)
+        prove_previous_tun()
     else:
         choose(previous)
-    if not https_ok("tun"):refuse("PREVIOUS_TUN_RESTORE_FAILED")
+        if not https_ok("tun"):refuse("PREVIOUS_TUN_RESTORE_FAILED")
     for name,target in (("selected.prev",SELECTED),("boot.prev",BOOT),
                         ("current.prev",CURRENT),("policy.prev",POLICY),
                         ("order.prev",ORDER)):
@@ -293,13 +317,16 @@ def apply(index):
                 "watchdog",str(path))
             if not unit_active(timer):refuse("WATCHDOG_NOT_ARMED")
             stored(path,state,"armed")
+            checkpoint(path,state,"VERIFY_CANDIDATE")
             # Recheck current credential identity before touching healthy VPN.
             node,sha,fingerprint=source_node(index)
             if (node,sha,fingerprint)!=(info["candidate"],info["sha"],info["fingerprint"]):
                 refuse("PROVIDER_CHANGED")
+            checkpoint(path,state,"STAGE_NEW_XRAY")
             if state["previous_xray"]:cmd("systemctl","stop",XRAY)
             cmd(str(ADAPTER),"select",str(index))
             cmd("systemctl","start",XRAY)
+            checkpoint(path,state,"PROBE_NEW_XRAY_SOCKS")
             # systemctl start only confirms the launch was queued, not that
             # the SOCKS listener or outbound HTTPS is ready. This probe uses
             # the same local-socks path as isolated validation, with a bounded
@@ -307,12 +334,14 @@ def apply(index):
             prove_local_xray()
             if source_node(index)[1:]!=(info["sha"],info["fingerprint"]):
                 refuse("PROVIDER_CHANGED")
+            checkpoint(path,state,"SWITCH_TUN")
             choose(ALIAS)
             if not https_ok("tun") or not routing_ok():
                 refuse("XRAY_TUN_OR_ROUTES_UNVERIFIED")
             invariant()
             if source_node(index)[1:]!=(info["sha"],info["fingerprint"]):
                 refuse("PROVIDER_CHANGED_BEFORE_COMMIT")
+            checkpoint(path,state,"COMMIT_POLICY")
             # Manual selection changes the CURRENT exit only. The user's
             # configured manual/FIXED/AUTO failover and READY/Hot Pool choices
             # are independent and must never be silently replaced here.
@@ -321,6 +350,7 @@ def apply(index):
             atomic(BOOT,b'[Unit]\nWants=awg-xray-vless.service\nAfter=awg-xray-vless.service\n# AWG_XRAY_MANUAL=1\n',0o644)
             cmd("systemctl","daemon-reload")
             cmd("systemctl","enable",XRAY)
+            checkpoint(path,state,"POSTCOMMIT_TUN")
             if not unit_enabled(XRAY) or not https_ok("tun") or not routing_ok():
                 refuse("XRAY_POSTCOMMIT_UNVERIFIED")
             if source_node(index)[1:]!=(info["sha"],info["fingerprint"]):
@@ -330,18 +360,48 @@ def apply(index):
             print("XRAY_MANUAL_TUN=VERIFIED")
             print("MIHOMO_NODE_POLICY=UNCHANGED")
             print("XRAY_MANUAL_REBOOT=NOT_TESTED")
-        except Exception:
+        except Exception as exc:
+            # Durable, root-only, code-only failure report; no credentials.
+            # If immediate rollback fails, preserve phase=armed to allow
+            # the independently scheduled recovery to run.
+            state["failure_code"]=stable_error_code(exc)
+            state["failed_at"]=state.get("checkpoint","NOT_STARTED")
+            try:
+                checkpoint(path,state,"ROLLBACK_ATTEMPT")
+            except Exception:
+                pass
             try:
                 restore(path,state)
+                checkpoint(path,state,"ROLLBACK_COMPLETE")
                 stored(path,state,"rolled_back")
-            except Exception:
-                # Independent watchdog remains armed and may recover later.
+            except Exception as rollback_exc:
+                state["rollback_failure_code"]=stable_error_code(rollback_exc)
+                try:checkpoint(path,state,"WATCHDOG_RECOVERY_PENDING")
+                except Exception:pass
+                # Leave the watchdog ARMED. The other unit will retry safely.
                 raise RuntimeError("XRAY_MANUAL_ROLLBACK_UNCONFIRMED")
             try:cmd("systemctl","stop",timer)
             except Exception:pass
             raise
 
+def last_failure():
+    if os.geteuid()!=0:refuse("ROOT_REQUIRED")
+    snapshots=[p for p in ROOT.glob("xray-manual-[0-9]*-[0-9]*")
+               if p.is_dir() and not p.is_symlink() and p.stat().st_uid==0]
+    if not snapshots:
+        print("XRAY_MANUAL_DIAG=NO_SNAPSHOT")
+        return
+    folder=max(snapshots,key=lambda p:p.stat().st_mtime)
+    state=json.loads((folder/"state.json").read_text())
+    # Expose only enumerated nonsecret words; no profile names or hashes.
+    for key in ("phase","failure_code","failed_at","rollback_failure_code","checkpoint"):
+        value=state.get(key,"UNKNOWN")
+        safe=value if isinstance(value,str) and re.fullmatch(r"[A-Z][A-Z0-9_]{1,79}|rolled_back|committed|armed|pending|cancelled",value) else "UNKNOWN"
+        print("XRAY_MANUAL_"+key.upper()+"="+safe)
+
 def main():
+    if len(sys.argv)==2 and sys.argv[1]=="diagnose":
+        last_failure();return
     if len(sys.argv)==3 and sys.argv[1]=="watchdog":
         watchdog(Path(sys.argv[2]));return
     if len(sys.argv)==3 and sys.argv[1] in ("preview","apply"):
