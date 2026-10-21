@@ -324,8 +324,14 @@ localize_status_file(){
     -e 's/^Provider cache: missing$/Кэш источника: отсутствует/' \
     -e 's/^Provider candidate: staged$/Подготовленный профиль: есть/' \
     -e 's/^Provider candidate: none$/Подготовленный профиль: нет/' \
-    -e 's/^Selected node:/Выбранный узел:/' \
-    -e 's/^Endpoint:/IPv4 сервера:/' \
+    -e 's/^Selected node:/Сохранённая нода Mihomo:/' \
+     -e 's/^Actual outbound engine: XRAY$/Фактический выход: Xray VLESS/' \
+     -e 's/^Actual outbound engine: MIHOMO$/Фактический выход: Mihomo/' \
+     -e 's/^Actual outbound engine: UNKNOWN$/Фактический выход: не подтверждён/' \
+     -e 's/^Actual outbound detail: Xray VLESS via Mihomo TUN$/Путь: Mihomo TUN → локальный Xray SOCKS5/' \
+     -e 's/^Actual outbound detail: Native Mihomo node$/Путь: нативная нода Mihomo/' \
+     -e 's/^Actual outbound node:/Активная нода Mihomo:/' \
+    -e 's/^Endpoint:/IPv4 сервера сохранённой Mihomo-ноды:/' \
     -e 's/^Last fetch path:/Последний канал загрузки:/' \
     -e 's/^Runtime config: ready$/Рабочая конфигурация: готова/' \
     -e 's/^Runtime config: missing$/Рабочая конфигурация: отсутствует/' \
@@ -1271,6 +1277,49 @@ mihomo_node_menu(){
     msg "Выбор узла" "Движок не поддерживается; переключение запрещено."
     return 0
   }
+
+  # Never treat saved node-name as the live outbound while Xray owns Mihomo.
+  # Ordinary node select-auto can rewrite metadata and restart Mihomo without
+  # changing the selected Xray controller alias.
+  local live_engine
+  live_engine="$(python3 -B - <<'PY'
+import json,urllib.request
+try:
+    op=urllib.request.build_opener(urllib.request.ProxyHandler({}))
+    with op.open("http://127.0.0.1:9090/proxies/AWG-MIHOMO",timeout=3) as resp:
+        group=json.load(resp)
+    selected=group.get("now")
+    if selected=="AWG-XRAY-VLESS-LOCAL":
+        print("XRAY")
+    elif isinstance(selected,str) and selected in group.get("all",[]):
+        print("MIHOMO")
+    else:
+        print("UNKNOWN")
+except (OSError,ValueError,KeyError,TypeError):
+    print("UNKNOWN")
+PY
+)"
+  case "$live_engine" in
+    XRAY)
+      title="Возврат Xray → Mihomo — предварительная проверка"
+      if ! run_with_progress "$title" "$XRAY_MANUAL_SWITCH" native-preview "$node_name"; then
+        show_operation_result 1 "$title"
+        msg "Возврат к Mihomo" "Рабочий выход остаётся Xray. Нативная Mihomo-нода должна быть уже загружена и соответствовать сохранённой конфигурации. Переключения не было."
+        return 0
+      fi
+      confirm "Возврат Xray → Mihomo" "Переключить реальный выход с Xray на выбранную уже настроенную ноду Mihomo?\\n\\nНовая нода проверяется через TUN. При ошибке watchdog восстановит Xray. После успеха Xray отключится от активного канала. DNS, SSH и MikroTik не меняются." || return 0
+      title="Защищённый возврат на Mihomo"
+      if capture "$XRAY_MANUAL_SWITCH" native-apply "$node_name"; then
+        msg "Mihomo" "Нативный Mihomo выбран в контроллере; HTTPS через TUN подтверждён. Xray-sidecar отключён. Проверка LAN и reboot — отдельно."
+      fi
+      return 0
+      ;;
+    MIHOMO) ;;
+    *)
+      msg "Ручной выбор Mihomo" "Контроллер не подтвердил текущий выход. Чтобы не прервать рабочий VPN, изменение ноды отменено."
+      return 0
+      ;;
+  esac
 
   info_tmp="$(mktemp)"
   title="Подготовка узла Mihomo"
