@@ -93,7 +93,17 @@ case "$MIHOMO_XRAY_VLESS_BRIDGE" in
     if [[ -x "$MIHOMO_XRAY_CORE" && -r "$MIHOMO_XRAY_CURRENT" ]]; then
       _xray_current="$(cat "$MIHOMO_XRAY_CURRENT")"
       if [[ -n "$_xray_current" && "$_xray_current" != *$'\n'* &&
-            "$_xray_current" != *$'\r'* ]]; then
+            "$_xray_current" != *$'\r'* ]] &&
+         python3 -B - "$MIHOMO_PROVIDER_FILE" "$_xray_current" <<'PY' >/dev/null 2>&1
+import sys,yaml
+try:
+    obj=yaml.safe_load(open(sys.argv[1],encoding="utf-8"))
+    rows=obj.get("proxies",[]) if isinstance(obj,dict) else []
+    assert sum(isinstance(r,dict) and r.get("name")==sys.argv[2]
+               for r in rows)==1
+except Exception:sys.exit(1)
+PY
+      then
         _bridge_ready=1
       else _bridge_ready=0; fi
     else _bridge_ready=0; fi
