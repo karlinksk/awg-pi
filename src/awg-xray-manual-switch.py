@@ -250,7 +250,8 @@ def candidate_native(name):
     raw=read(PROVIDER)
     if raw is None or len(raw)>8*1024*1024:
         refuse("NATIVE_PROVIDER_UNAVAILABLE")
-    data=yaml.safe_load(raw)
+    try:data=yaml.safe_load(raw)
+    except yaml.YAMLError:refuse("NATIVE_PROVIDER_PARSE_FAILED")
     rows=data.get("proxies",[]) if isinstance(data,dict) else []
     profiles=[n for n in rows if isinstance(n,dict) and n.get("name")==name]
     if len(profiles)!=1:refuse("NATIVE_PROFILE_NOT_UNIQUE")
@@ -261,9 +262,12 @@ def candidate_native(name):
         refuse("XRAY_PROFILE_IS_NOT_NATIVE")
     # Same trusted helper that native Mihomo's menu already uses.
     helper="/usr/local/lib/awg-pi/mihomo-provider.py"
-    p=subprocess.run(["python3",helper,"info",str(PROVIDER),name],
-        stdin=subprocess.DEVNULL,stdout=subprocess.PIPE,stderr=subprocess.DEVNULL,
-        timeout=14,text=True)
+    try:
+        p=subprocess.run(["python3",helper,"info",str(PROVIDER),name],
+            stdin=subprocess.DEVNULL,stdout=subprocess.PIPE,stderr=subprocess.DEVNULL,
+            timeout=14,text=True)
+    except (OSError,subprocess.TimeoutExpired):
+        refuse("NATIVE_PROFILE_RESOLVE_FAILED")
     if p.returncode:refuse("NATIVE_PROFILE_RESOLVE_FAILED")
     try:
         info=json.loads(p.stdout)
