@@ -1113,12 +1113,18 @@ mihomo_pool_results_dialog(){
 
 select_tsv_node_dialog(){
   local dialog_title="$1" prompt="$2" listing="$3" pick provider_idx ui_idx name display_name type endpoint duplicate health country delay description tab
-  local query="" filtered count total search_prompt advanced=no
+  local query="" filtered count total search_prompt advanced=no scope="${5:-manual}"
+  local eligible=0 xray_count=0 fail_count=0 node_health state_label source_total="" shown_total
   if (( $# >= 4 )); then advanced="$4"; fi
   local -a items=()
-  local -A choice_name=()
+  local -A choice_name=() choice_health=()
   tab="$(printf '\t')"
   total="$(awk -F '\t' '$1 ~ /^[0-9]+$/ {n++} END{print n+0}' <<<"$listing")"
+  if [[ "$scope" == live || "$scope" == fixed ]]; then
+    source_total="$("$MIHOMO_UNIFIED" list 2>/dev/null | sed -n 's/^UNIFIED_PROVIDER_COUNT=//p' | head -n1)" || source_total=""
+  fi
+  [[ "$source_total" =~ ^[1-9][0-9]*$ ]] || source_total="$total"
+  shown_total="$source_total"
   while true; do
     if [[ -n "$query" ]]; then
       filtered="$(grep -iF -- "$query" <<<"$listing" || true)"
@@ -1136,16 +1142,29 @@ select_tsv_node_dialog(){
       items+=("__advanced__" "⚙ Фильтры / обновление / статистика" "Дополнительные параметры списка; выбор рабочей ноды не меняется.")
     fi
     choice_name=()
+    choice_health=()
+    eligible=0; xray_count=0; fail_count=0
     ui_idx=0
     while IFS="$tab" read -r provider_idx name type endpoint duplicate health country delay; do
       [[ "$provider_idx" =~ ^[0-9]+$ && -n "$name" ]] || continue
       ui_idx=$((ui_idx + 1))
       choice_name["$ui_idx"]="$name"
+      choice_health["$ui_idx"]="$health"
+      case "$health" in
+        MIHOMO_OK) eligible=$((eligible + 1)) ;;
+        XRAY_HTTPS) xray_count=$((xray_count + 1)) ;;
+        MIHOMO_FAIL) fail_count=$((fail_count + 1)) ;;
+      esac
       display_name="$(mihomo_display_node_name "$name")"
       description="$type | сервер: $endpoint (НЕ IP выхода)"
       [[ -z "$country" || "$country" == "??" ]] || description="$description | страна выхода: $country"
       [[ -z "$delay" || "$delay" == "-" ]] || description="$description | $delay"
       case "$health" in
+        MIHOMO_OK) description="$description | Mihomo: работает" ;;
+        MIHOMO_FAIL) description="$description | Mihomo: НЕ работает" ;;
+        MIHOMO_UNTESTED) description="$description | Mihomo: ещё не проверен" ;;
+        UNSUPPORTED) description="$description | НЕ ПОДДЕРЖИВАЕТСЯ" ;;
+        DUPLICATE) description="$description | ДУБЛИКАТ: выбор запрещён" ;;
         XRAY_HTTPS) description="$description | Xray: HTTPS OK (не TUN)" ;;
         XRAY_UNTESTED) description="$description | Xray: ещё не проверен" ;;
         XRAY_NETWORK_FAIL) description="$description | Xray: ошибка сети" ;;
@@ -1155,9 +1174,22 @@ select_tsv_node_dialog(){
       esac
       [[ "$health" == DEAD ]] && description="$description | НЕДОСТУПЕН"
       [[ "$duplicate" == DUPLICATE ]] && description="$description | ДУБЛИКАТ ИМЕНИ"
-      items+=("$ui_idx" "$display_name — $description" "Mihomo: выбрать вручную; Xray: проверка, затем защищённое ручное переключение TUN.")
+      case "$health" in
+        MIHOMO_OK) state_label="Mihomo работает" ;;
+        MIHOMO_FAIL) state_label="Mihomo отказ" ;;
+        MIHOMO_UNTESTED) state_label="Mihomo не проверен" ;;
+        XRAY_HTTPS) state_label="Xray HTTPS" ;;
+        XRAY_UNTESTED) state_label="Xray не проверен" ;;
+        XRAY_NETWORK_FAIL) state_label="Xray отказ" ;;
+        DUPLICATE) state_label="дубликат" ;;
+        *) state_label="недоступен" ;;
+      esac
+      items+=("$ui_idx" "$display_name [$state_label] — $description" "Статус виден, но не является гарантией LAN/TUN. Проверка безопасности перед переключением обязательна.")
     done <<<"$filtered"
-    search_prompt="$prompt\n\nПоказано: $count из $total"
+    search_prompt="$prompt\n\nПоказано: $count из $shown_total | Mihomo работают: $eligible | Xray HTTPS: $xray_count | Mihomo отказ: $fail_count"
+    if [[ "$scope" == fixed ]]; then
+      search_prompt="$prompt\n\nПоказано: $count из $shown_total | Для FIXED допустимы только исправные Mihomo: $eligible"
+    fi
     [[ -z "$query" ]] || search_prompt="$search_prompt | поиск: $query"
     pick="$(dialog --backtitle "$BACKTITLE" --title "$dialog_title" --item-help --menu "$search_prompt" 28 116 17 "${items[@]}" 3>&1 1>&2 2>&3)" || return 1
     case "$pick" in
@@ -1170,6 +1202,15 @@ select_tsv_node_dialog(){
       __advanced__) return 42 ;;
       *)
         [[ -n "${choice_name[$pick]:-}" ]] || continue
+        node_health="${choice_health[$pick]:-UNSUPPORTED}"
+        if [[ "$scope" == fixed && "$node_health" != MIHOMO_OK ]]; then
+          msg "FIXED — доступность узла" "Профиль виден в подписке, но недоступен для FIXED.\n\nВ этой цепочке разрешены только исправные Mihomo; Xray и отказавшие узлы не добавляются."
+          continue
+        fi
+        if [[ "$node_health" == UNSUPPORTED || "$node_health" == DUPLICATE ]]; then
+          msg "Точка выхода" "Профиль отображается для полноты подписки, но его выбор запрещён: неподдерживаемый формат или неоднозначное имя."
+          continue
+        fi
         printf '%s\n' "${choice_name[$pick]}"
         return 0
         ;;
@@ -1328,7 +1369,7 @@ mihomo_pool_pick(){
           [[ "$direct" == yes ]] && return 1
           continue
         }
-        if node="$(select_tsv_node_dialog "$dialog_title" "$prompt" "$listing" "$direct")"; then
+        if node="$(select_tsv_node_dialog "$dialog_title" "$prompt" "$listing" "$direct" "$target")"; then
           MIHOMO_POOL_PICKED_NODE="$node"
         else
           pick_rc=$?
@@ -1714,7 +1755,7 @@ mihomo_provider_format_dialog(){
 }
 
 mihomo_node_chain_editor(){
-  local choice node idx chain current order_file listing
+  local choice node idx chain current order_file listing node_json
   local -a nodes=()
   order_file=/etc/awg-pbr/transports/mihomo/node-policy.nodes
 
@@ -1748,8 +1789,17 @@ mihomo_node_chain_editor(){
           dialog --backtitle "$BACKTITLE" --title "$title" --textbox "$TMP" 30 110
           continue
         fi
-        listing="$("$MIHOMO_POOL" list live --ignore-policy 2>/dev/null)" || continue
-        node="$(select_tsv_node_dialog "Добавить резервный узел" "Выберите живой узел для явной FIXED-цепочки. Геофильтр «Только Европа» здесь намеренно не ограничивает список." "$listing")" || continue
+        node_json="$(mktemp /run/awg-pbr/mihomo-fixed-catalog.XXXXXX.json)" || continue
+        chmod 600 "$node_json"
+        if ! "$MIHOMO_POOL" list live --all --ignore-policy --format json >"$node_json" 2>/dev/null; then
+          rm -f "$node_json"
+          msg "FIXED" "Единый каталог недоступен. Политика не изменена."
+          continue
+        fi
+        listing="$("$MIHOMO_NODE_PICKER" "$node_json" --target live --protocol all --region all 2>/dev/null)" || listing=""
+        rm -f "$node_json"
+        [[ -n "$listing" ]] || { msg "FIXED" "Единый каталог недоступен. Политика не изменена."; continue; }
+        node="$(select_tsv_node_dialog "Добавить резервный узел" "Все профили показаны. Для FIXED разрешены только исправные Mihomo; Xray и неисправные ноды видны, но не добавляются." "$listing" no fixed)" || continue
         [[ -n "$node" ]] || continue
         if printf '%s\n' "${nodes[@]}" | grep -Fxq -- "$node"; then
           msg "Резервирование узлов Mihomo" "Этот узел уже есть в цепочке."
