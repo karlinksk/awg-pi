@@ -830,3 +830,9 @@ Candidate corrections committed after operator evidence:
 - Synthetic tests assert both Transit quiesce/rearm and Selective failopen happen before service teardown, native state restoration, and no mutable action on invalid provider profiles.
 
 **Corrected source and regression tests have NOT been re-run on test Pi yet**, so current full-suite status is **FAIL pending new run**, independent of the previous 726/726 gate. There is **no** verified live/native↔Xray switch using corrected files, no installer clean-install/LAN/reboot/failover PASS. The candidate remains a **draft PR**, not production or stable release.
+
+### 2026-10-21 unified-manual regression rerun — 731/731 rootless PASS (not hardware)
+
+Operator on test Pi `awg-upgrade` checked pinned candidate commit `9d92f6375a0adc28bd6491f1ecad0cce8d216674`, verified Python `py_compile` for `awg-xray-manual-switch.py` and its tests, `bash -n src/awg-menu`, then ran `python3 -m unittest discover -s tests -q`: **`Ran 731 tests in 26.768s`, `OK`, `TEST_EXIT=0`**. The earlier 730-suite failure/error in the previous candidate were resolved by that tested revision. This is **automated rootless regression PASS**, with no modification of live Xray or Pi VPN dataplane.
+
+Next acceptance gate remains staged **test-Pi install of only versioned manual switch and menu helpers** after verifying no armed recovery timer, followed by read-only `native-preview` (exact current subscription native name) and privileged Transit status. Only after preflight permit supervised native↔Xray real TUN switching, which must check actual selected controller and egress, service health, rollback and guard. LAN/reboot/forced-failure/clean install not PASS. PR #143 remains draft, PR #115 open, no release.
