@@ -110,6 +110,15 @@ class UnifiedPicker(unittest.TestCase):
         self.assertIn('independent Xray OpenAI network gate remains valid',menu)
         self.assertIn('Reality VLESS may be unusable',menu)
 
+    def test_menu_distinguishes_server_address_from_egress(self):
+        menu=(ROOT/"src/awg-menu").read_text()
+        self.assertIn('сервер: $endpoint (НЕ IP выхода)',menu)
+        self.assertIn('"$MIHOMO_UNIFIED" probe "$index"',menu)
+        self.assertNotIn('confirm "Проверить Xray VLESS"',menu)
+        self.assertIn("mihomo_live_egress_ip()",menu)
+        self.assertIn("--interface mihomo0",menu)
+        self.assertIn("Публичный IP выхода через mihomo0",menu)
+
     def test_not_installed_into_auto_selection(self):
         source=PICKER.read_text()
         for word in ("systemctl", "node select-auto", "awg-transit-routing",
