@@ -32,6 +32,11 @@ BOOT=Path("/etc/systemd/system/awg-mihomo.service.d/62-awg-xray-manual.conf")
 LOCK=Path("/run/awg-maintenance.lock")
 ADAPTER=Path("/usr/local/sbin/awg-xray-vless")
 SWITCH=Path("/usr/local/sbin/awg-xray-manual-switch")
+CONFIGURE=Path("/usr/local/sbin/awg-mihomo-configure")
+MIHOMO_ENV=Path("/etc/awg-pbr/transports/mihomo/provider.env")
+MIHOMO_CONFIG=Path("/etc/awg-pbr/transports/mihomo/config.yaml")
+MIHOMO_ENDPOINT=Path("/etc/awg-pbr/transports/mihomo/endpoint-ip")
+MIHOMO_EGRESS=Path("/etc/awg-pbr/transports/mihomo/expected-egress-ip")
 ALIAS="AWG-XRAY-VLESS-LOCAL"
 XRAY="awg-xray-vless.service"
 MIHOMO="awg-mihomo.service"
@@ -237,31 +242,38 @@ def inspect(index):
             "already_selected":same_xray,"xray_enabled":unit_enabled(XRAY)}
 
 def inspect_native(name):
-    """An already-loaded native Mihomo choice, with active Xray as rollback."""
+    """Preflight Xray -> ANY supported native profile from current provider.
+
+    Only the real controller is authoritative for the active engine. A
+    provider-only native candidate is staged inside the guarded transaction
+    rather than incorrectly rejected as NATIVE_NOT_LOADED_IN_MIHOMO.
+    """
     if os.geteuid()!=0:refuse("ROOT_REQUIRED")
     if not isinstance(name,str) or not 1<=len(name)<=240 or (
        "\n" in name or "\r" in name or "\x00" in name):
         refuse("INVALID_NATIVE_NAME")
     invariant()
     con=controller()
-    if con.get("now")!=ALIAS or not unit_active(XRAY):
-        refuse("XRAY_NOT_ACTIVE")
-    if name==ALIAS or name not in con.get("all",[]):
-        refuse("NATIVE_NOT_LOADED_IN_MIHOMO")
-    # A native profile must already be fully configured by the ordinary
-    # installer/selector. Do not rewrite provider/filter while Xray is live.
-    configured=read(CURRENT)
-    if configured is None or configured.decode("utf-8","replace").strip()!=name:
-        refuse("NATIVE_CONFIG_NOT_PREPARED")
+    if con.get("now")!=ALIAS:
+        refuse("ACTIVE_ENGINE_NOT_XRAY")
+    if not unit_active(XRAY):
+        refuse("ACTIVE_XRAY_SERVICE_DOWN")
+    if ALIAS not in con.get("all",[]):
+        refuse("XRAY_BRIDGE_NOT_IN_RUNNING_CONFIG")
     raw=PROVIDER.read_bytes()
     if not raw or len(raw)>8*1024*1024:refuse("INVALID_PROVIDER_SIZE")
     parsed=yaml.safe_load(raw)
     rows=parsed.get("proxies",[]) if isinstance(parsed,dict) else []
-    if sum(isinstance(p,dict) and p.get("name")==name for p in rows)!=1:
-        refuse("NATIVE_PROFILE_NOT_UNIQUE")
+    matches=[p for p in rows if isinstance(p,dict) and p.get("name")==name]
+    if len(matches)!=1:refuse("NATIVE_PROFILE_NOT_UNIQUE")
+    node=matches[0]
+    if node.get("type") not in ("ss","trojan","hysteria2","vmess","vless"):
+        refuse("NOT_A_NATIVE_MIHOMO_PROFILE")
+    if node.get("type")=="vless" and node.get("network") in ("xhttp","grpc"):
+        refuse("XRAY_PROFILE_IS_NOT_NATIVE")
     chosen=read(SELECTED)
     if chosen is None:refuse("PREVIOUS_XRAY_PROFILE_MISSING")
-    try: digest=json.loads(chosen).get("sha256")
+    try:digest=json.loads(chosen).get("sha256")
     except (ValueError,UnicodeError):refuse("PREVIOUS_XRAY_PROFILE_INVALID")
     if not isinstance(digest,str) or not re.fullmatch(r"[0-9a-f]{64}",digest):
         refuse("PREVIOUS_XRAY_PROFILE_INVALID")
@@ -269,9 +281,32 @@ def inspect_native(name):
        b"AWG_XRAY_MANUAL=1" not in BOOT.read_bytes()):
         refuse("FOREIGN_BOOT_DEPENDENCY")
     if not https_ok("tun"):refuse("PREVIOUS_TUN_NOT_PROVEN")
+    current=read(CURRENT)
+    configured=current is not None and current.decode("utf-8","replace").strip()==name
+    loaded=name in con.get("all",[])
     return {"previous":ALIAS,"previous_xray":True,"xray_enabled":unit_enabled(XRAY),
             "candidate":name,"sha":hashlib.sha256(raw).hexdigest(),
-            "fingerprint":digest,"operation":"NATIVE_RETURN"}
+            "fingerprint":digest,"operation":"NATIVE_RETURN",
+            "needs_prepare":not (configured and loaded)}
+
+def prepare_native_under_lock(name,lock_fd):
+    """Use the installer-owned profile staging with the parent lock inherited.
+
+    The child sees the same open lock description; it must never open a second
+    lock on /run/awg-maintenance.lock or deadlock against this transaction.
+    """
+    env=os.environ.copy()
+    env["AWG_MIHOMO_GUARD_LOCK_FD"]=str(lock_fd)
+    try:
+        proc=subprocess.run([str(CONFIGURE),"node","select-auto",name],
+                            env=env,pass_fds=(lock_fd,),stdin=subprocess.DEVNULL,
+                            stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,
+                            timeout=100)
+    except (OSError,subprocess.TimeoutExpired):
+        refuse("NATIVE_PREPARE_PROCESS_FAILED")
+    if proc.returncode:
+        refuse("NATIVE_PREPARE_REJECTED")
+
 
 def native_return(name):
     """Guarded controller switch back to already-configured Mihomo native.
@@ -295,6 +330,16 @@ def native_return(name):
             checkpoint(path,state,"NATIVE_VERIFY")
             if inspect_native(name)["sha"]!=info["sha"]:
                 refuse("PROVIDER_CHANGED")
+            if info["needs_prepare"]:
+                checkpoint(path,state,"NATIVE_PREPARE")
+                mutated=True
+                state["native_reconfigured"]=True
+                stored(path,state,state["phase"])
+                prepare_native_under_lock(name,lock.fileno())
+                checkpoint(path,state,"NATIVE_PREPARED")
+            con=controller()
+            if name not in con.get("all",[]):
+                refuse("NATIVE_NOT_LOADED_AFTER_PREPARE")
             checkpoint(path,state,"NATIVE_CONTROLLER_SELECT")
             mutated=True
             choose(name)
@@ -356,7 +401,9 @@ def save_snap(info):
     atomic(path/"state.json",json.dumps(state).encode())
     for name,source in (("selected.prev",SELECTED),("current.prev",CURRENT),
                         ("policy.prev",POLICY),("order.prev",ORDER),
-                        ("boot.prev",BOOT)):
+                        ("boot.prev",BOOT),("env.prev",MIHOMO_ENV),
+                        ("config.prev",MIHOMO_CONFIG),
+                        ("endpoint.prev",MIHOMO_ENDPOINT),("egress.prev",MIHOMO_EGRESS)):
         data=read(source)
         if data is not None:atomic(path/name,data)
     return path,state
@@ -370,6 +417,19 @@ def restore(path,state):
     if cmd("/usr/local/sbin/awg-transport","get")!="mihomo":
         refuse("FOREIGN_TRANSPORT_DURING_RECOVERY")
     previous=state["previous"]
+    # An arbitrary native candidate may have rewritten the Mihomo provider
+    # filter and config, so restore those bytes BEFORE selecting previous Xray.
+    if state.get("operation")=="NATIVE_RETURN" and state.get("native_reconfigured"):
+        for name,target in (("env.prev",MIHOMO_ENV),("config.prev",MIHOMO_CONFIG),
+                            ("endpoint.prev",MIHOMO_ENDPOINT),
+                            ("egress.prev",MIHOMO_EGRESS),
+                            ("current.prev",CURRENT),("boot.prev",BOOT),
+                            ("selected.prev",SELECTED)):
+            data=read(path/name)
+            if data is None:target.unlink(missing_ok=True)
+            else:atomic(target,data,0o644 if target==BOOT else 0o600)
+        cmd("systemctl","daemon-reload")
+        cmd("systemctl","restart",MIHOMO,timeout=90)
     if state["previous_xray"]:
         cmd("systemctl","stop",XRAY)
         data=read(path/"selected.prev")
