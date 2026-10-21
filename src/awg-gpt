@@ -7,8 +7,8 @@ case "${1:-}" in
   menu-update)
     [[ "$#" == 1 ]] || exit 2
     base='https://raw.githubusercontent.com/karlinksk/awg-pi'
-    ref='e7706144d23720bc20bbc2dcce7cb6747cad5222'
-    expected='bc144b9732a51aff3bc343ecd38ebd14460891a6c0150e84a542e99ed7f1481b'
+    ref='a9db298eaeb897ee0addebeefbe13946f4316a48'
+    expected='5c8fbf1a2fbd900680854df497e7b2f64c2fbf65b50b14c671e5127ce49566da'
     tmp="$(mktemp /tmp/awg-gpt-menu.XXXXXXXX)"
     trap 'rm -f "$tmp"' EXIT
     curl -fL --connect-timeout 10 --max-time 60 "$base/$ref/src/awg-menu" -o "$tmp"
