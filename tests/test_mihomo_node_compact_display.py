@@ -52,9 +52,9 @@ select_tsv_node_dialog "Точка выхода" "Выберите ноду." "$
         args,items=self.render()
         self.assertIn("Сервер = адрес подключения",args[args.index("--menu")+1])
         names={i:label for i,label,helptext in items}
-        self.assertIn("Netherlands 1 | Xray | VLESS/xHTTP | 151.247.25.173:443 | — | HTTPS OK",names["1"])
-        self.assertIn("Germany 2 Hysteria2 | Mihomo | HY2 | de3.example:443 | 549мс | ТЕСТ OK",names["2"])
-        self.assertIn("Finland HY2 | Mihomo | HY2 | fi.example:443 | — | ТЕСТ FAIL",names["3"])
+        self.assertIn("Netherlands 1 | Xray | VLESS/xHTTP | 151.247.25.173:443 | — | OK",names["1"])
+        self.assertIn("Germany 2 Hysteria2 | Mihomo | HY2 | de3.example:443 | 549мс | OK",names["2"])
+        self.assertIn("Finland HY2 | Mihomo | HY2 | fi.example:443 | — | FAIL",names["3"])
         for index,label,helptext in items:
             if index.startswith("__"):continue
             self.assertEqual(label.count(" | "),5)
