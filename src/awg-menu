@@ -1282,6 +1282,12 @@ mihomo_node_menu(){
   # and prepares the requested provider node, proves actual Pi TUN egress,
   # and rolls back all of Mihomo's config under an independent watchdog.
   # Never mistake a stored node-name for the controller's live selection.
+  title="Подготовка узла Mihomo"
+  if ! run_with_progress "$title" "$MIHOMO_CONFIGURE" node prepare "$node_name"; then
+    show_operation_result 1 "$title"
+    msg "Ручной выбор Mihomo" "Узел подписки не удалось подготовить. Рабочий транспорт и конфигурация не изменены."
+    return 0
+  fi
   title="Ручной выбор Mihomo — предварительная проверка"
   if ! run_with_progress "$title" "$XRAY_MANUAL_SWITCH" native-preview "$node_name"; then
     show_operation_result 1 "$title"
