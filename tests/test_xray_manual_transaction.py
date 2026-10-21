@@ -322,116 +322,157 @@ class ManualSwitchContract(unittest.TestCase):
             self.assertEqual(saved["rollback_failure_code"],"PREVIOUS_TUN_RESTORE_FAILED")
             self.assertEqual(saved["checkpoint"],"WATCHDOG_RECOVERY_PENDING")
 
-    def test_native_preview_only_accepts_loaded_configured_node_with_working_xray(self):
+    def test_native_preview_handles_both_engines_and_unloaded_target(self):
         import json
-        import yaml
-        with tempfile.TemporaryDirectory() as td:
-            p=Path(td)
-            provider=p/"provider.yaml"
-            provider.write_text(yaml.safe_dump({"proxies":[{"name":"NL native","type":"hysteria2"}]}))
-            current=p/"node-name"
-            current.write_text("NL native\n")
-            selected=p/"selected.json"
-            selected.write_text(json.dumps({"sha256":"a"*64}))
-            with mock.patch.multiple(mod,CURRENT=current,PROVIDER=provider,
-                     SELECTED=selected,BOOT=p/"absent-boot.conf"), \
+        with tempfile.TemporaryDirectory() as d:
+            p=Path(d)
+            selected=p/"selected.json";selected.write_text(json.dumps({"sha256":"a"*64}))
+            current=p/"node";current.write_text("OldNative\n")
+            candidate={"candidate":"NewNative","endpoint":"203.0.113.20",
+                       "filter":"^NewNative$","sha":"providerdigest"}
+            with mock.patch.multiple(mod,SELECTED=selected,CURRENT=current,
+                                     BOOT=p/"absent-boot.conf"), \
                  mock.patch.object(mod.os,"geteuid",return_value=0), \
+                 mock.patch.object(mod,"candidate_native",return_value=candidate), \
                  mock.patch.object(mod,"invariant"), \
                  mock.patch.object(mod,"controller",return_value={
-                     "now":mod.ALIAS,"all":[mod.ALIAS,"NL native"]}), \
+                     "now":mod.ALIAS,"all":[mod.ALIAS,"OldNative"]}), \
                  mock.patch.object(mod,"unit_active",return_value=True), \
                  mock.patch.object(mod,"unit_enabled",return_value=True), \
                  mock.patch.object(mod,"https_ok",return_value=True):
-                info=mod.inspect_native("NL native")
-                self.assertEqual(info["previous"],mod.ALIAS)
+                info=mod.inspect_native("NewNative")
                 self.assertTrue(info["previous_xray"])
-                with self.assertRaisesRegex(RuntimeError,"NATIVE_NOT_LOADED_IN_MIHOMO"):
-                    mod.inspect_native("unloaded")
-                with self.assertRaisesRegex(RuntimeError,"INVALID_NATIVE_NAME"):
-                    mod.inspect_native("NL\nnative")
-                current.write_text("Other native\n")
-                with self.assertRaisesRegex(RuntimeError,"NATIVE_CONFIG_NOT_PREPARED"):
-                    mod.inspect_native("NL native")
+                self.assertEqual(info["previous"],mod.ALIAS)
+                self.assertFalse(info["already_selected"])
+            with mock.patch.multiple(mod,CURRENT=current,
+                                     BOOT=p/"absent-boot.conf"), \
+                 mock.patch.object(mod.os,"geteuid",return_value=0), \
+                 mock.patch.object(mod,"candidate_native",return_value=candidate), \
+                 mock.patch.object(mod,"invariant"), \
+                 mock.patch.object(mod,"controller",return_value={
+                     "now":"OldNative","all":["OldNative"]}), \
+                 mock.patch.object(mod,"unit_active",return_value=False), \
+                 mock.patch.object(mod,"unit_enabled",return_value=False), \
+                 mock.patch.object(mod,"https_ok",return_value=True):
+                info=mod.inspect_native("NewNative")
+                self.assertFalse(info["previous_xray"])
+                self.assertEqual(info["previous"],"OldNative")
+                self.assertFalse(info["already_selected"])
 
-    def test_successful_native_return_commits_only_after_tun_and_detaches_xray(self):
-        import hashlib
-        import json
-        with tempfile.TemporaryDirectory() as td:
-            p=Path(td)
-            provider=p/"provider.yaml";provider.write_bytes(b"synthetic-provider")
-            current=p/"node-name";current.write_text("NL native\n")
-            selected=p/"selected.json";selected.write_text(json.dumps({"sha256":"a"*64}))
-            boot=p/"62-xray-manual.conf";boot.write_text("# AWG_XRAY_MANUAL=1\n")
-            policy=p/"policy";policy.write_text("fixed\n")
-            order=p/"order";order.write_text("NL native\nreserve\n")
-            snap=p/"snapshot";snap.mkdir()
-            info={"candidate":"NL native","sha":hashlib.sha256(provider.read_bytes()).hexdigest(),
-                  "previous":mod.ALIAS,"previous_xray":True,
-                  "xray_enabled":True,"fingerprint":"a"*64,"operation":"NATIVE_RETURN"}
-            state={"phase":"pending",**info,"watchdog":"awg-xray-manual-test"}
-            commands=[]
-            def command(*args,**kwargs):
-                commands.append(args)
-                return ""
-            with mock.patch.multiple(mod,LOCK=p/"lock",PROVIDER=provider,CURRENT=current,
-                     SELECTED=selected,BOOT=boot,POLICY=policy,ORDER=order), \
+    def test_native_same_profile_does_not_arm_watchdog(self):
+        with tempfile.TemporaryDirectory() as d:
+            p=Path(d)
+            info={"previous":"Native","candidate":"Native",
+                  "previous_xray":False,"already_selected":True}
+            with mock.patch.multiple(mod,LOCK=p/"lock"), \
                  mock.patch.object(mod.os,"geteuid",return_value=0), \
                  mock.patch.object(mod,"inspect_native",return_value=info), \
+                 mock.patch.object(mod,"save_snap") as save, \
+                 mock.patch.object(mod,"cmd") as cmd:
+                mod.native_return("Native")
+                save.assert_not_called()
+                cmd.assert_not_called()
+
+    def test_native_env_uses_shell_escaping_without_provider_expansion(self):
+        with tempfile.TemporaryDirectory() as d:
+            p=Path(d)/"provider.env"
+            p.write_text("OTHER=keep\nMIHOMO_NODE_FILTER='^Old$'\n")
+            with mock.patch.multiple(mod,MIHOMO_ENV=p):
+                mod.native_env("MIHOMO_NODE_FILTER","^New (x)$")
+            self.assertIn("OTHER=keep",p.read_text())
+            self.assertIn("MIHOMO_NODE_FILTER='^New (x)$'",p.read_text())
+            self.assertNotIn("^Old",p.read_text())
+
+    def test_successful_native_return_commits_actual_native_controller(self):
+        import hashlib,json
+        with tempfile.TemporaryDirectory() as d:
+            p=Path(d)
+            provider=p/"provider";provider.write_bytes(b"synthetic-provider")
+            current=p/"node";current.write_text("OldXray\n")
+            selected=p/"selected";selected.write_text(json.dumps({"sha256":"a"*64}))
+            boot=p/"boot";boot.write_text("# AWG_XRAY_MANUAL=1\n")
+            policy=p/"policy";policy.write_text("fixed\n")
+            order=p/"order";order.write_text("native1\nnative2\n")
+            endpoint=p/"endpoint";endpoint.write_text("203.0.113.4\n")
+            egress=p/"egress";egress.write_text("203.0.113.8\n")
+            snap=p/"snap";snap.mkdir()
+            info={"candidate":"NewNative","endpoint":"203.0.113.20",
+                  "filter":"^NewNative$","sha":hashlib.sha256(b"synthetic-provider").hexdigest(),
+                  "previous":mod.ALIAS,"previous_xray":True,"xray_enabled":True,
+                  "operation":"NATIVE_SWITCH","already_selected":False}
+            state={"phase":"pending",**info,"watchdog":"awg-xray-manual-test"}
+            commands=[]
+            def fake_cmd(*args,**kwargs):
+                commands.append(args);return ""
+            with mock.patch.multiple(mod,LOCK=p/"lock",PROVIDER=provider,CURRENT=current,
+                    SELECTED=selected,BOOT=boot,POLICY=policy,ORDER=order,
+                    MIHOMO_ENDPOINT=endpoint,MIHOMO_EGRESS=egress), \
+                 mock.patch.object(mod.os,"geteuid",return_value=0), \
+                 mock.patch.object(mod,"inspect_native",return_value=info), \
+                 mock.patch.object(mod,"candidate_native",return_value=info), \
                  mock.patch.object(mod,"save_snap",return_value=(snap,state)), \
-                 mock.patch.object(mod,"cmd",side_effect=command), \
-                 mock.patch.object(mod,"unit_active",side_effect=lambda unit:unit.endswith(".timer")), \
-                 mock.patch.object(mod,"unit_enabled",return_value=False), \
-                 mock.patch.object(mod,"https_ok",return_value=True), \
-                 mock.patch.object(mod,"routing_ok",return_value=True), \
+                 mock.patch.object(mod,"cmd",side_effect=fake_cmd), \
+                 mock.patch.object(mod,"native_env"), \
+                 mock.patch.object(mod,"wait_native_controller"), \
+                 mock.patch.object(mod,"native_tun_proof"), \
+                 mock.patch.object(mod,"unit_active",side_effect=lambda name:name.endswith(".timer")), \
                  mock.patch.object(mod,"invariant"), \
-                 mock.patch.object(mod,"controller",
-                     return_value={"now":"NL native","all":["NL native",mod.ALIAS]}), \
+                 mock.patch.object(mod,"controller",return_value={
+                     "now":"NewNative","all":["NewNative"]}), \
                  mock.patch.object(mod,"choose") as choose:
-                mod.native_return("NL native")
-            choose.assert_called_once_with("NL native")
-            self.assertEqual(current.read_text(),"NL native\n")
+                mod.native_return("NewNative")
+            choose.assert_called_once_with("NewNative")
+            self.assertEqual(current.read_text(),"NewNative\n")
             self.assertEqual(policy.read_text(),"fixed\n")
-            self.assertEqual(order.read_text(),"NL native\nreserve\n")
+            self.assertEqual(order.read_text(),"native1\nnative2\n")
             self.assertFalse(selected.exists())
             self.assertFalse(boot.exists())
             self.assertEqual(json.loads((snap/"state.json").read_text())["phase"],"committed")
             self.assertIn(("systemctl","stop",mod.XRAY),commands)
-            self.assertIn(("systemctl","disable",mod.XRAY),commands)
 
-    def test_native_return_failed_tun_stays_on_previous_xray_with_watchdog(self):
+    def test_failed_native_tun_restores_full_previous_state(self):
         import hashlib,json
-        with tempfile.TemporaryDirectory() as td:
-            p=Path(td);snap=p/"snapshot";snap.mkdir()
+        with tempfile.TemporaryDirectory() as d:
+            p=Path(d)
             provider=p/"provider";provider.write_bytes(b"provider")
-            info={"candidate":"NL native","sha":hashlib.sha256(b"provider").hexdigest(),
-                  "previous":mod.ALIAS,"previous_xray":True,
-                  "xray_enabled":True,"fingerprint":"a"*64}
+            endpoint=p/"endpoint";current=p/"current"
+            info={"candidate":"NewNative","endpoint":"203.0.113.20",
+                  "filter":"^NewNative$","sha":hashlib.sha256(b"provider").hexdigest(),
+                  "previous":mod.ALIAS,"previous_xray":True,"xray_enabled":True,
+                  "already_selected":False,"operation":"NATIVE_SWITCH"}
             state={"phase":"pending",**info,"watchdog":"awg-xray-manual-test"}
-            with mock.patch.multiple(mod,LOCK=p/"lock",PROVIDER=provider), \
+            snap=p/"snapshot";snap.mkdir()
+            with mock.patch.multiple(mod,LOCK=p/"lock",PROVIDER=provider,
+                     MIHOMO_ENDPOINT=endpoint,MIHOMO_EGRESS=p/"egress",
+                     CURRENT=current), \
                  mock.patch.object(mod.os,"geteuid",return_value=0), \
                  mock.patch.object(mod,"inspect_native",return_value=info), \
+                 mock.patch.object(mod,"candidate_native",return_value=info), \
                  mock.patch.object(mod,"save_snap",return_value=(snap,state)), \
                  mock.patch.object(mod,"cmd",return_value=""), \
                  mock.patch.object(mod,"unit_active",return_value=True), \
+                 mock.patch.object(mod,"native_env"), \
+                 mock.patch.object(mod,"wait_native_controller"), \
+                 mock.patch.object(mod,"native_tun_proof",
+                      side_effect=RuntimeError("NATIVE_TUN_HTTPS_UNVERIFIED")), \
                  mock.patch.object(mod,"choose"), \
-                 mock.patch.object(mod,"https_ok",return_value=False), \
-                 mock.patch.object(mod,"restore") as restore:
-                with self.assertRaisesRegex(RuntimeError,"NATIVE_TUN_OR_ROUTES_UNVERIFIED"):
-                    mod.native_return("NL native")
+                 mock.patch.object(mod,"restore_native") as restore:
+                with self.assertRaisesRegex(RuntimeError,"NATIVE_TUN_HTTPS_UNVERIFIED"):
+                    mod.native_return("NewNative")
                 restore.assert_called_once()
             record=json.loads((snap/"state.json").read_text())
             self.assertEqual(record["phase"],"rolled_back")
-            self.assertEqual(record["failed_at"],"NATIVE_TUN_CHECK")
-            self.assertEqual(record["failure_code"],"NATIVE_TUN_OR_ROUTES_UNVERIFIED")
+            self.assertEqual(record["failed_at"],"NATIVE_TUN_PROOF")
 
-    def test_native_menu_uses_guarded_return_and_status_reports_controller_selection(self):
+    def test_native_menu_dispatches_all_mihomo_from_any_engine(self):
         menu=(ROOT/"src/awg-menu").read_text()
-        status=(ROOT/"src/awg-mihomo-configure").read_text()
         self.assertIn('"$XRAY_MANUAL_SWITCH" native-preview "$node_name"',menu)
         self.assertIn('"$XRAY_MANUAL_SWITCH" native-apply "$node_name"',menu)
-        self.assertIn("Фактический выход: Xray VLESS",menu)
-        self.assertIn('Actual outbound engine: XRAY',status)
-        self.assertIn('Actual outbound engine: MIHOMO',status)
+        selection=menu.split("mihomo_node_menu(){",1)[1].split("mihomo_candidate_is_staged(){",1)[0]
+        self.assertNotIn('"$MIHOMO_CONFIGURE" node select-auto',selection)
+        status=(ROOT/"src/awg-mihomo-configure").read_text()
+        self.assertIn("Actual outbound engine: XRAY",status)
+        self.assertIn("Actual outbound engine: MIHOMO",status)
 
     def test_native_watchdog_not_armed_never_stops_healthy_xray(self):
         import json
