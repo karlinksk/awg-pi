@@ -21,6 +21,7 @@ class TestXrayConfig(unittest.TestCase):
    "name":"LIVE-NODE","type":"ss","server":"198.51.100.25","port":443,
    "cipher":"aes-128-gcm","password":"synthetic"}]}))
   self.selected=self.root/"selected.json";self.selected.write_text('{"sha256":"synthetic"}')
+  self.current=self.root/"node-name";self.current.write_text("LIVE-NODE\n")
   self.xray=self.root/"xray";self.xray.write_text("#!/bin/sh\n");self.xray.chmod(0o700)
   self.env=os.environ.copy()
   self.env.update(
@@ -28,7 +29,8 @@ class TestXrayConfig(unittest.TestCase):
    MIHOMO_PROVIDER_FILE=str(self.provider),
    MIHOMO_NODE_FILTER="LIVE-NODE",
    MIHOMO_ENDPOINT_IP="198.51.100.25",
-   MIHOMO_XRAY_SELECTED=str(self.selected),MIHOMO_XRAY_CORE=str(self.xray))
+   MIHOMO_XRAY_SELECTED=str(self.selected),MIHOMO_XRAY_CORE=str(self.xray),
+   MIHOMO_XRAY_CURRENT=str(self.current))
  def config(self,option):
   result=subprocess.run(["bash",str(CONFIG)],capture_output=True,text=True,
                         env={**self.env,"MIHOMO_XRAY_VLESS_BRIDGE":option},timeout=6)
@@ -50,8 +52,19 @@ class TestXrayConfig(unittest.TestCase):
   d=yaml.safe_load(r.stdout)
   self.assertEqual(d["proxies"][0]["name"],"AWG-XRAY-VLESS-LOCAL")
   self.assertEqual(d["proxy-groups"][0]["proxies"],["AWG-XRAY-VLESS-LOCAL"])
+  self.assertEqual(d["proxy-groups"][0]["default-selected"],"LIVE-NODE")
   self.assertEqual(d["proxy-groups"][0]["use"],["subscription"])
   self.assertFalse(d["tun"]["auto-route"])
+
+ def test_no_current_node_does_not_default_to_dead_xray(self):
+  self.current.unlink()
+  env={**self.env}
+  env.pop("MIHOMO_XRAY_VLESS_BRIDGE",None)
+  r=subprocess.run(["bash",str(CONFIG)],capture_output=True,text=True,env=env,timeout=6)
+  self.assertEqual(r.returncode,0,r.stderr)
+  d=yaml.safe_load(r.stdout)
+  self.assertNotIn("proxies",d)
+  self.assertNotIn("default-selected",d["proxy-groups"][0])
 
  def test_auto_without_core_keeps_native_mihomo(self):
   self.xray.unlink()
