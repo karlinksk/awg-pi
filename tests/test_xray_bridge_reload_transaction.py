@@ -86,6 +86,31 @@ class BridgeReload(unittest.TestCase):
                 mod.recover(snap)
                 restore.assert_not_called()
 
+    def test_rollback_holds_original_execstartpre_override_through_restart(self):
+        with tempfile.TemporaryDirectory() as td:
+            d=Path(td)
+            snap=d/"snap";snap.mkdir()
+            (snap/"original.yaml").write_bytes(b"old baseline")
+            live=d/"active.yaml";live.write_bytes(b"new candidate")
+            transport=d/"transport";transport.write_text("mihomo")
+            mode=d/"mode";mode.write_text("transit")
+            override=d/"rollback.conf"
+            seen=[]
+            def simulated_systemctl(*args,**kwargs):
+                if args[:2]==("systemctl","restart"):
+                    self.assertEqual(live.read_bytes(),b"old baseline")
+                    self.assertEqual(override.read_bytes(),mod.ROLLBACK_OVERRIDE_CONTENT)
+                seen.append(args)
+                return ""
+            with mock.patch.multiple(mod,CONF=live,TRANSPORT=transport,MODE=mode,
+                                     ROLLBACK_OVERRIDE=override), \\
+                 mock.patch.object(mod,"run",side_effect=simulated_systemctl), \\
+                 mock.patch.object(mod,"wait_ready"):
+                mod.restore(snap,{"mode":"transit","previous":"NATIVE"})
+            self.assertEqual(live.read_bytes(),b"old baseline")
+            self.assertFalse(override.exists())
+            self.assertEqual([a[1] for a in seen],["daemon-reload","restart","daemon-reload"])
+
     def test_rollback_restores_config_and_requires_live_proof(self):
         with tempfile.TemporaryDirectory() as td:
             d=Path(td)
@@ -97,12 +122,16 @@ class BridgeReload(unittest.TestCase):
             calls=[]
             def fake_run(*args,**kwargs):
                 calls.append(args);return ""
-            with mock.patch.multiple(mod,CONF=live,TRANSPORT=transport,MODE=mode), \
+            with mock.patch.multiple(mod,CONF=live,TRANSPORT=transport,MODE=mode,ROLLBACK_OVERRIDE=d/"rollback-override.conf"), \
                  mock.patch.object(mod,"run",side_effect=fake_run), \
                  mock.patch.object(mod,"wait_ready") as checker:
                 mod.restore(snap,{"mode":"transit","previous":"NATIVE"})
                 self.assertEqual(live.read_bytes(),b"original config")
                 self.assertIn(("systemctl","restart",mod.SERVICE),calls)
+                self.assertEqual(calls[0][:2],("systemctl","daemon-reload"))
+                self.assertEqual(calls[1][:2],("systemctl","restart"))
+                self.assertEqual(calls[-1][:2],("systemctl","daemon-reload"))
+                self.assertFalse((d/"rollback-override.conf").exists())
                 checker.assert_called_once_with("NATIVE",False)
 
 if __name__=="__main__":unittest.main()
