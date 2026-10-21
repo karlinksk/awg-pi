@@ -42,12 +42,29 @@ class UnifiedPicker(unittest.TestCase):
         self.assertIn("XRAY_HTTPS",data[1])
         self.assertIn("Finland VLESS",data[1])
 
-    def test_only_fresh_xray_network_ok_is_selectable(self):
+    def test_xray_profiles_visible_before_network_probe(self):
+        # Visibility does not mean a live TUN activation is authorized.
         for status in ("UNTESTED","NETWORK_FAIL","UNKNOWN_HTTP","UNKNOWN_ERROR"):
             with self.subTest(status=status):
                 inv=[inventory[0],{**inventory[1],"basic_network":status}]
-                self.assertEqual(len(self.rows(proofs=inv)),1)
-                self.assertNotIn("Finland VLESS",self.rows(proofs=inv)[0])
+                data=self.rows(proofs=inv)
+                self.assertEqual(len(data),2)
+                self.assertIn("Finland VLESS",data[1])
+                self.assertIn("XRAY_"+status,data[1])
+                self.assertNotIn("XRAY_HTTPS",data[1])
+
+    def test_xray_present_even_when_missing_from_mihomo_scan(self):
+        data=self.rows(pool=[mihomo])
+        self.assertEqual(len(data),2)
+        self.assertIn("Finland VLESS",data[1])
+        self.assertIn("XRAY_HTTPS",data[1])
+
+    def test_stale_pool_does_not_suppress_current_xray(self):
+        stale={**xray,"server":"old.example","healthy":False}
+        data=self.rows(pool=[mihomo,stale])
+        self.assertEqual(len(data),2)
+        self.assertIn("Finland VLESS",data[1])
+        self.assertIn("XRAY_HTTPS",data[1])
 
     def test_duplicate_names_and_provider_churn_never_selected(self):
         duplicate=[profiles[0],profiles[1],{**profiles[1],"port":8443}]
