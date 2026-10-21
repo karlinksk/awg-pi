@@ -210,3 +210,24 @@ Screenshot from test Pi showed all 13 profiles in catalog but status «недо�
 **Фактический read-only snapshot подписки** уже после установки: ровно `13/13` в all/all, `6/13` VLESS и `7/13` Hysteria2. Python inventory: `6 XRAY_HTTPS` + `7 MIHOMO_OK`. Тот же TSV пропущен через настоящий `while IFS=$'\\t' read ...`; получено **13 записей с теми же статусами и индексами**, поле duplicate `-`/DUPLICATE не сдвигает столбцы: `CATALOG_STATUS_CONSISTENCY=PASS`. Все семь Mihomo-нод на *новом срезе* проходят текущий пул-тест (в старом срезе было 4 OK/3 FAIL); это динамическая проверка, а не эквивалент Happ/Pi TUN/LAN. При этом активный transport Mihomo `healthy`, Xray service inactive, SSH/dnsmasq/selection-monitor active, policy table 100/101 via mihomo0, OpenAI Pi TUN `401/curl0`, failed systemd units none. Никакой смены ноды/режима/политики не выполнялось.
 
 **CI status separate:** CI run `39618762066` для `b7b91e...` провалился в unit-тесте пустого provider из-за немокированного `load_view()` на runner без установленного view helper. Отдельным *test-only* коммитом `f07a74ed92eb197b1028dd5d42c77cd7008ca134` в ветке PR #149 добавлен `mock.patch.object(picker,"load_view",return_value=view)`; runtime code и установленные файлы Pi не менялись. Новый full GitHub CI по `f07a74e...` ещё не подтверждён. **Не смешивать** installed/Pi parser PASS с CI/released или с визуальной пользовательской приёмкой окна, LAN/failover/reboot, которые остаются открытыми.
+
+
+### SSH node catalog row format (2026-10-21)
+
+User requested one compact Russian-dominant presentation for node lists:
+name | engine | protocol | connection server | measured test RTT | scoped status.
+Do not confuse server endpoint with public egress IP, pool RTT with ICMP ping,
+or isolated Xray HTTPS proxy with Pi TUN, READY, or LAN. The repeated notes
+were moved to a shared legend and contextual help. Show — for unmeasured RTT,
+HY2 or actual VLESS/xHTTP/gRPC metadata, and status ТЕСТ OK/FAIL or HTTPS OK.
+Narrow SSH terminal keeps name, engine/protocol, RTT and status; full server
+address remains in help; backend selection always uses original exact names.
+Fixed-chain order views keep names only, avoiding invented live metrics.
+
+Code is in draft PR #150, commit 3a9ae4b3ee93298ec9f4b9c7d941c72777152f5e
+on top of draft PR #149. No routing, selection policy, DNS, probes,
+transport activation, rollback, or installer dependency changes.
+775 rootless Python tests PASS (2 hardware-only skipped), test-menu PASS.
+The revision is not installed on the test Pi yet because remote sudo expired.
+CI and live visual acceptance are pending. Do not mark merged/released or
+LAN/failover/reboot PASS.
