@@ -42,7 +42,8 @@ class ManualSwitchContract(unittest.TestCase):
             mod.inspect(1)
 
     def test_preview_requires_live_native_or_xray_and_healthy_tun(self):
-        with mock.patch.object(mod.os,"geteuid",return_value=0), \
+        with mock.patch.object(mod,"ADAPTER",SCRIPT), \
+             mock.patch.object(mod.os,"geteuid",return_value=0), \
              mock.patch.object(mod,"source_node",return_value=("Germany", "hash","id")), \
              mock.patch.object(mod,"invariant"), \
              mock.patch.object(mod,"controller",return_value={"now":"Native","all":[mod.ALIAS]}), \
@@ -54,7 +55,8 @@ class ManualSwitchContract(unittest.TestCase):
                 mod.inspect(3)
 
     def test_missing_bridge_rejects_before_any_mutation(self):
-        with mock.patch.object(mod.os,"geteuid",return_value=0), \
+        with mock.patch.object(mod,"ADAPTER",SCRIPT), \
+             mock.patch.object(mod.os,"geteuid",return_value=0), \
              mock.patch.object(mod,"source_node",return_value=("Germany","hash","id")), \
              mock.patch.object(mod,"invariant"), \
              mock.patch.object(mod,"controller",return_value={"now":"Native","all":["Native"]}), \
@@ -239,6 +241,7 @@ class ManualSwitchContract(unittest.TestCase):
             selected.write_text('{"sha256":"exact-transport-identity"}')
             with mock.patch.multiple(mod,SELECTED=selected,
                     BOOT=p/"absent-unit.conf"), \
+                 mock.patch.object(mod,"ADAPTER",SCRIPT), \
                  mock.patch.object(mod.os,"geteuid",return_value=0), \
                  mock.patch.object(mod,"source_node",
                                    return_value=("Xray", "provider","exact-transport-identity")), \

@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """Read-only regression for preinstall and already-installed test-Pi picker."""
 import hashlib
+import os
+import socket
 import importlib.util
 from pathlib import Path
 import subprocess
@@ -15,6 +17,10 @@ sys.modules[spec.name]=mod
 spec.loader.exec_module(mod)
 
 class PickerStaging(unittest.TestCase):
+    @unittest.skipUnless(
+        os.environ.get("AWG_PI_HARDWARE_TESTS")=="1" and
+        socket.gethostname()=="awg-upgrade",
+        "requires explicit test-Pi hardware stage, not portable unit tests")
     def test_installed_menu_read_only_patch_preflight(self):
         source=mod.SOURCE.read_text()
         if mod.PICKER.exists():
@@ -60,6 +66,10 @@ class PickerStaging(unittest.TestCase):
         self.assertIn('usr/local/sbin/awg-mihomo-node-picker',update)
         self.assertIn('/usr/local/sbin/awg-mihomo-node-picker',update)
 
+    @unittest.skipUnless(
+        os.environ.get("AWG_PI_HARDWARE_TESTS")=="1" and
+        socket.gethostname()=="awg-upgrade",
+        "requires explicit test-Pi hardware stage, not portable unit tests")
     def test_readonly_stage_test(self):
         r=subprocess.run([sys.executable,"-B",str(P),"--check"],
                          capture_output=True,text=True,timeout=15)
