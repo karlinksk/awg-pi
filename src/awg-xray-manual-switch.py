@@ -254,6 +254,8 @@ def apply(index):
             if not https_ok("tun") or not routing_ok():
                 refuse("XRAY_TUN_OR_ROUTES_UNVERIFIED")
             invariant()
+            if source_node(index)[1:]!=(info["sha"],info["fingerprint"]):
+                refuse("PROVIDER_CHANGED_BEFORE_COMMIT")
             atomic(CURRENT,(info["candidate"]+"\n").encode())
             atomic(POLICY,b"manual\n")
             ORDER.unlink(missing_ok=True)
@@ -263,6 +265,8 @@ def apply(index):
             cmd("systemctl","enable",XRAY)
             if not unit_enabled(XRAY) or not https_ok("tun") or not routing_ok():
                 refuse("XRAY_POSTCOMMIT_UNVERIFIED")
+            if source_node(index)[1:]!=(info["sha"],info["fingerprint"]):
+                refuse("PROVIDER_CHANGED_AFTER_TUN_POSTCHECK")
             stored(path,state,"committed")
             cmd("systemctl","stop",timer)
             print("XRAY_MANUAL_TUN=VERIFIED")
