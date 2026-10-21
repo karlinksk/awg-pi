@@ -363,9 +363,14 @@ def restore_native(path,state):
     """Watchdog-grade byte-for-byte restoration of native config and engine."""
     if cmd("/usr/local/sbin/awg-transport","get")!="mihomo":
         refuse("FOREIGN_TRANSPORT_DURING_RECOVERY")
-    if MODE.read_text().strip()=="transit":
+    mode=MODE.read_text().strip()
+    if mode=="transit":
         # The nft forward guard remains DROP while the TUN is absent.
         cmd("/usr/local/sbin/awg-transit-routing","disable")
+    elif mode=="selective":
+        # Preserve selective FAIL-OPEN behavior during controller restart.
+        cmd("/usr/local/sbin/awg-pbr-failopen")
+    else:refuse("INVALID_GATEWAY_MODE")
     cmd("systemctl","stop",MIHOMO)
     for label,dest in (("env.prev",MIHOMO_ENV),("config.prev",MIHOMO_CONFIG),
                        ("endpoint.prev",MIHOMO_ENDPOINT),("egress.prev",MIHOMO_EGRESS),
@@ -419,8 +424,12 @@ def native_return(name):
             mutated=True
             # Transit must enter its existing nft-guarded FAIL-CLOSED state
             # before the Mihomo TUN disappears. No forwarded DIRECT escape.
-            if MODE.read_text().strip()=="transit":
+            mode=MODE.read_text().strip()
+            if mode=="transit":
                 cmd("/usr/local/sbin/awg-transit-routing","disable")
+            elif mode=="selective":
+                cmd("/usr/local/sbin/awg-pbr-failopen")
+            else:refuse("INVALID_GATEWAY_MODE")
             # Previous Xray SOCKS stays alive for rollback; Mihomo TUN will
             # briefly stop while its native provider filter is replaced.
             cmd("systemctl","stop",MIHOMO)
