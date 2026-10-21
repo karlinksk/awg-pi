@@ -189,7 +189,9 @@ fi
 sudo grep -Fqx awg "$tmp/transport"
 [[ ! -s "$tmp/route.log" ]]
 [[ ! -e "$tmp/mihomo.active" ]]
-grep -Fq 'Pi-bound TUN HTTPS failed' "$tmp/err"
+grep -Fq 'Target transport is unhealthy; state unchanged: mihomo' "$tmp/err"
+# check_mihomo now includes Pi-bound TUN HTTPS in the initial health loop;
+# a failed gate rejects the candidate before the later explicit TUN branch.
 
 echo "=== Transit preflight failure leaves state unchanged ==="
 : >"$tmp/systemctl.log"; : >"$tmp/route.log"; : >"$tmp/preflight.log"; rm -f "$tmp/mihomo.active"

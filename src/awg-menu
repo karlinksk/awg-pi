@@ -158,6 +158,8 @@ dialog(){
   local -a args=("$@")
   local rows cols i hi wi li prompt_lines available
   local line line_width line_rows item_fields item_count remaining desired visible has_help
+  # Use Russian button labels in every widget, including --stdout forms.
+  args=(--ok-label "ОК" --cancel-label "Отмена" --yes-label "Да" --no-label "Нет" --exit-label "Закрыть" "${args[@]}")
   # A dialog --stdout form returns values via fd1 pipe, painting on fd2.
   # Ordinary selection menus swap fds. Both require breadcrumb rendering.
   if [[ ! -t 0 || ( ! -t 1 && ! -t 2 ) ]]; then command dialog "${args[@]}"; return; fi

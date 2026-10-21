@@ -24,6 +24,16 @@ class MenuVisualTheme(unittest.TestCase):
         self.assertNotIn('~/'+'.dialogrc',MENU.split('awg_dialog_theme_init(){',1)[1].split("}",1)[0])
         self.assertNotIn('/etc/dialogrc',MENU.split('awg_dialog_theme_init(){',1)[1].split("}",1)[0])
 
+    def test_primary_language_buttons_are_russian(self):
+        for option, label in (
+            ('--ok-label', 'ОК'),
+            ('--cancel-label', 'Отмена'),
+            ('--yes-label', 'Да'),
+            ('--no-label', 'Нет'),
+            ('--exit-label', 'Закрыть'),
+        ):
+            self.assertIn(option + ' "' + label + '"', MENU)
+
     def test_palette_matches_light_panel_with_high_contrast(self):
         for field in (
             "use_colors = ON", "use_shadow = ON",
