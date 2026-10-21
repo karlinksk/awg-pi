@@ -120,10 +120,10 @@ class ManualSwitchContract(unittest.TestCase):
             p=Path(d)
             snap=p/"snapshot";snap.mkdir()
             lock=p/"maintenance.lock"
-            current=p/"current";current.write_text("OldNative\\n")
-            policy=p/"node-policy.mode";policy.write_bytes(b"fixed\\n")
-            order=p/"node-policy.nodes";order.write_bytes(b"OldNative\\nFallback\\n")
-            ready=p/"ready-auto.mode";ready.write_bytes(b"0\\n")
+            current=p/"current";current.write_text("OldNative\n")
+            policy=p/"node-policy.mode";policy.write_bytes(b"fixed\n")
+            order=p/"node-policy.nodes";order.write_bytes(b"OldNative\nFallback\n")
+            ready=p/"ready-auto.mode";ready.write_bytes(b"0\n")
             boot=p/"systemd"/"62-awg-xray-manual.conf"
             info={"index":1,"candidate":"XrayNode","sha":"provider-digest",
                   "fingerprint":"transport-digest","previous":"OldNative",
@@ -143,10 +143,10 @@ class ManualSwitchContract(unittest.TestCase):
                  mock.patch.object(mod,"invariant"), \
                  mock.patch.object(mod,"choose"):
                 mod.apply(1)
-            self.assertEqual(policy.read_bytes(),b"fixed\\n")
-            self.assertEqual(order.read_bytes(),b"OldNative\\nFallback\\n")
-            self.assertEqual(ready.read_bytes(),b"0\\n")
-            self.assertEqual(current.read_bytes(),b"XrayNode\\n")
+            self.assertEqual(policy.read_bytes(),b"fixed\n")
+            self.assertEqual(order.read_bytes(),b"OldNative\nFallback\n")
+            self.assertEqual(ready.read_bytes(),b"0\n")
+            self.assertEqual(current.read_bytes(),b"XrayNode\n")
             self.assertIn(b"AWG_XRAY_MANUAL=1",boot.read_bytes())
 
     def test_prearm_error_never_stages_candidate(self):
