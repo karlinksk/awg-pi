@@ -314,8 +314,17 @@ def wait_native_controller(name):
     refuse("NATIVE_CONTROLLER_NOT_READY")
 
 def native_tun_proof():
+    # Selective FAIL-OPEN intentionally removes the fwmark rule while the TUN
+    # restarts. The independent health service restores it after a successful
+    # transport health cycle; waiting for it is not the same as passing a TUN
+    # HTTPS check. Transit re-arms synchronously through its guarded command.
+    until=time.monotonic()+20
+    while not routing_ok():
+        if time.monotonic()>=until:
+            refuse("NATIVE_ROUTING_NOT_RESTORED")
+        time.sleep(.5)
     for attempt in range(2):
-        if routing_ok() and https_ok("tun"):return
+        if https_ok("tun"):return
         if attempt==0:time.sleep(1)
     refuse("NATIVE_TUN_HTTPS_UNVERIFIED")
 
