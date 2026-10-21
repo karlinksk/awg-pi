@@ -78,7 +78,7 @@ class BridgeReload(unittest.TestCase):
             def root_owned_snap(path,*args,**kwargs):
                 if path==snap:
                     from types import SimpleNamespace
-                    return SimpleNamespace(st_uid=0)
+                    return SimpleNamespace(st_uid=0,st_mode=original_stat(path,*args,**kwargs).st_mode)
                 return original_stat(path,*args,**kwargs)
             with mock.patch.multiple(mod,BASE=d,LOCK=d/"test.lock"), \
                  mock.patch.object(type(snap),"stat",autospec=True,side_effect=root_owned_snap), \
