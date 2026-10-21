@@ -73,8 +73,13 @@ def snapshots(adapter):
 def transport(node):
     if not isinstance(node,dict):return "UNSUPPORTED"
     if node.get("type")=="vless" and node.get("tls") is True and node.get("network") in ("xhttp","grpc"):
-        if not isinstance(node.get("reality-opts"),dict):return "UNSUPPORTED"
-        return "XRAY"
+        if isinstance(node.get("reality-opts"),dict):return "XRAY"
+        # Plain verified TLS/gRPC works via the same passive Xray sidecar.
+        # Malformed REALITY hints and insecure TLS must not be promoted.
+        if (node.get("network")=="grpc" and "reality-opts" not in node
+            and node.get("skip-cert-verify") is not True):
+            return "XRAY"
+        return "UNSUPPORTED"
     if node.get("type") in ("hysteria2","ss","trojan","vmess","vless"):
         return "MIHOMO"
     return "UNSUPPORTED"

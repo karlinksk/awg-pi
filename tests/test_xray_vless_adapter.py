@@ -36,6 +36,9 @@ class AdapterTests(unittest.TestCase):
         self.grpc={**self.vless,"name":"HoneyVPN gRPC","network":"grpc",
                    "grpc-opts":{"grpc-service-name":"grpcname"}}
         self.grpc.pop("xhttp-opts")
+        self.grpc_tls={k:v for k,v in self.grpc.items() if k!="reality-opts"}
+        self.grpc_tls["name"]="Verified TLS/gRPC"
+        self.grpc_tls["alpn"]=["h2"]
         self.hy2={"name":"Hysteria2","type":"hysteria2","server":"198.51.100.4","port":443}
         self.provider.write_text(yaml.safe_dump({"proxies":[self.vless,self.grpc,self.hy2]},allow_unicode=True))
         self.addCleanup(mock.patch.stopall)
@@ -89,6 +92,41 @@ class AdapterTests(unittest.TestCase):
         self.assertEqual(ss["network"],"grpc")
         self.assertEqual(ss["grpcSettings"]["serviceName"],"grpcname")
         self.assertNotIn("xhttpSettings",ss)
+    def test_verified_tls_grpc_select_and_render_uses_same_safe_bridge(self):
+        self.provider.write_text(yaml.safe_dump(
+            {"proxies":[self.vless,self.grpc,self.hy2,self.grpc_tls]},allow_unicode=True))
+        self.call("select","4")
+        with mock.patch.object(self.a,"interface",return_value="lo"):
+            self.call("render")
+        d=json.loads(self.runtime.read_text())
+        ss=d["outbounds"][0]["streamSettings"]
+        self.assertEqual(ss["security"],"tls")
+        self.assertEqual(ss["network"],"grpc")
+        self.assertEqual(ss["tlsSettings"],{
+            "serverName":"example.com","allowInsecure":False,"alpn":["h2"]})
+        self.assertEqual(ss["grpcSettings"]["serviceName"],"grpcname")
+        self.assertNotIn("realitySettings",ss)
+        self.assertEqual(ss["sockopt"]["interface"],"lo")
+        self.assertNotIn(self.grpc_tls["uuid"],self.selected.read_text())
+        self.assertEqual(self.runtime.stat().st_mode&0o777,0o600)
+
+    def test_tls_grpc_no_insecure_or_malformed_fallback(self):
+        invalid=(
+            {"skip-cert-verify":True},
+            {"alpn":["http/1.1"]},
+            {"alpn":"h2"},
+            {"alpn":["h2","not-real"]},
+            {"flow":"xtls-rprx-vision"},
+            {"reality-opts":None},
+            {"reality-opts":{"public-key":"short"}},
+            {"network":"xhttp"},
+            {"tls":False},
+        )
+        for change in invalid:
+            with self.subTest(change=change):
+                with self.assertRaises(SystemExit):
+                    self.a.validate({**self.grpc_tls,**change})
+
     def test_hysteria2_rejected(self):
         with self.assertRaises(SystemExit):self.call("select","3")
         self.assertFalse(self.selected.exists())
