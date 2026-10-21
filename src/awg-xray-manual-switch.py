@@ -196,9 +196,22 @@ def inspect(index):
     if (BOOT.exists() or BOOT.is_symlink()) and (
         BOOT.is_symlink() or b"AWG_XRAY_MANUAL=1" not in BOOT.read_bytes()):
         refuse("FOREIGN_BOOT_DEPENDENCY")
+    # Idempotency is critical: selecting the already-healthy Xray profile
+    # must NEVER stop its active SOCKS service or arm a recovery watchdog.
+    # Compare the exact current transport fingerprint, never name or index.
+    same_xray=False
+    if previous==ALIAS:
+        try:
+            selected=json.loads(SELECTED.read_text())
+        except (OSError,ValueError,UnicodeError):
+            refuse("ACTIVE_XRAY_FINGERPRINT_UNAVAILABLE")
+        if not isinstance(selected,dict) or not isinstance(selected.get("sha256"),str):
+            refuse("ACTIVE_XRAY_FINGERPRINT_INVALID")
+        same_xray=(selected["sha256"]==fingerprint)
     return {"index":index,"candidate":candidate,"sha":provider_sha,
             "fingerprint":fingerprint,"previous":previous,
-            "previous_xray":previous==ALIAS,"xray_enabled":unit_enabled(XRAY)}
+            "previous_xray":previous==ALIAS,
+            "already_selected":same_xray,"xray_enabled":unit_enabled(XRAY)}
 
 def save_snap(info):
     ROOT.mkdir(mode=0o700,parents=True,exist_ok=True)
@@ -266,6 +279,12 @@ def apply(index):
     with LOCK.open("a") as lock:
         fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
         info=inspect(index)
+        if info.get("already_selected"):
+            # inspect has already proved service/TUN health; no change needed.
+            print("XRAY_MANUAL_ALREADY_SELECTED=YES")
+            print("XRAY_MANUAL_TUN=EXISTING_HEALTHY_NOT_SWITCHED")
+            print("MIHOMO_NODE_POLICY=UNCHANGED")
+            return
         path,state=save_snap(info)
         timer=state["watchdog"]+".timer"
         try:
@@ -330,9 +349,13 @@ def main():
             refuse("INVALID_NODE_INDEX")
         index=int(sys.argv[2])
         if sys.argv[1]=="preview":
-            inspect(index)
+            result=inspect(index)
             print("XRAY_MANUAL_PREFLIGHT=PASS")
-            print("XRAY_MANUAL_TUN=NOT_TESTED")
+            if result.get("already_selected"):
+                print("XRAY_MANUAL_ALREADY_SELECTED=YES")
+                print("XRAY_MANUAL_TUN=EXISTING_HEALTHY_NOT_SWITCHED")
+            else:
+                print("XRAY_MANUAL_TUN=NOT_TESTED")
         else:apply(index)
         return
     raise SystemExit("Usage: awg-xray-manual-switch preview|apply INDEX")
