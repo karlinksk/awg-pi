@@ -1,0 +1,24 @@
+[Unit]
+Description=AWG Pi Gateway isolated Xray subscription eligibility scan
+Documentation=man:systemd.service(5)
+Wants=network-online.target
+After=network-online.target
+ConditionPathExists=/var/lib/awg-pbr/mihomo/providers/subscription.yaml
+ConditionPathExists=/usr/local/bin/awg-xray-vless-core
+ConditionPathExists=/usr/local/sbin/awg-mihomo-unified-nodes
+# No relationship to Xray live service, READY, Hot Pool or route switching.
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/awg-mihomo-unified-nodes probe-vless-all
+TimeoutStartSec=300
+UMask=0077
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+ReadWritePaths=/var/lib/awg-pbr/xray-vless /dev/shm
+# Only the bounded isolated Xray scanner may write its health cache.
