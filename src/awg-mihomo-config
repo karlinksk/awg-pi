@@ -114,6 +114,31 @@ _xray_default_yaml=""
 if (( _bridge_ready )); then
   _xray_proxy_yaml=$'proxies:\n  - name: AWG-XRAY-VLESS-LOCAL\n    type: socks5\n    server: 127.0.0.1\n    port: 17892\n    udp: false'
   _xray_group_yaml=$'    proxies:\n      - AWG-XRAY-VLESS-LOCAL'
+  # After a successful manual Xray selection, CURRENT names the provider
+  # profile, while Mihomo's real selectable outbound is the local SOCKS alias.
+  # Only match it by the exact selected transport fingerprint; merely finding
+  # selected.json or recognizing a name must never activate stale credentials.
+  if [[ "$MIHOMO_XRAY_VLESS_BRIDGE" == auto && -r "$MIHOMO_XRAY_SELECTED" ]]; then
+    if python3 -B - "$MIHOMO_PROVIDER_FILE" "$MIHOMO_XRAY_SELECTED" "$_xray_current" <<'PY' >/dev/null 2>&1
+import hashlib,json,sys,yaml
+try:
+    d=yaml.safe_load(open(sys.argv[1],encoding="utf-8"))
+    chosen=json.load(open(sys.argv[2],encoding="utf-8"))
+    nodes=d.get("proxies",[]) if isinstance(d,dict) else []
+    matches=[n for n in nodes if isinstance(n,dict) and n.get("name")==sys.argv[3]]
+    assert len(matches)==1
+    n=matches[0]
+    assert n.get("type")=="vless" and n.get("network") in ("xhttp","grpc")
+    encoded=json.dumps({k:v for k,v in n.items() if k!="name"},
+      sort_keys=True,ensure_ascii=False,separators=(",",":")).encode()
+    assert chosen.get("sha256")==hashlib.sha256(encoded).hexdigest()
+except Exception:
+    sys.exit(1)
+PY
+    then
+      _xray_current="AWG-XRAY-VLESS-LOCAL"
+    fi
+  fi
   if [[ -n "$_xray_current" ]]; then
     _xray_default_yaml="    default-selected: $(yaml_sq "$_xray_current")"
   fi
