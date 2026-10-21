@@ -204,12 +204,37 @@ def source_node(index):
     mod=importlib.util.module_from_spec(spec);spec.loader.exec_module(mod)
     mod.validate(node)
     identity=mod.sha_profile(node)
-    cache=json.loads(HEALTH.read_text())
-    proof=cache.get("results",{}).get(identity,{})
-    age=time.time()-proof.get("at",0) if isinstance(proof,dict) else 1e9
-    if not 0<=age<=600 or proof.get("status")!="NETWORK_OK":
-        refuse("XRAY_FRESH_NETWORK_PROOF_REQUIRED")
+    # Cached discovery is advisory. An operator may request a fresh
+    # isolated test of a previously failed, stale or never-tested profile.
     return node["name"],hashlib.sha256(raw).hexdigest(),identity
+
+
+def preflight_xray(index,expected):
+    """Probe exact candidate in RAM without stopping the incumbent sidecar."""
+    from importlib.machinery import SourceFileLoader
+    path=Path("/usr/local/sbin/awg-mihomo-unified-nodes")
+    if not path.is_file():refuse("XRAY_ISOLATED_PROBE_MISSING")
+    spec=importlib.util.spec_from_loader("awg_manual_probe",SourceFileLoader("awg_manual_probe",str(path)))
+    module=importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    raw=PROVIDER.read_bytes()
+    if hashlib.sha256(raw).hexdigest()!=expected["sha"]:
+        refuse("PROVIDER_CHANGED_BEFORE_PROBE")
+    profiles=yaml.safe_load(raw).get("proxies",[])
+    if not isinstance(profiles,list) or not 1<=index<=len(profiles):
+        refuse("PROVIDER_CHANGED_BEFORE_PROBE")
+    node=profiles[index-1]
+    adapter=module.load_adapter()
+    if adapter.sha_profile(node)!=expected["fingerprint"]:
+        refuse("PROFILE_CHANGED_BEFORE_PROBE")
+    try:
+        result=module.isolated_probe(adapter,node)
+    except (OSError,ValueError,subprocess.TimeoutExpired):
+        refuse("XRAY_ISOLATED_PROBE_ERROR")
+    if hashlib.sha256(PROVIDER.read_bytes()).hexdigest()!=expected["sha"]:
+        refuse("PROVIDER_CHANGED_DURING_PROBE")
+    if result!="NETWORK_OK":
+        refuse("XRAY_ISOLATED_HTTPS_NOT_VERIFIED")
 
 def routing_ok():
     for table in ("100","101"):
@@ -623,6 +648,9 @@ def apply(index):
             print("XRAY_MANUAL_TUN=EXISTING_HEALTHY_NOT_SWITCHED")
             print("MIHOMO_NODE_POLICY=UNCHANGED")
             return
+        # Fresh on-demand HTTPS test comes before snapshot/watchdog and,
+        # critically, before stopping the current Xray process.
+        preflight_xray(index,info)
         path,state=save_snap(info)
         timer=state["watchdog"]+".timer"
         mutated=False
