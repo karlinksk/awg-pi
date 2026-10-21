@@ -56,6 +56,15 @@ class TestXrayConfig(unittest.TestCase):
   self.assertEqual(d["proxy-groups"][0]["use"],["subscription"])
   self.assertFalse(d["tun"]["auto-route"])
 
+ def test_removed_current_node_does_not_select_dead_xray(self):
+  self.current.write_text("Removed from provider\n")
+  env={**self.env};env.pop("MIHOMO_XRAY_VLESS_BRIDGE",None)
+  result=subprocess.run(["bash",str(CONFIG)],capture_output=True,text=True,env=env,timeout=6)
+  self.assertEqual(result.returncode,0,result.stderr)
+  rendered=yaml.safe_load(result.stdout)
+  self.assertNotIn("proxies",rendered)
+  self.assertNotIn("default-selected",rendered["proxy-groups"][0])
+
  def test_no_current_node_does_not_default_to_dead_xray(self):
   self.current.unlink()
   env={**self.env}
