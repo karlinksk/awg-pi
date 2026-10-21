@@ -329,10 +329,17 @@ def inspect_native(name):
     if not isinstance(previous,str) or previous not in con.get("all",[]):
         refuse("ACTIVE_CONTROLLER_UNKNOWN")
     was_xray=previous==ALIAS
-    if was_xray and not unit_active(XRAY):
+    xray_active=unit_active(XRAY)
+    if was_xray and not xray_active:
         refuse("PREVIOUS_XRAY_DOWN")
-    if not was_xray and unit_active(XRAY):
-        refuse("FOREIGN_XRAY_RUNNING")
+    if not was_xray and xray_active:
+        # A previously selected local sidecar may still be running after a
+        # native controller switch. Treat it as managed only when the exact
+        # installer-owned boot marker and selected fingerprint exist.
+        if (not BOOT.is_file() or BOOT.is_symlink() or
+             b"AWG_XRAY_MANUAL=1" not in BOOT.read_bytes() or
+             read(SELECTED) is None):
+            refuse("FOREIGN_XRAY_RUNNING")
     if BOOT.is_symlink() or (BOOT.exists() and
             b"AWG_XRAY_MANUAL=1" not in BOOT.read_bytes()):
         refuse("FOREIGN_BOOT_DEPENDENCY")
@@ -348,8 +355,8 @@ def inspect_native(name):
     already=(not was_xray and previous==name and configured is not None and
             configured.decode("utf-8","replace").strip()==name)
     target.update({"previous":previous,"previous_xray":was_xray,
-        "xray_enabled":unit_enabled(XRAY),"operation":"NATIVE_SWITCH",
-        "already_selected":already})
+        "xray_enabled":unit_enabled(XRAY),"xray_active":xray_active,
+        "operation":"NATIVE_SWITCH","already_selected":already})
     return target
 
 def restore_native(path,state):
@@ -377,8 +384,11 @@ def restore_native(path,state):
     if MODE.read_text().strip()=="transit":
         cmd("/usr/local/sbin/awg-transit-routing","apply")
     native_tun_proof()
-    if not state["previous_xray"] and unit_active(XRAY):
-        cmd("systemctl","stop",XRAY)
+    if not state["previous_xray"]:
+        if state.get("xray_active") and not unit_active(XRAY):
+            cmd("systemctl","start",XRAY)
+        elif not state.get("xray_active") and unit_active(XRAY):
+            cmd("systemctl","stop",XRAY)
     cmd("systemctl","enable" if state["xray_enabled"] else "disable",XRAY)
     invariant()
 
