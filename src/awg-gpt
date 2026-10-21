@@ -7,8 +7,12 @@ case "${1:-}" in
   menu-update)
     [[ "$#" == 1 ]] || exit 2
     base='https://raw.githubusercontent.com/karlinksk/awg-pi'
-    ref='a9db298eaeb897ee0addebeefbe13946f4316a48'
-    expected='5c8fbf1a2fbd900680854df497e7b2f64c2fbf65b50b14c671e5127ce49566da'
+    ref='0d79c6b995443e38426d47f7e9c420e31c574f06'
+    expected='3ff58fd6cab3d14236aacd74e2bbdda25700677809d1ad274eba84d5ead7c129'
+    # A menu from this candidate requires all companion executables and units.
+    # Never downgrade or partially update a gateway through this narrow helper.
+    [[ -x /usr/local/sbin/awg-xray-manual-switch ]] || { echo AWG_GPT=FULL_INSTALLER_UPGRADE_REQUIRED >&2; exit 1; }
+    [[ -f /etc/systemd/system/awg-xray-subscription-scan.service ]] || { echo AWG_GPT=FULL_INSTALLER_UPGRADE_REQUIRED >&2; exit 1; }
     tmp="$(mktemp /tmp/awg-gpt-menu.XXXXXXXX)"
     trap 'rm -f "$tmp"' EXIT
     curl -fL --connect-timeout 10 --max-time 60 "$base/$ref/src/awg-menu" -o "$tmp"
