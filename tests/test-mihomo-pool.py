@@ -84,13 +84,27 @@ assert [n["name"] for n in poolmod.filter_provider_nodes(sample_nodes, "vmess")]
 assert len(poolmod.filter_provider_nodes(sample_nodes, "all")) == 4
 
 print("=== adaptive worker count scales large feeds and honors override ===")
-assert poolmod.effective_worker_count(41) == 8
-assert poolmod.effective_worker_count(200) == 16
-assert poolmod.effective_worker_count(500) == 32
-assert poolmod.effective_worker_count(1000) == 64
-assert poolmod.effective_worker_count(1810) == 64
+assert poolmod.effective_worker_count(13) == 3
+assert poolmod.effective_worker_count(41) == 4
+assert poolmod.effective_worker_count(200) == 8
+assert poolmod.effective_worker_count(500) == 16
+assert poolmod.effective_worker_count(1000) == 32
+assert poolmod.effective_worker_count(1810) == 32
 assert poolmod.effective_worker_count(1810, "12") == 12
 assert poolmod.effective_worker_count(1810, "999") == 64
+
+print("=== Xray sidecar candidates excluded from Mihomo-only HTTPS scans ===")
+xray_node={"name":"Any name","type":"vless","tls":True,"network":"xhttp",
+           "reality-opts":{"public-key":"A"*43},"server":"example.com","port":443}
+native_node={"name":"Native","type":"ss","server":"example.net","port":443}
+assert poolmod.uses_xray_sidecar(xray_node)
+assert poolmod.uses_xray_sidecar({**xray_node,"network":"grpc"})
+assert poolmod.uses_xray_sidecar({**xray_node,"network":"grpc","reality-opts":None}) is False
+assert not poolmod.uses_xray_sidecar(native_node)
+config,clean=poolmod.make_probe_config([xray_node,native_node],17801,19090)
+assert len(config["proxies"])==1
+assert clean[0]["delegated_to_xray"] and clean[0]["healthy"] is None
+assert clean[1]["index"]==2 and clean[1]["probe_name"]=="AWG-PROBE-000002"
 
 print("=== termination signal converts to unwindable SystemExit ===")
 try:
