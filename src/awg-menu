@@ -1175,18 +1175,17 @@ select_tsv_node_dialog(){
         shown_delay="${delay%ms}мс"
       fi
       case "$health" in
-        MIHOMO_OK) engine_label="Mihomo"; state_label="ТЕСТ OK" ;;
-        MIHOMO_FAIL) engine_label="Mihomo"; state_label="ТЕСТ FAIL" ;;
-        MIHOMO_UNTESTED) engine_label="Mihomo"; state_label="НЕ ПРОВ." ;;
-        XRAY_HTTPS) engine_label="Xray"; state_label="HTTPS OK" ;;
-        XRAY_NETWORK_FAIL) engine_label="Xray"; state_label="HTTPS FAIL" ;;
-        XRAY_UNTESTED|XRAY_UNKNOWN_HTTP) engine_label="Xray"; state_label="НЕ ПРОВ." ;;
-        XRAY_UNKNOWN_ERROR) engine_label="Xray"; state_label="ОШИБКА" ;;
-        XRAY_UNAVAILABLE) engine_label="Xray"; state_label="НЕТ XRAY" ;;
-        DUPLICATE) engine_label="—"; state_label="ДУБЛИКАТ" ;;
-        *) engine_label="—"; state_label="НЕТ ДАННЫХ" ;;
+        MIHOMO_OK) engine_label="Mihomo"; state_label="OK" ;;
+        MIHOMO_FAIL) engine_label="Mihomo"; state_label="FAIL" ;;
+        MIHOMO_UNTESTED) engine_label="Mihomo"; state_label="" ;;
+        XRAY_HTTPS) engine_label="Xray"; state_label="OK" ;;
+        XRAY_NETWORK_FAIL) engine_label="Xray"; state_label="FAIL" ;;
+        XRAY_*) engine_label="Xray"; state_label="" ;;
+        *) engine_label="—"; state_label="" ;;
       esac
-      [[ "$duplicate" == DUPLICATE ]] && state_label="ДУБЛИКАТ"
+      # An untested/unsupported profile has no fabricated third status.
+      # The isolated manual preflight can still try a previously failed node.
+      [[ "$duplicate" == DUPLICATE ]] && state_label=""
       if [[ "$narrow" == yes ]]; then
         line_label="$display_name | $engine_label/$type | $shown_delay | $state_label"
       else
@@ -1195,7 +1194,7 @@ select_tsv_node_dialog(){
       item_help="Полное имя: $name. Сервер подключения: $endpoint (не публичный IP выхода). RTT: $shown_delay. Статус $state_label — результат отдельной проверки, не гарантия TUN/LAN."
       items+=("$ui_idx" "$line_label" "$item_help")
     done <<<"$filtered"
-    search_prompt="$prompt\n\nПоказано: $count из $shown_total | Mihomo тест OK: $eligible | Xray HTTPS: $xray_count | Mihomo тест FAIL: $fail_count"
+    search_prompt="$prompt\n\nПоказано: $count из $shown_total | Mihomo OK: $eligible | Xray OK: $xray_count | Mihomo FAIL: $fail_count"
     if [[ "$scope" == fixed ]]; then
       search_prompt="$prompt\n\nПоказано: $count из $shown_total | Для FIXED допустимы только исправные Mihomo: $eligible"
     fi
