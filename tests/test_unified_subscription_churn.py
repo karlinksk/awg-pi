@@ -222,6 +222,31 @@ class DynamicNodesTests(unittest.TestCase):
         self.assertEqual(record["verified_at"],old)
         self.assertEqual(record["last_probe"],"UNKNOWN_HTTP")
 
+    def test_2000_changing_xray_profiles_use_bounded_queue(self):
+        import contextlib,io,sys
+        nodes=[{**self.vless,"name":f"Node {i}",
+                "server":f"203.0.{i//250}.{i%250+1}"}
+               for i in range(2000)]
+        self.publish(nodes)
+        self.m.MAX_PROBE=10
+        seen=[]
+        self.m.isolated_probe=lambda adapter,node: seen.append(node["name"]) or "NETWORK_OK"
+        out=io.StringIO()
+        with mock.patch.object(sys,"argv",["unified-nodes","probe-vless-all"]),\
+             mock.patch.object(self.m.os,"geteuid",return_value=0),\
+             contextlib.redirect_stdout(out):
+            self.m.command()
+        self.assertEqual(len(seen),10)
+        self.assertIn("UNIFIED_XRAY_SCAN_REMAINING=1990",out.getvalue())
+        self.publish(list(reversed(nodes)))
+        seen.clear()
+        with mock.patch.object(sys,"argv",["unified-nodes","probe-vless-all"]),\
+             mock.patch.object(self.m.os,"geteuid",return_value=0),\
+             contextlib.redirect_stdout(io.StringIO()):
+            self.m.command()
+        self.assertEqual(len(seen),10)
+        self.assertFalse(set(seen)&{f"Node {i}" for i in range(10)})
+
     def test_provider_rotation_mid_probe_does_not_write_old_identity(self):
         import contextlib,io,sys
         def rotate(adapter,node):
