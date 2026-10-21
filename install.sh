@@ -830,6 +830,9 @@ install_project_python_helper src/awg-mihomo-node-picker.py /usr/local/sbin/awg-
 # start a sidecar or alter the selected live node during clean installation.
 install_project_python_helper src/awg-xray-activation-transaction.py /usr/local/sbin/awg-xray-activation-transaction
 install_project_python_helper src/awg-xray-live-backend.py /usr/local/sbin/awg-xray-live-backend
+# Root-only manual activation via the always-present dormant Mihomo Xray SOCKS alias.
+# Not run by installer, only with explicit operator confirmation from the menu.
+install_project_python_helper src/awg-xray-manual-switch.py /usr/local/sbin/awg-xray-manual-switch
 # Passive, pure cross-core recovery contracts (no service activation).
 install_project_python_helper src/awg-xray-failover-contract.py /usr/local/sbin/awg-xray-failover-contract
 install_project_python_helper src/awg-xray-recovery-runner.py /usr/local/sbin/awg-xray-recovery-runner
