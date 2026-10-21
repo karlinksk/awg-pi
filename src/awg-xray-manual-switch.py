@@ -285,6 +285,7 @@ def native_return(name):
         info=inspect_native(name)
         path,state=save_snap(info)
         timer=state["watchdog"]+".timer"
+        mutated=False
         try:
             cmd("systemd-run","--unit="+state["watchdog"],
                 "--on-active="+str(WATCH_SECONDS)+"s",str(SWITCH),
@@ -295,6 +296,7 @@ def native_return(name):
             if inspect_native(name)["sha"]!=info["sha"]:
                 refuse("PROVIDER_CHANGED")
             checkpoint(path,state,"NATIVE_CONTROLLER_SELECT")
+            mutated=True
             choose(name)
             checkpoint(path,state,"NATIVE_TUN_CHECK")
             if not https_ok("tun") or not routing_ok():
@@ -324,6 +326,13 @@ def native_return(name):
         except Exception as exc:
             state["failure_code"]=stable_error_code(exc)
             state["failed_at"]=state.get("checkpoint","NOT_STARTED")
+            if not mutated:
+                # Neither controller nor service was touched. Do not stop a
+                # healthy incumbent Xray when watchdog arm/preflight fails.
+                stored(path,state,"cancelled")
+                try:cmd("systemctl","stop",timer)
+                except Exception:pass
+                raise
             try:checkpoint(path,state,"ROLLBACK_ATTEMPT")
             except Exception:pass
             try:
@@ -414,6 +423,7 @@ def apply(index):
             return
         path,state=save_snap(info)
         timer=state["watchdog"]+".timer"
+        mutated=False
         try:
             cmd("systemd-run","--unit="+state["watchdog"],
                 "--on-active="+str(WATCH_SECONDS)+"s",str(SWITCH),
@@ -426,6 +436,7 @@ def apply(index):
             if (node,sha,fingerprint)!=(info["candidate"],info["sha"],info["fingerprint"]):
                 refuse("PROVIDER_CHANGED")
             checkpoint(path,state,"STAGE_NEW_XRAY")
+            mutated=True
             if state["previous_xray"]:cmd("systemctl","stop",XRAY)
             cmd(str(ADAPTER),"select",str(index))
             cmd("systemctl","start",XRAY)
@@ -465,10 +476,14 @@ def apply(index):
             print("XRAY_MANUAL_REBOOT=NOT_TESTED")
         except Exception as exc:
             # Durable, root-only, code-only failure report; no credentials.
-            # If immediate rollback fails, preserve phase=armed to allow
-            # the independently scheduled recovery to run.
             state["failure_code"]=stable_error_code(exc)
             state["failed_at"]=state.get("checkpoint","NOT_STARTED")
+            if not mutated:
+                stored(path,state,"cancelled")
+                try:cmd("systemctl","stop",timer)
+                except Exception:pass
+                raise
+            # If immediate rollback fails, preserve phase=armed for watchdog.
             try:
                 checkpoint(path,state,"ROLLBACK_ATTEMPT")
             except Exception:
