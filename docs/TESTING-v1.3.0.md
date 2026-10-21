@@ -743,3 +743,18 @@ Test Pi `awg-upgrade` manual activation of indexed Xray profile 1:
 - Corrected source in candidate branch: bounded 10-second service/listener wait at 127.0.0.1:17892, then at most two bounded HTTPS 401 probes before any native-to-Xray TUN selector change; explicit error categories `XRAY_SERVICE_NOT_ACTIVE`, `XRAY_SOCKS_PORT_NOT_LISTENING`, `XRAY_SERVICE_EXITED_DURING_HTTPS`, `XRAY_SOCKS_HTTPS_NOT_VERIFIED`. Existing native/Xray rollback guard preserved.
 - Test-Pi source suite **713/713 PASS** including 14 targeted manual-transaction tests; corrected live helper **NOT INSTALLED OR LIVE RETESTED YET**. Next gate: pinned install only of revised manual helper, fresh candidate `probe 1` and `preview 1` before a supervised manual Xray apply and TUN/LAN/rollback/reboot verification. No MikroTik/production SD changes.
 
+
+### 2026-10-21 first manual Xray activation — actual Pi TUN HTTPS PASS (not LAN/reboot)
+
+On test Pi `awg-upgrade`, operator installed the revised guarded manual helper and ran `probe 1`, `preview 1`, then supervised `apply 1`. Output:
+`UNIFIED_PROBE_INDEX=1 ENGINE=XRAY BASIC_NETWORK=NETWORK_OK`,
+`XRAY_MANUAL_PREFLIGHT=PASS`, `XRAY_MANUAL_TUN=VERIFIED`,
+`MIHOMO_NODE_POLICY=UNCHANGED`, `XRAY_MANUAL_REBOOT=NOT_TESTED`.
+
+Independent **post-apply live** read-only checks at 10:50 +07 confirmed:
+- Mihomo controller `AWG-XRAY-VLESS-LOCAL` **is the selected outbound** (`ALIAS_PRESENT=True`, `ALIAS_SELECTED=True`); Xray sidecar active, enabled for boot, running with 0 systemd restarts; Mihomo, SSH, dnsmasq, health and selection monitors active.
+- Actual `curl --interface mihomo0 --noproxy '*'` to `https://api.openai.com/v1/models` returned HTTP **401**, curl exit **0**; separate local `curl --socks5-hostname 127.0.0.1:17892` to the same HTTPS endpoint also returned **401**, curl exit **0**. Loopback SOCKS listener `127.0.0.1:17892` present. No browser testing or rejected YouTube HTTP gate used.
+- Both `fwmark 0x100/0x101` rules present and routing tables 100/101 default via `mihomo0`; 0 failed systemd units, no pending manual-switch watchdog timer.
+- **Limitations:** privileged `awg-transit-routing status` (nftables forward guard) could not be independently read by the non-root remote agent after the switch; that specific guard remains to be checked as root. These are Pi-bound TUN and SOCKS observations, **not LAN-client proof**, nor a forced rollback/automatic failover/YouTube 24-frame decode/reboot or full clean-install acceptance. No production microSD or MikroTik configuration changes.
+
+Next gate: root read-only Transit guard status and actual LAN-client experience while Xray is selected, followed by supervised Xray→native/FIXED preserving recovery, forced-failure watchdog validation, reboot and full v1.3.0 release matrix. Keep PR draft until all applicable gates are satisfied.
