@@ -11,7 +11,7 @@ ConditionPathExists=/usr/local/sbin/awg-mihomo-unified-nodes
 [Service]
 Type=oneshot
 ExecStart=/usr/local/sbin/awg-mihomo-unified-nodes probe-vless-all
-TimeoutStartSec=300
+TimeoutStartSec=420
 UMask=0077
 NoNewPrivileges=true
 ProtectSystem=strict
