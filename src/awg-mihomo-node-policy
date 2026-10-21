@@ -1016,7 +1016,7 @@ case "${1:-status}" in
   xray-auto)
     [[ $# -eq 2 ]] || { usage >&2; exit 2; }
     case "$2" in
-      status) printf 'MIHOMO_XRAY_AUTO=%s\\n' "$([[ "$_xray_auto_mode" == 1 ]] && echo enabled || echo disabled)" ;;
+      status) printf 'MIHOMO_XRAY_AUTO=%s\n' "$([[ "$_xray_auto_mode" == 1 ]] && echo enabled || echo disabled)" ;;
       enable)
         [[ "$(mode_get)" == auto ]] || { echo XRAY_AUTO_REQUIRES_NODE_AUTO >&2; exit 1; }
         [[ "$MIHOMO_READY_AUTO_CANARY" == 0 ]] || { echo XRAY_AUTO_REQUIRES_READY_OFF >&2; exit 1; }
