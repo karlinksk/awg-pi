@@ -356,6 +356,9 @@ def restore_native(path,state):
     """Watchdog-grade byte-for-byte restoration of native config and engine."""
     if cmd("/usr/local/sbin/awg-transport","get")!="mihomo":
         refuse("FOREIGN_TRANSPORT_DURING_RECOVERY")
+    if MODE.read_text().strip()=="transit":
+        # The nft forward guard remains DROP while the TUN is absent.
+        cmd("/usr/local/sbin/awg-transit-routing","disable")
     cmd("systemctl","stop",MIHOMO)
     for label,dest in (("env.prev",MIHOMO_ENV),("config.prev",MIHOMO_CONFIG),
                        ("endpoint.prev",MIHOMO_ENDPOINT),("egress.prev",MIHOMO_EGRESS),
@@ -371,6 +374,8 @@ def restore_native(path,state):
     cmd("systemctl","start",MIHOMO,timeout=40)
     wait_native_controller(state["previous"])
     choose(state["previous"])
+    if MODE.read_text().strip()=="transit":
+        cmd("/usr/local/sbin/awg-transit-routing","apply")
     native_tun_proof()
     if not state["previous_xray"] and unit_active(XRAY):
         cmd("systemctl","stop",XRAY)
@@ -402,6 +407,10 @@ def native_return(name):
                 refuse("NATIVE_PROVIDER_CHANGED")
             checkpoint(path,state,"NATIVE_RECONFIGURE")
             mutated=True
+            # Transit must enter its existing nft-guarded FAIL-CLOSED state
+            # before the Mihomo TUN disappears. No forwarded DIRECT escape.
+            if MODE.read_text().strip()=="transit":
+                cmd("/usr/local/sbin/awg-transit-routing","disable")
             # Previous Xray SOCKS stays alive for rollback; Mihomo TUN will
             # briefly stop while its native provider filter is replaced.
             cmd("systemctl","stop",MIHOMO)
@@ -420,6 +429,9 @@ def native_return(name):
             wait_native_controller(name)
             checkpoint(path,state,"NATIVE_SELECT")
             choose(name)
+            if MODE.read_text().strip()=="transit":
+                checkpoint(path,state,"NATIVE_TRANSIT_REARM")
+                cmd("/usr/local/sbin/awg-transit-routing","apply")
             checkpoint(path,state,"NATIVE_TUN_PROOF")
             native_tun_proof()
             invariant()
