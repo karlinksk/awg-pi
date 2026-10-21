@@ -397,6 +397,7 @@ class ManualSwitchContract(unittest.TestCase):
             endpoint=p/"endpoint";endpoint.write_text("203.0.113.4\n")
             egress=p/"egress";egress.write_text("203.0.113.8\n")
             snap=p/"snap";snap.mkdir()
+            mode=p/"mode";mode.write_text("transit\n")
             info={"candidate":"NewNative","endpoint":"203.0.113.20",
                   "filter":"^NewNative$","sha":hashlib.sha256(b"synthetic-provider").hexdigest(),
                   "previous":mod.ALIAS,"previous_xray":True,"xray_enabled":True,
@@ -407,7 +408,7 @@ class ManualSwitchContract(unittest.TestCase):
                 commands.append(args);return ""
             with mock.patch.multiple(mod,LOCK=p/"lock",PROVIDER=provider,CURRENT=current,
                     SELECTED=selected,BOOT=boot,POLICY=policy,ORDER=order,
-                    MIHOMO_ENDPOINT=endpoint,MIHOMO_EGRESS=egress), \
+                    MIHOMO_ENDPOINT=endpoint,MIHOMO_EGRESS=egress,MODE=mode), \
                  mock.patch.object(mod.os,"geteuid",return_value=0), \
                  mock.patch.object(mod,"inspect_native",return_value=info), \
                  mock.patch.object(mod,"candidate_native",return_value=info), \
@@ -436,6 +437,7 @@ class ManualSwitchContract(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             p=Path(d)
             provider=p/"provider";provider.write_bytes(b"provider")
+            mode=p/"mode";mode.write_text("transit\n")
             endpoint=p/"endpoint";current=p/"current"
             info={"candidate":"NewNative","endpoint":"203.0.113.20",
                   "filter":"^NewNative$","sha":hashlib.sha256(b"provider").hexdigest(),
@@ -445,7 +447,7 @@ class ManualSwitchContract(unittest.TestCase):
             snap=p/"snapshot";snap.mkdir()
             with mock.patch.multiple(mod,LOCK=p/"lock",PROVIDER=provider,
                      MIHOMO_ENDPOINT=endpoint,MIHOMO_EGRESS=p/"egress",
-                     CURRENT=current), \
+                     CURRENT=current,MODE=mode), \
                  mock.patch.object(mod.os,"geteuid",return_value=0), \
                  mock.patch.object(mod,"inspect_native",return_value=info), \
                  mock.patch.object(mod,"candidate_native",return_value=info), \
@@ -474,6 +476,7 @@ class ManualSwitchContract(unittest.TestCase):
                 target.write_bytes(b"mutated")
                 (snapshot/(key+".prev")).write_bytes((key+"-previous").encode())
             selected=targets["selected"]
+            mode=p/"mode";mode.write_text("transit\n")
             calls=[]
             def fake_cmd(*args,**kwargs):
                 calls.append(args)
@@ -483,7 +486,7 @@ class ManualSwitchContract(unittest.TestCase):
                      MIHOMO_CONFIG=targets["config"],MIHOMO_ENDPOINT=targets["endpoint"],
                      MIHOMO_EGRESS=targets["egress"],SELECTED=selected,
                      CURRENT=targets["current"],BOOT=targets["boot"],
-                     POLICY=targets["policy"],ORDER=targets["order"]), \
+                     POLICY=targets["policy"],ORDER=targets["order"],MODE=mode), \
                  mock.patch.object(mod,"cmd",side_effect=fake_cmd), \
                  mock.patch.object(mod,"unit_active",return_value=False), \
                  mock.patch.object(mod,"prove_local_xray"), \
