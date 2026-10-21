@@ -240,6 +240,88 @@ class ManualSwitchContract(unittest.TestCase):
         self.assertIn("grep -Fxq 'XRAY_MANUAL_ALREADY_SELECTED=YES' \"$TMP\"",menu)
         self.assertIn('Повторная остановка Xray и переключение не требуются',menu)
 
+
+    def test_previous_xray_restore_waits_for_transient_tun_recovery(self):
+        with mock.patch.object(mod,"unit_active",return_value=True), \
+             mock.patch.object(mod,"https_ok",side_effect=[False,False,True]) as probe, \
+             mock.patch.object(mod.time,"sleep") as sleep:
+            mod.prove_previous_tun()
+            self.assertEqual(probe.call_count,3)
+            self.assertEqual(sleep.call_count,2)
+
+    def test_previous_xray_restore_fails_closed_if_tun_never_recovers(self):
+        with mock.patch.object(mod,"unit_active",return_value=True), \
+             mock.patch.object(mod,"https_ok",return_value=False), \
+             mock.patch.object(mod.time,"sleep"):
+            with self.assertRaisesRegex(RuntimeError,"PREVIOUS_TUN_RESTORE_FAILED"):
+                mod.prove_previous_tun()
+
+    def test_diagnostics_never_persist_secret_exception_details(self):
+        self.assertEqual(mod.stable_error_code(RuntimeError("XRAY_SOCKS_HTTPS_NOT_VERIFIED")),
+                         "XRAY_SOCKS_HTTPS_NOT_VERIFIED")
+        self.assertEqual(mod.stable_error_code(RuntimeError("secret.example:8888 uuid-1")),
+                         "UNCLASSIFIED_FAILURE")
+
+    def test_xray_to_xray_failed_probe_persists_safe_step_and_original_error(self):
+        with tempfile.TemporaryDirectory() as td:
+            p=Path(td)
+            snap=p/"snap";snap.mkdir()
+            state={"phase":"pending","watchdog":"awg-xray-manual-test",
+                   "previous":mod.ALIAS,"previous_xray":True}
+            info={"already_selected":False,"index":2,"candidate":"Other",
+                  "sha":"digest","fingerprint":"new","previous":mod.ALIAS,
+                  "previous_xray":True,"xray_enabled":True}
+            actions=[]
+            def fake_cmd(*args,**kwargs):
+                actions.append(args)
+                return ""
+            with mock.patch.multiple(mod,LOCK=p/"maintenance.lock"), \
+                 mock.patch.object(mod.os,"geteuid",return_value=0), \
+                 mock.patch.object(mod,"inspect",return_value=info), \
+                 mock.patch.object(mod,"save_snap",return_value=(snap,state)), \
+                 mock.patch.object(mod,"cmd",side_effect=fake_cmd), \
+                 mock.patch.object(mod,"unit_active",return_value=True), \
+                 mock.patch.object(mod,"source_node",return_value=("Other","digest","new")), \
+                 mock.patch.object(mod,"prove_local_xray",
+                     side_effect=RuntimeError("XRAY_SOCKS_HTTPS_NOT_VERIFIED")), \
+                 mock.patch.object(mod,"restore") as restore:
+                with self.assertRaisesRegex(RuntimeError,"XRAY_SOCKS_HTTPS_NOT_VERIFIED"):
+                    mod.apply(2)
+            saved=__import__("json").loads((snap/"state.json").read_text())
+            self.assertEqual(saved["phase"],"rolled_back")
+            self.assertEqual(saved["failure_code"],"XRAY_SOCKS_HTTPS_NOT_VERIFIED")
+            self.assertEqual(saved["failed_at"],"PROBE_NEW_XRAY_SOCKS")
+            self.assertEqual(saved["checkpoint"],"ROLLBACK_COMPLETE")
+            restore.assert_called_once()
+            self.assertIn(("systemctl","stop",mod.XRAY),actions)
+
+    def test_xray_to_xray_failed_immediate_restore_leaves_watchdog_armed(self):
+        with tempfile.TemporaryDirectory() as td:
+            p=Path(td)
+            snap=p/"snap";snap.mkdir()
+            state={"phase":"pending","watchdog":"awg-xray-manual-test",
+                   "previous":mod.ALIAS,"previous_xray":True}
+            info={"already_selected":False,"index":2,"candidate":"Other",
+                  "sha":"digest","fingerprint":"new","previous":mod.ALIAS,
+                  "previous_xray":True,"xray_enabled":True}
+            with mock.patch.multiple(mod,LOCK=p/"maintenance.lock"), \
+                 mock.patch.object(mod.os,"geteuid",return_value=0), \
+                 mock.patch.object(mod,"inspect",return_value=info), \
+                 mock.patch.object(mod,"save_snap",return_value=(snap,state)), \
+                 mock.patch.object(mod,"cmd",return_value=""), \
+                 mock.patch.object(mod,"unit_active",return_value=True), \
+                 mock.patch.object(mod,"source_node",return_value=("Other","digest","new")), \
+                 mock.patch.object(mod,"prove_local_xray",
+                     side_effect=RuntimeError("XRAY_SOCKS_HTTPS_NOT_VERIFIED")), \
+                 mock.patch.object(mod,"restore",
+                     side_effect=RuntimeError("PREVIOUS_TUN_RESTORE_FAILED")):
+                with self.assertRaisesRegex(RuntimeError,"XRAY_MANUAL_ROLLBACK_UNCONFIRMED"):
+                    mod.apply(2)
+            saved=__import__("json").loads((snap/"state.json").read_text())
+            self.assertEqual(saved["phase"],"armed")
+            self.assertEqual(saved["rollback_failure_code"],"PREVIOUS_TUN_RESTORE_FAILED")
+            self.assertEqual(saved["checkpoint"],"WATCHDOG_RECOVERY_PENDING")
+
     def test_prearm_error_never_stages_candidate(self):
         with tempfile.TemporaryDirectory() as d:
             p=Path(d)
