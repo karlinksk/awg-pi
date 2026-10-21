@@ -817,3 +817,16 @@ User requirement: any current exact provider node must be manually selectable re
 - Installer and existing-install upgrade already deliver versioned `src/awg-menu`, `src/awg-xray-manual-switch.py` and `src/awg-mihomo-configure`; no new daemon, dependency or transport engine required.
 
 **Next gate:** test-Pi pinned source checkout, rootless  tests, then nonmutating `native-preview` for a selected native node while controller is actually Xray/native; only after current Transit/SSH checks and operator approval a timed live transition with independent TUN egress observation, valid controller state, rollback, then LAN/failover/reboot. Do not touch MikroTik priority SSTP or production microSD.
+
+### 2026-10-21 first unified-manual full suite FAILED; candidate corrections await rerun
+
+Operator tested pinned source commit `8cce62fa3f1e558cf93c75129871a41851c7cc70` on test Pi: syntax checks completed; full rootless Python suite: **730 cases, FAIL (1 failure + 1 error)**. Named results: `test_rollback_xray_restores_old_profile_before_local_selection` ERROR, `test_initial_setup_is_native_dialog_not_hidden_ssh` FAIL. **Do not install that revision or claim PASS.**
+
+Candidate corrections committed after operator evidence:
+- Xray rollback synthetic fixture now mocks systemd service liveness required by existing bounded previous-Xray TUN recovery (prevents unit test dependence on current running Pi state); no runtime service is changed.
+- The unified native menu restores its preexisting read-only `run_with_progress ... awg-mihomo-configure node prepare` behavior for normal/first-run setup.
+- Explicit **Transit FAIL-CLOSED** quiesce (existing `awg-transit-routing disable` under nft forward DROP guard) *before* stopping Mihomo TUN, followed by `awg-transit-routing apply` after real target node/controller become ready and before HTTPS/TUN postcheck; the same protection is required on native rollback. **Selective FAIL-OPEN** uses existing `awg-pbr-failopen` before any Mihomo TUN stop.
+- Preserves operator `MIHOMO_XRAY_VLESS_BRIDGE` setting instead of forcing `auto`; permits known, installer-owned Xray sidecar active while an actual native node is selected (passive managed Xray), and retains original sidecar state on rollback. Unknown/foreign Xray continues to be rejected before mutation.
+- Synthetic tests assert both Transit quiesce/rearm and Selective failopen happen before service teardown, native state restoration, and no mutable action on invalid provider profiles.
+
+**Corrected source and regression tests have NOT been re-run on test Pi yet**, so current full-suite status is **FAIL pending new run**, independent of the previous 726/726 gate. There is **no** verified live/native↔Xray switch using corrected files, no installer clean-install/LAN/reboot/failover PASS. The candidate remains a **draft PR**, not production or stable release.
