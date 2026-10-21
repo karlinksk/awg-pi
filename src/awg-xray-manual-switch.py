@@ -241,83 +241,148 @@ def inspect(index):
             "previous_xray":previous==ALIAS,
             "already_selected":same_xray,"xray_enabled":unit_enabled(XRAY)}
 
-def inspect_native(name):
-    """Preflight Xray -> ANY supported native profile from current provider.
-
-    Only the real controller is authoritative for the active engine. A
-    provider-only native candidate is staged inside the guarded transaction
-    rather than incorrectly rejected as NATIVE_NOT_LOADED_IN_MIHOMO.
-    """
-    if os.geteuid()!=0:refuse("ROOT_REQUIRED")
-    if not isinstance(name,str) or not 1<=len(name)<=240 or (
-       "\n" in name or "\r" in name or "\x00" in name):
+def candidate_native(name):
+    """Obtain the exact native profile/filter and resolved endpoint."""
+    import ipaddress
+    if not isinstance(name,str) or not 1<=len(name)<=240 or any(
+        ch in name for ch in ("\n","\r","\x00")):
         refuse("INVALID_NATIVE_NAME")
+    raw=read(PROVIDER)
+    if raw is None or len(raw)>8*1024*1024:
+        refuse("NATIVE_PROVIDER_UNAVAILABLE")
+    data=yaml.safe_load(raw)
+    rows=data.get("proxies",[]) if isinstance(data,dict) else []
+    profiles=[n for n in rows if isinstance(n,dict) and n.get("name")==name]
+    if len(profiles)!=1:refuse("NATIVE_PROFILE_NOT_UNIQUE")
+    typ=profiles[0].get("type")
+    if typ not in ("ss","trojan","hysteria2","vmess","vless"):
+        refuse("NOT_A_NATIVE_MIHOMO_PROFILE")
+    if typ=="vless" and profiles[0].get("network") in ("xhttp","grpc"):
+        refuse("XRAY_PROFILE_IS_NOT_NATIVE")
+    # Same trusted helper that native Mihomo's menu already uses.
+    helper="/usr/local/lib/awg-pi/mihomo-provider.py"
+    p=subprocess.run(["python3",helper,"info",str(PROVIDER),name],
+        stdin=subprocess.DEVNULL,stdout=subprocess.PIPE,stderr=subprocess.DEVNULL,
+        timeout=14,text=True)
+    if p.returncode:refuse("NATIVE_PROFILE_RESOLVE_FAILED")
+    try:
+        info=json.loads(p.stdout)
+        addr=str(ipaddress.IPv4Address(info["endpoint_ips"][0]))
+        pattern=info["filter_regex"]
+        if info.get("name")!=name or not isinstance(pattern,str) or not pattern or (
+           len(pattern)>2048 or any(c in pattern for c in "\r\n\x00")):
+            refuse("NATIVE_PROFILE_RESOLVE_FAILED")
+    except (ValueError,KeyError,TypeError,IndexError):
+        refuse("NATIVE_PROFILE_RESOLVE_FAILED")
+    return {"candidate":name,"endpoint":addr,"filter":pattern,
+            "sha":hashlib.sha256(raw).hexdigest()}
+
+def native_env(key,value):
+    """Update only an allowlisted env field with safe Bash quoting."""
+    import shlex
+    if key not in ("MIHOMO_NODE_FILTER","MIHOMO_ENDPOINT_IP",
+                   "MIHOMO_XRAY_VLESS_BRIDGE","MIHOMO_EXPECTED_EGRESS_IP"):
+        refuse("NATIVE_ENV_KEY_FORBIDDEN")
+    raw=read(MIHOMO_ENV)
+    if raw is None or len(raw)>131072:refuse("NATIVE_ENV_UNAVAILABLE")
+    lines=raw.decode("utf-8").splitlines()
+    matches=[i for i,line in enumerate(lines) if line.startswith(key+"=")]
+    if len(matches)>1:refuse("NATIVE_ENV_DUPLICATE")
+    if value is None:
+        lines=[line for line in lines if not line.startswith(key+"=")]
+    else:
+        if not isinstance(value,str) or any(c in value for c in "\r\n\x00"):
+            refuse("NATIVE_ENV_INVALID")
+        entry=key+"="+shlex.quote(value)
+        if matches:lines[matches[0]]=entry
+        else:lines.append(entry)
+    atomic(MIHOMO_ENV,("\n".join(lines)+"\n").encode())
+
+def wait_native_controller(name):
+    for _ in range(40):
+        if unit_active(MIHOMO):
+            try:
+                group=controller()
+                if name in group.get("all",[]):return
+            except (OSError,ValueError,KeyError,TimeoutError):
+                pass
+        time.sleep(.5)
+    refuse("NATIVE_CONTROLLER_NOT_READY")
+
+def native_tun_proof():
+    for attempt in range(2):
+        if routing_ok() and https_ok("tun"):return
+        if attempt==0:time.sleep(1)
+    refuse("NATIVE_TUN_HTTPS_UNVERIFIED")
+
+def inspect_native(name):
+    """One preflight for native→native and Xray→native, no mutation."""
+    if os.geteuid()!=0:refuse("ROOT_REQUIRED")
+    target=candidate_native(name)
     invariant()
     con=controller()
-    if con.get("now")!=ALIAS:
-        refuse("ACTIVE_ENGINE_NOT_XRAY")
-    if not unit_active(XRAY):
-        refuse("ACTIVE_XRAY_SERVICE_DOWN")
-    if ALIAS not in con.get("all",[]):
-        refuse("XRAY_BRIDGE_NOT_IN_RUNNING_CONFIG")
-    raw=PROVIDER.read_bytes()
-    if not raw or len(raw)>8*1024*1024:refuse("INVALID_PROVIDER_SIZE")
-    parsed=yaml.safe_load(raw)
-    rows=parsed.get("proxies",[]) if isinstance(parsed,dict) else []
-    matches=[p for p in rows if isinstance(p,dict) and p.get("name")==name]
-    if len(matches)!=1:refuse("NATIVE_PROFILE_NOT_UNIQUE")
-    node=matches[0]
-    if node.get("type") not in ("ss","trojan","hysteria2","vmess","vless"):
-        refuse("NOT_A_NATIVE_MIHOMO_PROFILE")
-    if node.get("type")=="vless" and node.get("network") in ("xhttp","grpc"):
-        refuse("XRAY_PROFILE_IS_NOT_NATIVE")
-    chosen=read(SELECTED)
-    if chosen is None:refuse("PREVIOUS_XRAY_PROFILE_MISSING")
-    try:digest=json.loads(chosen).get("sha256")
-    except (ValueError,UnicodeError):refuse("PREVIOUS_XRAY_PROFILE_INVALID")
-    if not isinstance(digest,str) or not re.fullmatch(r"[0-9a-f]{64}",digest):
-        refuse("PREVIOUS_XRAY_PROFILE_INVALID")
+    previous=con.get("now")
+    if not isinstance(previous,str) or previous not in con.get("all",[]):
+        refuse("ACTIVE_CONTROLLER_UNKNOWN")
+    was_xray=previous==ALIAS
+    if was_xray and not unit_active(XRAY):
+        refuse("PREVIOUS_XRAY_DOWN")
+    if not was_xray and unit_active(XRAY):
+        refuse("FOREIGN_XRAY_RUNNING")
     if BOOT.is_symlink() or (BOOT.exists() and
-       b"AWG_XRAY_MANUAL=1" not in BOOT.read_bytes()):
+            b"AWG_XRAY_MANUAL=1" not in BOOT.read_bytes()):
         refuse("FOREIGN_BOOT_DEPENDENCY")
     if not https_ok("tun"):refuse("PREVIOUS_TUN_NOT_PROVEN")
-    current=read(CURRENT)
-    configured=current is not None and current.decode("utf-8","replace").strip()==name
-    loaded=name in con.get("all",[])
-    return {"previous":ALIAS,"previous_xray":True,"xray_enabled":unit_enabled(XRAY),
-            "candidate":name,"sha":hashlib.sha256(raw).hexdigest(),
-            "fingerprint":digest,"operation":"NATIVE_RETURN",
-            "needs_prepare":not (configured and loaded)}
+    if was_xray:
+        try:
+            digest=json.loads(SELECTED.read_text()).get("sha256")
+        except (ValueError,OSError,UnicodeError):
+            refuse("PREVIOUS_XRAY_PROFILE_INVALID")
+        if not isinstance(digest,str) or not re.fullmatch(r"[0-9a-f]{64}",digest):
+            refuse("PREVIOUS_XRAY_PROFILE_INVALID")
+    configured=read(CURRENT)
+    already=(not was_xray and previous==name and configured is not None and
+            configured.decode("utf-8","replace").strip()==name)
+    target.update({"previous":previous,"previous_xray":was_xray,
+        "xray_enabled":unit_enabled(XRAY),"operation":"NATIVE_SWITCH",
+        "already_selected":already})
+    return target
 
-def prepare_native_under_lock(name,lock_fd):
-    """Use the installer-owned profile staging with the parent lock inherited.
-
-    The child sees the same open lock description; it must never open a second
-    lock on /run/awg-maintenance.lock or deadlock against this transaction.
-    """
-    env=os.environ.copy()
-    env["AWG_MIHOMO_GUARD_LOCK_FD"]=str(lock_fd)
-    try:
-        proc=subprocess.run([str(CONFIGURE),"node","select-auto",name],
-                            env=env,pass_fds=(lock_fd,),stdin=subprocess.DEVNULL,
-                            stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,
-                            timeout=100)
-    except (OSError,subprocess.TimeoutExpired):
-        refuse("NATIVE_PREPARE_PROCESS_FAILED")
-    if proc.returncode:
-        refuse("NATIVE_PREPARE_REJECTED")
-
+def restore_native(path,state):
+    """Watchdog-grade byte-for-byte restoration of native config and engine."""
+    if cmd("/usr/local/sbin/awg-transport","get")!="mihomo":
+        refuse("FOREIGN_TRANSPORT_DURING_RECOVERY")
+    cmd("systemctl","stop",MIHOMO)
+    for label,dest in (("env.prev",MIHOMO_ENV),("config.prev",MIHOMO_CONFIG),
+                       ("endpoint.prev",MIHOMO_ENDPOINT),("egress.prev",MIHOMO_EGRESS),
+                       ("selected.prev",SELECTED),("current.prev",CURRENT),
+                       ("boot.prev",BOOT),("policy.prev",POLICY),("order.prev",ORDER)):
+        original=read(path/label)
+        if original is None:dest.unlink(missing_ok=True)
+        else:atomic(dest,original,0o644 if dest==BOOT else 0o600)
+    cmd("systemctl","daemon-reload")
+    if state["previous_xray"]:
+        if not unit_active(XRAY):cmd("systemctl","start",XRAY)
+        prove_local_xray()
+    cmd("systemctl","start",MIHOMO,timeout=40)
+    wait_native_controller(state["previous"])
+    choose(state["previous"])
+    native_tun_proof()
+    if not state["previous_xray"] and unit_active(XRAY):
+        cmd("systemctl","stop",XRAY)
+    cmd("systemctl","enable" if state["xray_enabled"] else "disable",XRAY)
+    invariant()
 
 def native_return(name):
-    """Guarded controller switch back to already-configured Mihomo native.
-
-    Never pass through node select-auto while Xray owns the TUN: that helper
-    reconfigures metadata/restarts Mihomo and can leave the Xray alias selected.
-    """
+    """One guarded arbitrary manual native-target transition (either engine)."""
     if os.geteuid()!=0:refuse("ROOT_REQUIRED")
     with LOCK.open("a") as lock:
         fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
         info=inspect_native(name)
+        if info["already_selected"]:
+            print("NATIVE_MANUAL_ALREADY_SELECTED=YES")
+            print("NATIVE_RETURN_TUN=EXISTING_HEALTHY_NOT_SWITCHED")
+            return
         path,state=save_snap(info)
         timer=state["watchdog"]+".timer"
         mutated=False
@@ -327,40 +392,48 @@ def native_return(name):
                 "watchdog",str(path))
             if not unit_active(timer):refuse("WATCHDOG_NOT_ARMED")
             stored(path,state,"armed")
-            checkpoint(path,state,"NATIVE_VERIFY")
-            if inspect_native(name)["sha"]!=info["sha"]:
-                refuse("PROVIDER_CHANGED")
-            if info["needs_prepare"]:
-                checkpoint(path,state,"NATIVE_PREPARE")
-                mutated=True
-                state["native_reconfigured"]=True
-                stored(path,state,state["phase"])
-                prepare_native_under_lock(name,lock.fileno())
-                checkpoint(path,state,"NATIVE_PREPARED")
-            con=controller()
-            if name not in con.get("all",[]):
-                refuse("NATIVE_NOT_LOADED_AFTER_PREPARE")
-            checkpoint(path,state,"NATIVE_CONTROLLER_SELECT")
+            checkpoint(path,state,"VERIFY_NATIVE_CANDIDATE")
+            fresh=candidate_native(name)
+            if any(fresh[k]!=info[k] for k in ("candidate","endpoint","filter","sha")):
+                refuse("NATIVE_PROVIDER_CHANGED")
+            checkpoint(path,state,"NATIVE_RECONFIGURE")
             mutated=True
+            # Previous Xray SOCKS stays alive for rollback; Mihomo TUN will
+            # briefly stop while its native provider filter is replaced.
+            cmd("systemctl","stop",MIHOMO)
+            native_env("MIHOMO_NODE_FILTER",info["filter"])
+            native_env("MIHOMO_ENDPOINT_IP",info["endpoint"])
+            native_env("MIHOMO_XRAY_VLESS_BRIDGE","auto")
+            native_env("MIHOMO_EXPECTED_EGRESS_IP",None)
+            atomic(MIHOMO_ENDPOINT,(info["endpoint"]+"\n").encode())
+            MIHOMO_EGRESS.unlink(missing_ok=True)
+            atomic(CURRENT,(name+"\n").encode())
+            cmd("/usr/local/sbin/awg-mihomo-prepare",timeout=45)
+            if hashlib.sha256(PROVIDER.read_bytes()).hexdigest()!=info["sha"]:
+                refuse("NATIVE_PROVIDER_CHANGED")
+            checkpoint(path,state,"NATIVE_START")
+            cmd("systemctl","start",MIHOMO,timeout=40)
+            wait_native_controller(name)
+            checkpoint(path,state,"NATIVE_SELECT")
             choose(name)
-            checkpoint(path,state,"NATIVE_TUN_CHECK")
-            if not https_ok("tun") or not routing_ok():
-                refuse("NATIVE_TUN_OR_ROUTES_UNVERIFIED")
+            checkpoint(path,state,"NATIVE_TUN_PROOF")
+            native_tun_proof()
             invariant()
             if hashlib.sha256(PROVIDER.read_bytes()).hexdigest()!=info["sha"]:
-                refuse("PROVIDER_CHANGED_BEFORE_COMMIT")
-            # Only after live native TUN success detach the old Xray sidecar.
+                refuse("NATIVE_PROVIDER_CHANGED_BEFORE_COMMIT")
             checkpoint(path,state,"NATIVE_COMMIT")
-            atomic(CURRENT,(name+"\n").encode())
-            BOOT.unlink(missing_ok=True)
-            SELECTED.unlink(missing_ok=True)
-            cmd("systemctl","daemon-reload")
-            cmd("systemctl","stop",XRAY)
-            cmd("systemctl","disable",XRAY)
-            checkpoint(path,state,"NATIVE_POSTCOMMIT_CHECK")
-            if controller().get("now")!=name or unit_active(XRAY) or (
-               unit_enabled(XRAY)) or not https_ok("tun") or not routing_ok():
-                refuse("NATIVE_POSTCOMMIT_UNVERIFIED")
+            if state["previous_xray"]:
+                # Commit new native exit before detaching the standby sidecar.
+                BOOT.unlink(missing_ok=True)
+                SELECTED.unlink(missing_ok=True)
+                cmd("systemctl","daemon-reload")
+                cmd("systemctl","stop",XRAY)
+                cmd("systemctl","disable",XRAY)
+            checkpoint(path,state,"NATIVE_FINAL_VERIFY")
+            if controller().get("now")!=name or (
+                    state["previous_xray"] and unit_active(XRAY)):
+                refuse("NATIVE_EXIT_MISMATCH")
+            native_tun_proof()
             invariant()
             stored(path,state,"committed")
             cmd("systemctl","stop",timer)
@@ -372,8 +445,6 @@ def native_return(name):
             state["failure_code"]=stable_error_code(exc)
             state["failed_at"]=state.get("checkpoint","NOT_STARTED")
             if not mutated:
-                # Neither controller nor service was touched. Do not stop a
-                # healthy incumbent Xray when watchdog arm/preflight fails.
                 stored(path,state,"cancelled")
                 try:cmd("systemctl","stop",timer)
                 except Exception:pass
@@ -381,7 +452,7 @@ def native_return(name):
             try:checkpoint(path,state,"ROLLBACK_ATTEMPT")
             except Exception:pass
             try:
-                restore(path,state)
+                restore_native(path,state)
                 checkpoint(path,state,"ROLLBACK_COMPLETE")
                 stored(path,state,"rolled_back")
             except Exception as rollback_exc:
@@ -413,6 +484,8 @@ def stored(path,state,phase):
     atomic(path/"state.json",json.dumps(state).encode())
 
 def restore(path,state):
+    if state.get("operation")=="NATIVE_SWITCH":
+        return restore_native(path,state)
     # A separately selected healthy AWG must never be replaced by the watchdog.
     if cmd("/usr/local/sbin/awg-transport","get")!="mihomo":
         refuse("FOREIGN_TRANSPORT_DURING_RECOVERY")
@@ -580,9 +653,12 @@ def last_failure():
 def main():
     if len(sys.argv)==3 and sys.argv[1] in ("native-preview","native-apply"):
         if sys.argv[1]=="native-preview":
-            inspect_native(sys.argv[2])
+            candidate=inspect_native(sys.argv[2])
             print("NATIVE_RETURN_PREFLIGHT=PASS")
-            print("NATIVE_RETURN_TUN=NOT_TESTED")
+            if candidate["already_selected"]:
+                print("NATIVE_MANUAL_ALREADY_SELECTED=YES")
+                print("NATIVE_RETURN_TUN=EXISTING_HEALTHY_NOT_SWITCHED")
+            else:print("NATIVE_RETURN_TUN=NOT_TESTED")
         else:native_return(sys.argv[2])
         return
     if len(sys.argv)==2 and sys.argv[1]=="diagnose":
