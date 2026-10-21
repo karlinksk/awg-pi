@@ -430,6 +430,12 @@ class ManualSwitchContract(unittest.TestCase):
             self.assertFalse(selected.exists())
             self.assertFalse(boot.exists())
             self.assertEqual(json.loads((snap/"state.json").read_text())["phase"],"committed")
+            self.assertIn(("/usr/local/sbin/awg-transit-routing","disable"),commands)
+            self.assertIn(("/usr/local/sbin/awg-transit-routing","apply"),commands)
+            self.assertLess(commands.index(("/usr/local/sbin/awg-transit-routing","disable")),
+                            commands.index(("systemctl","stop",mod.MIHOMO)))
+            self.assertLess(commands.index(("/usr/local/sbin/awg-transit-routing","apply")),
+                            commands.index(("systemctl","stop",mod.XRAY)))
             self.assertIn(("systemctl","stop",mod.XRAY),commands)
 
     def test_failed_native_tun_restores_full_previous_state(self):
@@ -515,6 +521,43 @@ class ManualSwitchContract(unittest.TestCase):
                 with self.assertRaisesRegex(RuntimeError,"NATIVE_PROFILE_NOT_UNIQUE"):
                     mod.candidate_native("not-in-provider")
                 command.assert_not_called()
+
+    def test_native_selective_failopen_precedes_mihomo_stop(self):
+        import hashlib
+        with tempfile.TemporaryDirectory() as d:
+            p=Path(d)
+            provider=p/"provider";provider.write_bytes(b"provider")
+            mode=p/"mode";mode.write_text("selective\n")
+            info={"candidate":"NewNative","endpoint":"203.0.113.20",
+                  "filter":"^NewNative$","sha":hashlib.sha256(b"provider").hexdigest(),
+                  "previous":"OldNative","previous_xray":False,"xray_enabled":False,
+                  "already_selected":False,"operation":"NATIVE_SWITCH"}
+            state={"phase":"pending",**info,"watchdog":"awg-xray-manual-test"}
+            snap=p/"snapshot";snap.mkdir()
+            commands=[]
+            def fake_cmd(*args,**kwargs):
+                commands.append(args)
+                return ""
+            with mock.patch.multiple(mod,LOCK=p/"lock",PROVIDER=provider,
+                                     CURRENT=p/"current",MIHOMO_ENDPOINT=p/"endpoint",
+                                     MIHOMO_EGRESS=p/"egress",MODE=mode), \
+                 mock.patch.object(mod.os,"geteuid",return_value=0), \
+                 mock.patch.object(mod,"inspect_native",return_value=info), \
+                 mock.patch.object(mod,"candidate_native",return_value=info), \
+                 mock.patch.object(mod,"save_snap",return_value=(snap,state)), \
+                 mock.patch.object(mod,"cmd",side_effect=fake_cmd), \
+                 mock.patch.object(mod,"native_env"), \
+                 mock.patch.object(mod,"wait_native_controller"), \
+                 mock.patch.object(mod,"native_tun_proof"), \
+                 mock.patch.object(mod,"unit_active",side_effect=lambda x:x.endswith(".timer")), \
+                 mock.patch.object(mod,"invariant"), \
+                 mock.patch.object(mod,"controller",return_value={"now":"NewNative"}), \
+                 mock.patch.object(mod,"choose"):
+                mod.native_return("NewNative")
+            self.assertIn(("/usr/local/sbin/awg-pbr-failopen",),commands)
+            self.assertLess(commands.index(("/usr/local/sbin/awg-pbr-failopen",)),
+                            commands.index(("systemctl","stop",mod.MIHOMO)))
+            self.assertNotIn(("/usr/local/sbin/awg-transit-routing","disable"),commands)
 
     def test_native_menu_dispatches_all_mihomo_from_any_engine(self):
         menu=(ROOT/"src/awg-menu").read_text()
