@@ -163,6 +163,19 @@ show_operation_result 7 'Проверка подписки'
         self.assertIn('run_with_progress "$title" "$MIHOMO_CONFIGURE" node prepare', SOURCE)
         self.assertIn('run_with_progress "$title" "$MIHOMO_CONFIGURE" provider candidate prepare', SOURCE)
 
+    def test_xray_diagnostics_are_advanced_only(self):
+        main=body("mihomo_menu")
+        advanced=body("mihomo_advanced_menu")
+        tools=body("mihomo_xray_vless_menu")
+        self.assertIn('3 "Точка выхода Mihomo / Xray"',main)
+        self.assertIn('5 "Расширенные / восстановление"',main)
+        self.assertNotIn('6 "Xray VLESS: диагностика"',main)
+        self.assertNotIn('6) mihomo_xray_vless_menu',main)
+        self.assertIn('6 "Xray VLESS: диагностика"',advanced)
+        self.assertIn('6) mihomo_xray_vless_menu ;;',advanced)
+        self.assertIn('awg-xray-vless list',tools)
+        self.assertIn('awg-mihomo-unified-nodes probe',tools)
+
     def test_utf8_local_menu_without_system_locale_mutation(self):
         self.assertIn('locale charmap', SOURCE)
         self.assertIn('export LC_ALL=C.UTF-8', SOURCE)
