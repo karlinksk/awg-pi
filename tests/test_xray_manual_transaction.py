@@ -16,6 +16,34 @@ mod=importlib.util.module_from_spec(spec)
 spec.loader.exec_module(mod)
 
 class ManualSwitchContract(unittest.TestCase):
+    def setUp(self):
+        # Transaction fixtures exercise switch/rollback independently from
+        # the newly required isolated network qualification.
+        probe=mock.patch.object(mod,"preflight_xray")
+        probe.start()
+        self.addCleanup(probe.stop)
+        native=mock.patch.object(mod,"preflight_mihomo")
+        native.start()
+        self.addCleanup(native.stop)
+
+    def test_native_preflight_precedes_live_reconfiguration(self):
+        source=SCRIPT.read_text()
+        native=source[source.index("def native_return(name):"):source.index("def save_snap(info):")]
+        self.assertLess(native.index("preflight_mihomo(name,info)"),
+                        native.index("path,state=save_snap(info)"))
+        self.assertLess(native.index("preflight_mihomo(name,info)"),
+                        native.index('cmd("systemctl","stop",MIHOMO)'))
+
+    def test_on_demand_preflight_precedes_any_live_mutation(self):
+        source=SCRIPT.read_text()
+        apply=source[source.index("def apply(index):"):source.index("def last_failure():")]
+        self.assertLess(apply.index("preflight_xray(index,info)"),
+                        apply.index("path,state=save_snap(info)"))
+        self.assertLess(apply.index("preflight_xray(index,info)"),
+                        apply.index('cmd("systemctl","stop",XRAY)'))
+        self.assertNotIn("XRAY_FRESH_NETWORK_PROOF_REQUIRED",source)
+        self.assertIn('if result!="NETWORK_OK":',source)
+
     def test_installer_contains_manual_executor_and_ui(self):
         install=(ROOT/"install.sh").read_text()
         menu=(ROOT/"src/awg-menu").read_text()
@@ -29,7 +57,7 @@ class ManualSwitchContract(unittest.TestCase):
         s=SCRIPT.read_text()
         self.assertIn("if not https_ok(\"tun\"):refuse(\"PREVIOUS_TUN_NOT_PROVEN\")",s)
         self.assertIn('if ALIAS not in con.get("all",[]):refuse("XRAY_BRIDGE_NOT_IN_RUNNING_CONFIG")',s)
-        self.assertIn("XRAY_FRESH_NETWORK_PROOF_REQUIRED",s)
+        self.assertIn("XRAY_ISOLATED_HTTPS_NOT_VERIFIED",s)
         self.assertIn("systemd-run",s)
         self.assertIn("xray-manual-",s)
         self.assertNotIn("shell=True",s)
