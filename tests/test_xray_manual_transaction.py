@@ -63,6 +63,40 @@ class ManualSwitchContract(unittest.TestCase):
                 mod.inspect(3)
             c.assert_not_called()
 
+    def test_postcommit_and_native_rollback_wait_for_route_recovery(self):
+        code=SCRIPT.read_text()
+        self.assertIn("XRAY_POSTCOMMIT_SERVICE_NOT_ENABLED",code)
+        self.assertNotIn('if not https_ok("tun"):refuse("PREVIOUS_TUN_RESTORE_FAILED")',code)
+        self.assertNotIn("XRAY_POSTCOMMIT_UNVERIFIED",code)
+
+    def test_controller_restore_is_idempotent_no_put_for_selected_node(self):
+        with mock.patch.object(mod,"controller",return_value={
+             "now":"Native","all":["Native",mod.ALIAS]}), \
+             mock.patch.object(mod.urllib.request,"build_opener") as opener:
+            mod.choose("Native")
+        opener.return_value.open.assert_not_called()
+
+    def test_controller_400_requires_verified_selection(self):
+        from urllib.error import HTTPError
+        rejection=HTTPError("http://127.0.0.1:9090/proxies/AWG-MIHOMO",
+                            400,"Bad Request",{},None)
+        with mock.patch.object(mod,"controller",return_value={
+             "now":"Old","all":["Old","New"]}), \
+             mock.patch.object(mod.urllib.request,"build_opener") as opener, \
+             mock.patch.object(mod.time,"sleep"):
+            opener.return_value.open.side_effect=rejection
+            with self.assertRaisesRegex(RuntimeError,"CONTROLLER_SELECTION_NOT_CONFIRMED"):
+                mod.choose("New")
+            self.assertEqual(opener.return_value.open.call_count,3)
+
+    def test_controller_missing_target_does_not_write(self):
+        with mock.patch.object(mod,"controller",return_value={
+             "now":"Active","all":["Active"]}), \
+             mock.patch.object(mod.urllib.request,"build_opener") as opener:
+            with self.assertRaisesRegex(RuntimeError,"CONTROLLER_TARGET_NOT_AVAILABLE"):
+                mod.choose("Old")
+            opener.return_value.open.assert_not_called()
+
     def test_failed_switch_restores_native_and_policy(self):
         with tempfile.TemporaryDirectory() as d:
             p=Path(d);snap=p/"snapshot";snap.mkdir()
@@ -82,6 +116,7 @@ class ManualSwitchContract(unittest.TestCase):
                  mock.patch.object(mod,"cmd",side_effect=fake_cmd), \
                  mock.patch.object(mod,"choose") as choose, \
                  mock.patch.object(mod,"https_ok",return_value=True), \
+                 mock.patch.object(mod,"native_tun_proof"), \
                  mock.patch.object(mod,"prove_local_xray"), \
                  mock.patch.object(mod,"invariant"):
                 mod.restore(snap,{"previous":"Native","previous_xray":False,

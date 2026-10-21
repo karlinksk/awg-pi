@@ -110,6 +110,31 @@ class UnifiedPicker(unittest.TestCase):
         self.assertIn('independent Xray OpenAI network gate remains valid',menu)
         self.assertIn('Reality VLESS may be unusable',menu)
 
+    def test_stale_xray_proof_auto_refresh_is_bounded(self):
+        code=(ROOT/"src/awg-menu").read_text()
+        self.assertIn('XRAY_MANUAL_ERROR=XRAY_FRESH_NETWORK_PROOF_REQUIRED',code)
+        self.assertIn('"$MIHOMO_UNIFIED" probe "$index"',code)
+        self.assertIn('title="Обновление доказательства Xray HTTPS"',code)
+        self.assertIn('Подписка изменилась; активная нода не переключалась.',code)
+
+    def test_direct_live_picker_and_optional_advanced_menu(self):
+        code=(ROOT/"src/awg-menu").read_text()
+        self.assertIn('mihomo_pool_pick live "Точка выхода Mihomo / Xray"',code)
+        self.assertIn('доступны отдельным пунктом списка." direct',code)
+        self.assertIn('if [[ "$direct" == yes && "$target" == live ]]',code)
+        self.assertIn('items+=("__advanced__"',code)
+        self.assertIn('__advanced__) return 42',code)
+        self.assertIn('if (( pick_rc == 42 ))',code)
+
+    def test_menu_distinguishes_server_address_from_egress(self):
+        menu=(ROOT/"src/awg-menu").read_text()
+        self.assertIn('сервер: $endpoint (НЕ IP выхода)',menu)
+        self.assertIn('"$MIHOMO_UNIFIED" probe "$index"',menu)
+        self.assertNotIn('confirm "Проверить Xray VLESS"',menu)
+        self.assertIn("mihomo_live_egress_ip()",menu)
+        self.assertIn("--interface mihomo0",menu)
+        self.assertIn("Публичный IP выхода через mihomo0",menu)
+
     def test_not_installed_into_auto_selection(self):
         source=PICKER.read_text()
         for word in ("systemctl", "node select-auto", "awg-transit-routing",

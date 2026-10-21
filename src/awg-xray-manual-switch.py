@@ -18,6 +18,7 @@ import subprocess
 import sys
 import time
 import urllib.request
+import urllib.error
 import yaml
 
 ROOT=Path("/var/backups/awg-gateway")
@@ -65,13 +66,37 @@ def controller():
         return json.load(response)
 
 def choose(node):
+    """Idempotent, bounded controller selection with a verified final state.
+
+    A recovery watchdog must not repeat PUT if the previous node is already
+    selected. Some controllers reject redundant PUT requests with HTTP 400.
+    """
     opener=urllib.request.build_opener(urllib.request.ProxyHandler({}))
-    req=urllib.request.Request("http://127.0.0.1:9090/proxies/AWG-MIHOMO",
-        data=json.dumps({"name":node}).encode(),method="PUT",
-        headers={"Content-Type":"application/json"})
-    with opener.open(req,timeout=5) as resp:
-        if resp.status not in (200,204):refuse("CONTROLLER_REJECTED")
-    if controller().get("now")!=node:refuse("CONTROLLER_SELECTION_MISMATCH")
+    for attempt in range(3):
+        group=controller()
+        if group.get("now")==node:
+            return
+        if node not in group.get("all",[]):
+            refuse("CONTROLLER_TARGET_NOT_AVAILABLE")
+        req=urllib.request.Request("http://127.0.0.1:9090/proxies/AWG-MIHOMO",
+            data=json.dumps({"name":node}).encode(),method="PUT",
+            headers={"Content-Type":"application/json"})
+        try:
+            with opener.open(req,timeout=5) as response:
+                if response.status not in (200,204):
+                    refuse("CONTROLLER_SELECTION_REJECTED")
+        except urllib.error.HTTPError as exc:
+            # Never treat an HTTP error as success without rereading now.
+            if exc.code not in (400,409,503):
+                refuse("CONTROLLER_SELECTION_REJECTED")
+        try:
+            if controller().get("now")==node:
+                return
+        except (OSError,ValueError,TimeoutError):
+            pass
+        if attempt<2:
+            time.sleep(.5)
+    refuse("CONTROLLER_SELECTION_NOT_CONFIRMED")
 
 def https_ok(via):
     env={k:v for k,v in os.environ.items() if k.lower() not in
@@ -560,7 +585,8 @@ def restore(path,state):
         prove_previous_tun()
     else:
         choose(previous)
-        if not https_ok("tun"):refuse("PREVIOUS_TUN_RESTORE_FAILED")
+        # Routes can lag after restoring the incumbent node.
+        native_tun_proof()
     for name,target in (("selected.prev",SELECTED),("boot.prev",BOOT),
                         ("current.prev",CURRENT),("policy.prev",POLICY),
                         ("order.prev",ORDER)):
@@ -626,8 +652,8 @@ def apply(index):
                 refuse("PROVIDER_CHANGED")
             checkpoint(path,state,"SWITCH_TUN")
             choose(ALIAS)
-            if not https_ok("tun") or not routing_ok():
-                refuse("XRAY_TUN_OR_ROUTES_UNVERIFIED")
+            # The SOCKS listener is proven; allow bounded TUN route recovery.
+            native_tun_proof()
             invariant()
             if source_node(index)[1:]!=(info["sha"],info["fingerprint"]):
                 refuse("PROVIDER_CHANGED_BEFORE_COMMIT")
@@ -641,8 +667,9 @@ def apply(index):
             cmd("systemctl","daemon-reload")
             cmd("systemctl","enable",XRAY)
             checkpoint(path,state,"POSTCOMMIT_TUN")
-            if not unit_enabled(XRAY) or not https_ok("tun") or not routing_ok():
-                refuse("XRAY_POSTCOMMIT_UNVERIFIED")
+            if not unit_enabled(XRAY):
+                refuse("XRAY_POSTCOMMIT_SERVICE_NOT_ENABLED")
+            native_tun_proof()
             if source_node(index)[1:]!=(info["sha"],info["fingerprint"]):
                 refuse("PROVIDER_CHANGED_AFTER_TUN_POSTCHECK")
             stored(path,state,"committed")
