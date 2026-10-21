@@ -231,3 +231,23 @@ transport activation, rollback, or installer dependency changes.
 The revision is not installed on the test Pi yet because remote sudo expired.
 CI and live visual acceptance are pending. Do not mark merged/released or
 LAN/failover/reboot PASS.
+
+
+### SSH compact node layout installed on test Pi — 2026-10-21
+
+Draft PR #150 code from commit 3a9ae4b3ee93298ec9f4b9c7d941c72777152f5e
+installed on test Pi, three UI-only files with root-owned pre-change
+backup at /var/backups/awg-gateway/node-display-20261021.* .
+Installed exact Git blobs: menu 8918ff0b076417b232ec91a2217171c0b9a479f5,
+picker 1865096fb76ebf65727a91a46d4dbc7e3a6e56d6, results view
+b8cdf2852d78393b69a36181e44920b5f09ce0c9.
+GitHub CI run 39624669182: awg-v31 SUCCESS, shell SUCCESS.
+Test Pi regression: 775 Python tests PASS, 2 hardware-only skipped;
+test-menu and bash syntax PASS. Read-only provider inspection:
+13 profiles, 4 VLESS/xHTTP, 2 VLESS/gRPC, 7 HY2;
+6 Xray HTTPS checks and 7 Mihomo pool tests OK.
+Active transport unchanged Mihomo healthy, Xray service inactive,
+Pi TUN OpenAI HTTPS HTTP401/curl0, SSH and DNS active.
+Not a visual user-accepted TUI or a live Xray TUN/LAN PASS.
+No manual Xray switching, LAN, failover, reboot tested in this change.
+PR #150 draft; not merged/released. Continue v1.3.0 hardware release gate.
