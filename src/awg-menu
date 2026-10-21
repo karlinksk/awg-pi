@@ -934,10 +934,17 @@ select_tsv_node_dialog(){
       description="$type | $endpoint"
       [[ -z "$country" || "$country" == "??" ]] || description="$description | страна выхода: $country"
       [[ -z "$delay" || "$delay" == "-" ]] || description="$description | $delay"
-      [[ "$health" == XRAY_HTTPS ]] && description="$description | Xray: HTTPS OK (не TUN)"
+      case "$health" in
+        XRAY_HTTPS) description="$description | Xray: HTTPS OK (не TUN)" ;;
+        XRAY_UNTESTED) description="$description | Xray: ещё не проверен" ;;
+        XRAY_NETWORK_FAIL) description="$description | Xray: ошибка сети" ;;
+        XRAY_UNKNOWN_HTTP) description="$description | Xray: HTTP не подтверждён" ;;
+        XRAY_UNKNOWN_ERROR) description="$description | Xray: ошибка проверки" ;;
+        XRAY_UNAVAILABLE) description="$description | Xray: движок недоступен" ;;
+      esac
       [[ "$health" == DEAD ]] && description="$description | НЕДОСТУПЕН"
       [[ "$duplicate" == DUPLICATE ]] && description="$description | ДУБЛИКАТ ИМЕНИ"
-      items+=("$ui_idx" "$display_name — $description" "Mihomo: применить; Xray: подготовить профиль без переключения TUN.")
+      items+=("$ui_idx" "$display_name — $description" "Mihomo: применить; Xray: статус HTTPS отдельно, ручное переключение TUN пока запрещено.")
     done <<<"$filtered"
     search_prompt="$prompt\n\nПоказано: $count из $total"
     [[ -z "$query" ]] || search_prompt="$search_prompt | поиск: $query"
@@ -1063,7 +1070,7 @@ mihomo_pool_pick(){
     protocol_label="$(mihomo_protocol_label "$protocol")"
     choice="$(dialog --backtitle "$BACKTITLE" --title "$dialog_title" --item-help --menu \
       "Mihomo: проверка узла. Xray VLESS: изолированный OpenAI HTTPS, НЕ READY/TUN/LAN. Выбор Xray сначала только подготавливает профиль." 26 114 12 \
-      1 "Выбрать узел Mihomo / Xray [$region_label]" "Показать работающие Mihomo и Xray с HTTPS OK; Xray не переключает живой TUN." \
+      1 "Выбрать узел Mihomo / Xray [$region_label]" "Показать Mihomo и все Xray из подписки, включая ещё не проверенные. Xray не переключает живой TUN." \
       2 "Фильтр: Только Европа [$region_label]" "Для Xray страна без независимого GeoIP не подтверждена — такие ноды скрыты этим фильтром." \
       3 "Протокол [$protocol_label]" "Фильтр выбора: все, VLESS, Trojan, HY2, SS, VMess. Mihomo pool и отдельная Xray HTTPS-проверка независимы." \
       4 "Обновить проверку сейчас" "Проверить Mihomo; на live дополнительно Xray VLESS HTTPS в RAM. Рабочий VPN не переключается." \
@@ -1095,7 +1102,7 @@ mihomo_pool_pick(){
         fi
         rm -f "$node_json"
         [[ -n "$listing" ]] || {
-          msg "$dialog_title" "Нет работоспособных узлов, подходящих под текущие фильтры. Обновите проверку или измените фильтр региона/протокола."
+          msg "$dialog_title" "Нет подходящих узлов. Проверьте подписку и фильтры региона/протокола."
           continue
         }
         node="$(select_tsv_node_dialog "$dialog_title" "$prompt" "$listing")" || continue
@@ -1233,7 +1240,11 @@ mihomo_node_menu(){
     proof="$(sed -n 's/^NODE_BASIC_NETWORK=//p' <<<"$resolver" | head -n1)"
     index="$(sed -n 's/^NODE_INDEX=//p' <<<"$resolver" | head -n1)"
     if [[ "$proof" != NETWORK_OK || ! "$index" =~ ^[0-9]+$ ]]; then
-      msg "Xray VLESS" "Профиль изменился или HTTPS-доказательство устарело. Рабочая нода не изменена."
+      msg "Xray VLESS" "Узел есть в подписке, но HTTPS-проверка пока не подтверждена. Можно запустить изолированную проверку без изменения текущего VPN."
+      if [[ "$index" =~ ^[0-9]+$ ]] && confirm "Проверить Xray VLESS" "Запустить изолированную HTTPS-проверку выбранной Xray-ноды? Трафик клиентов и активная нода не меняются."; then
+        title="Проверка Xray VLESS"
+        capture "$MIHOMO_UNIFIED" probe "$index" || true
+      fi
       return 0
     fi
     if systemctl is-active --quiet awg-xray-vless.service; then
