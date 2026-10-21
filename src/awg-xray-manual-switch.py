@@ -236,6 +236,109 @@ def inspect(index):
             "previous_xray":previous==ALIAS,
             "already_selected":same_xray,"xray_enabled":unit_enabled(XRAY)}
 
+def inspect_native(name):
+    """An already-loaded native Mihomo choice, with active Xray as rollback."""
+    if os.geteuid()!=0:refuse("ROOT_REQUIRED")
+    if not isinstance(name,str) or not 1<=len(name)<=240 or (
+       "\\n" in name or "\\r" in name or "\\x00" in name):
+        refuse("INVALID_NATIVE_NAME")
+    invariant()
+    con=controller()
+    if con.get("now")!=ALIAS or not unit_active(XRAY):
+        refuse("XRAY_NOT_ACTIVE")
+    if name==ALIAS or name not in con.get("all",[]):
+        refuse("NATIVE_NOT_LOADED_IN_MIHOMO")
+    # A native profile must already be fully configured by the ordinary
+    # installer/selector. Do not rewrite provider/filter while Xray is live.
+    configured=read(CURRENT)
+    if configured is None or configured.decode("utf-8","replace").strip()!=name:
+        refuse("NATIVE_CONFIG_NOT_PREPARED")
+    raw=PROVIDER.read_bytes()
+    if not raw or len(raw)>8*1024*1024:refuse("INVALID_PROVIDER_SIZE")
+    parsed=yaml.safe_load(raw)
+    rows=parsed.get("proxies",[]) if isinstance(parsed,dict) else []
+    if sum(isinstance(p,dict) and p.get("name")==name for p in rows)!=1:
+        refuse("NATIVE_PROFILE_NOT_UNIQUE")
+    chosen=read(SELECTED)
+    if chosen is None:refuse("PREVIOUS_XRAY_PROFILE_MISSING")
+    try: digest=json.loads(chosen).get("sha256")
+    except (ValueError,UnicodeError):refuse("PREVIOUS_XRAY_PROFILE_INVALID")
+    if not isinstance(digest,str) or not re.fullmatch(r"[0-9a-f]{64}",digest):
+        refuse("PREVIOUS_XRAY_PROFILE_INVALID")
+    if BOOT.is_symlink() or (BOOT.exists() and
+       b"AWG_XRAY_MANUAL=1" not in BOOT.read_bytes()):
+        refuse("FOREIGN_BOOT_DEPENDENCY")
+    if not https_ok("tun"):refuse("PREVIOUS_TUN_NOT_PROVEN")
+    return {"previous":ALIAS,"previous_xray":True,"xray_enabled":unit_enabled(XRAY),
+            "candidate":name,"sha":hashlib.sha256(raw).hexdigest(),
+            "fingerprint":digest,"operation":"NATIVE_RETURN"}
+
+def native_return(name):
+    """Guarded controller switch back to already-configured Mihomo native.
+
+    Never pass through node select-auto while Xray owns the TUN: that helper
+    reconfigures metadata/restarts Mihomo and can leave the Xray alias selected.
+    """
+    if os.geteuid()!=0:refuse("ROOT_REQUIRED")
+    with LOCK.open("a") as lock:
+        fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
+        info=inspect_native(name)
+        path,state=save_snap(info)
+        timer=state["watchdog"]+".timer"
+        try:
+            cmd("systemd-run","--unit="+state["watchdog"],
+                "--on-active="+str(WATCH_SECONDS)+"s",str(SWITCH),
+                "watchdog",str(path))
+            if not unit_active(timer):refuse("WATCHDOG_NOT_ARMED")
+            stored(path,state,"armed")
+            checkpoint(path,state,"NATIVE_VERIFY")
+            if inspect_native(name)["sha"]!=info["sha"]:
+                refuse("PROVIDER_CHANGED")
+            checkpoint(path,state,"NATIVE_CONTROLLER_SELECT")
+            choose(name)
+            checkpoint(path,state,"NATIVE_TUN_CHECK")
+            if not https_ok("tun") or not routing_ok():
+                refuse("NATIVE_TUN_OR_ROUTES_UNVERIFIED")
+            invariant()
+            if hashlib.sha256(PROVIDER.read_bytes()).hexdigest()!=info["sha"]:
+                refuse("PROVIDER_CHANGED_BEFORE_COMMIT")
+            # Only after live native TUN success detach the old Xray sidecar.
+            checkpoint(path,state,"NATIVE_COMMIT")
+            atomic(CURRENT,(name+"\\n").encode())
+            BOOT.unlink(missing_ok=True)
+            SELECTED.unlink(missing_ok=True)
+            cmd("systemctl","daemon-reload")
+            cmd("systemctl","stop",XRAY)
+            cmd("systemctl","disable",XRAY)
+            checkpoint(path,state,"NATIVE_POSTCOMMIT_CHECK")
+            if controller().get("now")!=name or unit_active(XRAY) or (
+               unit_enabled(XRAY)) or not https_ok("tun") or not routing_ok():
+                refuse("NATIVE_POSTCOMMIT_UNVERIFIED")
+            invariant()
+            stored(path,state,"committed")
+            cmd("systemctl","stop",timer)
+            print("NATIVE_RETURN_TUN=VERIFIED")
+            print("ACTIVE_EXIT=MIHOMO_NATIVE")
+            print("MIHOMO_NODE_POLICY=UNCHANGED")
+            print("NATIVE_RETURN_REBOOT=NOT_TESTED")
+        except Exception as exc:
+            state["failure_code"]=stable_error_code(exc)
+            state["failed_at"]=state.get("checkpoint","NOT_STARTED")
+            try:checkpoint(path,state,"ROLLBACK_ATTEMPT")
+            except Exception:pass
+            try:
+                restore(path,state)
+                checkpoint(path,state,"ROLLBACK_COMPLETE")
+                stored(path,state,"rolled_back")
+            except Exception as rollback_exc:
+                state["rollback_failure_code"]=stable_error_code(rollback_exc)
+                try:checkpoint(path,state,"WATCHDOG_RECOVERY_PENDING")
+                except Exception:pass
+                raise RuntimeError("XRAY_MANUAL_ROLLBACK_UNCONFIRMED")
+            try:cmd("systemctl","stop",timer)
+            except Exception:pass
+            raise
+
 def save_snap(info):
     ROOT.mkdir(mode=0o700,parents=True,exist_ok=True)
     path=ROOT/("xray-manual-"+str(int(time.time()))+"-"+str(os.getpid()))
@@ -400,6 +503,13 @@ def last_failure():
         print("XRAY_MANUAL_"+key.upper()+"="+safe)
 
 def main():
+    if len(sys.argv)==3 and sys.argv[1] in ("native-preview","native-apply"):
+        if sys.argv[1]=="native-preview":
+            inspect_native(sys.argv[2])
+            print("NATIVE_RETURN_PREFLIGHT=PASS")
+            print("NATIVE_RETURN_TUN=NOT_TESTED")
+        else:native_return(sys.argv[2])
+        return
     if len(sys.argv)==2 and sys.argv[1]=="diagnose":
         last_failure();return
     if len(sys.argv)==3 and sys.argv[1]=="watchdog":
