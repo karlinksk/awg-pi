@@ -116,6 +116,22 @@ class DynamicNodesTests(unittest.TestCase):
         self.publish([self.vless,{**self.vlessb,"name":self.vless["name"]}])
         rows,_=self.get_rows()
         self.assertEqual([r["basic_network"] for r in rows],["UNUSABLE_DUPLICATE_OR_MISSING_NAME"]*2)
+    def test_last_all_dead_scan_is_visible_without_destroying_lkg(self):
+        # Recovery retains the previous good pool; UI must not keep showing
+        # OK once a newer, actually completed two-pass scan confirmed FAIL.
+        before=json.loads(self.m.MIHOMO_POOL.read_text())
+        before["scanned_at"]=time.time()-2
+        self.m.MIHOMO_POOL.write_text(json.dumps(before))
+        after={**before,"scanned_at":time.time(),
+               "nodes":[{**row,"healthy":False} for row in before["nodes"]]}
+        self.m.MIHOMO_POOL.with_name("live-lastscan.json").write_text(json.dumps(after))
+        rows,_=self.get_rows()
+        self.assertEqual(rows[2]["basic_network"],"NETWORK_FAIL")
+        self.assertTrue(json.loads(self.m.MIHOMO_POOL.read_text())["nodes"][2]["healthy"])
+        self.publish([self.hy2,self.vlessb])
+        rows,_=self.get_rows()
+        self.assertEqual(rows[0]["basic_network"],"NETWORK_OK")
+
     def test_stale_scan_is_not_healthy(self):
         payload=json.loads(self.m.MIHOMO_POOL.read_text())
         payload["scanned_at"]=time.time()-4000
@@ -164,6 +180,47 @@ class DynamicNodesTests(unittest.TestCase):
         with mock.patch.object(sys,"argv",["unified-nodes","probe-vless-all"]),             mock.patch.object(self.m.os,"geteuid",return_value=0),             contextlib.redirect_stdout(io.StringIO()):
             self.m.command()
         self.assertEqual(len(successes),27)
+
+    def test_xray_single_timeout_is_rechecked_before_fail(self):
+        import contextlib,io,sys
+        self.m.isolated_probe=mock.Mock(side_effect=["NETWORK_FAIL","NETWORK_OK"])
+        with mock.patch.object(sys,"argv",["unified-nodes","probe","1"]),\
+             mock.patch.object(self.m.os,"geteuid",return_value=0),\
+             mock.patch.object(self.m.time,"sleep") as delay,\
+             contextlib.redirect_stdout(io.StringIO()):
+            self.m.command()
+        delay.assert_called_once_with(15)
+        self.assertEqual(self.m.isolated_probe.call_count,2)
+        record=json.loads(self.m.CACHE.read_text())["results"][self.a.sha_profile(self.vless)]
+        self.assertEqual(record["status"],"NETWORK_OK")
+
+    def test_xray_double_timeout_is_confirmed_fail_not_cache_expiry(self):
+        import contextlib,io,sys
+        self.seed(self.vless)
+        self.m.isolated_probe=mock.Mock(return_value="NETWORK_FAIL")
+        with mock.patch.object(sys,"argv",["unified-nodes","probe","1"]),\
+             mock.patch.object(self.m.os,"geteuid",return_value=0),\
+             mock.patch.object(self.m.time,"sleep"),\
+             contextlib.redirect_stdout(io.StringIO()):
+            self.m.command()
+        record=json.loads(self.m.CACHE.read_text())["results"][self.a.sha_profile(self.vless)]
+        self.assertEqual(self.m.isolated_probe.call_count,2)
+        self.assertEqual(record["status"],"NETWORK_FAIL")
+        self.assertIn("verified_at",record)
+
+    def test_xray_ambiguous_http_does_not_override_verified_ok(self):
+        import contextlib,io,sys
+        self.seed(self.vless)
+        old=json.loads(self.m.CACHE.read_text())["results"][self.a.sha_profile(self.vless)]["at"]
+        self.m.isolated_probe=lambda adapter,node:"UNKNOWN_HTTP"
+        with mock.patch.object(sys,"argv",["unified-nodes","probe","1"]),\
+             mock.patch.object(self.m.os,"geteuid",return_value=0),\
+             contextlib.redirect_stdout(io.StringIO()):
+            self.m.command()
+        record=json.loads(self.m.CACHE.read_text())["results"][self.a.sha_profile(self.vless)]
+        self.assertEqual(record["status"],"NETWORK_OK")
+        self.assertEqual(record["verified_at"],old)
+        self.assertEqual(record["last_probe"],"UNKNOWN_HTTP")
 
     def test_provider_rotation_mid_probe_does_not_write_old_identity(self):
         import contextlib,io,sys
