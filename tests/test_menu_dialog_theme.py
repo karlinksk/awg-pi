@@ -49,6 +49,16 @@ class MenuVisualTheme(unittest.TestCase):
             self.assertIn(field,PALETTE)
         self.assertEqual(MENU.count("export DIALOGRC="),1)
 
+    def test_native_scrollbar_hidden_without_disabling_scroll(self):
+        # ncurses dialog native scrollbar draws broken glyphs at right edge
+        # in real SSH clients with wide UTF-8/cyan widgets. The status
+        # position indicator and keyboard navigation remain native.
+        self.assertIn("use_scrollbar = OFF",PALETTE)
+        self.assertNotIn("use_scrollbar = ON",PALETTE)
+        self.assertIn("position_indicator_color = title_color",PALETTE)
+        self.assertNotIn("--scrollbar",MENU)
+        self.assertIn("--item-help --menu",MENU)
+
     def test_dialog_help_for_every_menu(self):
         self.assertEqual(MENU.count("--item-help --menu"), len([line for line in MENU.splitlines() if "dialog " in line and "--menu" in line]))
         self.assertIn("if ((rows < 22 || cols < 70))",MENU)
