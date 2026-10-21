@@ -416,7 +416,6 @@ def native_return(name):
             cmd("systemctl","stop",MIHOMO)
             native_env("MIHOMO_NODE_FILTER",info["filter"])
             native_env("MIHOMO_ENDPOINT_IP",info["endpoint"])
-            native_env("MIHOMO_XRAY_VLESS_BRIDGE","auto")
             native_env("MIHOMO_EXPECTED_EGRESS_IP",None)
             atomic(MIHOMO_ENDPOINT,(info["endpoint"]+"\n").encode())
             MIHOMO_EGRESS.unlink(missing_ok=True)
