@@ -944,7 +944,7 @@ select_tsv_node_dialog(){
       esac
       [[ "$health" == DEAD ]] && description="$description | НЕДОСТУПЕН"
       [[ "$duplicate" == DUPLICATE ]] && description="$description | ДУБЛИКАТ ИМЕНИ"
-      items+=("$ui_idx" "$display_name — $description" "Mihomo: применить; Xray: статус HTTPS отдельно, ручное переключение TUN пока запрещено.")
+      items+=("$ui_idx" "$display_name — $description" "Mihomo: выбрать вручную; Xray: проверка, затем защищённое ручное переключение TUN.")
     done <<<"$filtered"
     search_prompt="$prompt\n\nПоказано: $count из $total"
     [[ -z "$query" ]] || search_prompt="$search_prompt | поиск: $query"
@@ -1055,6 +1055,7 @@ mihomo_pool_status_dialog(){
 }
 
 MIHOMO_POOL_PICKED_NODE=""
+XRAY_MANUAL_SWITCH="/usr/local/sbin/awg-xray-manual-switch"
 
 mihomo_pool_pick(){
   local target="$1" dialog_title="$2" prompt="$3" choice region region_label protocol protocol_label selected_protocol listing node node_json pick_rc
@@ -1069,8 +1070,8 @@ mihomo_pool_pick(){
     protocol="$("$MIHOMO_POOL" protocol get 2>/dev/null || echo all)"
     protocol_label="$(mihomo_protocol_label "$protocol")"
     choice="$(dialog --backtitle "$BACKTITLE" --title "$dialog_title" --item-help --menu \
-      "Mihomo: проверка узла. Xray VLESS: изолированный OpenAI HTTPS, НЕ READY/TUN/LAN. Выбор Xray сначала только подготавливает профиль." 26 114 12 \
-      1 "Выбрать узел Mihomo / Xray [$region_label]" "Показать Mihomo и все Xray из подписки, включая ещё не проверенные. Xray не переключает живой TUN." \
+      "Mihomo: проверка узла. Xray VLESS: изолированный OpenAI HTTPS, НЕ READY/TUN/LAN. Xray проверяется в фоне; переключение требует ручного подтверждения." 26 114 12 \
+      1 "Выбрать узел Mihomo / Xray [$region_label]" "Показать Mihomo и все Xray из подписки, включая ещё не проверенные. Ручное переключение Xray требует подтверждения и проверки TUN." \
       2 "Фильтр: Только Европа [$region_label]" "Для Xray страна без независимого GeoIP не подтверждена — такие ноды скрыты этим фильтром." \
       3 "Протокол [$protocol_label]" "Фильтр выбора: все, VLESS, Trojan, HY2, SS, VMess. Mihomo pool и отдельная Xray HTTPS-проверка независимы." \
       4 "Обновить проверку сейчас" "Проверить Mihomo; на live дополнительно Xray VLESS HTTPS в RAM. Рабочий VPN не переключается." \
@@ -1225,7 +1226,7 @@ select_chain_index(){
 mihomo_node_menu(){
   local node_name info_tmp current rc preview fixed_chain="" confirm_text sync_out updated_chain="" resolver engine index proof
 
-  if ! mihomo_pool_pick live "Точка выхода Mihomo / Xray" "Mihomo — штатное переключение; Xray VLESS — пока только безопасная подготовка профиля."; then
+  if ! mihomo_pool_pick live "Точка выхода Mihomo / Xray" "Mihomo — ручной выбор; Xray VLESS — проверка и защищённое ручное переключение."; then
     return 0
   fi
   node_name="$MIHOMO_POOL_PICKED_NODE"
@@ -1247,14 +1248,18 @@ mihomo_node_menu(){
       fi
       return 0
     fi
-    if systemctl is-active --quiet awg-xray-vless.service; then
-      msg "Xray VLESS" "Xray уже запущен. Не заменяем профиль активной службы без отдельной транзакции."
+    # Do not reuse AUTO's failed-incumbent transaction against a healthy node.
+    # The dedicated manual transaction must prove the current TUN, a fresh
+    # candidate and independent previous-node rollback before any mutation.
+    title="Ручной Xray — предварительная проверка"
+    if ! run_with_progress "$title" "$XRAY_MANUAL_SWITCH" preview "$index"; then
+      show_operation_result 1 "$title"
       return 0
     fi
-    confirm "Подготовка Xray VLESS" "Сохранить профиль выбранного узла Xray?\\n\\nЭто НЕ переключит живой TUN. Постоянный переход через Xray пока не допущен: автономный откат после выбора узла ещё требует испытания.\\n\\nMihomo, FIXED, DNS и MikroTik остаются прежними." || return 0
-    title="Подготовка профиля Xray"
-    if capture /usr/local/sbin/awg-xray-vless select "$index"; then
-      msg "Xray VLESS" "Профиль подготовлен. Живой трафик остаётся на прежней ноде.\\n\\nHTTPS OK означает только изолированную сетевую проверку, а не TUN/READY."
+    confirm "Переключение на Xray" "Выполнить ручное переключение рабочего VPN на выбранную Xray-ноду?\\n\\nСначала проверяется текущий TUN и резервный путь, затем Xray HTTPS, после переключения — HTTPS через mihomo0. При ошибке выполняется откат к прежней ноде под защитой независимого таймера.\\n\\nDNS, SSH и MikroTik не меняются." || return 0
+    title="Ручной переход на Xray"
+    if capture "$XRAY_MANUAL_SWITCH" apply "$index"; then
+      msg "Xray VLESS" "Ручное переключение выполнено с проверкой TUN. LAN и reboot должны проверяться отдельно."
     fi
     return 0
   fi
