@@ -559,6 +559,25 @@ class ManualSwitchContract(unittest.TestCase):
                             commands.index(("systemctl","stop",mod.MIHOMO)))
             self.assertNotIn(("/usr/local/sbin/awg-transit-routing","disable"),commands)
 
+    def test_native_tun_waits_for_selective_rule_restoration(self):
+        with mock.patch.object(mod, "routing_ok", side_effect=[False,False,True]) as routes, \
+             mock.patch.object(mod, "https_ok", return_value=True) as https, \
+             mock.patch.object(mod.time, "sleep") as pause:
+            mod.native_tun_proof()
+            self.assertEqual(routes.call_count, 3)
+            self.assertEqual(pause.call_count, 2)
+            https.assert_called_once_with("tun")
+
+    def test_native_tun_never_accepts_missing_route(self):
+        with mock.patch.object(mod, "routing_ok", return_value=False), \
+             mock.patch.object(mod.time, "monotonic", side_effect=[0,21]), \
+             mock.patch.object(mod.time, "sleep") as pause, \
+             mock.patch.object(mod, "https_ok") as https:
+            with self.assertRaisesRegex(RuntimeError,"NATIVE_ROUTING_NOT_RESTORED"):
+                mod.native_tun_proof()
+            https.assert_not_called()
+            pause.assert_not_called()
+
     def test_native_menu_dispatches_all_mihomo_from_any_engine(self):
         menu=(ROOT/"src/awg-menu").read_text()
         self.assertIn('"$XRAY_MANUAL_SWITCH" native-preview "$node_name"',menu)
