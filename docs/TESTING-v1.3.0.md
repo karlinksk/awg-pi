@@ -703,11 +703,11 @@ is implied by passing inventory unit tests.
 
 ### 2026-10-21 candidate code verification (not a release acceptance)
 
-Candidate `b7a0666` integrates Xray-core install, a bounded provider-change/periodic
+Candidate `8266bb0` integrates Xray-core install, a bounded provider-change/periodic
 background scanner, unified Mihomo/Xray catalog (including UNTESTED rows), a
 dormant localhost SOCKS5 bridge rendered with Mihomo, and an explicit guarded
-manual selection CLI. On `awg-upgrade`, **689 of 689 Python tests passed**,
-Bash syntax and unit file parsing checked. The live installed menu remained the
+manual selection CLI. On `awg-upgrade`, **693 of 693 Python tests passed**,
+Bash syntax, unit file parsing and real Mihomo binary config parsing checked. The current native/default node is preserved on clean import, and a saved Xray selection is mapped to the SOCKS alias only when the exact credential fingerprint matches; removed provider profiles never cause a dead alias to become the new default. The live installed menu remained the
 prior candidate, Xray service inactive, ssh/dnsmasq/Mihomo active. No true manual
 Mihomo→Xray→Xray→native transition, LAN-client forwarding, reboot persistence,
 Transit/Selective live failover, or clean install of this revision was run.
