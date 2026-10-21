@@ -1256,6 +1256,10 @@ mihomo_node_menu(){
       show_operation_result 1 "$title"
       return 0
     fi
+    if grep -Fxq 'XRAY_MANUAL_ALREADY_SELECTED=YES' "$TMP"; then
+      msg "Xray VLESS" "Этот Xray-профиль уже выбран, HTTPS через текущий TUN работает. Повторная остановка Xray и переключение не требуются."
+      return 0
+    fi
     confirm "Переключение на Xray" "Выполнить ручное переключение рабочего VPN на выбранную Xray-ноду?\\n\\nСначала проверяется текущий TUN и резервный путь, затем Xray HTTPS, после переключения — HTTPS через mihomo0. При ошибке выполняется откат к прежней ноде под защитой независимого таймера.\\n\\nDNS, SSH и MikroTik не меняются." || return 0
     title="Ручной переход на Xray"
     if capture "$XRAY_MANUAL_SWITCH" apply "$index"; then
