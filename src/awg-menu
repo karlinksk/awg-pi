@@ -1538,11 +1538,11 @@ mihomo_xray_auto_menu(){
   local choice status
   while true; do
     status="$("$MIHOMO_NODE_POLICY" xray-auto status 2>/dev/null || echo MIHOMO_XRAY_AUTO=unavailable)"
-    choice="$(dialog --backtitle "$BACKTITLE" --title "AUTO Mihomo / Xray" --item-help --menu \\
-      "Состояние: $status\\n\\nПри отказе Mihomo сначала проверяются его ноды, затем один свежий Xray VLESS/Reality. Далее — настроенный AWG. Selective FAIL-OPEN, Transit FAIL-CLOSED. READY/Hot Pool управляются отдельно." 24 108 6 \\
-      1 "Включить Xray в AUTO" "Требует AUTO нод, отключённого READY и настроенного резервного AWG. Без смены активного транспорта." \\
-      2 "Выключить Xray в AUTO" "Отключает будущие автоматические переходы Xray. Текущую ноду и каналы не прерывает." \\
-      3 "Показать состояние" "Показывает постоянную настройку AUTO Xray." \\
+    choice="$(dialog --backtitle "$BACKTITLE" --title "AUTO Mihomo / Xray" --item-help --menu \
+      "Состояние: $status\\n\\nПри отказе Mihomo сначала проверяются его ноды, затем один свежий Xray VLESS/Reality. Далее — настроенный AWG. Selective FAIL-OPEN, Transit FAIL-CLOSED. READY/Hot Pool управляются отдельно." 24 108 6 \
+      1 "Включить Xray в AUTO" "Требует AUTO нод, отключённого READY и настроенного резервного AWG. Без смены активного транспорта." \
+      2 "Выключить Xray в AUTO" "Отключает будущие автоматические переходы Xray. Текущую ноду и каналы не прерывает." \
+      3 "Показать состояние" "Показывает постоянную настройку AUTO Xray." \
       0 "Назад" "Сохранить настройки." 3>&1 1>&2 2>&3)" || return 0
     case "$choice" in
       1)
