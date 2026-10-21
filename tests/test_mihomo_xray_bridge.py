@@ -76,6 +76,20 @@ class TestXrayConfig(unittest.TestCase):
   self.assertNotIn("proxies",d)
   self.assertEqual(d["proxy-groups"][0]["use"],["subscription"])
 
+ def test_real_mihomo_accepts_config_with_safe_default(self):
+  core=Path("/usr/local/bin/mihomo")
+  if not core.is_file():self.skipTest("Pinned Mihomo not present on this test system")
+  env={**self.env}
+  env.pop("MIHOMO_XRAY_VLESS_BRIDGE",None)
+  rendered=subprocess.run(["bash",str(CONFIG)],capture_output=True,text=True,env=env,timeout=6)
+  self.assertEqual(rendered.returncode,0,rendered.stderr)
+  config=self.root/"xray-dormant.yaml"
+  config.write_text(rendered.stdout)
+  check=subprocess.run([str(core),"-t","-d",str(self.root),"-f",str(config)],
+      capture_output=True,text=True,timeout=25)
+  self.assertEqual(check.returncode,0,check.stderr[-500:])
+  self.assertEqual(yaml.safe_load(rendered.stdout)["proxy-groups"][0]["default-selected"],"LIVE-NODE")
+
  def test_explicit_optin_bridge(self):
   r=self.config("1")
   self.assertEqual(r.returncode,0,r.stderr)
