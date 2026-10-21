@@ -87,16 +87,27 @@ _provider_path_yaml="$(yaml_sq "$MIHOMO_PROVIDER_FILE")"
 _node_filter_yaml="$(yaml_sq "$MIHOMO_NODE_FILTER")"
 _health_url_yaml="$(yaml_sq "$MIHOMO_PROVIDER_HEALTH_URL")"
 case "$MIHOMO_XRAY_VLESS_BRIDGE" in
-  0) _xray_proxy_yaml="" ; _xray_group_yaml="" ;;
+  0) _bridge_ready=0 ;;
   auto)
-    if [[ -x "$MIHOMO_XRAY_CORE" ]]; then
-      _xray_proxy_yaml=
-    _xray_proxy_yaml=$'proxies:\n  - name: AWG-XRAY-VLESS-LOCAL\n    type: socks5\n    server: 127.0.0.1\n    port: 17892\n    udp: false'
-    _xray_group_yaml=$'    proxies:\n      - AWG-XRAY-VLESS-LOCAL'
+    # No Xray profile required: this is an INACTIVE local SOCKS alias.
+    if [[ -x "$MIHOMO_XRAY_CORE" ]]; then _bridge_ready=1
+    else _bridge_ready=0; fi
     ;;
-  *) echo "MIHOMO_XRAY_VLESS_BRIDGE must be 0 or 1" >&2; exit 2 ;;
+  1)
+    [[ -r "$MIHOMO_XRAY_SELECTED" && -x "$MIHOMO_XRAY_CORE" ]] || {
+      echo "Xray bridge selected but helper/core not installed" >&2
+      exit 2
+    }
+    _bridge_ready=1
+    ;;
+  *) echo "MIHOMO_XRAY_VLESS_BRIDGE must be 0, 1 or auto" >&2; exit 2 ;;
 esac
-
+_xray_proxy_yaml=""
+_xray_group_yaml=""
+if (( _bridge_ready )); then
+  _xray_proxy_yaml=$'proxies:\n  - name: AWG-XRAY-VLESS-LOCAL\n    type: socks5\n    server: 127.0.0.1\n    port: 17892\n    udp: false'
+  _xray_group_yaml=$'    proxies:\n      - AWG-XRAY-VLESS-LOCAL'
+fi
 
 cat <<YAML
 mixed-port: $MIHOMO_MIXED_PORT
