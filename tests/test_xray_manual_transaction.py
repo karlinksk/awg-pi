@@ -195,6 +195,51 @@ class ManualSwitchContract(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError,"XRAY_SERVICE_EXITED_DURING_HTTPS"):
                 mod.prove_local_xray()
 
+
+    def test_exact_current_xray_identity_is_recognized_only_by_fingerprint(self):
+        with tempfile.TemporaryDirectory() as d:
+            p=Path(d)
+            selected=p/"selected.json"
+            selected.write_text('{"sha256":"exact-transport-identity"}')
+            with mock.patch.multiple(mod,SELECTED=selected,
+                    BOOT=p/"absent-unit.conf"), \
+                 mock.patch.object(mod.os,"geteuid",return_value=0), \
+                 mock.patch.object(mod,"source_node",
+                                   return_value=("Xray", "provider","exact-transport-identity")), \
+                 mock.patch.object(mod,"invariant"), \
+                 mock.patch.object(mod,"controller",
+                                   return_value={"now":mod.ALIAS,"all":[mod.ALIAS]}), \
+                 mock.patch.object(mod,"unit_active",return_value=True), \
+                 mock.patch.object(mod,"unit_enabled",return_value=True), \
+                 mock.patch.object(mod,"https_ok",return_value=True):
+                same=mod.inspect(1)
+                self.assertTrue(same["already_selected"])
+                with mock.patch.object(mod,"source_node",
+                        return_value=("OtherXray","provider","different-identity")):
+                    different=mod.inspect(2)
+                    self.assertFalse(different["already_selected"])
+
+    def test_already_active_xray_does_not_arm_watchdog_or_stop_live_service(self):
+        with tempfile.TemporaryDirectory() as d:
+            p=Path(d)
+            info={"already_selected":True,"previous":mod.ALIAS,
+                  "previous_xray":True,"index":1}
+            with mock.patch.multiple(mod,LOCK=p/"lock"), \
+                 mock.patch.object(mod.os,"geteuid",return_value=0), \
+                 mock.patch.object(mod,"inspect",return_value=info), \
+                 mock.patch.object(mod,"save_snap") as snapshot, \
+                 mock.patch.object(mod,"cmd") as command, \
+                 mock.patch.object(mod,"choose") as controller:
+                mod.apply(1)
+                snapshot.assert_not_called()
+                command.assert_not_called()
+                controller.assert_not_called()
+
+    def test_menu_avoids_restarting_already_selected_xray(self):
+        menu=(ROOT/"src/awg-menu").read_text()
+        self.assertIn("grep -Fxq 'XRAY_MANUAL_ALREADY_SELECTED=YES' \"$TMP\"",menu)
+        self.assertIn('Повторная остановка Xray и переключение не требуются',menu)
+
     def test_prearm_error_never_stages_candidate(self):
         with tempfile.TemporaryDirectory() as d:
             p=Path(d)
