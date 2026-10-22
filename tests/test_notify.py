@@ -120,6 +120,31 @@ class NotifyTests(unittest.TestCase):
             self.assertEqual(mod.curl_api("12345678:" + "A"*35, {"text":"x"}, "eth0"),
                              (False, 429, 95))
 
+    def test_passive_selected_transport_outage_and_recovery(self):
+        with mock.patch.object(mod, "SECRET_PATH", self.secret):
+            bad = lambda value: False
+            good = lambda value: True
+            self.assertEqual(mod.observe_transport(self.db, "awg", bad), "suspect")
+            self.assertEqual(mod.observe_transport(self.db, "awg", bad), "down")
+            self.assertEqual(mod.observe_transport(self.db, "awg", bad), "down")
+            self.assertEqual(mod.observe_transport(self.db, "awg", good), "up")
+        events = [row[0] for row in self.db.execute("SELECT kind FROM events ORDER BY id")]
+        self.assertEqual(events, ["VPN_LOST", "VPN_RESTORED"])
+
+    def test_passive_watch_skips_unconfigured(self):
+        with mock.patch.object(mod, "SECRET_PATH", self.secret):
+            self.assertEqual(mod.observe_transport(self.db, "unconfigured", lambda x: False),
+                             "unconfigured")
+        self.assertEqual(self.db.execute("SELECT count(*) FROM events").fetchone()[0], 0)
+
+    def test_passive_watch_resets_failures_on_backend_change(self):
+        with mock.patch.object(mod, "SECRET_PATH", self.secret):
+            self.assertEqual(mod.observe_transport(self.db, "mihomo", lambda x: False),
+                             "suspect")
+            self.assertEqual(mod.observe_transport(self.db, "awg", lambda x: False),
+                             "suspect")
+        self.assertEqual(self.db.execute("SELECT count(*) FROM events").fetchone()[0], 0)
+
     def test_daily_report_once_per_day_without_credentials_leak(self):
         with mock.patch.object(mod, "SECRET_PATH", self.secret), \
              mock.patch.object(mod, "daily_snapshot", return_value="Состояние: норма"), \
