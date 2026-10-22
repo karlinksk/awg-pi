@@ -8,10 +8,13 @@ DNS, nftables, MikroTik configuration or the safety of SSH/SSTP.
 
 - `mihomo0`: bound IPv4 HTTPS connection through Mihomo TUN.
 - `awg0`: bound IPv4 HTTPS connection through AmneziaWG.
-- `eth0`: sent to the LAN router (MikroTik). **This is not proof of SSTP.**
-  RouterOS must already route Telegram Bot API destinations via SSTP for this
-  path to be SSTP-backed. AWG Notify does not add router policies, and does not
-  report SSTP as verified without an independent RouterOS check.
+- `eth0`: **disabled by default**. It can reach the LAN router (MikroTik),
+  but is NOT proof of SSTP, and RouterOS might send it DIRECT if SSTP fails.
+  The fallback is used only when a root-owned (0600) file
+  `/etc/awg-pbr/notify/router-sstp-approved` has the exact content
+  `SSTP_VERIFIED_FAIL_CLOSED=1`. That attestation is permitted only after
+  actual RouterOS SSTP-UP and SSTP-DOWN route/egress acceptance; never create
+  it based on IP reachability alone. The notifier does not change RouterOS.
 - Selection tries the currently configured transport first, then other paths.
   It does not edit the route or mark a LAN/client packet. If no path can reach
   Telegram, the message remains queued for a later retry.
@@ -24,7 +27,10 @@ Do not infer SSTP simply from an HTTPS 200 response via eth0.
 ## Configuration and secrets
 
 Create a bot using Telegram BotFather and send `/start` to your bot.
-Obtain the numeric private chat ID. The bot token must never appear in a
+The interactive `configure` command accepts an existing numeric chat ID, or
+press Enter to use safer one-time private pairing: it prints `/pair <random>`,
+which you send in the bot's private chat, and then press Enter to fetch the
+message. The token is not persisted until the matching private chat is found. The bot token must never appear in a
 command-line argument, GitHub, log or shared diagnostic output.
 
 Commands (after installer deployment; requires root):
@@ -60,7 +66,7 @@ be called PASS. Only a received message is end-to-end verification.
 The installer stages both the delivery timer and the local 09:00 daily
 snapshot timer **disabled**. After operator setup, use
 `awg-menu → Системные функции → Telegram — уведомления`.
-Configure the token and numeric chat ID directly on the Pi, send a test,
+Configure the token and private chat directly on the Pi, send a test,
 confirm it actually arrived, then enable message delivery and optionally
 daily reports. Daily reports use the Pi's local timezone (currently set on
 the test stand to Asia/Novosibirsk); the report reads thermal, disk, RAM,
@@ -73,7 +79,15 @@ received it. Real confirmation requires the human recipient.
 
 ## Testing and current status
 
-Isolated rootless contract tests (including daily/menu): `python3 -m unittest discover -s tests
--p test_notify.py -v`. Pending: real Bot API send, real MikroTik SSTP egress
-proof, rollback, failover/boot/LAN impact, installer fresh-install and upgrade.
+Isolated rootless contract tests (including daily/menu/pairing): `python3 -m unittest discover -s tests -p 'test_notify*.py' -v`.
+To stage **only** AWG Notify on the isolated test Pi (not full installer),
+copy the branch's `src/`, `units/`, `tests/`, `install.sh`, and `scripts/`
+into a disposable fixture, then run as root `scripts/awg-notify-test-install.sh`.
+This script refuses to overwrite installed AWG Notify units, verifies tests,
+installs the tool and FOUR passive systemd units, verifies those units, and
+leaves both timers disabled. If deployment fails, newly written files are
+removed and daemon-reload is repeated. It never restarts a VPN.
+
+Pending: real Bot API send, live installed-unit check, real MikroTik SSTP
+proof, full installer clean-install and upgrade, real failover/boot/LAN checks.
 Do not enable on production before gates are closed.
