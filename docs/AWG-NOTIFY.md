@@ -90,6 +90,36 @@ The automatic delivery timer sends at most two queued messages per run;
 remaining items wait for the next run. A queued event does not mean Telegram
 received it. Real confirmation requires the human recipient.
 
+## Per-event switches in the Telegram menu
+
+`awg-menu → Системные функции → Telegram → Типы уведомлений [галочки]`
+opens a six-item checklist. Space toggles one kind, **ОК** commits, and
+**Отмена** discards. The six controls are: `VPN_LOST`, `VPN_RESTORED`,
+`BOOT`, `DAILY_REPORT`, `NODE_SWITCH`, `TRANSPORT_SWITCH`
+(the last also covers `TRANSPORT_FAILOVER`). Existing installations
+without a preferences file retain the four formerly working alerts
+(lost, restored, boot, daily); node/transport events default OFF until
+operators opt in. On a clean install, *all* Telegram timers remain disabled
+until the bot is configured and the operator activates them.
+
+The preferences are atomically written to root-owned
+`/etc/awg-pbr/notify/events-policy.json` (mode 0600). Only the
+enabled-category booleans are stored; **not** credentials, profile URLs
+or message text. Suppressed events are not enqueued; already queued events
+are never deleted by changing switches. Existing systemd timer enablement
+is left untouched by this action: scheduling/delivery are independent
+from event-category filtering. The source-only node/transport producer
+hooks from this draft must be installed and tested before those two switches
+can cause real automatic messages. The UI identifies this limitation.
+
+The local root CLI also exposes `awg-notify status` (showing
+`NOTIFY_PREF_*=on/off`) and
+`awg-notify preferences-set --enabled VPN_LOST,VPN_RESTORED,BOOT`
+for controlled configuration. Empty `--enabled ''` switches all
+six off. `TEST` remains available for a manual delivery test, while
+`SYSTEM_WARNING`, subscription and pool event types remain outside
+this six-switch UI until their producers are implemented/verified.
+
 ## Watch service AF_NETLINK sandbox issue (2026-10-22)
 
 The optional `awg-notify-watch.service` runs `awg-transport check`, which
