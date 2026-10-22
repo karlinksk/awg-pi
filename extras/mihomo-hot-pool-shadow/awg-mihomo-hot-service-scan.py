@@ -25,6 +25,7 @@ import time
 import urllib.error
 
 SMART = Path('/usr/local/sbin/awg-mihomo-smart')
+LIVE_PROVIDER = Path('/var/lib/awg-pbr/mihomo/providers/subscription.yaml')
 CONNECT_BUDGET_SECONDS = 22
 CONNECT_ATTEMPTS = 4
 CONNECT_PAUSE_SECONDS = 1
@@ -197,6 +198,20 @@ def load_smart():
     return obj
 
 
+def live_guard_profiles(helper, provider: Path = LIVE_PROVIDER) -> list[dict]:
+    """Resolve live identity from canonical provider, never hot-* aliases.
+
+    The continuity provider rewrites Unicode/spaced names to ASCII IDs
+    for isolated scans. Re-read on every guard to detect live changes.
+    If canonical provider cannot be read, preserve fail-closed behavior.
+    """
+    try:
+        nodes = helper.read_provider(provider)
+        return nodes if isinstance(nodes, list) else []
+    except (OSError, ValueError, TypeError):
+        return []
+
+
 def inspect_node(name: str, provider: Path | None = None) -> int:
     if os.geteuid() != 0:
         print('SERVICE_SHADOW_ERROR=REQUIRES_ROOT')
@@ -216,7 +231,7 @@ def inspect_node(name: str, provider: Path | None = None) -> int:
     if len(matched) != 1:
         print('SERVICE_SHADOW_ERROR=NODE_NOT_UNIQUE')
         return 2
-    guard = smart.shadow_guard_reason(matched[0], raw)
+    guard = smart.shadow_guard_reason(matched[0], live_guard_profiles(helper))
     if guard:
         print('SERVICE_SHADOW_ERROR=LIVE_GUARD_' + guard)
         return 2
@@ -225,7 +240,7 @@ def inspect_node(name: str, provider: Path | None = None) -> int:
     print('SERVICE_DIAG_MODE=ISOLATED_SHADOW_ONLY', flush=True)
     with (smart.STATE_DIR / 'lock').open('a+') as lock:
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        smart.require_shadow_safe(matched[0], raw)
+        smart.require_shadow_safe(matched[0], live_guard_profiles(helper))
         mixed = helper.choose_free_port()
         controller = helper.choose_free_port()
         while mixed == controller:
@@ -261,7 +276,7 @@ def inspect_node(name: str, provider: Path | None = None) -> int:
                     print('SERVICE_SHADOW_ERROR=CONTROLLER_START_TIMEOUT')
                     return 2
                 controller_ms = round((time.monotonic() - start) * 1000)
-                smart.require_shadow_safe(matched[0], raw)
+                smart.require_shadow_safe(matched[0], live_guard_profiles(helper))
                 helper.select_probe(controller, entries[0]['probe_name'])
                 ok, wait_ms, attempts, family = cold_connect(gate.fetch, mixed)
                 print('SERVICE_CONNECT_STATE=' + ('PASS' if ok else 'UNKNOWN'))
@@ -278,13 +293,13 @@ def inspect_node(name: str, provider: Path | None = None) -> int:
                     print('SERVICE_REASON_CHATGPT_WEB=connect_not_ready')
                     print_geo('UNKNOWN', 'UNKNOWN', 'UNKNOWN', 'CONNECT_NOT_READY')
                     return 1
-                smart.require_shadow_safe(matched[0], raw)
+                smart.require_shadow_safe(matched[0], live_guard_profiles(helper))
                 # Historical tested service-qualification path: OpenAI API,
                 # ChatGPT Web and one real 24-frame YouTube decode. Never
                 # reject a healthy video node via legacy HTTP Range or the
                 # unrelated numeric-IP HTTPS diagnostic gate.
                 result = assess_hot_pool_24(gate, smart, mixed)
-                smart.require_shadow_safe(matched[0], raw)
+                smart.require_shadow_safe(matched[0], live_guard_profiles(helper))
                 # Geo is telemetry only. It MUST NOT influence the balanced gate.
                 geo_ip, geo_country, geo_state, geo_reason = isolated_egress(
                     helper, controller, mixed, entries[0])
