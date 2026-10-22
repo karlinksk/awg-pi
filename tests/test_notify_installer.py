@@ -36,6 +36,17 @@ class NotifyWiringTests(unittest.TestCase):
         self.assertIn("timeout 2s /usr/local/sbin/awg-notify emit", code)
         self.assertNotIn("api.telegram.org", code)
 
+    def test_boot_notice_only_when_enabled(self):
+        install = (ROOT / "install.sh").read_text()
+        menu = (ROOT / "src/awg-menu").read_text()
+        unit = (ROOT / "units/awg-notify-boot.service").read_text()
+        self.assertIn("install_project_unit units/awg-notify-boot.service", install)
+        self.assertIn("systemctl enable awg-notify-boot.service", menu)
+        self.assertIn("systemctl disable --now awg-notify-boot.service", menu)
+        self.assertIn("ConditionPathExists=/etc/awg-pbr/notify/telegram.json", unit)
+        self.assertIn("ExecStart=/usr/local/sbin/awg-notify emit --kind BOOT", unit)
+        self.assertNotIn("systemctl enable awg-notify-boot.service", install)
+
     def test_daily_timer_is_passive(self):
         install = (ROOT / "install.sh").read_text()
         for unit in ("awg-notify-daily.service", "awg-notify-daily.timer"):
