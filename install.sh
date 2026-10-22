@@ -819,6 +819,9 @@ install_project_helper src/awg-mihomo-configure "$MIHOMO_CONFIGURE_SCRIPT"
 install_project_helper src/awg-first-run "$FIRST_RUN_CLI"
 install_project_helper src/awg-selection "$SELECTION_CLI"
 install_project_helper src/awg-selection-monitor "$SELECTION_MONITOR"
+# Passive AWG Notify: no token, no active timer, no routing changes at install.
+install_project_python_helper src/awg-notify.py /usr/local/sbin/awg-notify
+install -d -o root -g root -m 0700 /etc/awg-pbr/notify /var/lib/awg-pbr/notify
 # Service eligibility helpers are installed passive: the opt-in balanced
 # mode is NEVER enabled by installation. The Stage18 RAM runtime timer is
 # also passive until separately enabled after acceptance and rollback tests.
@@ -1037,6 +1040,8 @@ install_project_unit units/awg-mihomo-update.timer /etc/systemd/system/awg-mihom
 install_project_unit units/awg-mihomo-pool-refresh.service /etc/systemd/system/awg-mihomo-pool-refresh.service
 install_project_unit units/awg-mihomo-pool-refresh.timer /etc/systemd/system/awg-mihomo-pool-refresh.timer
 install_project_unit units/awg-selection-monitor.service /etc/systemd/system/awg-selection-monitor.service
+install_project_unit units/awg-notify-flush.service /etc/systemd/system/awg-notify-flush.service
+install_project_unit units/awg-notify-flush.timer /etc/systemd/system/awg-notify-flush.timer
 # Stage18 is provider-guarded: automatic boot and provider-change recovery,
 # without running an isolated media test during bare installation.
 install_project_unit units/awg-mihomo-stage18-ram-runtime.service /etc/systemd/system/awg-mihomo-stage18-ram-runtime.service
