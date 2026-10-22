@@ -2,6 +2,21 @@
 set -Eeuo pipefail
 [[ ${EUID:-$(id -u)} -eq 0 ]] || exec sudo "$0" "$@"
 
+# Presentation-only dispatcher. Never intercept the Matrix inner dialog instance.
+if [[ "${AWG_MENU_REEXEC:-0}" != 1 && "${1:-}" != "--classic" &&
+      -t 0 && -t 1 && -f /etc/awg-pbr/menu-appearance ]]; then
+  read -r _awg_ui < /etc/awg-pbr/menu-appearance || _awg_ui=classic
+  if [[ "$_awg_ui" == matrix && -r /usr/local/lib/awg-pi/awg-matrix-compositor.py ]] &&
+     command -v tmux >/dev/null 2>&1; then
+    _awg_owner="${SUDO_USER:-}"
+    if [[ -n "$_awg_owner" && "$_awg_owner" != root ]] && id "$_awg_owner" >/dev/null 2>&1; then
+      exec /usr/sbin/runuser -u "$_awg_owner" -- /usr/bin/python3 /usr/local/lib/awg-pi/awg-matrix-compositor.py
+    fi
+  fi
+fi
+[[ "${1:-}" != "--classic" ]] || shift
+
+
 # Run from a temporary copy so a gateway update can safely replace awg-menu.
 if [[ "${AWG_MENU_REEXEC:-0}" != 1 ]]; then
   _menu_tmp="$(mktemp /tmp/awg-menu.XXXXXX)"
@@ -129,8 +144,7 @@ awg_dialog_breadcrumb_title(){
       operating_mode_menu) label="Режим" ;;
       desktop_commander_menu) label="Desktop Commander" ;;
       notify_menu) label="Telegram" ;;
-      first_transport_setup) label="Первичная настройка" ;;
-      secondary_transport_setup) label="Добавить транспорт" ;;
+      notify_types_menu) label="Типы уведомлений" ;;
       update_menu) label="Обновления" ;;
       mihomo_pool_pick) label="Каталог" ;;
     esac
@@ -180,7 +194,7 @@ dialog(){
   fi
   for ((i=0;i<${#args[@]};i++)); do
     case "${args[i]}" in
-      --menu|--msgbox|--yesno|--inputbox|--editbox|--textbox|--infobox)
+      --menu|--checklist|--msgbox|--yesno|--inputbox|--editbox|--textbox|--infobox)
         hi=$((i+2)); wi=$((i+3))
         if [[ "${args[hi]:-}" =~ ^[0-9]+$ && "${args[wi]:-}" =~ ^[0-9]+$ ]]; then
           ((args[hi] > rows-2)) && args[hi]="$((rows-2))"
@@ -239,7 +253,7 @@ dialog(){
   done
   if ((title_index>=0)); then
     for ((i=0;i<${#args[@]};i++)); do
-      if [[ "${args[i]}" == --menu || "${args[i]}" == --msgbox ||
+      if [[ "${args[i]}" == --menu || "${args[i]}" == --checklist || "${args[i]}" == --msgbox ||
             "${args[i]}" == --yesno || "${args[i]}" == --inputbox ||
             "${args[i]}" == --editbox || "${args[i]}" == --textbox ||
             "${args[i]}" == --infobox ]]; then
@@ -2115,6 +2129,7 @@ secondary_transport_setup(){
   esac
 }
 
+
 mihomo_replace_subscription(){
   local url url_tmp status current_url current_profile profile profile_label
   status="$("$MIHOMO_CONFIGURE" status 2>/dev/null || true)"
@@ -2510,7 +2525,7 @@ vpn_menu(){
         4 "Mihomo" "Управление подпиской, узлами, резервированием узлов и восстановлением Mihomo. Активный транспорт меняется отдельным пунктом ниже." \
         5 "Активный транспорт" "Ручное безопасное переключение трафика между AWG и Mihomo. Показывает, какой транспорт используется сейчас." \
         6 "Политика выбора транспорта" "MANUAL / FIXED / AUTO. Определяет, когда разрешено автоматическое переключение между AWG и Mihomo." \
-        7 "Добавить / настроить транспорт" "Мастер для первичной настройки или добавления второго VPN без вмешательства в действующий транспорт." \
+        7 "Добавить / настроить транспорт" "Мастер первой настройки или добавления второго транспорта." \
         0 "Назад" "Возвращает в главное меню без изменений." 3>&1 1>&2 2>&3)" || return 0
       case "$choice" in
         1)
@@ -2539,7 +2554,7 @@ vpn_menu(){
       5 "Mihomo" "Управление подпиской, узлами, резервированием узлов и восстановлением Mihomo. Активный транспорт меняется отдельным пунктом ниже." \
       6 "Активный транспорт" "Ручное безопасное переключение трафика между AWG и Mihomo. Показывает, какой транспорт используется сейчас." \
       7 "Политика выбора транспорта" "MANUAL / FIXED / AUTO. Определяет, когда разрешено автоматическое переключение между AWG и Mihomo." \
-      8 "Добавить / настроить транспорт" "Мастер для первичной настройки или добавления второго VPN без вмешательства в действующий транспорт." \
+      8 "Добавить / настроить транспорт" "Мастер первой настройки или добавления второго транспорта." \
       0 "Назад" "Возвращает в главное меню без изменений." 3>&1 1>&2 2>&3)" || return 0
     case "$choice" in
       1)
@@ -2796,6 +2811,41 @@ desktop_commander_menu(){
   done
 }
 
+notify_types_menu(){
+  local current selection csv
+  local lost=off restored=off boot=off daily=off nodes=off transport=off
+  current="$(/usr/local/sbin/awg-notify status 2>/dev/null)" || {
+    msg "Telegram" "Не удалось прочитать типы уведомлений. Изменений нет."
+    return 0
+  }
+  grep -Fxq 'NOTIFY_PREF_VPN_LOST=on' <<<"$current" && lost=on
+  grep -Fxq 'NOTIFY_PREF_VPN_RESTORED=on' <<<"$current" && restored=on
+  grep -Fxq 'NOTIFY_PREF_BOOT=on' <<<"$current" && boot=on
+  grep -Fxq 'NOTIFY_PREF_DAILY_REPORT=on' <<<"$current" && daily=on
+  grep -Fxq 'NOTIFY_PREF_NODE_SWITCH=on' <<<"$current" && nodes=on
+  grep -Fxq 'NOTIFY_PREF_TRANSPORT_SWITCH=on' <<<"$current" && transport=on
+  selection="$(dialog --backtitle "$BACKTITLE" --title "Telegram — переключатели" \
+    --separate-output --checklist \
+    "Пробел — включить/выключить, ОК — сохранить, Отмена — без изменений.
+
+Сообщения о переключениях начнут приходить лишь после установки соответствующих hooks из PR #158. Никакие VPN-маршруты не меняются." \
+    25 110 8 \
+    VPN_LOST "Отказ выбранного VPN (две проверки)" "$lost" \
+    VPN_RESTORED "Восстановление выбранного VPN" "$restored" \
+    BOOT "Запуск Raspberry Pi" "$boot" \
+    DAILY_REPORT "Ежедневная сводка в 09:00" "$daily" \
+    NODE_SWITCH "Переключение ноды (после установки hooks)" "$nodes" \
+    TRANSPORT_SWITCH "Смена транспорта / failover (после hooks)" "$transport" \
+    3>&1 1>&2 2>&3)" || return 0
+  csv="$(printf '%s\n' "$selection" | paste -sd, -)"
+  title="Telegram — сохранение переключателей"
+  if capture /usr/local/sbin/awg-notify preferences-set --enabled "$csv"; then
+    msg "Telegram" "Настройки сохранены. Отключённые события не добавляются в очередь.
+
+Таймеры и общая доставка остаются в прежнем состоянии; старые сообщения в очереди сохраняются."
+  fi
+}
+
 notify_menu(){
   local choice note_state daily_state watch_state current
   while true; do
@@ -2823,6 +2873,7 @@ $(grep -E '^NOTIFY_(CONFIGURED|PENDING|LAST_ROUTE)=' <<<"$current" || true)
       6 "Выключить ежедневную сводку" "Отключает только ежедневный отчёт." \
       7 "Состояние и очередь" "Просмотр параметров без токена и секретов." \
       8 "Исправить привязку чата" "Проверяет имя бота и исправляет ошибочный chat ID=1 через личную команду /pair." \
+      9 "Типы уведомлений [галочки]" "Отдельно включить или выключить каждую категорию сообщений." \
       0 "Назад" "Возврат в системное меню." 3>&1 1>&2 2>&3)" || return 0
     case "$choice" in
       1) run_interactive "Настройка Telegram-бота" /usr/local/sbin/awg-notify configure ;;
@@ -2857,7 +2908,37 @@ $(grep -E '^NOTIFY_(CONFIGURED|PENDING|LAST_ROUTE)=' <<<"$current" || true)
          else
            msg "Telegram" "Помощник привязки чата ещё не установлен."
          fi ;;
+      9) notify_types_menu ;;
       0) return 0 ;;
+    esac
+  done
+}
+
+
+appearance_menu(){
+  local choice current style_tmp
+  while true; do
+    current="$(cat /etc/awg-pbr/menu-appearance 2>/dev/null || printf classic)"
+    [[ "$current" == matrix ]] && current="Matrix Gradient" || current="Классическое"
+    choice="$(dialog --backtitle "$BACKTITLE" --title "Оформление интерфейса" --item-help --menu \
+      "Текущее оформление: $current. Изменение действует после перезапуска меню." 17 88 3 \
+      classic "Классическое" "Без анимации. Резервный интерфейс." \
+      matrix "Matrix Gradient" "Зелёный цифровой дождь за окнами штатного меню." \
+      back "Назад" "Без изменений." 3>&1 1>&2 2>&3)" || return 0
+    case "$choice" in
+      back) return 0 ;;
+      classic|matrix)
+        if [[ "$choice" == matrix ]] &&
+           { ! command -v tmux >/dev/null 2>&1 || [[ ! -r /usr/local/lib/awg-pi/awg-matrix-compositor.py ]]; }; then
+          msg "Оформление интерфейса" "Matrix Gradient не установлен полностью. Классическое меню остаётся доступным."
+          continue
+        fi
+        style_tmp="$(mktemp /etc/awg-pbr/.menu-appearance.XXXXXXXX)"
+        printf '%s\n' "$choice" > "$style_tmp"
+        chmod 0600 "$style_tmp"
+        mv -f "$style_tmp" /etc/awg-pbr/menu-appearance
+        msg "Оформление интерфейса" "Сохранено: $choice. Изменение действует при следующем запуске.\n\nРезервный вход: sudo /usr/local/sbin/awg-menu --classic"
+        return 0 ;;
     esac
   done
 }
@@ -2878,6 +2959,7 @@ system_menu(){
       8 "Статистика трафика" "Трафик за сегодня и месяц только по транспортным интерфейсам Pi: awg0 и mihomo0, с отдельной статистикой по AWG и Mihomo." \
       9 "Desktop Commander — удалённый доступ" "Подключение устройства, проверка авторизации, включение и выключение автозапуска." \
       10 "Telegram — уведомления" "Бот, доставка, очередь, Watch, ежедневная сводка." \
+      11 "Оформление интерфейса" "Классическое / Matrix Gradient." \
       0 "Назад" "Возвращает в главное меню без изменений." 3>&1 1>&2 2>&3)" || return 0
     case "$choice" in
       1)
@@ -2897,6 +2979,7 @@ system_menu(){
       8) traffic_screen ;;
       9) desktop_commander_menu ;;
       10) notify_menu ;;
+      11) appearance_menu ;;
       0) return 0 ;;
     esac
   done
