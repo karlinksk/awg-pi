@@ -250,6 +250,38 @@
   испытания. Главная задача — **PR #115 и v1.3.0**; PR #158/#159
   не merged/released.
 
+## Telegram checklist установлен на тестовой Pi — 2026-10-22 21:27 +07
+
+- Оператор выполнил pinned root-only скрипт
+  `awg-notify-checklist-test-install.py`, сообщил
+  `CHECKLIST_INSTALL=PASS_TEST_PI_ONLY`,
+  `TELEGRAM_EVENT_SWITCHES=6`,
+  `MATRIX_AND_DESKTOP_COMMANDER=PRESERVED`,
+  `NOTIFY_POLICY_FILE=UNMODIFIED`,
+  `EXISTING_QUEUE_AND_BOT_SECRET=UNMODIFIED`,
+  `NETWORK_AND_NOTIFIER_UNCHANGED=YES`.
+  Путь root-only резервной копии по отчёту скрипта:
+  `/var/backups/awg-gateway/telegram-checklist-b7eon880`.
+- Независимая read-only проверка на `awg-upgrade`:
+  установленные SHA-256 `awg-menu=03fa77837a1c8c624562ec2722b06a42836c30b4c232440a3faf93d7dfeb5b85`
+  и `awg-notify=6eab64b8ea3dab459130c32516b693c049f17d1d0e631c1d17a76157ac0139a3`,
+  совпадают с подготовленными и зарегистрированными в draft PR #158
+  исходниками. В установленном меню есть обработчик
+  `notify_types_menu`, Matrix `appearance_menu`, Desktop Commander,
+  и мастер первого/второго VPN-транспорта. Bash/Python syntax PASS.
+- Все четыре Telegram activation units enabled; Watch по журналу
+  в 21:24:35, 21:26:06 и 21:27:40 — `NOTIFY_WATCH=up`,
+  отправитель — `pending=0`, `sent=0`. SSH, dnsmasq,
+  awg-pbr-health, awg-selection-monitor, awg-mihomo — active.
+  Таблицы 100/101 по-прежнему `mihomo0`. Смена VPN не проводилась.
+- **Статус installed on test Pi** подтверждён; это не значит
+  `merged`, `released` или `clean-install PASS`.
+  Не проверены ручная работа чекбоксов в Termius Matrix, фильтрация
+  реальных событий после их переключения, авто-hook node/transport,
+  а также LAN/failover/reboot/SSTP и релизный gate v1.3.0.
+  Root-only backup нельзя прочитать непривилегированным агентом.
+  Продолжаем PR #115 как основной приоритет.
+
 ## 1. Главная цель и границы работ
 
 Закончить **AWG Pi Gateway v1.3.0**: воспроизводимый шлюз для Raspberry Pi 4 / чистой Debian 13 ARM64 с двумя транспортами **AmneziaWG** и **Mihomo**. Инсталлятор должен сразу устанавливать всё необходимое, **включая FFmpeg/FFprobe, Stage18 Node.js и yt-dlp** и сами движки — даже если VPN-профиль/подписка будут внесены позднее. После ввода AWG-профиля и/или Mihomo-подписки система должна штатно подбирать пригодные ноды, работать после перезагрузки, сохранять политики и обеспечивать предусмотренный резервный путь.
