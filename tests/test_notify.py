@@ -125,7 +125,7 @@ class NotifyTests(unittest.TestCase):
             self.assertIn("if!awg0", argv)
             self.assertIn("getUpdates", kwargs["input"])
             self.assertIn("data =", kwargs["input"])
-            return mock.Mock(returncode=0, stdout='{"ok":true,"result":[]}\\n200')
+            return mock.Mock(returncode=0, stdout='{"ok":true,"result":[]}\n200')
         with mock.patch.object(mod.subprocess, "run", side_effect=fake_run):
             self.assertEqual(mod._receive_pairing_updates(token, "awg0"), [])
 
