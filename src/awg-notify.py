@@ -126,17 +126,17 @@ def _receive_pairing_updates(token, route, timeout=8):
     if route not in ROUTES:
         raise ValueError("Unsupported route")
     config = ('url = "https://api.telegram.org/bot' + token +
-              '/getUpdates"\\n' + 'data = "timeout=0&limit=100"\\n')
+              '/getUpdates"\n' + 'data = "timeout=0&limit=100"\n')
     argv = ["curl", "-q", "--config", "-", "--ipv4", "--proto", "=https",
             "--noproxy", "*", "--interface", "if!" + route,
             "--connect-timeout", "4", "--max-time", str(timeout),
-            "--silent", "--write-out", "\\n%{http_code}"]
+            "--silent", "--write-out", "\n%{http_code}"]
     try:
         reply = subprocess.run(argv, input=config, text=True, capture_output=True,
                                timeout=timeout + 2, check=False)
         if reply.returncode or len(reply.stdout) > 65536:
             return None
-        body, _, status = reply.stdout.rpartition("\\n")
+        body, _, status = reply.stdout.rpartition("\n")
         result = json.loads(body)
         if status == "200" and result.get("ok") is True:
             items = result.get("result")
