@@ -243,6 +243,24 @@ class NotifyWiringTests(unittest.TestCase):
             self.assertEqual(result.returncode, 2)
             self.assertIn("ROOT_REQUIRED", result.stderr)
 
+    def test_matrix_compositor_is_in_installer_not_just_pi(self):
+        install = (ROOT / "install.sh").read_text()
+        compositor = (ROOT / "extras/awg-matrix-compositor.py").read_text()
+        menu = (ROOT / "src/awg-menu").read_text()
+        update = (ROOT / "src/awg-update").read_text()
+        self.assertIn("dialog tmux ffmpeg", install)
+        self.assertIn("install_project_python_helper extras/awg-matrix-compositor.py "
+                      "/usr/local/lib/awg-pi/awg-matrix-compositor.py", install)
+        self.assertIn("if [[ ! -e /etc/awg-pbr/menu-appearance ]]; then", install)
+        self.assertIn("echo matrix > /etc/awg-pbr/menu-appearance", install)
+        self.assertIn("echo classic > /etc/awg-pbr/menu-appearance", install)
+        self.assertIn('(( UPGRADE_EXISTING == 0 ))', install)
+        self.assertIn("/usr/local/sbin/awg-menu --classic", menu)
+        self.assertIn("awg-matrix-compositor.py", menu)
+        self.assertIn("tmux", compositor)
+        self.assertIn("usr/local/lib/awg-pi", update)
+        self.assertIn("etc/awg-pbr", update)
+
     def test_no_router_or_dns_modifications(self):
         code = (ROOT / "src/awg-notify.py").read_text()
         for keyword in ("ip route replace", "nft add", "mikrotik login", "dnsmasq restart"):
