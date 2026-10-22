@@ -12,6 +12,7 @@ import os
 from pathlib import Path
 import re
 import sqlite3
+import shutil
 import subprocess
 import sys
 import time
@@ -21,7 +22,7 @@ DB_PATH = Path("/var/lib/awg-pbr/notify/events.sqlite3")
 SECRET_PATH = Path("/etc/awg-pbr/notify/telegram.json")
 TRANSPORT_PATH = Path("/etc/awg-pbr/transport")
 TOKEN_PATTERN = re.compile(r"^[0-9]{5,15}:[A-Za-z0-9_-]{25,150}$")
-KINDS = {"NODE_SWITCH", "TRANSPORT_FAILOVER", "VPN_LOST", "VPN_RESTORED",
+KINDS = {"NODE_SWITCH", "TRANSPORT_SWITCH", "TRANSPORT_FAILOVER", "VPN_LOST", "VPN_RESTORED",
          "POOL_EMPTY", "POOL_RESTORED", "BOOT", "SYSTEM_WARNING",
          "SUBSCRIPTION_CHANGED", "DAILY_REPORT", "TEST"}
 SEVERITIES = ("info", "warning", "critical")
@@ -184,7 +185,7 @@ def curl_api(token, payload, route, method="sendMessage", timeout=8):
     return False, code, min(3600, max(0, int(retry))) if str(retry).isdigit() else 0
 
 
-def flush(db, sender=curl_api, secret_path=SECRET_PATH, active="", limit=5, secret_uid=0):
+def flush(db, sender=curl_api, secret_path=SECRET_PATH, active="", limit=2, secret_uid=0):
     # No credentials = intentionally unconfigured; do not delete queued events.
     try:
         token, chat = load_secret(secret_path, secret_uid)
@@ -229,6 +230,84 @@ def flush(db, sender=curl_api, secret_path=SECRET_PATH, active="", limit=5, secr
             "reason": verdict}
 
 
+def _read_first(path, default=""):
+    try:
+        return Path(path).read_text(encoding="utf-8").strip()
+    except (OSError, UnicodeError):
+        return default
+
+
+def _service_active(unit):
+    try:
+        result = subprocess.run(["systemctl", "is-active", "--quiet", unit],
+                                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                                check=False, timeout=3)
+        return result.returncode == 0
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+
+
+def daily_snapshot():
+    """Read-only local telemetry; no VPN restart, DNS probe or route mutation."""
+    total = available = 0
+    for line in _read_first("/proc/meminfo").splitlines():
+        if line.startswith("MemTotal:"):
+            total = int(line.split()[1]) // 1024
+        if line.startswith("MemAvailable:"):
+            available = int(line.split()[1]) // 1024
+    try:
+        disk = shutil.disk_usage("/")
+        used_disk = round((disk.total - disk.free) * 100 / disk.total)
+    except (OSError, ZeroDivisionError):
+        used_disk = -1
+    temp = _read_first("/sys/class/thermal/thermal_zone0/temp")
+    try:
+        temp_label = f"{int(temp) / 1000:.1f} °C"
+    except ValueError:
+        temp_label = "неизвестно"
+    try:
+        uptime = int(float(_read_first("/proc/uptime").split()[0]))
+    except (IndexError, ValueError):
+        uptime = 0
+    transport = _read_first(TRANSPORT_PATH, "не настроен")
+    if transport not in ("awg", "mihomo", "unconfigured"):
+        transport = "неизвестно"
+    mode = _read_first("/etc/awg-pbr/mode", "неизвестно")
+    if mode not in ("selective", "transit"):
+        mode = "неизвестно"
+    service_names = ("awg-selection-monitor.service", "awg-pbr-health.service",
+                     "dnsmasq.service", "ssh.service")
+    health = [unit.removesuffix(".service") + "=" +
+              ("активна" if _service_active(unit) else "неактивна")
+              for unit in service_names]
+    return "\\n".join([
+        "Ежедневная сводка AWG Pi Gateway",
+        "Режим: " + mode,
+        "Транспорт (выбранный, не подтверждение HTTPS): " + transport,
+        "Температура CPU: " + temp_label,
+        "RAM: " + str(total - available) + " / " + str(total) + " MiB",
+        "Диск: " + (str(used_disk) + "%" if used_disk >= 0 else "неизвестно"),
+        "Uptime: " + str(uptime // 3600) + " ч",
+        "Службы: " + ", ".join(health),
+    ])
+
+
+def enqueue_daily(db):
+    """One daily report per local calendar day even if invoked twice."""
+    if not SECRET_PATH.exists():
+        return False
+    stamp = time.strftime("%Y-%m-%d", time.localtime())
+    with db:
+        seen = db.execute("SELECT value FROM meta WHERE key='daily_date'").fetchone()
+        if seen and seen[0] == stamp:
+            return False
+        queued = enqueue(db, "DAILY_REPORT", "info", daily_snapshot(),
+                         "daily:" + stamp)
+        if queued:
+            db.execute("INSERT OR REPLACE INTO meta VALUES ('daily_date', ?)", (stamp,))
+        return queued
+
+
 def show_status(db, secret_path=SECRET_PATH):
     try:
         load_secret(secret_path)
@@ -256,6 +335,7 @@ def main(argv=None):
     sub.add_parser("flush")
     sub.add_parser("status")
     sub.add_parser("test")
+    sub.add_parser("daily")
     args = parser.parse_args(argv)
     check_root()
     os.umask(0o077)
@@ -267,6 +347,8 @@ def main(argv=None):
             message = args.text if args.text is not None else sys.stdin.read(MAX_TEXT + 1)
             created = enqueue(db, args.kind, args.severity, message, args.key)
             print("NOTIFY_QUEUED=" + ("yes" if created else "deduplicated"))
+        elif args.command == "daily":
+            print("NOTIFY_DAILY_QUEUED=" + ("yes" if enqueue_daily(db) else "no"))
         elif args.command == "test":
             enqueue(db, "TEST", "info", "Test notification from Raspberry Pi", str(now()))
             print(json.dumps(flush(db), sort_keys=True))
