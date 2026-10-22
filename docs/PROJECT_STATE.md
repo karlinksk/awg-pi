@@ -12,12 +12,15 @@
 - Создан **draft PR #158** ([AWG Notify](https://github.com/karlinksk/awg-pi/pull/158)),
   зависимый от draft PR #115. Есть Python-очередь SQLite, ограниченный
   Telegram-отправитель, пассивные systemd units, installer wiring и
-  первоначальные hooks успешного переключения; **не merged, не released,
-  не installed**. На тестовой Pi **22/22** rootless unit/installer/UI-contract тестов PASS
-  для AWG Notify (Bash-синтаксис также PASS). Добавлены пассивный
-  ежедневный отчёт на 09:00 и загрузочное сообщение; таймеры отключены до
-  подключения Telegram. Реальная отправка Telegram-сообщения, SSTP egress,
-  установка от root и аппаратный failover ещё НЕ PASS.
+  первоначальные hooks успешного переключения; **не merged и не released; на тестовой Pi установлен пассивно,
+  на рабочей microSD не установлен**. На тестовой Pi **29/29** изолированных
+  unit/installer/UI-contract тестов PASS, Bash-синтаксис PASS. Дополнительно
+  подтверждена установка от root: SHA-256 бинарника соответствует pin,
+  7 systemd units установлены и успешно проверены systemd-analyze verify.
+  Telegram не настроен, очередь пуста, все таймеры выключены; SSH,
+  dnsmasq, health и selection monitor активны, таблицы 100/101 через mihomo0.
+  Реальная отправка Telegram-сообщения, SSTP egress и аппаратный
+  failover/reboot/clean-install остаются неподтверждёнными.
 - Не изменены MikroTik/SSTP, DNS, PBR, действующий транспорт, рабочая
   microSD. Telegram должен оставаться необязательным и выключенным до
   настройки; никакие токены не помещать в GitHub.
