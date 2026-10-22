@@ -13,8 +13,11 @@
   зависимый от draft PR #115. Есть Python-очередь SQLite, ограниченный
   Telegram-отправитель, пассивные systemd units, installer wiring и
   первоначальные hooks успешного переключения; **не merged, не released,
-  не installed**. На тестовой Pi **10/10** изолированных unit-тестов ядра
-  PASS; интеграция и отправка реального Telegram-сообщения ещё не PASS.
+  не installed**. На тестовой Pi **22/22** rootless unit/installer/UI-contract тестов PASS
+  для AWG Notify (Bash-синтаксис также PASS). Добавлены пассивный
+  ежедневный отчёт на 09:00 и загрузочное сообщение; таймеры отключены до
+  подключения Telegram. Реальная отправка Telegram-сообщения, SSTP egress,
+  установка от root и аппаратный failover ещё НЕ PASS.
 - Не изменены MikroTik/SSTP, DNS, PBR, действующий транспорт, рабочая
   microSD. Telegram должен оставаться необязательным и выключенным до
   настройки; никакие токены не помещать в GitHub.
