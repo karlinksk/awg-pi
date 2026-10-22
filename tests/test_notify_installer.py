@@ -178,6 +178,36 @@ class NotifyWiringTests(unittest.TestCase):
             self.assertEqual(result.returncode, 2)
             self.assertIn("ROOT_REQUIRED", result.stdout)
 
+    def test_telegram_checklist_installer_and_matrix_compatibility(self):
+        install = (ROOT / "install.sh").read_text()
+        menu = (ROOT / "src/awg-menu").read_text()
+        sender = (ROOT / "src/awg-notify.py").read_text()
+        installer = (ROOT / "scripts/awg-notify-switches-test-install.py").read_text()
+        self.assertIn("install_project_python_helper src/awg-notify.py", install)
+        self.assertIn("install_project_helper src/awg-menu", install)
+        self.assertIn("notify_types_menu(){", menu)
+        self.assertIn("--separate-output --checklist", menu)
+        self.assertIn('9 "Типы уведомлений [галочки]"', menu)
+        self.assertIn("appearance_menu(){", menu)
+        self.assertIn("awg-matrix-compositor.py", menu)
+        self.assertIn('10 "Telegram — уведомления"', menu)
+        self.assertIn('9 "Desktop Commander — удалённый доступ"', menu)
+        self.assertIn("first_transport_setup(){", menu)
+        self.assertIn("secondary_transport_setup(){", menu)
+        self.assertIn('sub.add_parser("preferences-set")', sender)
+        self.assertIn("PREFERENCES_PATH", sender)
+        self.assertIn("NOTIFY_PREFERENCES=SAVED", sender)
+        self.assertIn("NOTIFY_SWITCHES_INSTALL=ROLLED_BACK", installer)
+        self.assertIn("TIMER_ENABLEMENT=UNCHANGED", installer)
+        self.assertNotIn("systemctl restart", installer)
+        self.assertNotIn("systemctl enable", installer)
+        if os.geteuid() != 0:
+            res = subprocess.run(
+                ["python3", str(ROOT / "scripts/awg-notify-switches-test-install.py")],
+                capture_output=True, text=True, check=False, timeout=5)
+            self.assertEqual(res.returncode, 2)
+            self.assertIn("ROOT_REQUIRED", res.stdout)
+
     def test_no_router_or_dns_modifications(self):
         code = (ROOT / "src/awg-notify.py").read_text()
         for keyword in ("ip route replace", "nft add", "mikrotik login", "dnsmasq restart"):
