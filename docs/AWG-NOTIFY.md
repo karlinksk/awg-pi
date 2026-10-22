@@ -55,9 +55,25 @@ retaining critical events. This is at-least-once delivery: a lost Telegram
 HTTP response can produce one duplicate after a retry. A failed send cannot
 be called PASS. Only a received message is end-to-end verification.
 
+## Russian menu and daily report
+
+The installer stages both the delivery timer and the local 09:00 daily
+snapshot timer **disabled**. After operator setup, use
+`awg-menu → Системные функции → Telegram — уведомления`.
+Configure the token and numeric chat ID directly on the Pi, send a test,
+confirm it actually arrived, then enable message delivery and optionally
+daily reports. Daily reports use the Pi's local timezone (currently set on
+the test stand to Asia/Novosibirsk); the report reads thermal, disk, RAM,
+uptime, selected transport identity and local systemd state. This is **not**
+a proof of VPN egress or LAN/client availability.
+
+The automatic delivery timer sends at most two queued messages per run;
+remaining items wait for the next run. A queued event does not mean Telegram
+received it. Real confirmation requires the human recipient.
+
 ## Testing and current status
 
-Isolated rootless contract tests: `python3 -m unittest discover -s tests
+Isolated rootless contract tests (including daily/menu): `python3 -m unittest discover -s tests
 -p test_notify.py -v`. Pending: real Bot API send, real MikroTik SSTP egress
 proof, rollback, failover/boot/LAN impact, installer fresh-install and upgrade.
 Do not enable on production before gates are closed.
