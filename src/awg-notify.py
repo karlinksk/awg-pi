@@ -328,6 +328,66 @@ def enqueue_daily(db):
         return queued
 
 
+def _selected_transport_healthy(transport):
+    """Reuse the gateway's existing health decision; do not create a selector."""
+    if transport not in ("awg", "mihomo"):
+        return None
+    try:
+        result = subprocess.run(
+            ["/usr/local/sbin/awg-transport", "check", transport],
+            capture_output=True, check=False, timeout=15)
+        return result.returncode == 0
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+
+
+def observe_transport(db, transport=None, probe=_selected_transport_healthy):
+    """Observe a *selected* transport; do not claim LAN reachability.
+
+    Require two consecutive health failures before declaring a problem.
+    Read-only and disabled unless the operator configured Telegram.
+    """
+    if not SECRET_PATH.exists():
+        return "unconfigured"
+    current = transport or _read_first(TRANSPORT_PATH, "unconfigured")
+    if current not in ("awg", "mihomo"):
+        with db:
+            db.execute("INSERT OR REPLACE INTO meta VALUES ('watch_state','unconfigured')")
+            db.execute("INSERT OR REPLACE INTO meta VALUES ('watch_count','0')")
+            db.execute("INSERT OR REPLACE INTO meta VALUES ('watch_transport',?)", (current,))
+        return "unconfigured"
+    result = probe(current)
+    with db:
+        old_state = db.execute("SELECT value FROM meta WHERE key='watch_state'").fetchone()
+        old = old_state[0] if old_state else "unknown"
+        count_row = db.execute("SELECT value FROM meta WHERE key='watch_count'").fetchone()
+        count = int(count_row[0]) if count_row and count_row[0].isdigit() else 0
+        previous = db.execute("SELECT value FROM meta WHERE key='watch_transport'").fetchone()
+        if previous and previous[0] != current:
+            count = 0
+        if result is True:
+            if old == "down":
+                enqueue(db, "VPN_RESTORED", "info",
+                        "Выбранный транспорт " + current +
+                        " снова проходит штатный health-check. Клиент LAN не проверялся.",
+                        key="recovered:" + current)
+            state, count = "up", 0
+        elif result is False:
+            count += 1
+            state = "down" if count >= 2 else ("down" if old == "down" else "suspect")
+            if state == "down" and old != "down":
+                enqueue(db, "VPN_LOST", "critical",
+                        "Два последовательных отказа health-check выбранного транспорта " +
+                        current + ". Это не подтверждение отказа всех резервов или LAN.",
+                        key="down:" + current)
+        else:
+            return "unknown"
+        for key, value in (("watch_state", state), ("watch_count", str(count)),
+                           ("watch_transport", current)):
+            db.execute("INSERT OR REPLACE INTO meta VALUES (?,?)", (key, value))
+    return state
+
+
 def show_status(db, secret_path=SECRET_PATH):
     try:
         load_secret(secret_path)
@@ -357,6 +417,7 @@ def main(argv=None):
     sub.add_parser("status")
     sub.add_parser("test")
     sub.add_parser("daily")
+    sub.add_parser("watch")
     args = parser.parse_args(argv)
     check_root()
     os.umask(0o077)
@@ -368,6 +429,8 @@ def main(argv=None):
             message = args.text if args.text is not None else sys.stdin.read(MAX_TEXT + 1)
             created = enqueue(db, args.kind, args.severity, message, args.key)
             print("NOTIFY_QUEUED=" + ("yes" if created else "deduplicated"))
+        elif args.command == "watch":
+            print("NOTIFY_WATCH=" + observe_transport(db))
         elif args.command == "daily":
             print("NOTIFY_DAILY_QUEUED=" + ("yes" if enqueue_daily(db) else "no"))
         elif args.command == "test":
