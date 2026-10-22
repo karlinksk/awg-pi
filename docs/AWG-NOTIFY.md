@@ -74,6 +74,37 @@ retaining critical events. This is at-least-once delivery: a lost Telegram
 HTTP response can produce one duplicate after a retry. A failed send cannot
 be called PASS. Only a received message is end-to-end verification.
 
+## Individual Telegram event switches (2026-10-22)
+
+The Russian menu includes a single **Telegram → Типы уведомлений [галочки]**
+checklist. Press **Space** to toggle a checkmark, **ОК** to save atomically, or
+**Отмена** to leave all settings unchanged. Supported event switches:
+
+- VPN_LOST: two consecutive selected-transport health failures
+- VPN_RESTORED: recovery of that selected transport
+- BOOT: Raspberry Pi startup event
+- DAILY_REPORT: daily local read-only snapshot at 09:00
+- NODE_SWITCH: future verified node-switch hooks (not live on test Pi)
+- TRANSPORT_SWITCH: verified transport switch/failover hooks (not live on test Pi)
+
+An absent settings file means **VPN_LOST, VPN_RESTORED, BOOT and DAILY_REPORT
+enabled** as event categories; node/transport events remain **disabled**.
+Telegram delivery and all timers remain **OFF after clean install** until
+the operator sets up the bot; event-category defaults do not enable delivery.
+The root-owned, atomic 0600 preferences file is
+`/etc/awg-pbr/notify/events-policy.json`. The installer must preserve it
+on upgrades and leave it absent on a clean install. No bot credentials,
+queued notifications, VPN routing, DNS or MikroTik are changed by this screen.
+Disabling a category suppresses **future** event production but deliberately
+does not delete already queued messages. The daily and boot systemd
+activation state is separate from this per-event filter.
+
+Menu integration keeps the existing Matrix appearance toggle, Russian
+breadcrumbs, Desktop Commander (system item 9), Telegram (system item 10)
+and first/secondary VPN setup wizards. Full menu + notifier pin-checked
+test-Pi-only upgrade helper: `scripts/awg-notify-checklist-test-install.py`.
+A dry rootless check does not qualify as installed/clean-install PASS.
+
 ## Russian menu and daily report
 
 The installer stages both the delivery timer and the local 09:00 daily
