@@ -83,8 +83,9 @@ Isolated rootless contract tests (including daily/menu/pairing): `python3 -m uni
 To stage **only** AWG Notify on the isolated test Pi (not full installer),
 copy the branch's `src/`, `units/`, `tests/`, `install.sh`, and `scripts/`
 into a disposable fixture, then run as root `scripts/awg-notify-test-install.sh`.
-This script refuses to overwrite installed AWG Notify units, verifies tests,
-installs the tool and SEVEN passive systemd units, verifies those units, and
+This script refuses to overwrite installed AWG Notify units, verifies the
+SHA256 checksums of the reviewed files (the tests must be run as an ordinary
+user first), installs the tool and SEVEN passive systemd units, verifies those units, and
 leaves both timers disabled. If deployment fails, newly written files are
 removed and daemon-reload is repeated. It never restarts a VPN.
 
