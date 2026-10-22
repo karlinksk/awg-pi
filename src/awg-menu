@@ -39,6 +39,8 @@ fi
 # These are terminal ANSI colors, not forced RGB values.
 # A process-owned rc file is necessary because the menu can be launched via
 # sudo from arbitrary SSH accounts and must not mutate ~/.dialogrc or /etc.
+# The surrounding screen uses the former light-cyan dialog background;
+# windows remain deep blue for readable highlighted status text.
 AWG_DIALOG_STYLE=""
 awg_dialog_theme_init(){
   AWG_DIALOG_STYLE="$(mktemp /tmp/awg-dialogrc.XXXXXXXX)"
@@ -47,7 +49,7 @@ awg_dialog_theme_init(){
 use_colors = ON
 use_shadow = ON
 use_scrollbar = OFF
-screen_color = (CYAN,BLUE,OFF)
+screen_color = (BLACK,CYAN,OFF)
 shadow_color = (BLACK,BLACK,ON)
 dialog_color = (WHITE,BLUE,OFF)
 title_color = (YELLOW,BLUE,ON)
