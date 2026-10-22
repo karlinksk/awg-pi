@@ -36,6 +36,16 @@ class NotifyWiringTests(unittest.TestCase):
         self.assertIn("timeout 2s /usr/local/sbin/awg-notify emit", code)
         self.assertNotIn("api.telegram.org", code)
 
+    def test_passive_watcher_scheduled_only_with_notifications(self):
+        install = (ROOT / "install.sh").read_text()
+        menu = (ROOT / "src/awg-menu").read_text()
+        for name in ("awg-notify-watch.service", "awg-notify-watch.timer"):
+            self.assertIn("install_project_unit units/" + name, install)
+        self.assertNotIn("systemctl enable --now awg-notify-watch.timer", install)
+        self.assertIn("systemctl enable --now awg-notify-watch.timer", menu)
+        self.assertIn("systemctl disable --now awg-notify-watch.timer", menu)
+        self.assertIn("OnUnitActiveSec=90sec", (ROOT / "units/awg-notify-watch.timer").read_text())
+
     def test_boot_notice_only_when_enabled(self):
         install = (ROOT / "install.sh").read_text()
         menu = (ROOT / "src/awg-menu").read_text()
