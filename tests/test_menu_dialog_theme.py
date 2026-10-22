@@ -34,19 +34,27 @@ class MenuVisualTheme(unittest.TestCase):
         ):
             self.assertIn(option + ' "' + label + '"', MENU)
 
-    def test_palette_matches_light_panel_with_high_contrast(self):
+    def test_palette_is_dark_and_high_contrast_in_every_dialog(self):
         for field in (
             "use_colors = ON", "use_shadow = ON",
-            "dialog_color = (BLACK,CYAN,OFF)",
+            "dialog_color = (WHITE,BLUE,OFF)",
             "item_color = dialog_color",
-            "item_selected_color = (WHITE,BLUE,ON)",
-            "title_color = (BLUE,CYAN,ON)",
-            "itemhelp_color = (BLACK,CYAN,OFF)",
-            "button_active_color = (WHITE,BLUE,ON)",
+            "item_selected_color = (WHITE,BLACK,ON)",
+            "title_color = (YELLOW,BLUE,ON)",
+            "border_color = (CYAN,BLUE,ON)",
+            "menubox_color = dialog_color",
+            "itemhelp_color = (WHITE,BLUE,OFF)",
+            "button_active_color = (WHITE,BLACK,ON)",
+            "button_inactive_color = (WHITE,BLUE,ON)",
+            "button_label_active_color = (YELLOW,BLACK,ON)",
             "inputbox_color = dialog_color",
             "searchbox_color = dialog_color",
+            "form_text_color = dialog_color",
         ):
-            self.assertIn(field,PALETTE)
+            self.assertIn(field, PALETTE)
+        # No light cyan panel or selection that obscures Termius green words.
+        self.assertNotIn("(BLACK,CYAN,OFF)", PALETTE)
+        self.assertNotIn("(WHITE,CYAN,ON)", PALETTE)
         self.assertEqual(MENU.count("export DIALOGRC="),1)
 
     def test_native_scrollbar_hidden_without_disabling_scroll(self):
