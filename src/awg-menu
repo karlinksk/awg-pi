@@ -2239,6 +2239,58 @@ traffic_screen(){
   capture "$AWG_TRAFFIC" status full || true
 }
 
+notify_menu(){
+  local choice note_state daily_state current
+  while true; do
+    if [[ ! -x /usr/local/sbin/awg-notify ]]; then
+      msg "Система → Telegram" "AWG Notify пока не установлен. Доступен после установки PR #158.\nДействующие службы шлюза не изменялись."
+      return 0
+    fi
+    note_state="выключены"
+    daily_state="выключена"
+    systemctl is-enabled --quiet awg-notify-flush.timer 2>/dev/null && note_state="включены" || true
+    systemctl is-enabled --quiet awg-notify-daily.timer 2>/dev/null && daily_state="включена" || true
+    current="$(/usr/local/sbin/awg-notify status 2>/dev/null || echo NOTIFY_CONFIGURED=no)"
+    choice="$(dialog --backtitle "$BACKTITLE" --title "Система → Telegram — уведомления" --item-help --menu \
+      "Отправка: $note_state. Ежедневная сводка: $daily_state.
+$(grep -E '^NOTIFY_(CONFIGURED|PENDING|LAST_ROUTE)=' <<<"$current" || true)
+
+Оповещения не меняют VPN-маршруты и не управляют MikroTik." 27 106 10 \
+      1 "Настроить Telegram-бота" "Безопасный ввод токена и числового chat ID в SSH-терминале." \
+      2 "Проверить доставку" "Отправляет тестовое сообщение через доступные VPN/маршрут к MikroTik." \
+      3 "Включить уведомления" "Активирует только таймер доставки; требует валидного токена." \
+      4 "Выключить уведомления" "Отключает таймер; уже сохранённые события остаются в очереди." \
+      5 "Включить сводку в 09:00" "Создаёт ежедневный отчёт о состоянии Pi по системному времени." \
+      6 "Выключить ежедневную сводку" "Отключает только ежедневный отчёт." \
+      7 "Состояние и очередь" "Просмотр параметров без токена и секретов." \
+      0 "Назад" "Возврат в системное меню." 3>&1 1>&2 2>&3)" || return 0
+    case "$choice" in
+      1) run_interactive "Настройка Telegram-бота" /usr/local/sbin/awg-notify configure ;;
+      2) run_interactive "Проверка отправки Telegram" /usr/local/sbin/awg-notify test ;;
+      3)
+        if grep -Fxq 'NOTIFY_CONFIGURED=yes' <<<"$current"; then
+          if confirm "Telegram" "Включить фоновую доставку Telegram-сообщений? VPN и MikroTik не изменяются."; then
+            capture systemctl enable --now awg-notify-flush.timer || true
+          fi
+        else
+          msg "Telegram" "Сначала настройте токен и chat ID через пункт 1."
+        fi
+        ;;
+      4) capture systemctl disable --now awg-notify-flush.timer || true ;;
+      5)
+        if grep -Fxq 'NOTIFY_CONFIGURED=yes' <<<"$current"; then
+          capture systemctl enable --now awg-notify-daily.timer || true
+        else
+          msg "Telegram" "Сначала настройте Telegram-бота."
+        fi
+        ;;
+      6) capture systemctl disable --now awg-notify-daily.timer || true ;;
+      7) capture /usr/local/sbin/awg-notify status || true ;;
+      0) return 0 ;;
+    esac
+  done
+}
+
 system_menu(){
   local choice mode_badge
   while true; do
@@ -2253,6 +2305,7 @@ system_menu(){
       6 "Режим работы [$mode_badge]" "Переключение между SELECTIVE и TRANSIT с безопасными предварительными проверками. Метка показывает текущий режим." \
       7 "Часовой пояс" "Просмотр доступных часовых поясов IANA и изменение системного часового пояса." \
       8 "Статистика трафика" "Трафик за сегодня и месяц только по транспортным интерфейсам Pi: awg0 и mihomo0, с отдельной статистикой по AWG и Mihomo." \
+      9 "Telegram — уведомления" "Сообщения о VPN, состоянии Pi и переключениях. Безопасная настройка, проверка доставки и сводки." \
       0 "Назад" "Возвращает в главное меню без изменений." 3>&1 1>&2 2>&3)" || return 0
     case "$choice" in
       1)
@@ -2270,6 +2323,7 @@ system_menu(){
       6) operating_mode_menu ;;
       7) timezone_menu ;;
       8) traffic_screen ;;
+      9) notify_menu ;;
       0) return 0 ;;
     esac
   done
