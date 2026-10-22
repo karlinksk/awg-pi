@@ -57,7 +57,7 @@ class NotifyTests(unittest.TestCase):
             result = mod.flush(self.db, failed, self.secret, active="awg", secret_uid=os.getuid())
         self.assertEqual(result["sent"], 0)
         self.assertEqual(result["pending"], 1)
-        self.assertEqual(calls, ["awg0", "mihomo0", "eth0"])
+        self.assertEqual(calls, ["awg0", "mihomo0"])
         self.db.execute("UPDATE events SET next_try=0")
         self.db.commit()
         def delivered(token, payload, route):
@@ -87,9 +87,22 @@ class NotifyTests(unittest.TestCase):
         self.assertEqual(result["reason"], "telegram_rejected_401")
 
     def test_router_route_is_not_labeled_sstp(self):
-        self.assertEqual(mod.route_order("mihomo"), ["mihomo0", "awg0", "eth0"])
-        self.assertEqual(mod.route_order("awg"), ["awg0", "mihomo0", "eth0"])
+        self.assertEqual(mod.route_order("mihomo", router_approved=False), ["mihomo0", "awg0"])
+        self.assertEqual(mod.route_order("mihomo", router_approved=True), ["mihomo0", "awg0", "eth0"])
+        self.assertEqual(mod.route_order("awg", router_approved=False), ["awg0", "mihomo0"])
         self.assertNotIn("sstp", mod.ROUTES)
+
+    def test_router_approval_requires_root_only_attestation(self):
+        marker = self.folder / "router-sstp-approved"
+        self.assertFalse(mod.router_sstp_approved(marker, os.getuid()))
+        marker.write_text("SSTP_VERIFIED_FAIL_CLOSED=1\\n")
+        marker.chmod(0o600)
+        self.assertTrue(mod.router_sstp_approved(marker, os.getuid()))
+        marker.chmod(0o644)
+        self.assertFalse(mod.router_sstp_approved(marker, os.getuid()))
+        marker.chmod(0o600)
+        marker.write_text("SSTP_VERIFIED_FAIL_CLOSED=0\\n")
+        self.assertFalse(mod.router_sstp_approved(marker, os.getuid()))
 
     def test_curl_token_not_in_argv_or_stderr(self):
         token = "12345678:" + "A" * 35
