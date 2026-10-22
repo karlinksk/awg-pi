@@ -104,6 +104,31 @@ class NotifyTests(unittest.TestCase):
         marker.write_text("SSTP_VERIFIED_FAIL_CLOSED=0\\n")
         self.assertFalse(mod.router_sstp_approved(marker, os.getuid()))
 
+    def test_pairing_matches_only_private_challenge(self):
+        def getter(token, route):
+            return [
+                {"message": {"chat": {"id": 100, "type": "private"},
+                             "from": {"id": 100}, "text": "/pair deadbeef"}},
+                {"message": {"chat": {"id": 200, "type": "group"},
+                             "from": {"id": 200}, "text": "/pair 123abc"}},
+                {"message": {"chat": {"id": 300, "type": "private"},
+                             "from": {"id": 300}, "text": "/pair 123abc"}},
+            ]
+        self.assertEqual(mod.find_pair_chat("token", "123abc", fetch=getter), "300")
+        self.assertIsNone(mod.find_pair_chat("token", "missing", fetch=getter))
+
+    def test_get_updates_curl_uses_stdin_not_argv(self):
+        token = "12345678:" + "A" * 35
+        def fake_run(argv, **kwargs):
+            self.assertNotIn(token, " ".join(argv))
+            self.assertIn(token, kwargs["input"])
+            self.assertIn("if!awg0", argv)
+            self.assertIn("getUpdates", kwargs["input"])
+            self.assertIn("data =", kwargs["input"])
+            return mock.Mock(returncode=0, stdout='{"ok":true,"result":[]}\\n200')
+        with mock.patch.object(mod.subprocess, "run", side_effect=fake_run):
+            self.assertEqual(mod._receive_pairing_updates(token, "awg0"), [])
+
     def test_curl_token_not_in_argv_or_stderr(self):
         token = "12345678:" + "A" * 35
         def fake_run(argv, **kwargs):
