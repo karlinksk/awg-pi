@@ -280,7 +280,7 @@ def daily_snapshot():
     health = [unit.removesuffix(".service") + "=" +
               ("активна" if _service_active(unit) else "неактивна")
               for unit in service_names]
-    return "\\n".join([
+    return "\n".join([
         "Ежедневная сводка AWG Pi Gateway",
         "Режим: " + mode,
         "Транспорт (выбранный, не подтверждение HTTPS): " + transport,
