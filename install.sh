@@ -1045,6 +1045,8 @@ install_project_unit units/awg-notify-flush.timer /etc/systemd/system/awg-notify
 install_project_unit units/awg-notify-daily.service /etc/systemd/system/awg-notify-daily.service
 install_project_unit units/awg-notify-daily.timer /etc/systemd/system/awg-notify-daily.timer
 install_project_unit units/awg-notify-boot.service /etc/systemd/system/awg-notify-boot.service
+install_project_unit units/awg-notify-watch.service /etc/systemd/system/awg-notify-watch.service
+install_project_unit units/awg-notify-watch.timer /etc/systemd/system/awg-notify-watch.timer
 # Stage18 is provider-guarded: automatic boot and provider-change recovery,
 # without running an isolated media test during bare installation.
 install_project_unit units/awg-mihomo-stage18-ram-runtime.service /etc/systemd/system/awg-mihomo-stage18-ram-runtime.service
