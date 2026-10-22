@@ -56,6 +56,18 @@ class NotifyWiringTests(unittest.TestCase):
         self.assertIn("systemctl disable --now awg-notify-watch.timer", menu)
         self.assertIn("OnUnitActiveSec=90sec", (ROOT / "units/awg-notify-watch.timer").read_text())
 
+    def test_watch_sandbox_allows_read_only_netlink_health(self):
+        unit = (ROOT / "units/awg-notify-watch.service").read_text()
+        transport = (ROOT / "src/awg-transport").read_text()
+        self.assertIn(
+            "RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK",
+            unit)
+        self.assertIn('"$IP_BIN" link show "$MIHOMO_TUN_IF"', transport)
+        self.assertIn("NoNewPrivileges=true", unit)
+        self.assertIn("ProtectSystem=strict", unit)
+        self.assertIn("ReadWritePaths=/var/lib/awg-pbr/notify", unit)
+        self.assertNotIn("CapabilityBoundingSet=", unit)
+
     def test_boot_notice_only_when_enabled(self):
         install = (ROOT / "install.sh").read_text()
         menu = (ROOT / "src/awg-menu").read_text()
