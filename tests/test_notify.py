@@ -1,5 +1,6 @@
 """No-network/rootless contract tests for AWG Notify."""
 import importlib.util
+import os
 import json
 from pathlib import Path
 import sqlite3
@@ -41,7 +42,7 @@ class NotifyTests(unittest.TestCase):
                 mod.enqueue(self.db, kind, sev, msg)
 
     def test_secret_permissions(self):
-        self.assertEqual(mod.load_secret(self.secret)[1], "123456789")
+        self.assertEqual(mod.load_secret(self.secret, owner_uid=os.getuid())[1], "123456789")
         self.secret.chmod(0o644)
         with self.assertRaises(ValueError):
             mod.load_secret(self.secret)
@@ -53,7 +54,7 @@ class NotifyTests(unittest.TestCase):
             calls.append(route)
             return False, 0, 0
         with mock.patch.object(mod, "now", return_value=5000000000):
-            result = mod.flush(self.db, failed, self.secret, active="awg")
+            result = mod.flush(self.db, failed, self.secret, active="awg", secret_uid=os.getuid())
         self.assertEqual(result["sent"], 0)
         self.assertEqual(result["pending"], 1)
         self.assertEqual(calls, ["awg0", "mihomo0", "eth0"])
@@ -62,7 +63,7 @@ class NotifyTests(unittest.TestCase):
         def delivered(token, payload, route):
             return (route == "mihomo0", 200 if route == "mihomo0" else 0, 0)
         with mock.patch.object(mod, "now", return_value=5000000001):
-            result = mod.flush(self.db, delivered, self.secret, active="awg")
+            result = mod.flush(self.db, delivered, self.secret, active="awg", secret_uid=os.getuid())
         self.assertEqual(result["sent"], 1)
         self.assertEqual(result["pending"], 0)
         self.assertEqual(self.db.execute("SELECT value FROM meta WHERE key='last_success_route'").fetchone()[0], "mihomo0")
@@ -70,7 +71,7 @@ class NotifyTests(unittest.TestCase):
     def test_missing_credentials_preserves_queue(self):
         mod.enqueue(self.db, "BOOT", "info", "Restart")
         self.secret.unlink()
-        result = mod.flush(self.db, secret_path=self.secret)
+        result = mod.flush(self.db, secret_path=self.secret, secret_uid=os.getuid())
         self.assertEqual(result["reason"], "not_configured")
         self.assertEqual(result["pending"], 1)
 
@@ -81,7 +82,7 @@ class NotifyTests(unittest.TestCase):
             calls.append(route)
             return False, 401, 0
         with mock.patch.object(mod, "now", return_value=5000000000):
-            result = mod.flush(self.db, reject, self.secret)
+            result = mod.flush(self.db, reject, self.secret, secret_uid=os.getuid())
         self.assertEqual(len(calls), 1)
         self.assertEqual(result["reason"], "telegram_rejected_401")
 
