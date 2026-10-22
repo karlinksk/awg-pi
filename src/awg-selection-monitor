@@ -173,7 +173,7 @@ try_failover(){
     # A fallback backend may be intentionally stopped while on standby.
     # awg-transport select starts it, validates health/preflight and rolls
     # back safely if activation fails.
-    if "$AWG_TRANSPORT_CLI" select "$candidate" >/dev/null; then
+    if AWG_NOTIFY_AUTOMATIC=1 "$AWG_TRANSPORT_CLI" select "$candidate" >/dev/null; then
       log_event "Automatic failover: $current -> $candidate (mode=$SELECTION_MODE)"
       reset_failures
       printf 'FAILOVER=%s->%s\n' "$current" "$candidate"
@@ -257,7 +257,8 @@ selection_cycle(){
       # Passive notification after the node-policy confirmed the switch.
       # Never hold recovery for a Telegram network request.
       if [[ -s /etc/awg-pbr/notify/telegram.json &&
-            -x /usr/local/sbin/awg-notify ]]; then
+            -x /usr/local/sbin/awg-notify ]] &&
+         systemctl is-enabled --quiet awg-notify-flush.timer 2>/dev/null; then
         printf 'Automatic Mihomo node switch: %s' "${node_out#MIHOMO_NODE_FAILOVER=}" |
           timeout 2s /usr/local/sbin/awg-notify emit --kind NODE_SWITCH \
             --severity info >/dev/null 2>&1 || true
