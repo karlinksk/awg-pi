@@ -223,6 +223,26 @@ class NotifyWiringTests(unittest.TestCase):
         self.assertIn("appearance_menu(){", menu)
         self.assertIn("awg-matrix-compositor.py", menu)
 
+    def test_checklist_test_pi_upgrade_pinned_and_read_only(self):
+        script = (ROOT / "scripts/awg-notify-checklist-test-install.py").read_text()
+        for term in ("CHECKLIST_INSTALL=PASS_TEST_PI_ONLY",
+                     "CHECKLIST_INSTALL=ROLLED_BACK",
+                     "REFUSE_CHECKSUM_CHANGED",
+                     "TELEGRAM_EVENT_SWITCHES=6",
+                     "MATRIX_AND_DESKTOP_COMMANDER=PRESERVED",
+                     "NOTIFY_POLICY_FILE=UNMODIFIED",
+                     "EXISTING_QUEUE_AND_BOT_SECRET=UNMODIFIED",
+                     "NETWORK_AND_NOTIFIER_UNCHANGED=YES"):
+            self.assertIn(term, script)
+        self.assertNotIn("systemctl restart", script)
+        self.assertNotIn("systemctl enable", script)
+        if os.geteuid() != 0:
+            result = subprocess.run(
+                ["python3", str(ROOT / "scripts/awg-notify-checklist-test-install.py")],
+                text=True, capture_output=True, timeout=5, check=False)
+            self.assertEqual(result.returncode, 2)
+            self.assertIn("ROOT_REQUIRED", result.stderr)
+
     def test_no_router_or_dns_modifications(self):
         code = (ROOT / "src/awg-notify.py").read_text()
         for keyword in ("ip route replace", "nft add", "mikrotik login", "dnsmasq restart"):
