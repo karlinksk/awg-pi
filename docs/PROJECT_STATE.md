@@ -84,6 +84,26 @@
 - Положительное испытание под root и установка исправленной службы
   **ожидаются**. Watch timer выключен, действующий шлюз не менялся.
 
+## AWG Notify: реальный systemd Watch PASS — 2026-10-22
+
+- Пользователь выполнил закреплённый по SHA-256 root-only сценарий на **тестовой Pi**:
+  `OLD_FALSE_DOWN_BASELINE=CLEARED`, `WATCH_RUNTIME=PASS_UP`,
+  `NOTIFY_EVENTS_NEWLY_QUEUED=0`, `NOTIFY_WATCH_TIMER=DISABLED`,
+  `TRANSPORT_CHANGE=NONE`. Сохранён backup SQLite в `/run`, очередь
+  не очищалась. Это проверка одного настоящего systemd-запуска исправленного
+  наблюдателя, **не реальная имитация отказа VPN**.
+- Независимо проверено в журнале: **15:27:27 +07** `NOTIFY_WATCH=up`,
+  systemd unit `Result=success`, `ExecMainStatus=0`, `AF_NETLINK`
+  разрешён. Flush/daily таймеры активны, watch timer остаётся выключен
+  до отдельного включения оператором. SSH/dnsmasq/health/selection работают,
+  таблицы 100/101 через mihomo0. 49/49 rootless тестов PASS.
+- Исправленная служба **installed only on test Pi**, находится в
+  **draft PR #158**, не merged/released/production. Длительный таймер,
+  автоматические node/transport hooks, реальные failover/LAN/reboot,
+  SSTP egress не доказаны. После штатного включения watch проверить
+  несколько циклов `up` без ложных событий, затем вернуться к PR #115
+  и clean-install release gate.
+
 ## 1. Главная цель и границы работ
 
 Закончить **AWG Pi Gateway v1.3.0**: воспроизводимый шлюз для Raspberry Pi 4 / чистой Debian 13 ARM64 с двумя транспортами **AmneziaWG** и **Mihomo**. Инсталлятор должен сразу устанавливать всё необходимое, **включая FFmpeg/FFprobe, Stage18 Node.js и yt-dlp** и сами движки — даже если VPN-профиль/подписка будут внесены позднее. После ввода AWG-профиля и/или Mihomo-подписки система должна штатно подбирать пригодные ноды, работать после перезагрузки, сохранять политики и обеспечивать предусмотренный резервный путь.
