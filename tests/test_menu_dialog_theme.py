@@ -37,6 +37,7 @@ class MenuVisualTheme(unittest.TestCase):
     def test_palette_is_dark_and_high_contrast_in_every_dialog(self):
         for field in (
             "use_colors = ON", "use_shadow = ON",
+            "screen_color = (BLACK,CYAN,OFF)",
             "dialog_color = (WHITE,BLUE,OFF)",
             "item_color = dialog_color",
             "item_selected_color = (WHITE,BLACK,ON)",
@@ -53,7 +54,8 @@ class MenuVisualTheme(unittest.TestCase):
         ):
             self.assertIn(field, PALETTE)
         # No light cyan panel or selection that obscures Termius green words.
-        self.assertNotIn("(BLACK,CYAN,OFF)", PALETTE)
+        # The light cyan is confined to the outside screen, never the window.
+        self.assertEqual(PALETTE.count("(BLACK,CYAN,OFF)"), 1)
         self.assertNotIn("(WHITE,CYAN,ON)", PALETTE)
         self.assertEqual(MENU.count("export DIALOGRC="),1)
 
