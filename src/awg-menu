@@ -2271,12 +2271,16 @@ $(grep -E '^NOTIFY_(CONFIGURED|PENDING|LAST_ROUTE)=' <<<"$current" || true)
         if grep -Fxq 'NOTIFY_CONFIGURED=yes' <<<"$current"; then
           if confirm "Telegram" "Включить фоновую доставку Telegram-сообщений? VPN и MikroTik не изменяются."; then
             capture systemctl enable --now awg-notify-flush.timer || true
+            capture systemctl enable awg-notify-boot.service || true
           fi
         else
           msg "Telegram" "Сначала настройте токен и chat ID через пункт 1."
         fi
         ;;
-      4) capture systemctl disable --now awg-notify-flush.timer || true ;;
+      4)
+        capture systemctl disable --now awg-notify-flush.timer || true
+        capture systemctl disable --now awg-notify-boot.service || true
+        ;;
       5)
         if grep -Fxq 'NOTIFY_CONFIGURED=yes' <<<"$current"; then
           capture systemctl enable --now awg-notify-daily.timer || true
