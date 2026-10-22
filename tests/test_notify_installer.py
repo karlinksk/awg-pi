@@ -88,6 +88,26 @@ class NotifyWiringTests(unittest.TestCase):
             self.assertIn("ROOT_REQUIRED", proc.stderr)
             self.assertNotIn("ROOT_REQUIRED", proc.stdout)
 
+    def test_notify_upgrade_rollback_manifest_and_optin(self):
+        upgrade = (ROOT / "src/awg-update").read_text()
+        for name in ("awg-notify", "awg-notify-pair-repair"):
+            self.assertIn("usr/local/sbin/" + name, upgrade)
+        for unit in ("awg-notify-flush.timer", "awg-notify-watch.timer",
+                     "awg-notify-daily.timer", "awg-notify-boot.service",
+                     "awg-notify-flush.service", "awg-notify-watch.service",
+                     "awg-notify-daily.service"):
+            self.assertIn("etc/systemd/system/" + unit, upgrade)
+        self.assertIn("var/lib/awg-pbr/notify", upgrade)
+        self.assertIn('notify-activation-$unit', upgrade)
+        self.assertIn('notify-activation-$notify_unit', upgrade)
+        self.assertIn('systemctl disable --now awg-notify-flush.timer '
+                      'awg-notify-watch.timer awg-notify-daily.timer '
+                      'awg-notify-boot.service', upgrade)
+        self.assertIn('systemctl enable --now "$notify_unit"', upgrade)
+        self.assertIn('systemctl enable "$notify_unit"', upgrade)
+        # No production VPN mutation should be added for a notifier backup.
+        self.assertIn('systemctl daemon-reload', upgrade)
+
     def test_boot_notice_only_when_enabled(self):
         install = (ROOT / "install.sh").read_text()
         menu = (ROOT / "src/awg-menu").read_text()
