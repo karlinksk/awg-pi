@@ -91,6 +91,20 @@ class MenuVisualTheme(unittest.TestCase):
             self.assertEqual(proc.returncode,0,proc.stderr.decode(errors="replace")[-200:])
             self.assertIn(b"Style check",proc.stdout)
 
+    def test_installer_and_upgrade_use_pinned_menu_palette_source(self):
+        install=(ROOT/"install.sh").read_text()
+        update=(ROOT/"src/awg-update").read_text()
+        self.assertIn('PROJECT_REF="${AWG_PI_REF:-v${AWG_PI_VERSION}}"',install)
+        self.assertIn('PROJECT_RAW_BASE="https://raw.githubusercontent.com/karlinksk/awg-pi/${PROJECT_REF}"',install)
+        self.assertIn('"$PROJECT_RAW_BASE/$remote"',install)
+        self.assertIn("install_project_helper src/awg-menu /usr/local/sbin/awg-menu",install)
+        self.assertIn("cyan backdrop, dark-blue windows, white breadcrumb titles",install)
+        # Production auto-update remains release-tagged; the candidate uses
+        # the same installer with a separately supplied pinned ref.
+        self.assertIn('AWG_PI_REF="$tag" AWG_PI_UPGRADE_AUTO=1',update)
+        self.assertIn("title_color = (WHITE,BLUE,ON)",PALETTE)
+        self.assertIn("screen_color = (BLACK,CYAN,OFF)",PALETTE)
+
     def test_no_mutation_outside_menu(self):
         install=(ROOT/"install.sh").read_text()
         self.assertIn("install_project_helper src/awg-menu /usr/local/sbin/awg-menu",install)
