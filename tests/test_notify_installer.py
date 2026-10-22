@@ -133,6 +133,29 @@ class NotifyWiringTests(unittest.TestCase):
         self.assertIn('8) secondary_transport_setup ;;', menu)
         self.assertEqual(menu.count('10 "Telegram — уведомления"'), 1)
 
+    def test_test_pi_menu_upgrade_preserves_live_and_secrets(self):
+        installer = (ROOT / "install.sh").read_text()
+        script = (ROOT / "scripts/awg-notify-menu-test-install.py").read_text()
+        self.assertIn("install_project_helper src/awg-menu /usr/local/sbin/awg-menu", installer)
+        self.assertIn("install_project_python_helper scripts/awg-notify-pair-repair.py", installer)
+        self.assertIn("install_project_unit units/awg-notify-watch.service", installer)
+        self.assertIn("MENU_CURRENT = ", script)
+        self.assertIn("MENU_NEW = ", script)
+        self.assertIn("PAIR_NEW = ", script)
+        self.assertIn("REFUSED_DEPLOYED_MENU_HAS_CHANGED", script)
+        self.assertIn("MENU_INSTALL=ROLLED_BACK", script)
+        self.assertIn("CORE_SERVICES_AND_PBR=UNCHANGED", script)
+        self.assertIn("NOTIFY_TIMERS=UNCHANGED", script)
+        self.assertNotIn("systemctl restart", script)
+        self.assertNotIn("systemctl enable", script)
+        self.assertNotIn("mikrotik", script.lower())
+        if os.geteuid() != 0:
+            result = subprocess.run(
+                ["python3", str(ROOT / "scripts/awg-notify-menu-test-install.py")],
+                capture_output=True, text=True, check=False, timeout=5)
+            self.assertEqual(result.returncode, 2)
+            self.assertIn("ROOT_REQUIRED", result.stdout)
+
     def test_no_router_or_dns_modifications(self):
         code = (ROOT / "src/awg-notify.py").read_text()
         for keyword in ("ip route replace", "nft add", "mikrotik login", "dnsmasq restart"):
