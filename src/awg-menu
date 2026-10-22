@@ -129,6 +129,8 @@ awg_dialog_breadcrumb_title(){
       operating_mode_menu) label="Режим" ;;
       desktop_commander_menu) label="Desktop Commander" ;;
       notify_menu) label="Telegram" ;;
+      first_transport_setup) label="Первичная настройка" ;;
+      secondary_transport_setup) label="Добавить транспорт" ;;
       update_menu) label="Обновления" ;;
       mihomo_pool_pick) label="Каталог" ;;
     esac
@@ -2069,6 +2071,50 @@ mihomo_initial_setup_flow(){
   fi
 }
 
+first_transport_setup(){
+  local choice
+  choice="$(dialog --backtitle "$BACKTITLE" --title "Первичная настройка VPN" --item-help --menu \
+    "Движки VPN установлены отдельно от профилей. Выберите первый транспорт. Настройку можно отложить без ошибки; текущие сетевые правила останутся безопасными." 23 106 7 \
+    1 "Настроить AmneziaWG" "Вставить .conf либо выбрать файл на Pi. Проверка профиля предшествует включению." \
+    2 "Настроить Mihomo" "Ввести ссылку подписки, проверить ноды и выбрать рабочий профиль." \
+    3 "Настроить позже" "Оставить VPN без профиля. SELECTIVE использует DIRECT, TRANSIT блокирует транзит." \
+    0 "Назад" "Ничего не менять." 3>&1 1>&2 2>&3)" || return 0
+  case "$choice" in
+    1) awg_config_menu ;;
+    2) mihomo_initial_setup_flow normal ;;
+    3) msg "Первичная настройка" "VPN пока не настроен. Это не ошибка установки.\n\nПрофиль можно добавить позже в разделе «VPN-маршрутизация». В TRANSIT до настройки действует блокировка транзитного трафика (FAIL-CLOSED)." ;;
+    0) return 0 ;;
+  esac
+}
+
+secondary_transport_setup(){
+  local current mihomo_status
+
+  current="$("$AWG_TRANSPORT" get 2>/dev/null || echo unconfigured)"
+  case "$current" in
+    unconfigured)
+      first_transport_setup
+      ;;
+    awg)
+      mihomo_status="$("$MIHOMO_CONFIGURE" status 2>/dev/null || true)"
+      if grep -Fqx 'Configured: yes' <<<"$mihomo_status"; then
+        msg "Второй транспорт" "Mihomo уже настроен как дополнительный транспорт.\n\nАктивный транспорт: AWG.\nMihomo не будет настраиваться заново. Открываю обычное меню управления Mihomo."
+        mihomo_menu
+      else
+        confirm "Добавить Mihomo" "AWG уже работает и останется активным транспортом.\n\nНастроить Mihomo как второй транспорт: подписка → основной узел → необязательная резервная цепочка?" || return 0
+        mihomo_initial_setup_flow secondary
+      fi
+      ;;
+    mihomo)
+      msg "Второй транспорт" "Mihomo уже активен. Для добавления или обновления AmneziaWG используйте раздел конфигурации AWG. Транспорт автоматически не переключается."
+      awg_config_menu
+      ;;
+    *)
+      msg "Транспорт" "Неизвестное состояние активного транспорта: $current"
+      ;;
+  esac
+}
+
 mihomo_replace_subscription(){
   local url url_tmp status current_url current_profile profile profile_label
   status="$("$MIHOMO_CONFIGURE" status 2>/dev/null || true)"
@@ -2464,6 +2510,7 @@ vpn_menu(){
         4 "Mihomo" "Управление подпиской, узлами, резервированием узлов и восстановлением Mihomo. Активный транспорт меняется отдельным пунктом ниже." \
         5 "Активный транспорт" "Ручное безопасное переключение трафика между AWG и Mihomo. Показывает, какой транспорт используется сейчас." \
         6 "Политика выбора транспорта" "MANUAL / FIXED / AUTO. Определяет, когда разрешено автоматическое переключение между AWG и Mihomo." \
+        7 "Добавить / настроить транспорт" "Мастер для первичной настройки или добавления второго VPN без вмешательства в действующий транспорт." \
         0 "Назад" "Возвращает в главное меню без изменений." 3>&1 1>&2 2>&3)" || return 0
       case "$choice" in
         1)
@@ -2477,6 +2524,7 @@ vpn_menu(){
         4) mihomo_menu ;;
         5) active_transport_menu ;;
         6) selection_policy_menu ;;
+        7) secondary_transport_setup ;;
         0) return 0 ;;
       esac
       continue
@@ -2491,6 +2539,7 @@ vpn_menu(){
       5 "Mihomo" "Управление подпиской, узлами, резервированием узлов и восстановлением Mihomo. Активный транспорт меняется отдельным пунктом ниже." \
       6 "Активный транспорт" "Ручное безопасное переключение трафика между AWG и Mihomo. Показывает, какой транспорт используется сейчас." \
       7 "Политика выбора транспорта" "MANUAL / FIXED / AUTO. Определяет, когда разрешено автоматическое переключение между AWG и Mihomo." \
+      8 "Добавить / настроить транспорт" "Мастер для первичной настройки или добавления второго VPN без вмешательства в действующий транспорт." \
       0 "Назад" "Возвращает в главное меню без изменений." 3>&1 1>&2 2>&3)" || return 0
     case "$choice" in
       1)
@@ -2509,6 +2558,7 @@ vpn_menu(){
       5) mihomo_menu ;;
       6) active_transport_menu ;;
       7) selection_policy_menu ;;
+      8) secondary_transport_setup ;;
       0) return 0 ;;
     esac
   done
