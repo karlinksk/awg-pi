@@ -338,7 +338,7 @@ apt-get update
 apt-get install -y --no-install-recommends \
   ca-certificates curl git jq build-essential make pkg-config \
   iproute2 iputils-ping iputils-arping dnsutils nftables dnsmasq procps \
-  python3-minimal python3-yaml openssl dialog ffmpeg xz-utils tzdata
+  python3-minimal python3-yaml openssl dialog tmux ffmpeg xz-utils tzdata
 
 command -v nft >/dev/null || die "nft не установлен"
 command -v dnsmasq >/dev/null || die "dnsmasq не установлен"
@@ -1018,7 +1018,21 @@ install_project_helper src/awg-opencck-update /usr/local/sbin/awg-opencck-update
 install_project_helper src/awg-core-update /usr/local/sbin/awg-core-update
 install_project_helper src/awg-update "$UPDATE_SCRIPT"
 install_project_helper src/awg-traffic "$TRAFFIC_CLI"
+# Matrix is the user-accepted optional visual skin over the existing TUI.
+# The compositor never changes routing, transport, DNS or RouterOS. On a fresh
+# install it is the initial theme; on upgrade preserve the operator's choice.
+# A recovery path always remains: sudo awg-menu --classic.
+install_project_python_helper extras/awg-matrix-compositor.py /usr/local/lib/awg-pi/awg-matrix-compositor.py
 install_project_helper src/awg-menu /usr/local/sbin/awg-menu
+if [[ ! -e /etc/awg-pbr/menu-appearance ]]; then
+  install -d -o root -g root -m 0700 /etc/awg-pbr
+  if (( UPGRADE_EXISTING == 0 )); then
+    printf 'matrix\\n' > /etc/awg-pbr/menu-appearance
+  else
+    printf 'classic\\n' > /etc/awg-pbr/menu-appearance
+  fi
+  chmod 0600 /etc/awg-pbr/menu-appearance
+fi
 
 mkdir -p /etc/awg-pbr/sources/opencck/metadata
 mkdir -p /etc/awg-pbr/transports/mihomo /var/lib/awg-pbr/mihomo/providers /var/lib/awg-pbr/traffic
