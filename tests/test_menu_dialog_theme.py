@@ -34,19 +34,31 @@ class MenuVisualTheme(unittest.TestCase):
         ):
             self.assertIn(option + ' "' + label + '"', MENU)
 
-    def test_palette_matches_light_panel_with_high_contrast(self):
+    def test_palette_is_dark_and_high_contrast_in_every_dialog(self):
         for field in (
             "use_colors = ON", "use_shadow = ON",
-            "dialog_color = (BLACK,CYAN,OFF)",
+            "screen_color = (BLACK,CYAN,OFF)",
+            "dialog_color = (WHITE,BLUE,OFF)",
             "item_color = dialog_color",
-            "item_selected_color = (WHITE,BLUE,ON)",
-            "title_color = (BLUE,CYAN,ON)",
-            "itemhelp_color = (BLACK,CYAN,OFF)",
-            "button_active_color = (WHITE,BLUE,ON)",
+            "item_selected_color = (WHITE,BLACK,ON)",
+            "title_color = (WHITE,BLUE,ON)",
+            "border_color = (CYAN,BLUE,ON)",
+            "menubox_color = dialog_color",
+            "itemhelp_color = (WHITE,BLUE,OFF)",
+            "button_active_color = (WHITE,BLACK,ON)",
+            "button_inactive_color = (WHITE,BLUE,ON)",
+            "button_label_active_color = (YELLOW,BLACK,ON)",
             "inputbox_color = dialog_color",
             "searchbox_color = dialog_color",
+            "form_text_color = dialog_color",
         ):
-            self.assertIn(field,PALETTE)
+            self.assertIn(field, PALETTE)
+        # No light cyan panel or selection that obscures Termius green words.
+        # The light cyan is confined to the outside screen, never the window.
+        self.assertEqual(PALETTE.count("(BLACK,CYAN,OFF)"), 1)
+        self.assertNotIn("(WHITE,CYAN,ON)", PALETTE)
+        self.assertIn("gauge_color = (YELLOW,BLUE,ON)", PALETTE)
+        self.assertIn("button_label_active_color = (YELLOW,BLACK,ON)", PALETTE)
         self.assertEqual(MENU.count("export DIALOGRC="),1)
 
     def test_native_scrollbar_hidden_without_disabling_scroll(self):
@@ -55,7 +67,7 @@ class MenuVisualTheme(unittest.TestCase):
         # position indicator and keyboard navigation remain native.
         self.assertIn("use_scrollbar = OFF",PALETTE)
         self.assertNotIn("use_scrollbar = ON",PALETTE)
-        self.assertIn("position_indicator_color = title_color",PALETTE)
+        self.assertIn("position_indicator_color = (YELLOW,BLUE,ON)",PALETTE)
         self.assertNotIn("--scrollbar",MENU)
         self.assertIn("--item-help --menu",MENU)
 
@@ -78,6 +90,20 @@ class MenuVisualTheme(unittest.TestCase):
             )
             self.assertEqual(proc.returncode,0,proc.stderr.decode(errors="replace")[-200:])
             self.assertIn(b"Style check",proc.stdout)
+
+    def test_installer_and_upgrade_use_pinned_menu_palette_source(self):
+        install=(ROOT/"install.sh").read_text()
+        update=(ROOT/"src/awg-update").read_text()
+        self.assertIn('PROJECT_REF="${AWG_PI_REF:-v${AWG_PI_VERSION}}"',install)
+        self.assertIn('PROJECT_RAW_BASE="https://raw.githubusercontent.com/karlinksk/awg-pi/${PROJECT_REF}"',install)
+        self.assertIn('"$PROJECT_RAW_BASE/$remote"',install)
+        self.assertIn("install_project_helper src/awg-menu /usr/local/sbin/awg-menu",install)
+        self.assertIn("cyan backdrop, dark-blue windows, white breadcrumb titles",install)
+        # Production auto-update remains release-tagged; the candidate uses
+        # the same installer with a separately supplied pinned ref.
+        self.assertIn('AWG_PI_REF="$tag" AWG_PI_UPGRADE_AUTO=1',update)
+        self.assertIn("title_color = (WHITE,BLUE,ON)",PALETTE)
+        self.assertIn("screen_color = (BLACK,CYAN,OFF)",PALETTE)
 
     def test_no_mutation_outside_menu(self):
         install=(ROOT/"install.sh").read_text()

@@ -32,11 +32,17 @@ if [[ -t 0 && -t 1 ]]; then
 fi
 
 
-# Consistent 8-color dialog palette for every AWG menu widget. The generated
-# design uses richer shades; native Debian dialog supports terminal colors,
-# so this is a faithful light-panel/dark-selection approximation, not RGB.
+# Consistent high-contrast, 8-color palette for all AWG menu widgets.
+# Termius may highlight words (e.g. OK) green; a light-cyan panel makes those
+# hard to read. Deep-blue panels, white text and black selected rows keep
+# both terminal-colored words and native dialog labels legible on SSH clients.
+# These are terminal ANSI colors, not forced RGB values.
 # A process-owned rc file is necessary because the menu can be launched via
 # sudo from arbitrary SSH accounts and must not mutate ~/.dialogrc or /etc.
+# The surrounding screen uses the former light-cyan dialog background;
+# windows remain deep blue for readable highlighted status text.
+# Breadcrumbs use dialog's title color: white on deep blue, while the
+# position marker, progress gauge and active buttons keep yellow accents.
 AWG_DIALOG_STYLE=""
 awg_dialog_theme_init(){
   AWG_DIALOG_STYLE="$(mktemp /tmp/awg-dialogrc.XXXXXXXX)"
@@ -45,28 +51,28 @@ awg_dialog_theme_init(){
 use_colors = ON
 use_shadow = ON
 use_scrollbar = OFF
-screen_color = (CYAN,BLUE,OFF)
+screen_color = (BLACK,CYAN,OFF)
 shadow_color = (BLACK,BLACK,ON)
-dialog_color = (BLACK,CYAN,OFF)
-title_color = (BLUE,CYAN,ON)
-border_color = (BLUE,CYAN,ON)
+dialog_color = (WHITE,BLUE,OFF)
+title_color = (WHITE,BLUE,ON)
+border_color = (CYAN,BLUE,ON)
 border2_color = border_color
 menubox_color = dialog_color
 menubox_border_color = border_color
 menubox_border2_color = border_color
 item_color = dialog_color
-item_selected_color = (WHITE,BLUE,ON)
-tag_color = (BLUE,CYAN,ON)
-tag_selected_color = (CYAN,BLUE,ON)
+item_selected_color = (WHITE,BLACK,ON)
+tag_color = (CYAN,BLUE,ON)
+tag_selected_color = (YELLOW,BLACK,ON)
 tag_key_color = tag_color
 tag_key_selected_color = tag_selected_color
-itemhelp_color = (BLACK,CYAN,OFF)
-button_active_color = (WHITE,BLUE,ON)
-button_inactive_color = (BLUE,CYAN,ON)
+itemhelp_color = (WHITE,BLUE,OFF)
+button_active_color = (WHITE,BLACK,ON)
+button_inactive_color = (WHITE,BLUE,ON)
 button_key_active_color = button_active_color
 button_key_inactive_color = button_inactive_color
-button_label_active_color = (YELLOW,BLUE,ON)
-button_label_inactive_color = (BLUE,CYAN,ON)
+button_label_active_color = (YELLOW,BLACK,ON)
+button_label_inactive_color = (WHITE,BLUE,ON)
 inputbox_color = dialog_color
 inputbox_border_color = border_color
 inputbox_border2_color = border_color
@@ -74,14 +80,14 @@ searchbox_color = dialog_color
 searchbox_title_color = title_color
 searchbox_border_color = border_color
 searchbox_border2_color = border_color
-position_indicator_color = title_color
-uarrow_color = (BLUE,CYAN,ON)
+position_indicator_color = (YELLOW,BLUE,ON)
+uarrow_color = (CYAN,BLUE,ON)
 darrow_color = uarrow_color
 check_color = dialog_color
 check_selected_color = button_active_color
 form_active_text_color = button_active_color
 form_text_color = dialog_color
-gauge_color = title_color
+gauge_color = (YELLOW,BLUE,ON)
 AWG_DIALOG_PALETTE
   export DIALOGRC="$AWG_DIALOG_STYLE"
 }
