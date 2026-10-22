@@ -41,6 +41,19 @@ sudo awg-notify test          # queues and attempts one test notification
 sudo systemctl enable --now awg-notify-flush.timer
 ```
 
+If a mistaken numeric chat ID was saved as `1`, **do not send a test
+message** and do not enable notification timers. Run the installed,
+operator-invoked `sudo /usr/local/sbin/awg-notify-pair-repair`. This command
+reads the existing root-owned bot token, verifies the actual bot public
+username through Telegram `getMe`, shows the exact `t.me` link and
+an ephemeral private `/pair` challenge, then polls available updates for
+up to two minutes. It accepts only a matching private command sent by the
+chat's own account. It only replaces the chat ID upon success and does not
+send messages, consume updates, change webhook, or alter gateway routing.
+It refuses to overwrite a configured chat ID other than the known erroneous
+placeholder. The correction is not evidence of message delivery; follow
+with `sudo awg-notify test` and personally confirm receipt.
+
 The root-only token lives at `/etc/awg-pbr/notify/telegram.json` (0600);
 the event queue lives at `/var/lib/awg-pbr/notify/events.sqlite3` (0700
 parent). The installer installs the binary and units but does not activate
