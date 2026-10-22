@@ -20,7 +20,7 @@ EXPECTED_CURRENT = {
 }
 EXPECTED_NEW = {
     "awg-menu": "03fa77837a1c8c624562ec2722b06a42836c30b4c232440a3faf93d7dfeb5b85",
-    "awg-notify": "TO_BE_PINNED",
+    "awg-notify": "937e4f21f8fa8b40d8cabd9352f605feb553070327140c56f6cd72d0e576db44",
 }
 CORE = ("ssh.service", "dnsmasq.service", "awg-pbr-health.service",
         "awg-selection-monitor.service", "awg-mihomo.service")
