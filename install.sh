@@ -820,6 +820,11 @@ install_project_helper src/awg-first-run "$FIRST_RUN_CLI"
 install_project_helper src/awg-selection "$SELECTION_CLI"
 install_project_helper src/awg-selection-monitor "$SELECTION_MONITOR"
 # Passive AWG Notify: no token, no active timer, no routing changes at install.
+# AWG Notify event checkboxes are stored in root-only
+# /etc/awg-pbr/notify/events-policy.json by awg-notify preferences-set.
+# Do not create or overwrite this policy during install/upgrade: absent
+# policy preserves legacy BOOT/DAILY/VPN alert defaults, while Telegram
+# delivery stays OFF until user configures their bot.
 install_project_python_helper src/awg-notify.py /usr/local/sbin/awg-notify
 # Safe interactive repair for an incorrect chat ID; never invoked by installer.
 install_project_python_helper scripts/awg-notify-pair-repair.py /usr/local/sbin/awg-notify-pair-repair
