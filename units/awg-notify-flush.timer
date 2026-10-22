@@ -1,0 +1,11 @@
+[Unit]
+Description=Flush pending AWG Pi Telegram notifications
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=1min
+RandomizedDelaySec=10s
+AccuracySec=5s
+
+[Install]
+WantedBy=timers.target
