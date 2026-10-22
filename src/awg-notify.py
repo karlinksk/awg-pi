@@ -21,6 +21,8 @@ from urllib.parse import urlencode
 DB_PATH = Path("/var/lib/awg-pbr/notify/events.sqlite3")
 SECRET_PATH = Path("/etc/awg-pbr/notify/telegram.json")
 TRANSPORT_PATH = Path("/etc/awg-pbr/transport")
+# Only an operator-verified fail-closed RouterOS SSTP policy permits eth0 fallback.
+ROUTER_SSTP_APPROVED = Path("/etc/awg-pbr/notify/router-sstp-approved")
 TOKEN_PATTERN = re.compile(r"^[0-9]{5,15}:[A-Za-z0-9_-]{25,150}$")
 KINDS = {"NODE_SWITCH", "TRANSPORT_SWITCH", "TRANSPORT_FAILOVER", "VPN_LOST", "VPN_RESTORED",
          "POOL_EMPTY", "POOL_RESTORED", "BOOT", "SYSTEM_WARNING",
@@ -140,14 +142,32 @@ def configure(path=SECRET_PATH):
     print("Telegram credentials saved (0600). No message sent yet.")
 
 
-def route_order(active=""):
+def router_sstp_approved(path=ROUTER_SSTP_APPROVED, owner_uid=0):
+    try:
+        stat = Path(path).stat()
+        return (stat.st_uid == owner_uid and not (stat.st_mode & 0o077)
+                and Path(path).is_file()
+                and Path(path).read_text(encoding="ascii").strip()
+                == "SSTP_VERIFIED_FAIL_CLOSED=1")
+    except (OSError, UnicodeError):
+        return False
+
+
+def route_order(active="", router_approved=None):
     if active not in ("awg", "mihomo"):
         try:
             active = TRANSPORT_PATH.read_text(encoding="utf-8").strip()
         except (FileNotFoundError, PermissionError):
             active = ""
     preferred = {"mihomo": "mihomo0", "awg": "awg0"}.get(active)
-    return ([preferred] if preferred else []) + [x for x in ROUTES if x != preferred]
+    # eth0 may be DIRECT when SSTP drops: never use it without a reviewed
+    # RouterOS fail-closed policy that was tested with the SSTP tunnel down.
+    candidates = ["mihomo0", "awg0"]
+    if router_approved is None:
+        router_approved = router_sstp_approved()
+    if router_approved:
+        candidates.append("eth0")
+    return ([preferred] if preferred else []) + [x for x in candidates if x != preferred]
 
 
 def curl_api(token, payload, route, method="sendMessage", timeout=8):
@@ -319,7 +339,8 @@ def show_status(db, secret_path=SECRET_PATH):
     print("NOTIFY_CONFIGURED=" + ("yes" if configured else "no"))
     print("NOTIFY_PENDING=" + str(pending))
     print("NOTIFY_LAST_ROUTE=" + (last[0] if last else "none"))
-    print("NOTIFY_ROUTE_ETH0=via_MikroTik_SSTP_not_proven")
+    print("NOTIFY_ROUTE_ETH0=" + ("approved_router_policy" if router_sstp_approved()
+                                   else "disabled_pending_sstp_fail_closed_proof"))
 
 
 def main(argv=None):
