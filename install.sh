@@ -959,6 +959,9 @@ fi
 # candidates first, then temporarily pause only the Hot Pool timer.
 _hot_stage="$(mktemp -d /run/awg-hot-pool-install.XXXXXXXX)"
 install_project_python_helper extras/mihomo-hot-pool-shadow/awg-mihomo-hot-pool.py "$_hot_stage/pool"
+# The staged service scanner must check the actual active Mihomo identity
+# against the canonical live subscription, NOT rewritten hot-* aliases.
+# It is updated atomically with the other Hot Pool artifacts below.
 install_project_python_helper extras/mihomo-hot-pool-shadow/awg-mihomo-hot-service-scan.py "$_hot_stage/scan"
 install_project_python_helper extras/mihomo-hot-pool-shadow/awg-hot-pool-continuity.py "$_hot_stage/continuity"
 install_project_helper extras/mihomo-hot-pool-shadow/awg-mihomo-hot-continuity-run "$_hot_stage/runner"
