@@ -142,7 +142,12 @@ class ShadowLiveGuardTests(unittest.TestCase):
         safe_list = hot.live_guard_profiles(SimpleNamespace(read_provider=broken),
                                              Path(self.tmp.name) / "provider")
         self.assertEqual(safe_list, [])
-        self.assertEqual(self.guard(OTHER, safe_list), "LIVE_IDENTITY_UNKNOWN")
+        self.assertEqual(
+            smart.shadow_guard_reason(
+                OTHER, safe_list,
+                transport_file=self.transport, node_file=self.node,
+                endpoint_file=self.endpoint, health_file=self.health),
+            "LIVE_IDENTITY_UNKNOWN")
 
     def test_shadow_guard_reloads_canonical_identity_each_time(self):
         unicode_live = dict(LIVE, name="🇩🇪 Germany 2 Hysteria2")
