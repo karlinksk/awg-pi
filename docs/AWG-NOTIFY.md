@@ -144,3 +144,32 @@ removed and daemon-reload is repeated. It never restarts a VPN.
 Pending: real Bot API send, live installed-unit check, real MikroTik SSTP
 proof, full installer clean-install and upgrade, real failover/boot/LAN checks.
 Do not enable on production before gates are closed.
+
+
+## Test-Pi menu installation and gateway update safety (2026-10-22)
+
+- A pinned, audit-diffed menu-only installer was run by the operator on
+  `awg-upgrade`. Installed `/usr/local/sbin/awg-menu` SHA-256
+  `bcc82ecbf97cc0c1d61fdec8529180e41f3a4f4596c202a3797a3ce3bf155057`.
+  The difference from the preinstall menu was restricted to Telegram
+  integration and navigation. Existing Desktop Commander remains at system
+  entry 9; Telegram is entry 10. Bash syntax is valid. The previous menu
+  is backed up under `/var/backups/awg-gateway/notify-menu.sxSqWZdh/awg-menu`.
+- Installed the interactive repair helper root-only with mode 0700;
+  operator's SHA-pinned installation confirmed `PAIR_HELPER_INSTALLED=YES`.
+  Existing notifier, SSH, DNS, Mihomo and gateway health services were not
+  restarted. Both policy route tables remain routed over mihomo0.
+- At 16:18 +07, AWG Notify Watch had completed consecutive scheduled
+  `NOTIFY_WATCH=up` checks, all three notification timers were enabled,
+  and the latest flush queue state was 0. This confirms healthy observation
+  **without** simulating a genuine VPN outage/recovery.
+- The draft `install.sh` installs the same menu, Telegram helper, notifier
+  binary and seven passive systemd units on a future clean install.
+  The `src/awg-update` rollback manifest now includes notifier binaries,
+  seven units, persistent SQLite queue and preserves opt-in enablement states
+  of delivery, watch, daily and boot service after rollback.
+- Source syntax and **52 isolated notify/installer tests** passed on the
+  isolated Pi. A complete clean install, actual gateway upgrade/rollback,
+  reboot, genuine failover, LAN forwarded traffic and SSTP proof remain
+  **unverified**. Source is only in draft PR #158 stacked on draft #115;
+  the active menu was installed separately on the test Pi, not production.
