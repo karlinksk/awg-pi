@@ -84,7 +84,7 @@ To stage **only** AWG Notify on the isolated test Pi (not full installer),
 copy the branch's `src/`, `units/`, `tests/`, `install.sh`, and `scripts/`
 into a disposable fixture, then run as root `scripts/awg-notify-test-install.sh`.
 This script refuses to overwrite installed AWG Notify units, verifies tests,
-installs the tool and FOUR passive systemd units, verifies those units, and
+installs the tool and SEVEN passive systemd units, verifies those units, and
 leaves both timers disabled. If deployment fails, newly written files are
 removed and daemon-reload is repeated. It never restarts a VPN.
 
