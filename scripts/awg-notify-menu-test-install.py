@@ -21,7 +21,14 @@ PAIR_SRC = ROOT / "scripts/awg-notify-pair-repair.py"
 MENU_DST = Path("/usr/local/sbin/awg-menu")
 PAIR_DST = Path("/usr/local/sbin/awg-notify-pair-repair")
 BACKUP_ROOT = Path("/var/backups/awg-gateway")
-MENU_CURRENT = "1c84248658e43462c9f6d4a740a5c4ad001a60a2e1d4e89c8fa76fb8fb6268fd"
+MENU_ACCEPTED = {
+    # Originally deployed live-menu baseline
+    "1c84248658e43462c9f6d4a740a5c4ad001a60a2e1d4e89c8fa76fb8fb6268fd",
+    # Operator-installed first Telegram merge (DC #9, Telegram #10)
+    "bcc82ecbf97cc0c1d61fdec8529180e41f3a4f4596c202a3797a3ce3bf155057",
+    # Already-installed final complete source, for rerunnable idempotent checks
+    "1e46c5cc26f27ed6ac9b1f60c923cdaac29e4fe3bbd6d459ba3618871168c1cb",
+}
 MENU_NEW = "1e46c5cc26f27ed6ac9b1f60c923cdaac29e4fe3bbd6d459ba3618871168c1cb"
 PAIR_NEW = "5b9ee5f72a94670cd9e04a712ab9a729fdbfcd054599781fb9706a0bc34a1d4c"
 CORE_SERVICES = ("ssh.service", "dnsmasq.service",
@@ -65,7 +72,7 @@ def snapshot():
     )
 
 
-def atomic_executable(data, path):
+def atomic_executable(data, path, mode=0o755):
     handle, filename = tempfile.mkstemp(prefix=".awg-notify-stage-", dir=path.parent)
     try:
         with os.fdopen(handle, "wb") as stream:
@@ -73,7 +80,7 @@ def atomic_executable(data, path):
             stream.flush()
             os.fsync(stream.fileno())
         os.chown(filename, 0, 0)
-        os.chmod(filename, 0o755)
+        os.chmod(filename, mode)
         os.replace(filename, path)
     finally:
         if os.path.exists(filename):
@@ -90,15 +97,17 @@ def main():
             print("REFUSED_SOURCE_HASH_MISMATCH=" + src.name)
             return 2
     info = check_regular(MENU_DST)
-    if info.st_uid != 0 or digest(MENU_DST) != MENU_CURRENT:
+    if info.st_uid != 0 or digest(MENU_DST) not in MENU_ACCEPTED:
         print("REFUSED_DEPLOYED_MENU_HAS_CHANGED")
         return 2
-    old_pair = PAIR_DST.read_bytes() if PAIR_DST.exists() else None
-    if old_pair is not None:
-        check_regular(PAIR_DST)
-        if PAIR_DST.stat().st_uid != 0:
+    if PAIR_DST.exists():
+        pair_info = check_regular(PAIR_DST)
+        if pair_info.st_uid != 0:
             print("REFUSED_PAIR_HELPER_NOT_ROOT_OWNED")
             return 2
+        old_pair = PAIR_DST.read_bytes()
+    else:
+        old_pair = None
     if cmd("bash", "-n", str(MENU_SRC)):
         raise RuntimeError("unexpected bash -n output")
     compile(PAIR_SRC.read_bytes(), str(PAIR_SRC), "exec")
@@ -123,6 +132,12 @@ def main():
         print("REFUSED_UNEXPECTED_LIVE_ROUTING")
         return 2
 
+    if digest(MENU_DST) == MENU_NEW and old_pair is not None and hashlib.sha256(old_pair).hexdigest() == PAIR_NEW:
+        print("MENU_INSTALL=ALREADY_INSTALLED_TEST_PI_ONLY")
+        print("CORE_SERVICES_AND_PBR=UNCHANGED")
+        print("NOTIFY_TIMERS=UNCHANGED")
+        return 0
+
     BACKUP_ROOT.mkdir(mode=0o700, parents=True, exist_ok=True)
     folder = Path(tempfile.mkdtemp(
         prefix="telegram-menu-", dir=str(BACKUP_ROOT)))
@@ -135,7 +150,7 @@ def main():
 
     try:
         atomic_executable(MENU_SRC.read_bytes(), MENU_DST)
-        atomic_executable(PAIR_SRC.read_bytes(), PAIR_DST)
+        atomic_executable(PAIR_SRC.read_bytes(), PAIR_DST, mode=0o700)
         if digest(MENU_DST) != MENU_NEW or digest(PAIR_DST) != PAIR_NEW:
             raise RuntimeError("installed checksum mismatch")
         if snapshot() != before:
@@ -145,7 +160,7 @@ def main():
         if old_pair is None:
             PAIR_DST.unlink(missing_ok=True)
         else:
-            atomic_executable(old_pair, PAIR_DST)
+            atomic_executable(old_pair, PAIR_DST, mode=0o700)
         print("MENU_INSTALL=ROLLED_BACK")
         print("BACKUP=" + str(folder))
         raise
