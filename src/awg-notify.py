@@ -149,8 +149,6 @@ def open_db(path=DB_PATH):
 def enqueue(db, kind, severity, message, key=None, timestamp=None):
     if kind not in KINDS or severity not in SEVERITIES:
         raise ValueError("Invalid event kind or severity")
-    if not event_enabled(kind):
-        return False
     if not isinstance(message, str) or not message.strip() or len(message) > MAX_TEXT:
         raise ValueError("Invalid message length")
     t = now() if timestamp is None else timestamp
@@ -446,7 +444,7 @@ def daily_snapshot():
 
 def enqueue_daily(db):
     """One daily report per local calendar day even if invoked twice."""
-    if not SECRET_PATH.exists():
+    if not SECRET_PATH.exists() or not event_enabled("DAILY_REPORT"):
         return False
     stamp = time.strftime("%Y-%m-%d", time.localtime())
     with db:
@@ -498,7 +496,7 @@ def observe_transport(db, transport=None, probe=_selected_transport_healthy):
         if previous and previous[0] != current:
             count = 0
         if result is True:
-            if old == "down":
+            if old == "down" and event_enabled("VPN_RESTORED"):
                 enqueue(db, "VPN_RESTORED", "info",
                         "Выбранный транспорт " + current +
                         " снова проходит штатный health-check. Клиент LAN не проверялся.",
@@ -507,7 +505,7 @@ def observe_transport(db, transport=None, probe=_selected_transport_healthy):
         elif result is False:
             count += 1
             state = "down" if count >= 2 else ("down" if old == "down" else "suspect")
-            if state == "down" and old != "down":
+            if state == "down" and old != "down" and event_enabled("VPN_LOST"):
                 enqueue(db, "VPN_LOST", "critical",
                         "Два последовательных отказа health-check выбранного транспорта " +
                         current + ". Это не подтверждение отказа всех резервов или LAN.",
@@ -574,9 +572,12 @@ def main(argv=None):
         return 0
     with open_db() as db:
         if args.command == "emit":
-            message = args.text if args.text is not None else sys.stdin.read(MAX_TEXT + 1)
-            created = enqueue(db, args.kind, args.severity, message, args.key)
-            print("NOTIFY_QUEUED=" + ("yes" if created else "deduplicated"))
+            if not event_enabled(args.kind):
+                print("NOTIFY_QUEUED=disabled")
+            else:
+                message = args.text if args.text is not None else sys.stdin.read(MAX_TEXT + 1)
+                created = enqueue(db, args.kind, args.severity, message, args.key)
+                print("NOTIFY_QUEUED=" + ("yes" if created else "deduplicated"))
         elif args.command == "watch":
             print("NOTIFY_WATCH=" + observe_transport(db))
         elif args.command == "daily":
