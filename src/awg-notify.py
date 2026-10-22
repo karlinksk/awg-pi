@@ -11,6 +11,7 @@ import json
 import os
 from pathlib import Path
 import re
+import secrets
 import sqlite3
 import shutil
 import subprocess
@@ -120,12 +121,72 @@ def load_secret(path=SECRET_PATH, owner_uid=0):
     return obj["token"], chat
 
 
+def _receive_pairing_updates(token, route, timeout=8):
+    """Fetch Bot API updates without leaking token into argv or logs."""
+    if route not in ROUTES:
+        raise ValueError("Unsupported route")
+    config = ('url = "https://api.telegram.org/bot' + token +
+              '/getUpdates"\\n' + 'data = "timeout=0&limit=100"\\n')
+    argv = ["curl", "-q", "--config", "-", "--ipv4", "--proto", "=https",
+            "--noproxy", "*", "--interface", "if!" + route,
+            "--connect-timeout", "4", "--max-time", str(timeout),
+            "--silent", "--write-out", "\\n%{http_code}"]
+    try:
+        reply = subprocess.run(argv, input=config, text=True, capture_output=True,
+                               timeout=timeout + 2, check=False)
+        if reply.returncode or len(reply.stdout) > 65536:
+            return None
+        body, _, status = reply.stdout.rpartition("\\n")
+        result = json.loads(body)
+        if status == "200" and result.get("ok") is True:
+            items = result.get("result")
+            return items if isinstance(items, list) else None
+    except (OSError, subprocess.TimeoutExpired, ValueError, TypeError):
+        pass
+    return None
+
+
+def find_pair_chat(token, code, fetch=_receive_pairing_updates):
+    """Only a unique private /pair <random challenge> proves the chat owner."""
+    expected = "/pair " + code
+    matches = set()
+    for route in route_order():
+        updates = fetch(token, route)
+        if updates is None:
+            continue
+        for item in updates:
+            if not isinstance(item, dict):
+                continue
+            msg = item.get("message")
+            if not isinstance(msg, dict) or msg.get("text") != expected:
+                continue
+            chat, author = msg.get("chat", {}), msg.get("from", {})
+            if not isinstance(chat, dict) or not isinstance(author, dict):
+                continue
+            cid, uid = chat.get("id"), author.get("id")
+            if chat.get("type") == "private" and type(cid) is int and cid == uid:
+                matches.add(str(cid))
+        if len(matches) == 1:
+            return next(iter(matches))
+        if len(matches) > 1:
+            raise ValueError("Ambiguous pairing challenge; start again")
+    return None
+
+
 def configure(path=SECRET_PATH):
     path = Path(path)
     path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
     os.chmod(path.parent, 0o700)
     token = getpass.getpass("Telegram bot token (input hidden): ").strip()
-    chat = input("Telegram numeric chat ID: ").strip()
+    chat = input("Numeric chat ID (Enter = secure /pair setup): ").strip()
+    if not chat:
+        challenge = secrets.token_hex(5)
+        print("In your private bot chat send: /pair " + challenge)
+        input("Press Enter after sending the exact command... ")
+        chat = find_pair_chat(token, challenge)
+        if not chat:
+            raise SystemExit("Private /pair message not found. Nothing saved.")
+        print("Private Telegram chat verified by one-time challenge.")
     if not TOKEN_PATTERN.fullmatch(token) or not re.fullmatch(r"-?[0-9]{1,20}", chat):
         raise SystemExit("Invalid token or chat ID; nothing saved.")
     temp = path.with_name(path.name + ".new")
