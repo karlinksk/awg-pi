@@ -26,7 +26,7 @@ class NotifyWiringTests(unittest.TestCase):
     def test_source_notifies_after_transport_postcheck(self):
         code = (ROOT / "src/awg-transport").read_text()
         self.assertLess(code.index('if [[ "$target" == mihomo ]]; then mihomo_tun_https_ok; fi'),
-                        code.index("--kind TRANSPORT_FAILOVER"))
+                        code.index('--kind "$notify_kind"'))
         self.assertIn("timeout 2s /usr/local/sbin/awg-notify", code)
         self.assertIn("/etc/awg-pbr/notify/telegram.json", code)
 
