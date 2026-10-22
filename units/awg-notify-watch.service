@@ -1,0 +1,17 @@
+[Unit]
+Description=Read-only AWG Pi selected-transport health observation
+After=awg-selection-monitor.service
+
+[Service]
+Type=oneshot
+User=root
+Group=root
+ExecStart=/usr/local/sbin/awg-notify watch
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths=/var/lib/awg-pbr/notify
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+TimeoutStartSec=30
