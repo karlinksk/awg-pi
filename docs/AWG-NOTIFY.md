@@ -90,6 +90,24 @@ The automatic delivery timer sends at most two queued messages per run;
 remaining items wait for the next run. A queued event does not mean Telegram
 received it. Real confirmation requires the human recipient.
 
+## Watch service AF_NETLINK sandbox issue (2026-10-22)
+
+The optional `awg-notify-watch.service` runs `awg-transport check`, which
+uses `ip link show`. `iproute2` obtains link state through `AF_NETLINK`.
+The first draft service restricted the socket families to UNIX/INET/INET6,
+which makes the `ip link show` preflight fail inside the systemd sandbox
+while root-shell checks can still return healthy. This produced spurious
+`NOTIFY_WATCH=suspect/down`, despite healthy Mihomo API, proxy and OpenAI
+TUN checks. **Do not report a confirmed outage from this historical alarm.**
+
+The corrected unit permits `AF_NETLINK` *only* for the optional watch
+service, without altering routing, PBR, DNS, SSH/SSTP or any VPN selection
+logic. The standalone passive probe must demonstrate a failing
+old-sandbox `ip link show` and a passing revised-sandbox invocation before
+re-enabling `awg-notify-watch.timer`. Until then, leave only watch disabled,
+with Telegram delivery/daily timers unchanged. A valid fix in code or tests
+does not equal a real runtime validation.
+
 ## Testing and current status
 
 Isolated rootless contract tests (including daily/menu/pairing): `python3 -m unittest discover -s tests -p 'test_notify*.py' -v`.
