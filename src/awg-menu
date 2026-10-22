@@ -2263,6 +2263,7 @@ $(grep -E '^NOTIFY_(CONFIGURED|PENDING|LAST_ROUTE)=' <<<"$current" || true)
       5 "Включить сводку в 09:00" "Создаёт ежедневный отчёт о состоянии Pi по системному времени." \
       6 "Выключить ежедневную сводку" "Отключает только ежедневный отчёт." \
       7 "Состояние и очередь" "Просмотр параметров без токена и секретов." \
+      8 "Исправить привязку чата" "Проверяет имя бота и исправляет ошибочный chat ID=1 через личную команду /pair." \
       0 "Назад" "Возврат в системное меню." 3>&1 1>&2 2>&3)" || return 0
     case "$choice" in
       1) run_interactive "Настройка Telegram-бота" /usr/local/sbin/awg-notify configure ;;
@@ -2292,6 +2293,7 @@ $(grep -E '^NOTIFY_(CONFIGURED|PENDING|LAST_ROUTE)=' <<<"$current" || true)
         ;;
       6) capture systemctl disable --now awg-notify-daily.timer || true ;;
       7) capture /usr/local/sbin/awg-notify status || true ;;
+      8) run_interactive "Исправление Telegram chat ID" /usr/local/sbin/awg-notify-pair-repair ;;
       0) return 0 ;;
     esac
   done
