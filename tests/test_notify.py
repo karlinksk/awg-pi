@@ -41,26 +41,29 @@ class NotifyTests(unittest.TestCase):
 
 
     def test_event_preferences_default_and_disabled_do_not_queue(self):
-        self.assertEqual(mod.load_preferences(), mod.PREFERENCE_DEFAULTS)
-        self.assertTrue(mod.event_enabled("VPN_LOST"))
-        self.assertFalse(mod.event_enabled("NODE_SWITCH"))
-        self.assertFalse(mod.event_enabled("TRANSPORT_FAILOVER"))
-        self.assertFalse(mod.enqueue(self.db, "NODE_SWITCH", "info", "ignored"))
+        self.assertEqual(mod.load_preferences(owner_uid=os.getuid()), mod.PREFERENCE_DEFAULTS)
+        self.assertTrue(mod.event_enabled("VPN_LOST", owner_uid=os.getuid()))
+        self.assertFalse(mod.event_enabled("NODE_SWITCH", owner_uid=os.getuid()))
+        self.assertFalse(mod.event_enabled("TRANSPORT_FAILOVER", owner_uid=os.getuid()))
+        # Production emit/watch/daily gates, rather than low-level enqueue(),
+        # filter categories; enqueue remains an isolated queue primitive.
         self.assertEqual(self.db.execute("SELECT count(*) FROM events").fetchone()[0], 0)
         self.assertTrue(mod.enqueue(self.db, "TEST", "info", "keep"))
-        mod.save_preferences({"BOOT", "NODE_SWITCH"}, self.preferences)
+        mod.save_preferences({"BOOT", "NODE_SWITCH"}, self.preferences, owner_uid=os.getuid())
         self.assertEqual(self.preferences.stat().st_mode & 0o777, 0o600)
-        self.assertTrue(mod.event_enabled("NODE_SWITCH"))
-        self.assertFalse(mod.event_enabled("VPN_LOST"))
-        self.assertTrue(mod.event_enabled("BOOT"))
-        self.assertFalse(mod.enqueue(self.db, "VPN_LOST", "critical", "ignored"))
+        self.assertTrue(mod.event_enabled("NODE_SWITCH", owner_uid=os.getuid()))
+        self.assertFalse(mod.event_enabled("VPN_LOST", owner_uid=os.getuid()))
+        self.assertTrue(mod.event_enabled("BOOT", owner_uid=os.getuid()))
+        # Disabled categories are rejected by the producer-level gate.
         self.assertTrue(mod.enqueue(self.db, "NODE_SWITCH", "info", "allowed"))
         self.assertEqual(self.db.execute("SELECT kind FROM events ORDER BY id").fetchall(),
                          [("TEST",), ("NODE_SWITCH",)])
 
     def test_daily_and_watcher_respect_disabled_categories(self):
-        mod.save_preferences({"BOOT"}, self.preferences)
-        with mock.patch.object(mod, "SECRET_PATH", self.secret), \
+        mod.save_preferences({"BOOT"}, self.preferences, owner_uid=os.getuid())
+        filter_with_uid = mod.event_enabled
+        with mock.patch.object(mod, "event_enabled", side_effect=lambda kind: filter_with_uid(kind, owner_uid=os.getuid())), \
+             mock.patch.object(mod, "SECRET_PATH", self.secret), \
              mock.patch.object(mod, "daily_snapshot", return_value="daily"), \
              mock.patch.object(mod.time, "strftime", return_value="2026-10-22"):
             self.assertFalse(mod.enqueue_daily(self.db))
@@ -71,27 +74,27 @@ class NotifyTests(unittest.TestCase):
 
     def test_preferences_refuse_bad_policy_and_symlink(self):
         with self.assertRaises(ValueError):
-            mod.save_preferences({"DANGEROUS"}, self.preferences)
+            mod.save_preferences({"DANGEROUS"}, self.preferences, owner_uid=os.getuid())
         self.preferences.write_text('{"BOOT":"true"}')
         self.preferences.chmod(0o600)
-        self.assertFalse(mod.event_enabled("BOOT"))
+        self.assertFalse(mod.event_enabled("BOOT", owner_uid=os.getuid()))
         with self.assertRaises(ValueError):
-            mod.load_preferences()
+            mod.load_preferences(owner_uid=os.getuid())
         self.preferences.unlink()
         target = self.folder / "target.json"
         target.write_text("{}")
         self.preferences.symlink_to(target)
         with self.assertRaises(ValueError):
-            mod.save_preferences({"BOOT"}, self.preferences)
-        self.assertFalse(mod.event_enabled("BOOT"))
+            mod.save_preferences({"BOOT"}, self.preferences, owner_uid=os.getuid())
+        self.assertFalse(mod.event_enabled("BOOT", owner_uid=os.getuid()))
 
     def test_preferences_keep_existing_queue_and_atomic_update(self):
         mod.enqueue(self.db, "BOOT", "info", "pending boot")
-        mod.save_preferences(set(), self.preferences)
+        mod.save_preferences(set(), self.preferences, owner_uid=os.getuid())
         self.assertEqual(self.db.execute("SELECT kind FROM events").fetchall(), [("BOOT",)])
-        self.assertFalse(mod.event_enabled("BOOT"))
-        mod.save_preferences(set(mod.PREFERENCE_TYPES), self.preferences)
-        self.assertTrue(mod.event_enabled("BOOT"))
+        self.assertFalse(mod.event_enabled("BOOT", owner_uid=os.getuid()))
+        mod.save_preferences(set(mod.PREFERENCE_TYPES), self.preferences, owner_uid=os.getuid())
+        self.assertTrue(mod.event_enabled("BOOT", owner_uid=os.getuid()))
         self.assertEqual(list(self.folder.glob(".events-policy-*")), [])
 
     def test_invalid_inputs(self):
