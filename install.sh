@@ -1065,6 +1065,10 @@ install_project_helper src/awg-opencck-update /usr/local/sbin/awg-opencck-update
 install_project_helper src/awg-core-update /usr/local/sbin/awg-core-update
 install_project_helper src/awg-update "$UPDATE_SCRIPT"
 install_project_helper src/awg-traffic "$TRAFFIC_CLI"
+# Installer-first TUI delivery: this source also owns the process-local dialog
+# palette (cyan backdrop, dark-blue windows, white breadcrumb titles).
+# Fetch from the same pinned PROJECT_REF on clean install AND upgrade; do not
+# touch users' ~/.dialogrc, global locale, SSH terminal or VPN configuration.
 install_project_helper src/awg-menu /usr/local/sbin/awg-menu
 
 mkdir -p /etc/awg-pbr/sources/opencck/metadata
