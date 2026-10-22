@@ -29,7 +29,6 @@ def entries(rows,profiles,inventory,protocol="all",region="all"):
     Live pool proof is matched to the exact provider index/name/endpoint and
     scoped to the provider SHA by the upstream unified snapshot.
     """
-    view=load_view()
     rows=list(rows) if isinstance(rows,list) else []
     profiles=profiles if isinstance(profiles,list) else []
     inventory=inventory if isinstance(inventory,list) else []
