@@ -254,6 +254,14 @@ selection_cycle(){
     node_out="$("$MIHOMO_NODE_POLICY_CLI" failover 2>/dev/null || true)"
     if [[ "$node_out" == MIHOMO_NODE_FAILOVER=* ]]; then
       log_event "Automatic Mihomo node failover: ${node_out#MIHOMO_NODE_FAILOVER=}"
+      # Passive notification after the node-policy confirmed the switch.
+      # Never hold recovery for a Telegram network request.
+      if [[ -s /etc/awg-pbr/notify/telegram.json &&
+            -x /usr/local/sbin/awg-notify ]]; then
+        printf 'Automatic Mihomo node switch: %s' "${node_out#MIHOMO_NODE_FAILOVER=}" |
+          timeout 2s /usr/local/sbin/awg-notify emit --kind NODE_SWITCH \
+            --severity info >/dev/null 2>&1 || true
+      fi
       reset_failures
       printf '%s\n' "$node_out"
       return 0
