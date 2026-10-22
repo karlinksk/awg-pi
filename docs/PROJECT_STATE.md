@@ -17,7 +17,11 @@
   unit/installer/UI-contract тестов PASS, Bash-синтаксис PASS. Дополнительно
   подтверждена установка от root: SHA-256 бинарника соответствует pin,
   7 systemd units установлены и успешно проверены systemd-analyze verify.
-  Telegram не настроен, очередь пуста, все таймеры выключены; SSH,
+  Токен бота установлен, но chat ID ошибочно равен 1; реальная привязка
+  ещё не PASS. Bot API через AWG/Mihomo отвечает getMe=200, webhook отсутствует,
+  getUpdates возвращает 0. Подготовлен отдельный безопасный мастер повторной
+  привязки через /pair с проверкой публичного имени бота; 43/43 теста PASS.
+  Таймеры уведомлений выключены; SSH,
   dnsmasq, health и selection monitor активны, таблицы 100/101 через mihomo0.
   Реальная отправка Telegram-сообщения, SSTP egress и аппаратный
   failover/reboot/clean-install остаются неподтверждёнными.
