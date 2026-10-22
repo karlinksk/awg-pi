@@ -14,6 +14,15 @@ class NotifyWiringTests(unittest.TestCase):
         self.assertNotIn("systemctl enable --now awg-notify-flush.timer", install)
         self.assertIn("install -d -o root -g root -m 0700 /etc/awg-pbr/notify /var/lib/awg-pbr/notify", install)
 
+    def test_disabled_notification_is_nonintrusive(self):
+        transport = (ROOT / "src/awg-transport").read_text()
+        selection = (ROOT / "src/awg-selection-monitor").read_text()
+        self.assertIn("systemctl is-enabled --quiet awg-notify-flush.timer", transport)
+        self.assertIn("systemctl is-enabled --quiet awg-notify-flush.timer", selection)
+        self.assertIn("notify_kind=TRANSPORT_SWITCH", transport)
+        self.assertIn("notify_kind=TRANSPORT_FAILOVER", transport)
+        self.assertIn('AWG_NOTIFY_AUTOMATIC=1 "$AWG_TRANSPORT_CLI" select', selection)
+
     def test_source_notifies_after_transport_postcheck(self):
         code = (ROOT / "src/awg-transport").read_text()
         self.assertLess(code.index('if [[ "$target" == mihomo ]]; then mihomo_tun_https_ok; fi'),
