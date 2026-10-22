@@ -103,10 +103,10 @@ def enqueue(db, kind, severity, message, key=None, timestamp=None):
     return True
 
 
-def load_secret(path=SECRET_PATH):
+def load_secret(path=SECRET_PATH, owner_uid=0):
     path = Path(path)
     stat = path.stat()
-    if stat.st_mode & 0o077 or stat.st_uid != 0 or not path.is_file():
+    if stat.st_mode & 0o077 or stat.st_uid != owner_uid or not path.is_file():
         raise ValueError("Telegram secret file must be root-owned and mode 0600")
     obj = json.loads(path.read_text(encoding="utf-8"))
     if not TOKEN_PATTERN.fullmatch(str(obj.get("token", ""))):
@@ -184,10 +184,10 @@ def curl_api(token, payload, route, method="sendMessage", timeout=8):
     return False, code, min(3600, max(0, int(retry))) if str(retry).isdigit() else 0
 
 
-def flush(db, sender=curl_api, secret_path=SECRET_PATH, active="", limit=5):
+def flush(db, sender=curl_api, secret_path=SECRET_PATH, active="", limit=5, secret_uid=0):
     # No credentials = intentionally unconfigured; do not delete queued events.
     try:
-        token, chat = load_secret(secret_path)
+        token, chat = load_secret(secret_path, secret_uid)
     except (OSError, ValueError, json.JSONDecodeError):
         return {"sent": 0, "pending": db.execute("SELECT count(*) FROM events").fetchone()[0],
                 "reason": "not_configured"}
