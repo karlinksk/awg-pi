@@ -41,7 +41,7 @@ class MenuVisualTheme(unittest.TestCase):
             "dialog_color = (WHITE,BLUE,OFF)",
             "item_color = dialog_color",
             "item_selected_color = (WHITE,BLACK,ON)",
-            "title_color = (YELLOW,BLUE,ON)",
+            "title_color = (WHITE,BLUE,ON)",
             "border_color = (CYAN,BLUE,ON)",
             "menubox_color = dialog_color",
             "itemhelp_color = (WHITE,BLUE,OFF)",
@@ -57,6 +57,8 @@ class MenuVisualTheme(unittest.TestCase):
         # The light cyan is confined to the outside screen, never the window.
         self.assertEqual(PALETTE.count("(BLACK,CYAN,OFF)"), 1)
         self.assertNotIn("(WHITE,CYAN,ON)", PALETTE)
+        self.assertIn("gauge_color = (YELLOW,BLUE,ON)", PALETTE)
+        self.assertIn("button_label_active_color = (YELLOW,BLACK,ON)", PALETTE)
         self.assertEqual(MENU.count("export DIALOGRC="),1)
 
     def test_native_scrollbar_hidden_without_disabling_scroll(self):
@@ -65,7 +67,7 @@ class MenuVisualTheme(unittest.TestCase):
         # position indicator and keyboard navigation remain native.
         self.assertIn("use_scrollbar = OFF",PALETTE)
         self.assertNotIn("use_scrollbar = ON",PALETTE)
-        self.assertIn("position_indicator_color = title_color",PALETTE)
+        self.assertIn("position_indicator_color = (YELLOW,BLUE,ON)",PALETTE)
         self.assertNotIn("--scrollbar",MENU)
         self.assertIn("--item-help --menu",MENU)
 
