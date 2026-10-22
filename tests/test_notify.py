@@ -95,13 +95,13 @@ class NotifyTests(unittest.TestCase):
     def test_router_approval_requires_root_only_attestation(self):
         marker = self.folder / "router-sstp-approved"
         self.assertFalse(mod.router_sstp_approved(marker, os.getuid()))
-        marker.write_text("SSTP_VERIFIED_FAIL_CLOSED=1\\n")
+        marker.write_text("SSTP_VERIFIED_FAIL_CLOSED=1\n")
         marker.chmod(0o600)
         self.assertTrue(mod.router_sstp_approved(marker, os.getuid()))
         marker.chmod(0o644)
         self.assertFalse(mod.router_sstp_approved(marker, os.getuid()))
         marker.chmod(0o600)
-        marker.write_text("SSTP_VERIFIED_FAIL_CLOSED=0\\n")
+        marker.write_text("SSTP_VERIFIED_FAIL_CLOSED=0\n")
         self.assertFalse(mod.router_sstp_approved(marker, os.getuid()))
 
     def test_pairing_matches_only_private_challenge(self):
