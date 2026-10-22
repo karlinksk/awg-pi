@@ -1,5 +1,7 @@
 """AWG Notify installer/selector safety contract tests."""
 from pathlib import Path
+import os
+import subprocess
 import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -67,6 +69,23 @@ class NotifyWiringTests(unittest.TestCase):
         self.assertIn("ProtectSystem=strict", unit)
         self.assertIn("ReadWritePaths=/var/lib/awg-pbr/notify", unit)
         self.assertNotIn("CapabilityBoundingSet=", unit)
+
+    def test_test_pi_watch_acceptance_script_expands_shell_variables(self):
+        path = ROOT / "scripts/awg-notify-watch-netlink-test-install.sh"
+        script = path.read_text()
+        self.assertIn('[[ ${EUID:-$(id -u)} -eq 0 ]]', script)
+        self.assertIn('"${source_sha%% *}"', script)
+        self.assertIn('"--unit=awg-notify-netlink-${flavor}-$"', script)
+        self.assertNotIn('\\${', script)
+        self.assertIn('systemctl daemon-reload', script)
+        self.assertIn('NOTIFY_WATCH_TIMER=DISABLED', script)
+        self.assertNotIn('systemctl enable ', script)
+        if os.geteuid() != 0:
+            proc = subprocess.run(["bash", str(path)], text=True,
+                                  capture_output=True, check=False, timeout=5)
+            self.assertEqual(proc.returncode, 2)
+            self.assertIn("ROOT_REQUIRED", proc.stderr)
+            self.assertNotIn("ROOT_REQUIRED", proc.stdout)
 
     def test_boot_notice_only_when_enabled(self):
         install = (ROOT / "install.sh").read_text()
