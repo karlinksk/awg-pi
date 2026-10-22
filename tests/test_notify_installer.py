@@ -24,7 +24,8 @@ class NotifyWiringTests(unittest.TestCase):
             "/usr/local/sbin/awg-notify-pair-repair", install)
         self.assertNotIn("sudo /usr/local/sbin/awg-notify-pair-repair", install)
         self.assertIn('8 "Исправить привязку чата"', menu)
-        self.assertIn('8) run_interactive "Исправление Telegram chat ID"', menu)
+        self.assertIn('run_interactive "Исправление Telegram chat ID"', menu)
+        self.assertIn('if [[ -x /usr/local/sbin/awg-notify-pair-repair ]]', menu)
 
     def test_disabled_notification_is_nonintrusive(self):
         transport = (ROOT / "src/awg-transport").read_text()
