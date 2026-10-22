@@ -208,6 +208,21 @@ class NotifyWiringTests(unittest.TestCase):
             self.assertEqual(res.returncode, 2)
             self.assertIn("ROOT_REQUIRED", res.stdout)
 
+    def test_event_checklist_menu_and_installer_contract(self):
+        menu = (ROOT / "src/awg-menu").read_text()
+        backend = (ROOT / "src/awg-notify.py").read_text()
+        for token in ("notify_types_menu(){", "--checklist", "--separate-output",
+                      "preferences-set --enabled", "VPN_LOST", "VPN_RESTORED",
+                      "NODE_SWITCH", "TRANSPORT_SWITCH", "BOOT", "DAILY_REPORT"):
+            self.assertIn(token, menu)
+        self.assertIn("PREFERENCES_PATH", backend)
+        self.assertIn("NOTIFY_PREFERENCES=SAVED", backend)
+        self.assertIn("save_preferences(enabled)", backend)
+        self.assertIn('install_project_python_helper src/awg-notify.py /usr/local/sbin/awg-notify',
+                      (ROOT / "install.sh").read_text())
+        self.assertIn("appearance_menu(){", menu)
+        self.assertIn("awg-matrix-compositor.py", menu)
+
     def test_no_router_or_dns_modifications(self):
         code = (ROOT / "src/awg-notify.py").read_text()
         for keyword in ("ip route replace", "nft add", "mikrotik login", "dnsmasq restart"):
