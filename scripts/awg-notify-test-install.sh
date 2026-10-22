@@ -44,13 +44,27 @@ for target in "${targets[@]}"; do
   }
 done
 
-# Do not bring up any unit; preflight only.
-bash -n "$root/install.sh" "$root/src/awg-transport" \
-  "$root/src/awg-selection-monitor" "$root/src/awg-menu"
-PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover \
-  -s "$root/tests" -p 'test_notify*.py' -q
-# Existing units should remain unaffected.
-echo 'PRECHECK=PASS'
+# Unit tests are run UNPRIVILEGED before this script. Never run writable
+# test code as root. Verify the exact reviewed binaries before installing.
+declare -A reviewed_sha=(
+  [src/awg-notify.py]=e475f8af8ba4cec8886fe70e2ad9c84a0c2b7f444594bb2966c21f9fe52b3d94
+  [units/awg-notify-flush.service]=27a3e37b87f1d97f210346142a7b012a9502abb1de34242853c5f8ea8781d1eb
+  [units/awg-notify-flush.timer]=34f6da2b554dbd560dad8ee1170a3d5b8e5dabc13474aff12f9738514d1c51df
+  [units/awg-notify-daily.service]=4047d4c1d8d0a72b4422192f04ae221b265767c557109059dd0f6eba6fc84a0a
+  [units/awg-notify-daily.timer]=2466cb70bd124e5110c418c7d1abdee82e971629a3581477b9117189dc36124b
+  [units/awg-notify-watch.service]=5d74dbe512344795e55f2caf11300ebd7b9516750ce30ca708deec71cc2bc2df
+  [units/awg-notify-watch.timer]=032845943eebd221f83b48d807c7a290fb29b9ef7c0c785bbbb9fb44b8144794
+  [units/awg-notify-boot.service]=bf991978805100c61c03f3c0a56739a90cb09e8921761900a646e618147a8fd8
+)
+for file in "${!reviewed_sha[@]}"; do
+  actual="$(sha256sum "$root/$file")"
+  [[ "${actual%% *}" == "${reviewed_sha[$file]}" ]] || {
+    echo "REFUSE: source checksum mismatch: $file" >&2
+    exit 5
+  }
+done
+bash -n "$root/scripts/awg-notify-test-install.sh"
+echo 'PINNED_SOURCE_PRECHECK=PASS'
 
 installed=()
 cleanup_on_error(){
