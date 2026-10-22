@@ -21,6 +21,16 @@ from urllib.parse import urlencode
 
 DB_PATH = Path("/var/lib/awg-pbr/notify/events.sqlite3")
 SECRET_PATH = Path("/etc/awg-pbr/notify/telegram.json")
+PREFERENCES_PATH = Path("/etc/awg-pbr/notify/events-policy.json")
+# Preserve currently enabled alerts on upgrade. Optional node/transport hooks
+# are deliberately OFF until installed and explicitly enabled by the user.
+PREFERENCE_TYPES = ("VPN_LOST", "VPN_RESTORED", "BOOT", "DAILY_REPORT",
+                    "NODE_SWITCH", "TRANSPORT_SWITCH")
+PREFERENCE_DEFAULTS = {kind: kind in
+                       ("VPN_LOST", "VPN_RESTORED", "BOOT", "DAILY_REPORT")
+                       for kind in PREFERENCE_TYPES}
+PREFERENCE_KIND_MAP = {"TRANSPORT_FAILOVER": "TRANSPORT_SWITCH"}
+
 TRANSPORT_PATH = Path("/etc/awg-pbr/transport")
 # Only an operator-verified fail-closed RouterOS SSTP policy permits eth0 fallback.
 ROUTER_SSTP_APPROVED = Path("/etc/awg-pbr/notify/router-sstp-approved")
@@ -42,6 +52,65 @@ def now():
 def check_root():
     if os.geteuid() != 0:
         raise SystemExit("Requires root; run with sudo.")
+
+
+def load_preferences(path=None):
+    """Root-owned 0600 preference file; an absent file preserves legacy alerts."""
+    path = Path(path or PREFERENCES_PATH)
+    if not path.exists() and not path.is_symlink():
+        return dict(PREFERENCE_DEFAULTS)
+    meta = path.lstat()
+    if (not path.is_file() or path.is_symlink() or meta.st_uid != 0 or
+            meta.st_mode & 0o077):
+        raise ValueError("Unsafe Telegram preference file")
+    values = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(values, dict) or set(values) != set(PREFERENCE_TYPES):
+        raise ValueError("Invalid Telegram preference keys")
+    if any(type(value) is not bool for value in values.values()):
+        raise ValueError("Invalid Telegram preference values")
+    return values
+
+
+def event_enabled(kind, path=None):
+    key = PREFERENCE_KIND_MAP.get(kind, kind)
+    if key not in PREFERENCE_DEFAULTS:
+        return True  # TEST, SYSTEM_WARNING and future reserved events unchanged
+    try:
+        return load_preferences(path)[key]
+    except (OSError, ValueError, TypeError, UnicodeError):
+        return False  # Invalid config cannot accidentally turn alerts back on
+
+
+def save_preferences(enabled, path=None):
+    """Atomically replace only the opt-in event policy; never touch bot token."""
+    path = Path(path or PREFERENCES_PATH)
+    if not isinstance(enabled, (set, frozenset)) or not enabled <= set(PREFERENCE_TYPES):
+        raise ValueError("Unknown Telegram event category")
+    if path.is_symlink():
+        raise ValueError("Refuse symlinked preference file")
+    if path.exists() and (not path.is_file() or path.stat().st_uid != 0):
+        raise ValueError("Refuse unexpected preference owner")
+    path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    if path.parent.is_symlink() or path.parent.stat().st_uid != 0:
+        raise ValueError("Refuse unexpected Telegram config directory")
+    temp = path.with_name(".events-policy-" + secrets.token_hex(8))
+    try:
+        with temp.open("x", encoding="utf-8") as output:
+            os.chmod(temp, 0o600)
+            json.dump({kind: kind in enabled for kind in PREFERENCE_TYPES},
+                      output, sort_keys=True)
+            output.write("\n")
+            output.flush()
+            os.fsync(output.fileno())
+        os.replace(temp, path)
+    finally:
+        temp.unlink(missing_ok=True)
+
+
+def preference_status_lines():
+    values = load_preferences()
+    return ["NOTIFY_PREF_" + key + "=" + ("on" if values[key] else "off")
+            for key in PREFERENCE_TYPES]
 
 
 def open_db(path=DB_PATH):
@@ -80,6 +149,8 @@ def open_db(path=DB_PATH):
 def enqueue(db, kind, severity, message, key=None, timestamp=None):
     if kind not in KINDS or severity not in SEVERITIES:
         raise ValueError("Invalid event kind or severity")
+    if not event_enabled(kind):
+        return False
     if not isinstance(message, str) or not message.strip() or len(message) > MAX_TEXT:
         raise ValueError("Invalid message length")
     t = now() if timestamp is None else timestamp
@@ -462,6 +533,8 @@ def show_status(db, secret_path=SECRET_PATH):
     print("NOTIFY_LAST_ROUTE=" + (last[0] if last else "none"))
     print("NOTIFY_ROUTE_ETH0=" + ("approved_router_policy" if router_sstp_approved()
                                    else "disabled_pending_sstp_fail_closed_proof"))
+    for entry in preference_status_lines():
+        print(entry)
 
 
 def main(argv=None):
@@ -476,6 +549,10 @@ def main(argv=None):
     sub.add_parser("configure")
     sub.add_parser("flush")
     sub.add_parser("status")
+    prefs = sub.add_parser("preferences-set")
+    prefs.add_argument("--enabled", required=True,
+                       help="Comma-separated enabled event categories; empty means all off")
+
     sub.add_parser("test")
     sub.add_parser("daily")
     sub.add_parser("watch")
@@ -484,6 +561,16 @@ def main(argv=None):
     os.umask(0o077)
     if args.command == "configure":
         configure()
+        return 0
+    if args.command == "preferences-set":
+        requested = args.enabled.split(",") if args.enabled else []
+        if any(not key or key.strip() != key for key in requested):
+            raise ValueError("Invalid preference list")
+        enabled = set(requested)
+        if len(enabled) != len(requested) or not enabled <= set(PREFERENCE_TYPES):
+            raise ValueError("Unknown or duplicate preference type")
+        save_preferences(enabled)
+        print("NOTIFY_PREFERENCES=SAVED")
         return 0
     with open_db() as db:
         if args.command == "emit":
