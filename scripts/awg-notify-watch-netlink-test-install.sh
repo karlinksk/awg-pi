@@ -3,14 +3,14 @@
 # corrected optional notifier watcher unit, but leave its timer DISABLED.
 set -Eeuo pipefail
 umask 077
-[[ \${EUID:-$(id -u)} == 0 ]] || { echo ROOT_REQUIRED >&2; exit 2; }
+[[ ${EUID:-$(id -u)} -eq 0 ]] || { echo ROOT_REQUIRED >&2; exit 2; }
 name=awg-notify-watch.service
 target=/etc/systemd/system/$name
 source_unit=/home/karlinks/awg-notify-fixture/units/$name
 expected=d40dde31a9d7eb382fd745d0af0451d2e42527cbce52d1221ab2c4fb767431a3
 [[ -f "$target" && ! -L "$target" && -f "$source_unit" && ! -L "$source_unit" ]] || { echo REFUSE_MISSING_OR_SYMLINKED_INPUT >&2; exit 3; }
 source_sha="$(sha256sum "$source_unit")"
-[[ "\${source_sha%% *}" == "$expected" ]] || { echo REFUSE_REVIEWED_UNIT_HASH_MISMATCH >&2; exit 4; }
+[[ "${source_sha%% *}" == "$expected" ]] || { echo REFUSE_REVIEWED_UNIT_HASH_MISMATCH >&2; exit 4; }
 if systemctl is-enabled --quiet awg-notify-watch.timer || systemctl is-active --quiet awg-notify-watch.timer; then
   echo REFUSE_WATCH_TIMER_MUST_BE_DISABLED >&2; exit 5
 fi
@@ -21,7 +21,7 @@ case "$ip_bin" in /usr/sbin/ip|/sbin/ip|/usr/bin/ip) ;; *) echo REFUSE_UNEXPECTE
 sandbox_probe(){
   local flavor="$1" families="$2"
   systemd-run --system --quiet --wait --collect --pipe \
-    "--unit=awg-notify-netlink-\${flavor}-$$" \
+    "--unit=awg-notify-netlink-${flavor}-$$" \
     -p "RestrictAddressFamilies=$families" \
     -p NoNewPrivileges=yes -p PrivateTmp=yes -p ProtectHome=yes \
     -p ProtectSystem=strict -p ReadWritePaths=/var/lib/awg-pbr/notify \
