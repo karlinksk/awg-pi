@@ -1027,9 +1027,9 @@ install_project_helper src/awg-menu /usr/local/sbin/awg-menu
 if [[ ! -e /etc/awg-pbr/menu-appearance ]]; then
   install -d -o root -g root -m 0700 /etc/awg-pbr
   if (( UPGRADE_EXISTING == 0 )); then
-    printf 'matrix\\n' > /etc/awg-pbr/menu-appearance
+    echo matrix > /etc/awg-pbr/menu-appearance
   else
-    printf 'classic\\n' > /etc/awg-pbr/menu-appearance
+    echo classic > /etc/awg-pbr/menu-appearance
   fi
   chmod 0600 /etc/awg-pbr/menu-appearance
 fi
