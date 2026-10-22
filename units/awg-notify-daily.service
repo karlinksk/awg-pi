@@ -1,0 +1,17 @@
+[Unit]
+Description=AWG Pi Gateway Telegram daily status snapshot
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=root
+Group=root
+ExecStart=/usr/local/sbin/awg-notify daily
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths=/var/lib/awg-pbr/notify
+RestrictAddressFamilies=AF_UNIX
+TimeoutStartSec=30
