@@ -14,6 +14,16 @@ class NotifyWiringTests(unittest.TestCase):
         self.assertNotIn("systemctl enable --now awg-notify-flush.timer", install)
         self.assertIn("install -d -o root -g root -m 0700 /etc/awg-pbr/notify /var/lib/awg-pbr/notify", install)
 
+    def test_pair_repair_installed_only_passively(self):
+        install = (ROOT / "install.sh").read_text()
+        menu = (ROOT / "src/awg-menu").read_text()
+        self.assertIn(
+            "install_project_python_helper scripts/awg-notify-pair-repair.py "
+            "/usr/local/sbin/awg-notify-pair-repair", install)
+        self.assertNotIn("sudo /usr/local/sbin/awg-notify-pair-repair", install)
+        self.assertIn('8 "Исправить привязку чата"', menu)
+        self.assertIn('8) run_interactive "Исправление Telegram chat ID"', menu)
+
     def test_disabled_notification_is_nonintrusive(self):
         transport = (ROOT / "src/awg-transport").read_text()
         selection = (ROOT / "src/awg-selection-monitor").read_text()
