@@ -22,6 +22,10 @@ class NotifyTests(unittest.TestCase):
         self.folder = Path(self.work.name)
         self.db = mod.open_db(self.folder / "queue" / "events.sqlite3")
         self.addCleanup(self.db.close)
+        self.preferences = self.folder / "events-policy.json"
+        self.preferences_patch = mock.patch.object(mod, "PREFERENCES_PATH", self.preferences)
+        self.preferences_patch.start()
+        self.addCleanup(self.preferences_patch.stop)
         self.secret = self.folder / "telegram.json"
         self.secret.write_text(json.dumps({
             "token": "12345678:" + "A" * 35,
