@@ -86,6 +86,8 @@ def save_preferences(enabled, path=None, owner_uid=0):
     path = Path(path or PREFERENCES_PATH)
     if not isinstance(enabled, (set, frozenset)) or not enabled <= set(PREFERENCE_TYPES):
         raise ValueError("Unknown Telegram event category")
+    if owner_uid is None:
+        owner_uid = os.geteuid()
     if path.is_symlink():
         raise ValueError("Refuse symlinked preference file")
     if path.exists() and (not path.is_file() or path.stat().st_uid != owner_uid):
