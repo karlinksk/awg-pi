@@ -13,5 +13,7 @@ PrivateTmp=true
 ProtectHome=true
 ProtectSystem=strict
 ReadWritePaths=/var/lib/awg-pbr/notify
-RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+# awg-transport check invokes ip link show, which requires AF_NETLINK.
+# Do not remove this: otherwise the sandbox falsely reports VPN_LOST.
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
 TimeoutStartSec=30
