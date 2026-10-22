@@ -107,6 +107,33 @@ class NotifyTests(unittest.TestCase):
             self.assertEqual(mod.curl_api("12345678:" + "A"*35, {"text":"x"}, "eth0"),
                              (False, 429, 95))
 
+    def test_daily_report_once_per_day_without_credentials_leak(self):
+        with mock.patch.object(mod, "SECRET_PATH", self.secret), \
+             mock.patch.object(mod, "daily_snapshot", return_value="Состояние: норма"), \
+             mock.patch.object(mod.time, "strftime", return_value="2026-10-22"):
+            self.assertTrue(mod.enqueue_daily(self.db))
+            self.assertFalse(mod.enqueue_daily(self.db))
+        queued = self.db.execute("SELECT kind,message FROM events").fetchall()
+        self.assertEqual(queued, [("DAILY_REPORT", "Состояние: норма")])
+
+    def test_daily_report_unconfigured_is_silent(self):
+        self.secret.unlink()
+        with mock.patch.object(mod, "SECRET_PATH", self.secret):
+            self.assertFalse(mod.enqueue_daily(self.db))
+        self.assertEqual(self.db.execute("SELECT count(*) FROM events").fetchone()[0], 0)
+
+    def test_daily_report_uses_sanitized_read_only_status(self):
+        result = mod.daily_snapshot()
+        self.assertIn("Ежедневная сводка AWG Pi Gateway", result)
+        self.assertIn("Температура CPU:", result)
+        self.assertIn("RAM:", result)
+        self.assertIn("Транспорт (выбранный, не подтверждение HTTPS):", result)
+        self.assertNotIn("bot", result.lower())
+
+    def test_batch_limit_two(self):
+        import inspect
+        self.assertEqual(inspect.signature(mod.flush).parameters["limit"].default, 2)
+
     def test_quota_drops_oldest_info_before_critical(self):
         old = mod.MAX_PENDING
         with mock.patch.object(mod, "MAX_PENDING", 3):
