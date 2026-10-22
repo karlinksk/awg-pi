@@ -108,6 +108,27 @@ re-enabling `awg-notify-watch.timer`. Until then, leave only watch disabled,
 with Telegram delivery/daily timers unchanged. A valid fix in code or tests
 does not equal a real runtime validation.
 
+## v1.3.0 menu integration and test-Pi staging (2026-10-22)
+
+The main AWG menu includes a latest deployed Russian dialog theme (white
+breadcrumbs, high-contrast windows, no torn scrollbar), unified Mihomo/Xray
+node views, and the existing Desktop Commander helper under system item **9**.
+Telegram is system item **10**, with delivery configuration, test, daily
+reports, Watch/boot toggling and one-time pairing repair. The older
+installer branch had competing item **9**; replacing the deployed menu wholesale
+would discard recent UI and DC functions. The tracked `src/awg-menu` now
+reconciles the deployed UI with Telegram and restores the draft installer
+first/secondary transport onboarding handlers for **clean installs**.
+
+`install.sh` installs this exact `src/awg-menu`, the `src/awg-notify.py`
+sender, `scripts/awg-notify-pair-repair.py`, and all seven optional systemd
+units; notifier timers remain disabled by default on a clean install.
+Existing installations must retain the root-owned token, SQLite queue,
+selected node, DNS, SSH/SSTP and active VPN. Isolated test-Pi staging
+must verify pinned source checksums and preserve a rollback copy of the
+existing menu. Do not treat isolated rootless tests or staging as proof of
+real clean-install or production readiness.
+
 ## Testing and current status
 
 Isolated rootless contract tests (including daily/menu/pairing): `python3 -m unittest discover -s tests -p 'test_notify*.py' -v`.
