@@ -15,6 +15,9 @@ files=(
   units/awg-notify-flush.timer
   units/awg-notify-daily.service
   units/awg-notify-daily.timer
+  units/awg-notify-watch.service
+  units/awg-notify-watch.timer
+  units/awg-notify-boot.service
 )
 for file in "${files[@]}"; do
   [[ -f "$root/$file" && ! -L "$root/$file" ]] || {
@@ -30,6 +33,9 @@ targets=(
   /etc/systemd/system/awg-notify-flush.timer
   /etc/systemd/system/awg-notify-daily.service
   /etc/systemd/system/awg-notify-daily.timer
+  /etc/systemd/system/awg-notify-watch.service
+  /etc/systemd/system/awg-notify-watch.timer
+  /etc/systemd/system/awg-notify-boot.service
 )
 for target in "${targets[@]}"; do
   [[ ! -e "$target" && ! -L "$target" ]] || {
@@ -61,14 +67,14 @@ install -d -o root -g root -m 0700 \
   /etc/awg-pbr/notify /var/lib/awg-pbr/notify
 install -o root -g root -m 0755 "$root/src/awg-notify.py" "${targets[0]}"
 installed+=("${targets[0]}")
-for i in 1 2 3 4; do
+for ((i=1; i<${#files[@]}; i++)); do
   install -o root -g root -m 0644 "$root/${files[i]}" "${targets[i]}"
   installed+=("${targets[i]}")
 done
 
 systemctl daemon-reload
-systemd-analyze verify "${targets[1]}" "${targets[2]}" "${targets[3]}" "${targets[4]}"
-for timer in awg-notify-flush.timer awg-notify-daily.timer; do
+systemd-analyze verify "${targets[@]:1}"
+for timer in awg-notify-flush.timer awg-notify-daily.timer awg-notify-watch.timer awg-notify-boot.service; do
   if systemctl is-enabled --quiet "$timer" ||
      systemctl is-active --quiet "$timer"; then
     echo "ERROR: timer unexpectedly active/enabled: $timer" >&2
