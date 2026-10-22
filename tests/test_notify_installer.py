@@ -27,6 +27,22 @@ class NotifyWiringTests(unittest.TestCase):
         self.assertIn("timeout 2s /usr/local/sbin/awg-notify emit", code)
         self.assertNotIn("api.telegram.org", code)
 
+    def test_daily_timer_is_passive(self):
+        install = (ROOT / "install.sh").read_text()
+        for unit in ("awg-notify-daily.service", "awg-notify-daily.timer"):
+            self.assertIn("install_project_unit units/" + unit, install)
+        self.assertNotIn("systemctl enable --now awg-notify-daily.timer", install)
+        timer = (ROOT / "units/awg-notify-daily.timer").read_text()
+        self.assertIn("OnCalendar=*-*-* 09:00:00", timer)
+
+    def test_telegram_menu_is_in_system_area(self):
+        menu = (ROOT / "src/awg-menu").read_text()
+        self.assertIn('9 "Telegram — уведомления"', menu)
+        self.assertIn('9) notify_menu ;;', menu)
+        self.assertIn('run_interactive "Настройка Telegram-бота"', menu)
+        self.assertIn("systemctl enable --now awg-notify-flush.timer", menu)
+        self.assertIn('NOTIFY_CONFIGURED=yes', menu)
+
     def test_no_router_or_dns_modifications(self):
         code = (ROOT / "src/awg-notify.py").read_text()
         for keyword in ("ip route replace", "nft add", "mikrotik login", "dnsmasq restart"):
