@@ -75,7 +75,7 @@ class NotifyWiringTests(unittest.TestCase):
         script = path.read_text()
         self.assertIn('[[ ${EUID:-$(id -u)} -eq 0 ]]', script)
         self.assertIn('"${source_sha%% *}"', script)
-        self.assertIn('"--unit=awg-notify-netlink-${flavor}-$"', script)
+        self.assertIn('"--unit=awg-notify-netlink-${flavor}-$$"', script)
         self.assertNotIn('\\${', script)
         self.assertIn('systemctl daemon-reload', script)
         self.assertIn('NOTIFY_WATCH_TIMER=DISABLED', script)
