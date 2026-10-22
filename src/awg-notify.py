@@ -54,13 +54,13 @@ def check_root():
         raise SystemExit("Requires root; run with sudo.")
 
 
-def load_preferences(path=None):
+def load_preferences(path=None, owner_uid=0):
     """Root-owned 0600 preference file; an absent file preserves legacy alerts."""
     path = Path(path or PREFERENCES_PATH)
     if not path.exists() and not path.is_symlink():
         return dict(PREFERENCE_DEFAULTS)
     meta = path.lstat()
-    if (not path.is_file() or path.is_symlink() or meta.st_uid != 0 or
+    if (not path.is_file() or path.is_symlink() or meta.st_uid != owner_uid or
             meta.st_mode & 0o077):
         raise ValueError("Unsafe Telegram preference file")
     values = json.loads(path.read_text(encoding="utf-8"))
@@ -71,27 +71,27 @@ def load_preferences(path=None):
     return values
 
 
-def event_enabled(kind, path=None):
+def event_enabled(kind, path=None, owner_uid=0):
     key = PREFERENCE_KIND_MAP.get(kind, kind)
     if key not in PREFERENCE_DEFAULTS:
         return True  # TEST, SYSTEM_WARNING and future reserved events unchanged
     try:
-        return load_preferences(path)[key]
+        return load_preferences(path, owner_uid=owner_uid)[key]
     except (OSError, ValueError, TypeError, UnicodeError):
         return False  # Invalid config cannot accidentally turn alerts back on
 
 
-def save_preferences(enabled, path=None):
+def save_preferences(enabled, path=None, owner_uid=0):
     """Atomically replace only the opt-in event policy; never touch bot token."""
     path = Path(path or PREFERENCES_PATH)
     if not isinstance(enabled, (set, frozenset)) or not enabled <= set(PREFERENCE_TYPES):
         raise ValueError("Unknown Telegram event category")
     if path.is_symlink():
         raise ValueError("Refuse symlinked preference file")
-    if path.exists() and (not path.is_file() or path.stat().st_uid != 0):
+    if path.exists() and (not path.is_file() or path.stat().st_uid != owner_uid):
         raise ValueError("Refuse unexpected preference owner")
     path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-    if path.parent.is_symlink() or path.parent.stat().st_uid != 0:
+    if path.parent.is_symlink() or path.parent.stat().st_uid != owner_uid:
         raise ValueError("Refuse unexpected Telegram config directory")
     temp = path.with_name(".events-policy-" + secrets.token_hex(8))
     try:
