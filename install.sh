@@ -821,6 +821,8 @@ install_project_helper src/awg-selection "$SELECTION_CLI"
 install_project_helper src/awg-selection-monitor "$SELECTION_MONITOR"
 # Passive AWG Notify: no token, no active timer, no routing changes at install.
 install_project_python_helper src/awg-notify.py /usr/local/sbin/awg-notify
+# Safe interactive repair for an incorrect chat ID; never invoked by installer.
+install_project_python_helper scripts/awg-notify-pair-repair.py /usr/local/sbin/awg-notify-pair-repair
 install -d -o root -g root -m 0700 /etc/awg-pbr/notify /var/lib/awg-pbr/notify
 # Service eligibility helpers are installed passive: the opt-in balanced
 # mode is NEVER enabled by installation. The Stage18 RAM runtime timer is
