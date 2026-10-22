@@ -112,8 +112,6 @@ def main():
             if method == "getWebhookInfo" and response.get("webhook_configured") is True:
                 print("CONCLUSION=WEBHOOK_CONFIGURED_GETUPDATES_WILL_NOT_WORK")
                 return 0
-        if call_api is None:
-            break
     print("CONCLUSION=REVIEW_SANITIZED_STATUSES")
     return 0
 
