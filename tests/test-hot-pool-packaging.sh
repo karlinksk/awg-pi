@@ -30,6 +30,13 @@ assert upd.count('var/lib/awg-pbr/hot-pool')>=2
 assert 'install_project_helper src/awg-menu /usr/local/sbin/awg-menu' in ins
 assert 'install_project_python_helper extras/mihomo-hot-pool-shadow/awg-mihomo-hot-pool.py' in ins
 assert 'install_project_python_helper extras/mihomo-hot-pool-shadow/awg-mihomo-hot-service-scan.py' in ins
+# v1.3 installer upgrades the exact scanner that was proven on the test Pi.
+# Rewriting Unicode names inside continuity must not mask active live identity.
+scanner=(root/'awg-mihomo-hot-service-scan.py').read_text()
+assert "LIVE_PROVIDER = Path('/var/lib/awg-pbr/mihomo/providers/subscription.yaml')" in scanner
+assert scanner.count('live_guard_profiles(helper)') == 5
+assert 'smart.require_shadow_safe(matched[0], raw)' not in scanner
+assert 'against the canonical live subscription' in ins
 assert 'systemctl stop awg-mihomo-hot-pool.timer' in ins
 assert 'cp -p --' in ins and 'cmp -s --' in ins
 menu = Path('src/awg-menu').read_text()
