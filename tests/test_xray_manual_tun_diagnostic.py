@@ -59,6 +59,34 @@ class HttpsObservabilityContract(unittest.TestCase):
         self.assertFalse(self.do_probe(99,"000"))
         self.assertEqual(mod._LAST_HTTPS_PROBE_CLASS,"CURL_EXIT_OTHER")
 
+    def test_mixed_proxy_is_diagnostic_only(self):
+        with mock.patch.object(mod.subprocess,"run",return_value=
+             subprocess.CompletedProcess(["curl"],0,"401","")) as c:
+            self.assertTrue(mod.https_ok("mixed"))
+            args=c.call_args.args[0]
+            self.assertEqual(args[args.index("--proxy")+1],"http://127.0.0.1:7890")
+            self.assertNotIn("--interface",args)
+            self.assertEqual(mod._LAST_HTTPS_PROBE_CLASS,"HTTP_401")
+
+    def test_mixed_timeout_never_skips_tun(self):
+        with mock.patch.object(mod.subprocess,"run",return_value=
+             subprocess.CompletedProcess(["curl"],28,"000","")):
+            self.assertFalse(mod.https_ok("mixed"))
+            self.assertEqual(mod._LAST_HTTPS_PROBE_CLASS,"CURL_EXIT_28")
+        source=SRC.read_text().split("def apply(index):",1)[1].split(
+            "def last_failure():",1)[0]
+        block=source.split('checkpoint(path,state,"SWITCH_TUN")',1)[1]
+        self.assertIn('https_ok("mixed")',block)
+        self.assertIn('state["mixed_probe_last"]=_LAST_HTTPS_PROBE_CLASS',block)
+        self.assertLess(block.index('https_ok("mixed")'),block.index("native_tun_proof()"))
+        self.assertNotIn("if mixed_ok:",block)
+        self.assertIn('"mixed_probe_last"',SRC.read_text())
+
+    def test_unknown_probe_mode_fails_closed(self):
+        with mock.patch.object(mod.subprocess,"run") as p:
+            self.assertFalse(mod.https_ok("unknown"))
+            p.assert_not_called()
+
     def test_process_timeout_and_os_error(self):
         with mock.patch.object(mod.subprocess,"run",
                                side_effect=subprocess.TimeoutExpired(["curl"],23)):

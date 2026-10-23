@@ -106,13 +106,24 @@ def https_ok(via):
     _LAST_HTTPS_PROBE_CLASS="NOT_COMPLETED"
     env={k:v for k,v in os.environ.items() if k.lower() not in
          ("http_proxy","https_proxy","all_proxy","no_proxy")}
-    params=(["--interface","mihomo0","--noproxy","*"] if via=="tun" else
-            ["--socks5-hostname","127.0.0.1:17892","--noproxy",""])
+    if via=="tun":
+        params=["--interface","mihomo0","--noproxy","*"]
+    elif via=="socks":
+        params=["--socks5-hostname","127.0.0.1:17892","--noproxy",""]
+    elif via=="mixed":
+        # Only a diagnostic: test the running Mihomo selector through its
+        # loopback HTTP proxy. This never substitutes for the real TUN gate.
+        params=["--proxy","http://127.0.0.1:7890","--noproxy",""]
+    else:
+        _LAST_HTTPS_PROBE_CLASS="UNKNOWN_PROBE_MODE"
+        return False
     try:
-        p=subprocess.run(["curl","-q","-4","-sS","--connect-timeout","7",
-            "--max-time","18","-o","/dev/null","-w","%{http_code}",*params,
+        p=subprocess.run(["curl","-q","-4","-sS","--connect-timeout",
+            ("5" if via=="mixed" else "7"),"--max-time",
+            ("10" if via=="mixed" else "18"),"-o","/dev/null","-w","%{http_code}",*params,
             "https://api.openai.com/v1/models"],env=env,stdin=subprocess.DEVNULL,
-            stdout=subprocess.PIPE,stderr=subprocess.DEVNULL,text=True,timeout=23)
+            stdout=subprocess.PIPE,stderr=subprocess.DEVNULL,text=True,
+            timeout=(15 if via=="mixed" else 23))
         code=p.stdout.strip()
         if p.returncode==0 and re.fullmatch(r"[0-9]{3}",code):
             _LAST_HTTPS_PROBE_CLASS="HTTP_"+code
@@ -1060,7 +1071,16 @@ def apply(index):
                 refuse("PROVIDER_CHANGED")
             checkpoint(path,state,"SWITCH_TUN")
             choose(ALIAS)
-            # The SOCKS listener is proven; allow bounded TUN route recovery.
+            # Third independent leg of the proof chain:
+            # (1) Xray SOCKS was already HTTPS-proven before this selection;
+            # (2) Mihomo's own mixed proxy now tests the selected Xray alias;
+            # (3) ONLY the subsequent mihomo0 bound-TUN 401 can commit.
+            # An unsuccessful mixed proxy diagnostic never passes OR vetoes
+            # a healthy TUN; it is recorded solely for failure isolation.
+            state["mixed_probe_last"]="NOT_RUN"
+            mixed_ok=https_ok("mixed")
+            state["mixed_probe_last"]=_LAST_HTTPS_PROBE_CLASS
+            # This remains the sole approval for real TUN HTTPS:
             native_tun_proof()
             invariant()
             if source_node(index)[1:]!=(info["sha"],info["fingerprint"]):
@@ -1125,7 +1145,7 @@ def last_failure():
     folder=max(snapshots,key=lambda p:p.stat().st_mtime)
     state=json.loads((folder/"state.json").read_text())
     # Expose only enumerated nonsecret words; no profile names or hashes.
-    for key in ("phase","failure_code","failed_at","rollback_failure_code","checkpoint","tun_probe_last"):
+    for key in ("phase","failure_code","failed_at","rollback_failure_code","checkpoint","tun_probe_last","mixed_probe_last"):
         value=state.get(key,"UNKNOWN")
         safe=value if isinstance(value,str) and re.fullmatch(r"[A-Z][A-Z0-9_]{1,79}|rolled_back|committed|armed|pending|cancelled",value) else "UNKNOWN"
         print("XRAY_MANUAL_"+key.upper()+"="+safe)
