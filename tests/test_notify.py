@@ -97,6 +97,67 @@ class NotifyTests(unittest.TestCase):
         self.assertTrue(mod.event_enabled("BOOT", owner_uid=os.getuid()))
         self.assertEqual(list(self.folder.glob(".events-policy-*")), [])
 
+    def test_six_checkbox_matrix_emits_only_selected_kind(self):
+        # Simulate public CLI emission without touching configured bot, network,
+        # selected transport, or the production queue.
+        for category in mod.PREFERENCE_TYPES:
+            with self.subTest(category=category):
+                case = self.folder / (category + ".json")
+                alias = ("TRANSPORT_FAILOVER" if category == "TRANSPORT_SWITCH"
+                         else category)
+                mod.save_preferences({category}, case, owner_uid=os.getuid())
+                self.assertTrue(mod.event_enabled(alias, path=case, owner_uid=os.getuid()))
+                for other in mod.PREFERENCE_TYPES:
+                    if other != category:
+                        self.assertFalse(mod.event_enabled(other, path=case, owner_uid=os.getuid()))
+                mod.save_preferences(set(), case, owner_uid=os.getuid())
+                self.assertFalse(mod.event_enabled(alias, path=case, owner_uid=os.getuid()))
+        self.assertEqual(self.db.execute("SELECT count(*) FROM events").fetchone()[0], 0)
+
+    def test_watch_both_categories_are_independent(self):
+        checker = mod.event_enabled
+        with mock.patch.object(mod, "event_enabled", side_effect=
+                               lambda k: checker(k, owner_uid=os.getuid())), \\
+             mock.patch.object(mod, "SECRET_PATH", self.secret):
+            mod.save_preferences({"VPN_LOST"}, self.preferences, owner_uid=os.getuid())
+            self.assertEqual(mod.observe_transport(self.db, "awg", lambda _: False), "suspect")
+            self.assertEqual(mod.observe_transport(self.db, "awg", lambda _: False), "down")
+            self.assertEqual(mod.observe_transport(self.db, "awg", lambda _: True), "up")
+            self.assertEqual(self.db.execute("SELECT kind FROM events").fetchall(),
+                             [("VPN_LOST",)])
+            mod.save_preferences({"VPN_RESTORED"}, self.preferences, owner_uid=os.getuid())
+            self.assertEqual(mod.observe_transport(self.db, "awg", lambda _: False), "suspect")
+            self.assertEqual(mod.observe_transport(self.db, "awg", lambda _: False), "down")
+            self.assertEqual(mod.observe_transport(self.db, "awg", lambda _: True), "up")
+            self.assertEqual(self.db.execute("SELECT kind FROM events").fetchall(),
+                             [("VPN_LOST",), ("VPN_RESTORED",)])
+
+    def test_emit_cli_gate_with_enabled_and_disabled_category(self):
+        # Verify the actual emit command code path in an isolated test DB.
+        import io
+        from contextlib import redirect_stdout
+        real_open = mod.open_db
+        case_db = self.folder / "cli-test" / "events.sqlite3"
+        checker = mod.event_enabled
+        with mock.patch.object(mod, "check_root", return_value=None), \\
+             mock.patch.object(mod, "open_db", side_effect=lambda: real_open(case_db)), \\
+             mock.patch.object(mod, "event_enabled", side_effect=
+                               lambda k: checker(k, owner_uid=os.getuid())):
+            mod.save_preferences({"TRANSPORT_SWITCH"}, self.preferences,
+                                 owner_uid=os.getuid())
+            with redirect_stdout(io.StringIO()) as printed:
+                self.assertEqual(mod.main(["emit", "--kind", "TRANSPORT_FAILOVER",
+                                           "--text", "[ТЕСТ] переключение AWG"]), 0)
+            self.assertIn("NOTIFY_QUEUED=yes", printed.getvalue())
+            mod.save_preferences(set(), self.preferences, owner_uid=os.getuid())
+            with redirect_stdout(io.StringIO()) as printed:
+                self.assertEqual(mod.main(["emit", "--kind", "TRANSPORT_FAILOVER",
+                                           "--text", "[ТЕСТ] не отправлять"]), 0)
+            self.assertIn("NOTIFY_QUEUED=disabled", printed.getvalue())
+        with real_open(case_db) as db:
+            self.assertEqual(db.execute("SELECT kind FROM events").fetchall(),
+                             [("TRANSPORT_FAILOVER",)])
+
     def test_invalid_inputs(self):
         for kind, sev, msg in [("BAD", "info", "x"), ("BOOT", "bad", "x"),
                                ("BOOT", "info", ""), ("BOOT", "info", "z" * 3001)]:
