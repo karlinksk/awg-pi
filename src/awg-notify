@@ -631,5 +631,3 @@ if __name__ == "__main__":
         # Never echo secret content or raw API response.
         print("AWG Notify error: " + type(exc).__name__, file=sys.stderr)
         sys.exit(1)
-
-[executed on device: awg-upgrade (380467cc-7e1c-4e2f-b140-00eed49b0459)]
