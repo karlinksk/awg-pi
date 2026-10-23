@@ -1,5 +1,13 @@
 # AWG Pi Gateway — состояние проекта и согласованные решения
 
+## 2026-10-23 18:22 +07 — root independent read-only watchdog fired PASS
+
+- Owner ran SHA-pinned **untracked, test-only** `awg-v13-root-watchdog-fire-drill.py --start` on `awg-upgrade`. Root-owned systemd transient timer armed 8 seconds and **actually fired**. Owner receipt `/home/karlinks/awg-v13-watchdog-fire-receipt-20261023.txt`: `ROOT_SYSTEMD_TIMER_EXECUTED=YES`, `ROOT_PRIOR_SNAPSHOT=VERIFIED_READ_ONLY`, `ROOT_RUNTIME_TOPOLOGY=PASS_READ_ONLY`, `ROOT_AFTER_TIMER=ORIGINAL_MIHOMO_VERIFIED`, `WATCHDOG_TEST=PASS_READ_ONLY_TIMER_FIRE`. Internal root-only receipt under `/var/backups/awg-gateway/v13-watchdog-fire-20261023.3u1j16a0/fired.receipt`.
+- Independent postcheck: Mihomo, AWG, SSH, dnsmasq, PBR health and selection monitor active; Xray inactive; default routes in tables 100/101 via `mihomo0`; Pi TUN bound OpenAI API HTTPS `401`; no failed systemd units, no remaining test watchdog timer. Helper hashes pinned (`awg-xray-manual-switch` `c3263efa…`, `awg-xray-live-backend` `7a16d846…`).
+- **Strict scope:** actual root systemd **timer firing** PASS, root read-only original snapshot and topology PASS, **transport-changing root rollback actuation NOT TESTED**. Previous manual Xray attempt returned `NATIVE_TUN_HTTPS_UNVERIFIED` and its built-in transaction rolled back successfully, but no successful cross-engine Pi TUN, LAN or AUTO proof yet.
+- Revised untracked roundtrip wrapper includes bounded diagnostic extraction if fresh post-switch bound-TUN HTTPS fails, and protection of any already healthy incumbent (native/Xray/AWG) before speculative fallback; `SOURCE_SHA` matches test Pi installed diagnostic helper. Rootless contract tests **21 PASS** across watchdog and wrapper. Re-run real transition only with root approval, independent watchdog, preflight and verified recovery; never treat SOCKS proof as TUN proof.
+
+
 ## 2026-10-23 18:11 +07 — root read-only recovery audit PASS; live trial still blocked
 
 - Owner ran a hash-pinned **root read-only** audit on test Pi after installing manual diagnostic source. Receipt `/home/karlinks/awg-v13-root-recovery-audit-20261023.txt`: `ROOT_PRIOR_SNAPSHOT_FINAL_STATE=VERIFIED`, `TEST_PI_NATIVE_TUN=HTTPS_401`, `XRAY_ALIAS=LOCAL_SOCKS5_17892_IN_SELECTOR`, `MIHOMO_TUN_AUTOROUTE=AUTO_REDIRECT_OFF`, `TRANSIT_GUARD=SAFE`, `AUDIT=READONLY_RUNTIME_TOPOLOGY_PASS`. Confirms previous original native selection/policy/config have been restored, and the *current* Mihomo/Xray configuration matches expected local proxy bridge shape. It does not exercise an emergency rollback.
