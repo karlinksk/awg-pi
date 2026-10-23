@@ -46,11 +46,11 @@ class EngineBest(unittest.TestCase):
     def test_auto_dispatch_only_after_native_budget(self):
         source=(ROOT/"src/awg-mihomo-node-policy").read_text()
         body=source.split("failover_auto(){",1)[1].split("\n}\n",1)[0]
-        self.assertIn('xray_nomination_used=0 max_candidate_visits=3',body)
+        self.assertIn('xray_visits=0 max_xray_visits=2 max_candidate_visits=3',body)
         self.assertIn('candidate_visits" -lt "$max_checks"',body)
-        self.assertIn('local -a unified_args=(best --engine XRAY)',body)
-        self.assertIn('max_candidate_visits=$((max_checks + 1))',body)
-        self.assertIn('xray_nomination_used=1',body)
+        self.assertIn('local -a unified_args=(best --engine XRAY --rotate)',body)
+        self.assertIn('max_candidate_visits=$((max_checks + max_xray_visits))',body)
+        self.assertIn('xray_visits=$((xray_visits+1))',body)
         self.assertIn('for item in "${excludes[@]}"',body)
 
 if __name__=="__main__":

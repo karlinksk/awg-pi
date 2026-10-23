@@ -243,7 +243,8 @@ assert 'grep -iF -- "$query"' in menu
 assert 'Показано: $count из $shown_total' in menu
 assert 'ui_idx=$((ui_idx + 1))' in menu
 assert 'choice_name["$ui_idx"]="$name"' in menu
-assert '$display_name [$state_label] — $description' in menu
+# Unified row must include engine, protocol, server endpoint, ping and state.
+assert 'line_label="$display_name | $engine_label | $type | $shown_endpoint | $shown_delay | $state_label"' in menu
 assert 'Статистика пула узлов' in menu
 assert 'MIHOMO_POOL_PICKED_NODE=""' in menu
 assert 'MIHOMO_POOL_PICKED_NODE="$node"' in menu
@@ -268,14 +269,15 @@ assert 'Европейских точек выхода: $europe' in menu
 assert 'mihomo_display_node_name(){' in menu
 assert 'mihomo_display_chain(){' in menu
 assert 'mihomo_pool_results_dialog(){' in menu
-assert 'display_name="$(mihomo_display_node_name "$name")"' in menu
-assert '$display_name [$state_label] — $description' in menu
+assert 'display_name="$(mihomo_clip_node_label "$(mihomo_display_node_name "$name")" 24)"' in menu
+# Unified row must include engine, protocol, server endpoint, ping and state.
+assert 'line_label="$display_name | $engine_label | $type | $shown_endpoint | $shown_delay | $state_label"' in menu
 assert 'capture "$MIHOMO_POOL" list "$target" --all --ignore-policy' not in menu
 assert 'mihomo_pool_results_dialog "$target"' in menu
 assert 'mihomo_pool_results_dialog live' in menu
-assert 'Причина:' in Path('src/awg-mihomo-results-view.py').read_text()
+assert 'Причина теста:' in Path('src/awg-mihomo-results-view.py').read_text()
 assert 'Состояние' in menu
-assert 'Задержка' in Path('src/awg-mihomo-results-view.py').read_text()
+assert "'RTT':>7" in Path('src/awg-mihomo-results-view.py').read_text()
 assert '"$XRAY_MANUAL_SWITCH" native-preview "$node_name"' in menu
 assert '"$XRAY_MANUAL_SWITCH" native-apply "$node_name"' in menu
 assert 'Ручной выбор Mihomo — предварительная проверка' in menu

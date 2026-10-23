@@ -52,6 +52,7 @@ if [ "$MOCK_FAILOPEN_RC" != 0 ];then exit "$MOCK_FAILOPEN_RC";fi
 : >"$MOCK_RULES"''')
         self.mock("executor",'''printf "EXECUTOR:%s:%s\n" "$2" "$3" >>"$MOCK_COMMANDS"
 [ "$MOCK_EXECUTOR_RC" = 0 ]''')
+        self.mock("isolated-xray-probe",'[[ "$1" == probe-xray && "$2" == 3 ]] || exit 3\nexit "${MOCK_PROBE_RC:-0}"')
         self.mock("logger",'''printf "LOGGER\n" >>"$MOCK_COMMANDS"''')
 
     def mock(self,name,body):
@@ -78,6 +79,7 @@ if [ "$MOCK_FAILOPEN_RC" != 0 ];then exit "$MOCK_FAILOPEN_RC";fi
             "MIHOMO_AUTO_SERVICE":"awg-mihomo.service",
             "MIHOMO_AUTO_TRANSPORT_CLI":str(self.bin/"transport"),
             "MIHOMO_AUTO_FAILOPEN":str(self.bin/"failopen"),
+            "MIHOMO_XRAY_NATIVE_RECOVERY_CLI":str(self.bin/"isolated-xray-probe"),
             "MIHOMO_XRAY_TRANSACTION_CLI":str(self.bin/"executor"),
             "MOCK_MIHOMO_ACTIVE":active,
             "MOCK_AWG_HEALTH":awg,
@@ -86,7 +88,8 @@ if [ "$MOCK_FAILOPEN_RC" != 0 ];then exit "$MOCK_FAILOPEN_RC";fi
             "MOCK_COMMANDS":str(self.log),
             "MOCK_RULES":str(self.rules)}
         script=FUN+'''auto_xray_candidate FAILED-NATIVE VLESS-CANDIDATE \
-"NODE_ENGINE=XRAY
+ "NODE_ENGINE=XRAY
+NODE_INDEX=3
 NODE_BASIC_NETWORK=NETWORK_OK"'''
         p=subprocess.run(["bash","-c",script],env=env,capture_output=True,
                          text=True,timeout=5)

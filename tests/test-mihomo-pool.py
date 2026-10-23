@@ -84,11 +84,13 @@ assert [n["name"] for n in poolmod.filter_provider_nodes(sample_nodes, "vmess")]
 assert len(poolmod.filter_provider_nodes(sample_nodes, "all")) == 4
 
 print("=== adaptive worker count scales large feeds and honors override ===")
-assert poolmod.effective_worker_count(41) == 8
-assert poolmod.effective_worker_count(200) == 16
-assert poolmod.effective_worker_count(500) == 32
-assert poolmod.effective_worker_count(1000) == 64
-assert poolmod.effective_worker_count(1810) == 64
+# Conservative caps match the actual scanner policy (avoid saturating
+# Raspberry Pi 4 and ISP connections on large public subscriptions).
+assert poolmod.effective_worker_count(41) == 4
+assert poolmod.effective_worker_count(200) == 8
+assert poolmod.effective_worker_count(500) == 16
+assert poolmod.effective_worker_count(1000) == 32
+assert poolmod.effective_worker_count(1810) == 32
 assert poolmod.effective_worker_count(1810, "12") == 12
 assert poolmod.effective_worker_count(1810, "999") == 64
 

@@ -231,7 +231,9 @@ out="$(run_policy mode manual)"
 grep -Fqx 'MIHOMO_NODE_POLICY=manual' <<<"$out"
 sudo test ! -e "$TMP/etc/node-policy.nodes"
 
-echo "=== cross-core VLESS cannot enter legacy FIXED/AUTO configure ==="
+echo "=== uncertified unified inventory cannot dispatch a cross-core node ==="
+# The mock resolver has no candidates action. Never send an unknown Xray
+# node through native Mihomo configure when provider inventory is missing.
 cat >"$TMP/bin/resolver" <<'MOCK'
 #!/usr/bin/env bash
 [[ "${1:-}" == resolve ]] || exit 2
@@ -245,27 +247,24 @@ chmod +x "$TMP/bin/resolver"
 run_policy mode fixed '🇫🇮 Finland' 'DE (backup)+1' 'NL [test]*' >/dev/null
 printf '%s\n' '🇫🇮 Finland' | sudo tee "$TMP/etc/node-name" >/dev/null
 : >"$TMP/log"
-out="$(run_policy failover 2>"$TMP/err")"
-grep -Fqx 'MIHOMO_NODE_FAILOVER=🇫🇮 Finland->NL [test]*' <<<"$out"
-grep -Fq 'MIHOMO_NODE_FAILOVER=XRAY_TRANSACTION_NOT_CERTIFIED' "$TMP/err"
-if grep -Fq 'node select-auto DE (backup)+1' "$TMP/log"; then
-  echo 'FAIL: Xray candidate leaked into Mihomo-only configure' >&2
+if run_policy failover >"$TMP/out" 2>"$TMP/err"; then
+  echo 'FAIL: uncertified fixed inventory unexpectedly triggered a switch' >&2
   exit 1
 fi
+grep -Fq 'UNIFIED_EMPTY_OR_STALE_AWG_FALLBACK' "$TMP/err"
+[[ ! -s "$TMP/log" ]]
 run_policy mode auto >/dev/null
 printf '%s\n' '🇫🇮 Finland' | sudo tee "$TMP/etc/node-name" >/dev/null
 : >"$TMP/log"
-out="$(run_policy failover 2>"$TMP/err")"
-grep -Fqx 'MIHOMO_NODE_FAILOVER=🇫🇮 Finland->NL [test]*' <<<"$out"
-if grep -Fq 'node select-auto DE (backup)+1' "$TMP/log"; then
-  echo 'FAIL: AUTO Xray candidate leaked into Mihomo-only configure' >&2
+if run_policy failover >"$TMP/out" 2>"$TMP/err"; then
+  echo 'FAIL: uncertified AUTO inventory unexpectedly triggered a switch' >&2
   exit 1
 fi
+grep -Fq 'UNIFIED_EMPTY_OR_STALE_AWG_FALLBACK' "$TMP/err"
+[[ ! -s "$TMP/log" ]]
 chmod -x "$TMP/bin/resolver"
-: >"$TMP/log"
-printf '%s\n' '🇫🇮 Finland' | sudo tee "$TMP/etc/node-name" >/dev/null
 if run_policy failover >"$TMP/out" 2>"$TMP/err"; then
-  echo 'FAIL: non-executable engine resolver allowed failover' >&2
+  echo 'FAIL: non-executable unified inventory switched node' >&2
   exit 1
 fi
 [[ ! -s "$TMP/log" ]]
