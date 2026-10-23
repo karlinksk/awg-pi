@@ -318,6 +318,9 @@ def curl_api(token, payload, route, method="sendMessage", timeout=8):
             "--noproxy", "*", "--interface", "if!" + route,
             "--connect-timeout", "4", "--max-time", str(timeout),
             "--silent", "--show-error", "--write-out", "\n%{http_code}"]
+    if route == "eth0":
+        # Pin Telegram IPv4 to the RouterOS SSTP-only policy destination.
+        argv.extend(["--resolve", "api.telegram.org:443:149.154.166.110"])
     try:
         reply = subprocess.run(argv, input=config, text=True, capture_output=True,
                                timeout=timeout + 2, check=False)
@@ -337,6 +340,56 @@ def curl_api(token, payload, route, method="sendMessage", timeout=8):
     return False, code, min(3600, max(0, int(retry))) if str(retry).isdigit() else 0
 
 
+EVENT_LABELS = {
+    "NODE_SWITCH": "Переключение узла",
+    "TRANSPORT_SWITCH": "Смена транспорта",
+    "TRANSPORT_FAILOVER": "Резервное переключение",
+    "VPN_LOST": "VPN недоступен",
+    "VPN_RESTORED": "VPN восстановлен",
+    "POOL_EMPTY": "Нет доступных узлов",
+    "POOL_RESTORED": "Доступные узлы появились",
+    "BOOT": "Запуск шлюза",
+    "SYSTEM_WARNING": "Предупреждение системы",
+    "SUBSCRIPTION_CHANGED": "Подписка обновлена",
+    "DAILY_REPORT": "Ежедневная сводка",
+    "TEST": "Тест уведомлений",
+}
+
+
+def readable_transport(value):
+    return {"mihomo": "Mihomo", "awg": "AmneziaWG",
+            "unconfigured": "не настроен"}.get(value, value)
+
+
+def readable_message(kind, message):
+    """Translate known producer messages without changing stored events."""
+    if kind == "NODE_SWITCH" and message.startswith("Automatic Mihomo node switch: "):
+        detail = message.split(": ", 1)[1]
+        return "Mihomo автоматически переключил узел. Подробности: " + detail
+    if kind in ("TRANSPORT_SWITCH", "TRANSPORT_FAILOVER"):
+        match = re.fullmatch(r"Transport: (mihomo|awg|unconfigured) -> (mihomo|awg|unconfigured); postcheck completed", message)
+        if match:
+            previous, current = (readable_transport(value) for value in match.groups())
+            return (f"Транспорт переключён: {previous} → {current}. "
+                    "Проверка после переключения завершена. "
+                    "Доступность сайтов и устройств LAN этим сообщением не подтверждается.")
+    return message
+
+
+def format_event(kind, severity, message):
+    """Human-friendly Telegram display; never modifies persisted event data."""
+    if kind in ("VPN_LOST", "POOL_EMPTY") or severity == "critical":
+        symbol = "🟥"
+    elif kind in ("VPN_RESTORED", "POOL_RESTORED", "BOOT", "TEST"):
+        symbol = "🟩"
+    elif severity == "warning":
+        symbol = "🟨"
+    else:
+        symbol = "🟩"
+    title = EVENT_LABELS.get(kind, kind)
+    return f"{symbol} AWG Pi — {title}\n{readable_message(kind, message)}"
+
+
 def flush(db, sender=curl_api, secret_path=SECRET_PATH, active="", limit=2, secret_uid=0):
     # No credentials = intentionally unconfigured; do not delete queued events.
     try:
@@ -350,7 +403,7 @@ def flush(db, sender=curl_api, secret_path=SECRET_PATH, active="", limit=2, secr
                              FROM events WHERE next_try <= ?
                              ORDER BY id LIMIT ?""", (now(), limit)).fetchall():
         ident, created, kind, severity, message, attempts = row
-        text = "[AWG Pi] " + kind + " / " + severity.upper() + "\n" + message
+        text = format_event(kind, severity, message)
         for route in route_order(active):
             ok, code, retry = sender(token, {"chat_id": chat, "text": text,
                                               "disable_web_page_preview": "true"}, route)
@@ -585,7 +638,7 @@ def main(argv=None):
         elif args.command == "daily":
             print("NOTIFY_DAILY_QUEUED=" + ("yes" if enqueue_daily(db) else "no"))
         elif args.command == "test":
-            enqueue(db, "TEST", "info", "Test notification from Raspberry Pi", str(now()))
+            enqueue(db, "TEST", "info", "Проверка уведомлений с Raspberry Pi. Доставка Telegram работает.", str(now()))
             print(json.dumps(flush(db), sort_keys=True))
         elif args.command == "flush":
             print(json.dumps(flush(db), sort_keys=True))
