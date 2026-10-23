@@ -90,7 +90,9 @@ def main():
         b'first_transport_setup(){' in staged and
         b'9 "Desktop Commander' in staged and
         b'10 "Telegram' in staged and
-        b'4 "Typ' not in staged and
+        '4 "Типы уведомлений [галочки]"' in staged.decode("utf-8") and
+        '6 "Исправить привязку чата"' in staged.decode("utf-8") and
+        '6 "Выключить ежедневную сводку"' not in staged.decode("utf-8") and
         b'--title "Telegram"' in staged
     ):
         print("MENU_DEDUPE=REFUSED_CONTRACT")
