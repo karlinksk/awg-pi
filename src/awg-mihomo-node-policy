@@ -906,6 +906,7 @@ unified_native_quiesce(){
 failover_unified(){
   local current="$1" mode engine idx provider_sha candidate resolved resolved_sha
   local active_bridge=0 rc=0 attempts=0 start_epoch now line item selected=0
+  local xray_guard_rejected=0
   local native_cli="${MIHOMO_XRAY_NATIVE_RECOVERY_CLI:-/usr/local/sbin/awg-xray-manual-switch}"
   local -a rows=() prioritized=() normalized=() order=()
   # The caller is the node-policy monitor, not manual node selection.
@@ -1011,7 +1012,14 @@ failover_unified(){
       else
         rc=$?
         # rc=2 means candidate untouched; rc=1 means guarded abort to AWG.
-        (( rc == 2 )) && continue
+        if (( rc == 2 )); then
+          # The Xray auto executor can reject a candidate because its
+          # independent safety canary is disabled, not because that node
+          # was proved dead. Keep trying other engines, but never report
+          # "all nodes failed" after such an unattempted Xray profile.
+          xray_guard_rejected=1
+          continue
+        fi
         echo 'MIHOMO_NODE_FAILOVER=UNIFIED_XRAY_ABORT_AWG_FALLBACK' >&2
         return 1
       fi
@@ -1030,7 +1038,11 @@ failover_unified(){
       return 1
     }
   fi
-  echo 'MIHOMO_NODE_FAILOVER=UNIFIED_EXHAUSTED_NO_VERIFIED_CANDIDATE_AWG_FALLBACK' >&2
+  if (( xray_guard_rejected == 1 )); then
+    echo 'MIHOMO_NODE_FAILOVER=UNIFIED_XRAY_GUARD_UNAVAILABLE_AWG_FALLBACK' >&2
+  else
+    echo 'MIHOMO_NODE_FAILOVER=UNIFIED_EXHAUSTED_NO_VERIFIED_CANDIDATE_AWG_FALLBACK' >&2
+  fi
   return 1
 }
 

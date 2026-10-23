@@ -36,7 +36,7 @@ echo "NATIVE:$3" >> "$MOCK_LOG";exit 0
 ''')
     def write(self,name,body):
         path=self.bin/name;path.write_text("#!/usr/bin/env bash\n"+body);path.chmod(0o755)
-    def run_case(self,bridge=True,success="Node13",fixed=False,decline=False):
+    def run_case(self,bridge=True,success="Node13",fixed=False,decline=False,xray_guard=False):
         self.log.write_text("")
         self.mode.write_text("fixed\n" if fixed else "auto\n")
         self.order.write_text("Node11\nNode2\n")
@@ -51,7 +51,7 @@ echo "NATIVE:$3" >> "$MOCK_LOG";exit 0
             'service_candidate_allowed(){ return 0; }\n',
             'unified_native_tun_postcheck(){ return 1; }\n',
             'unified_native_quiesce(){ echo QUIESCE >> "$MOCK_LOG"; return 0; }\n',
-            'auto_xray_candidate(){ echo "XRAY:$2" >> "$MOCK_LOG"; [ "$UNIFIED_SUCCESS" = "$2" ]; }\n',
+            'auto_xray_candidate(){ echo "XRAY:$2" >> "$MOCK_LOG"; if [ "$XRAY_GUARD" = 1 ]; then return 2; fi; [ "$UNIFIED_SUCCESS" = "$2" ]; }\n',
             'failover_unified FailedNode\n'
         ))
         env={**os.environ,"MOCK_SHA":self.sha,"MOCK_LOG":str(self.log),
@@ -60,7 +60,7 @@ echo "NATIVE:$3" >> "$MOCK_LOG";exit 0
              "MIHOMO_UNIFIED_NODE_CLI":str(self.bin/"resolver"),
              "MIHOMO_XRAY_NATIVE_RECOVERY_CLI":str(self.bin/"executor"),
              "MIHOMO_CONFIGURE":str(self.bin/"configure"),
-             "UNIFIED_SUCCESS":success,"MOCK_SUCCESS":success}
+             "UNIFIED_SUCCESS":success,"MOCK_SUCCESS":success,"XRAY_GUARD":"1" if xray_guard else "0"}
         if decline:self.write("executor","exit 2")
         return subprocess.run(["bash","-c",script],env=env,capture_output=True,text=True,timeout=10)
     def test_thirteenth_candidate_can_win(self):
@@ -90,6 +90,13 @@ echo "NATIVE:$3" >> "$MOCK_LOG";exit 0
         r=self.run_case(decline=True)
         self.assertEqual(r.returncode,1)
         self.assertEqual(self.log.read_text(),"")
+    def test_xray_canary_guard_is_not_misreported_as_all_nodes_dead(self):
+        r=self.run_case(bridge=False,success="None",xray_guard=True)
+        self.assertEqual(r.returncode,1)
+        self.assertIn("UNIFIED_XRAY_GUARD_UNAVAILABLE_AWG_FALLBACK",r.stderr)
+        self.assertNotIn("UNIFIED_EXHAUSTED_NO_VERIFIED_CANDIDATE",r.stderr)
+        self.assertIn("XRAY:Node3",self.log.read_text())
+
     def test_no_numeric_caps(self):
         fn=extract("failover_unified")
         self.assertNotIn("max_xray_visits",fn)
