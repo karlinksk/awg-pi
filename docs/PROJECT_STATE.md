@@ -1,5 +1,7 @@
 # AWG Pi Gateway — состояние проекта и согласованные решения
 
+**Дополнительный аудит runtime→installer, 2026-10-23:** после сравнения 42 известных runtime/source файлов шесть установленных на test Pi улучшений отсутствовали в RC. Они перенесены в source integration commit `ededba0`: guard ручного переключения Mihomo/Xray с изолированным HTTPS preflight до изменения live, AWG-safe watchdog rollback, полный engine-aware учёт 13 нод, раздельные статусы OK/FAIL/нет доказательств, повторные health probes, bounded rotating Xray AUTO (до двух Xray-кандидатов). Не переносился устаревший eager-import node picker, уже исправленный в merged PR #160. Rootless полный regression suite на Debian 13 ARM64: **847 OK, 2 skipped** (скрытые hardware gates остаются незакрытыми); тесты подтверждают, что отрицательный preflight не запускает watchdog и не мутирует routing. Интеграционная версия **не установлена на test Pi**, не main/production/release. Текущую Pi и MikroTik не меняли.
+
 ## Оперативный срез 2026-10-23 — объединение инсталлятора v1.3.0 (SOURCE ONLY)
 
 - В ветке `integration/v1.3.0-approved-installer-20261023` объединены RC `rc/v1.3.0-tsv-status-canary-20261021` (base `60db9e2`) и согласованный optional AWG Notify / Matrix `feature/awg-notify-telegram-v1` (`c23a7c7`). Merge commit `bcbb4d3`. Это **GitHub source branch, не main, не релиз и не установленный runtime**.
