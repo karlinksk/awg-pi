@@ -261,6 +261,35 @@ class NotifyWiringTests(unittest.TestCase):
         self.assertIn("usr/local/lib/awg-pi", update)
         self.assertIn("etc/awg-pbr", update)
 
+    def test_failover_hook_install_is_pinned_and_no_vpn_switch(self):
+        installer = (ROOT / "scripts/awg-notify-failover-hook-accept.py").read_text()
+        transport = (ROOT / "src/awg-transport").read_text()
+        monitor = (ROOT / "src/awg-selection-monitor").read_text()
+        for key in ("ORIGINAL =", "UPDATED =", "REFUSE", "ROOT_REQUIRED"):
+            if key != "REFUSE":
+                self.assertIn(key, installer)
+        self.assertIn("HOOK_INSTALL=ROLLED_BACK", installer)
+        self.assertIn("HOOK_INSTALL=PASS_TEST_PI_ONLY", installer)
+        self.assertIn("ALL_SIX_CHECKBOX_GATES=PASS", installer)
+        self.assertIn("WATCH_FAILURE_AND_RECOVERY_GATES=PASS", installer)
+        self.assertIn("TEST_BOT_DELIVERY=6_OF_6_API_OK_VIA_AWG0", installer)
+        self.assertIn('mock.patch.object(mod, "route_order", return_value=["awg0"])', installer)
+        self.assertIn('command("systemctl", "restart", "awg-selection-monitor.service"', installer)
+        self.assertNotIn('restart", "awg-quick@awg0', installer)
+        self.assertNotIn('restart", "dnsmasq', installer)
+        self.assertNotIn('restart", "awg-pbr-health', installer)
+        self.assertNotIn('awg-transport", "select"', installer)
+        self.assertIn('local notify_kind=TRANSPORT_SWITCH', transport)
+        self.assertIn('notify_kind=TRANSPORT_FAILOVER', transport)
+        self.assertIn('AWG_NOTIFY_AUTOMATIC=1 "$AWG_TRANSPORT_CLI" select', monitor)
+        self.assertIn('--kind NODE_SWITCH', monitor)
+        if os.geteuid() != 0:
+            result = subprocess.run(
+                ["python3", str(ROOT / "scripts/awg-notify-failover-hook-accept.py")],
+                capture_output=True, text=True, timeout=5, check=False)
+            self.assertEqual(result.returncode, 2)
+            self.assertIn("ROOT_REQUIRED", result.stdout)
+
     def test_no_router_or_dns_modifications(self):
         code = (ROOT / "src/awg-notify.py").read_text()
         for keyword in ("ip route replace", "nft add", "mikrotik login", "dnsmasq restart"):
