@@ -282,6 +282,46 @@
   Root-only backup нельзя прочитать непривилегированным агентом.
   Продолжаем PR #115 как основной приоритет.
 
+## Инцидент 2026-10-22 23:58 +07 — подтверждённый failover и отсутствие Telegram event
+
+- 2026-10-22 **23:58:03 +07** на **тестовой Pi `awg-upgrade`**
+  в `awg-selection-monitor.service` достоверно зафиксировано
+  `FAILOVER=mihomo->awg`. Срез 2026-10-23 **07:13–07:18 +07**:
+  `awg-selection status` показывает `AUTO / current=awg`,
+  `awg-quick@awg0` active, `awg-mihomo` inactive, fwmark таблицы
+  100/101 через `awg0`, SSH/dnsmasq/selection/health активны.
+  **AWG-bound HTTPS** к `api.openai.com/v1/models` дал 401 с
+  успешным TLS; к `api.telegram.org/` — 302 с успешным TLS.
+  Это **Pi-bound transport**, не LAN-клиент и не подтверждение
+  реальной отправки сообщения через Telegram Bot API.
+- Непосредственно перед переключением в 23:56:57 Mihomo получил
+  `127.0.0.1:17892 connect: connection refused` к локальному
+  Xray SOCKS; Xray service ныне disabled/inactive. Истечение
+  HoneyVPN trial **не доказано** этим диагнозом, потому что отказ
+  происходил на localhost до обращения к провайдеру.
+- Telegram Watch: 23:57:31 `suspect`, 23:59:01 `up` после
+  перехода AWG, поэтому двух последовательных `down` не было.
+  Telegram flush во время события, в 23:58:33, и последующие
+  запуски показывают `pending=0, sent=0`. В установленных
+  `/usr/local/sbin/awg-transport` и `awg-selection-monitor`
+  **нет emit-hook для TRANSPORT_FAILOVER** (grep без совпадений),
+  хотя код уже staged **только в draft PR #158**. Это основная
+  доказанная причина отсутствия сообщения. Отдельно root-only
+  значение `TRANSPORT_SWITCH` в preferences не удалось прочитать;
+  его default — OFF; нельзя утверждать фактическую галочку.
+- Безопасный диагностический срез без секретов сохранён на Pi:
+  `/home/karlinks/awg-pi-failover-snapshot-20261023.txt`
+  (режим 0600, пользователь karlinks). В ходе проверки не менялись
+  VPN, MikroTik, DNS, SSH/SSTP, ноды, systemd units или уведомления.
+- Следующий шаг: прежде чем менять действующий AWG, отдельным
+  тестом проверить root-only preferences без выдачи credentials;
+  затем внедрить проверенный event emit в test-Pi selector/transport
+  с rollback и **без реальной имитации отказа работающего VPN**.
+  Проверить фактический enqueue и доставку через AWG и только
+  затем заявлять `TELEGRAM_FAILOVER=PASS`. Главный релизный
+  приоритет — PR #115/clean-install/LAN/failover/reboot/v1.3.0;
+  PR #158 остаётся draft/unmerged.
+
 ## 1. Главная цель и границы работ
 
 Закончить **AWG Pi Gateway v1.3.0**: воспроизводимый шлюз для Raspberry Pi 4 / чистой Debian 13 ARM64 с двумя транспортами **AmneziaWG** и **Mihomo**. Инсталлятор должен сразу устанавливать всё необходимое, **включая FFmpeg/FFprobe, Stage18 Node.js и yt-dlp** и сами движки — даже если VPN-профиль/подписка будут внесены позднее. После ввода AWG-профиля и/или Mihomo-подписки система должна штатно подбирать пригодные ноды, работать после перезагрузки, сохранять политики и обеспечивать предусмотренный резервный путь.
