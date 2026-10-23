@@ -1,5 +1,22 @@
 # AWG Pi Gateway — состояние проекта и согласованные решения
 
+## 2026-10-23 21:50 +07 — hardware core A/B shows time-dependent node failure independent of core version/sandbox
+
+- Owner executed pinned, protected old/new **Xray-core A/B** on test Pi `awg-upgrade`. Receipt `/home/karlinks/awg-v13-xray-core-ab-receipt-20261023.txt`: `CORE_AB_INITIAL_TUN=HTTP_401`, `PROFILE_IDENTITY=SAME_EXACT_FINGERPRINT`, `BINARY_EXECUTION_ROOT=SAME_RAM_DIRECTORY`, `WATCHDOG=ARMED_420S`, **both 26.3.27 and 26.10.21 configs PASS**. Eight ordered HTTPS OpenAI API checks on exactly the same XHTTP/REALITY provider node and identical local SOCKS config:
+  1. **OLD 26.3.27 DIRECT = HTTP_401**
+  2. **NEW 26.10.21 DIRECT = HTTP_401**
+  3. **NEW 26.10.21 under installed systemd-like sandbox = HTTP_401**
+  4. **OLD 26.3.27 under sandbox = CURL_TIMEOUT**
+  5. **OLD 26.3.27 under sandbox = CURL_TIMEOUT**
+  6. **NEW 26.10.21 under sandbox = CURL_TIMEOUT**
+  7. **NEW 26.10.21 DIRECT = CURL_TIMEOUT**
+  8. **OLD 26.3.27 DIRECT = CURL_TIMEOUT**
+- **Interpretation:** both binaries succeed at first, including the **new binary under systemd hardening**; all subsequent **old/new and direct/unit** probes fail. Therefore **no reliable causal Xray version- or sandbox-specific fix was demonstrated**. A time-varying problem involving this exact node, remote service or underlay is substantially more consistent with the ordered data. It is still NOT proven to be a server-side rate limit versus client/underlay/network behavior; do not assert provider fault without server logs/network proof. Since these are local SOCKS probes, they are NOT live production `mihomo0` Xray TUN, forwarded LAN, AUTO failover or reboot acceptance. Do not upgrade active Xray merely on this evidence.
+- Independent **posttest** Pi checks: `CORE_AB_RUNTIME_TESTS=COMPLETE`, `CORE_AB_POST_NATIVE_TUN=HTTP_401`, `ACTIVE_GATEWAY=UNCHANGED`, `INSTALLED_BINARY=UNCHANGED`, transport Mihomo and standby AWG active; Xray service inactive; SSH/dnsmasq/selection-monitor/PBR-health active; policy route tables 100/101 via `mihomo0`, failed systemd units **0**, no test watchdog timers. Both binary SHA-256 hashes unchanged; 10/10 rootless A/B test suite PASS. The test Pi remains safe; working microSD and MikroTik untouched.
+- Manual Xray switching code review after A/B: **`preflight_xray` verifies exact root-owned subscription fingerprint and live isolated HTTPS before mutation**, then `prove_local_xray` HTTPS checks the actual service, and commit is gated by strict native `mihomo0` OpenAI HTTPS 401 **twice**, with rollback on failure and independent timer. The admission guard is already conservative. We should not add repeated redundant probes or permanent node bans that would worsen operator experience under an intermittent provider/underlay.
+- **Decision/queue:** stop experimenting with fixed Xray profile #1 and repeated protected live switch loops unless a different reproducible hypothesis emerges. Keep Xray 26.10.21 only in verified RAM as optional upgrade candidate (installed remains 26.3.27), leave existing active Mihomo, user READY/Hot Pool settings and transit safety unchanged. If Xray acceptance is needed later, use a *different currently verified* node and then demand true production TUN and LAN evidence. Priority returns to PR **#115** installer/upgrade delivery, full clean-install/LAN/failover/reboot release gates and then stable v1.3.0; draft PR #162 diagnostic work is not merged or released.
+
+
 ## 2026-10-23 21:40 +07 — pinned Xray old/new standalone vs systemd sandbox A/B ready
 
 - User approved a **single narrow old/new Xray core comparison**, with no further repeated full-gateway manual switch until evidence identifies a specific fix. Test Pi `awg-upgrade` still has native Mihomo healthy, standby AWG healthy, Xray service passive, SSH and DNS active, policy tables 100/101 default through `mihomo0`, zero failed systemd units. No production MikroTik/working microSD changes.
