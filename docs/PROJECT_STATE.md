@@ -1,5 +1,13 @@
 # AWG Pi Gateway — состояние проекта и согласованные решения
 
+## Срез 2026-10-23 17:15 — real test Pi isolated evidence and guarded Xray backend
+
+- Test Pi `awg-upgrade` owner-approved live **source-only** stage passed: `STAGE=VERIFIED_SOURCE_ONLY`, 3 installed helpers (`awg-mihomo-node-policy`, `awg-mihomo-unified-nodes`, `awg-xray-manual-switch`) SHA matched exact PR `8117aef`. Original individual files saved `/var/backups/awg-gateway/unified-stage-20261023.x6N7dpic` independently of previously verified 124,039,828-byte gateway snapshot. Stage rollback watchdog was armed and disarmed on success. This is not clean-install/restore/reboot or real failover PASS.
+- Owner-authorized isolated exact-profile HTTPS audit (no live gateway changes): unified subscription **13 supported** = **7 Mihomo, 6 Xray**. 6/6 Xray tried: indexes 1,2,3,6 fresh PASS; 4,5 NO_FRESH_PROOF; Mihomo indexes 7,8,9 fresh PASS; other 4 Mihomo untested. Active transport remains Mihomo; Transit with table 100/101 `mihomo0`, DNS, SSH, AWG and monitor active, Xray inactive; operator `XRAY_AUTO=0`, `READY_AUTO=0` unchanged.
+- Follow-on finding **after** source-only stage: original Linux backend `src/awg-xray-live-backend.py` still vetoed a freshly verified Xray via historical `NODE_BASIC_NETWORK=NETWORK_OK`, which can be stale; it must not replace exact fresh preflight. Source-only backend fix **`8c58fce`** in draft PR #162 (local matching source commit `c9f32f9`) verifies exact provider SHA/index and conducts independent HTTPS via guarded root-owned `awg-xray-manual-switch probe-xray` inside backend preflight **before** arming watchdog/altering TUN. Cached health is not proof or veto; provider rotation aborts. Local Debian 13 ARM64 rootless full suite **895 tests OK, 2 skipped**. GitHub CI job run `39937861279` tracks the exact source commit; inspect outcome before hardware stage. Live-installed backend **not yet updated**, and source-only stage of this fourth file remains pending.
+- Remaining release gate: verify new source CI PASS; controlled fourth-helper stage with independent restore; preserve Transit FAIL-CLOSED and SSH/SSTP/DNS; only then test deliberate Mihomo→Xray and reverse on test Pi, separately LAN forwarding, both mode behaviors and reboot/restore. Full `XRAY_AUTO=0` should be restored after temporary test opt-in. Never report live failover PASS from isolated candidate HTTPS alone. PR #115 also remains draft, v1.3.0 not released.
+
+
 
 ## Hardware gate preflight и Xray fresh-proof — 2026-10-23
 
