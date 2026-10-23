@@ -47,6 +47,7 @@ MIHOMO_READY_GUARD="/usr/local/sbin/awg-mihomo-ready-live-match"
 MIHOMO_READY_POSTCHECK="/usr/local/sbin/awg-mihomo-ready-postcheck-tun"
 MIHOMO_TUN_CHECK="/usr/local/sbin/awg-mihomo-tun-check"
 DC_CLI="/usr/local/bin/awg-dc"
+GPT_CLI="/usr/local/sbin/awg-gpt"
 SYSTEM_NODE_SCRIPT="/usr/local/sbin/awg-system-node"
 DC_UNIT="/etc/systemd/system/awg-dc-remote@.service"
 UPDATE_SCRIPT="/usr/local/sbin/awg-update"
@@ -876,6 +877,8 @@ install_project_helper src/awg-mihomo-ready-postcheck-tun "$MIHOMO_READY_POSTCHE
 install_project_helper src/awg-mihomo-tun-check "$MIHOMO_TUN_CHECK"
 # DC is optional: stage the commands and an INACTIVE service template only.
 install_project_helper src/awg-dc "$DC_CLI"
+# Narrow root-only helper: do not grant passwordless sudo automatically.
+install_project_helper src/awg-gpt "$GPT_CLI"
 install_project_unit units/awg-dc-remote@.service "$DC_UNIT"
 install_project_helper src/awg-mihomo-node-policy "$MIHOMO_NODE_POLICY_CLI"
 
@@ -1123,6 +1126,8 @@ python3 -B -c 'import ast,sys; ast.parse(open(sys.argv[1],encoding="utf-8").read
 bash -n "$MIHOMO_READY_POSTCHECK" || die "READY postcheck: синтаксическая ошибка"
 [[ -x "$MIHOMO_TUN_CHECK" ]] || die "Не установлен TUN diagnostic: $MIHOMO_TUN_CHECK"
 bash -n "$MIHOMO_TUN_CHECK" || die "TUN diagnostic: синтаксическая ошибка"
+[[ -x "$GPT_CLI" ]] || die "Не установлен AWG GPT helper: $GPT_CLI"
+bash -n "$GPT_CLI" || die "AWG GPT helper: синтаксическая ошибка"
 [[ -x "$DC_CLI" ]] || die "Не установлен optional DC helper: $DC_CLI"
 bash -n "$DC_CLI" || die "DC helper: синтаксическая ошибка"
 [[ -x "$SYSTEM_NODE_SCRIPT" ]] || die "Не установлен Node.js runtime installer: $SYSTEM_NODE_SCRIPT"
