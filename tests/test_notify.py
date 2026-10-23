@@ -117,7 +117,7 @@ class NotifyTests(unittest.TestCase):
     def test_watch_both_categories_are_independent(self):
         checker = mod.event_enabled
         with mock.patch.object(mod, "event_enabled", side_effect=
-                               lambda k: checker(k, owner_uid=os.getuid())), \\
+                               lambda k: checker(k, owner_uid=os.getuid())), \
              mock.patch.object(mod, "SECRET_PATH", self.secret):
             mod.save_preferences({"VPN_LOST"}, self.preferences, owner_uid=os.getuid())
             self.assertEqual(mod.observe_transport(self.db, "awg", lambda _: False), "suspect")
@@ -139,8 +139,8 @@ class NotifyTests(unittest.TestCase):
         real_open = mod.open_db
         case_db = self.folder / "cli-test" / "events.sqlite3"
         checker = mod.event_enabled
-        with mock.patch.object(mod, "check_root", return_value=None), \\
-             mock.patch.object(mod, "open_db", side_effect=lambda: real_open(case_db)), \\
+        with mock.patch.object(mod, "check_root", return_value=None), \
+             mock.patch.object(mod, "open_db", side_effect=lambda: real_open(case_db)), \
              mock.patch.object(mod, "event_enabled", side_effect=
                                lambda k: checker(k, owner_uid=os.getuid())):
             mod.save_preferences({"TRANSPORT_SWITCH"}, self.preferences,
