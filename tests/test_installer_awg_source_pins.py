@@ -11,7 +11,7 @@ CI=(ROOT/".github/workflows/ci.yml").read_text()
 GO_TAG="v3.1.20260828"
 TOOLS_TAG="v3.1.20260812"
 GO_SHA="b5928efb6ca19f0153958460c3d141f04abc5c2e"
-TOOLS_SHA="ee0f0a9aa34ff0a0da4b343b9512781cfe02843"
+TOOLS_SHA="ee0f0a9aa34ff0a0da4b3433b9512781cfe02843"
 
 class SourcePins(unittest.TestCase):
     def test_explicit_tags_not_dynamic_latest(self):
