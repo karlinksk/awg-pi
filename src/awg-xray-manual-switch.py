@@ -42,6 +42,9 @@ ALIAS="AWG-XRAY-VLESS-LOCAL"
 XRAY="awg-xray-vless.service"
 MIHOMO="awg-mihomo.service"
 WATCH_SECONDS=180
+# Only a bounded, secret-free failure class from the latest HTTPS probe.
+# Never log the URL, profile name, provider details, TLS output or credentials.
+_LAST_HTTPS_PROBE_CLASS="NOT_RUN"
 
 def refuse(code):
     raise RuntimeError(code)
@@ -99,6 +102,8 @@ def choose(node):
     refuse("CONTROLLER_SELECTION_NOT_CONFIRMED")
 
 def https_ok(via):
+    global _LAST_HTTPS_PROBE_CLASS
+    _LAST_HTTPS_PROBE_CLASS="NOT_COMPLETED"
     env={k:v for k,v in os.environ.items() if k.lower() not in
          ("http_proxy","https_proxy","all_proxy","no_proxy")}
     params=(["--interface","mihomo0","--noproxy","*"] if via=="tun" else
@@ -108,8 +113,23 @@ def https_ok(via):
             "--max-time","18","-o","/dev/null","-w","%{http_code}",*params,
             "https://api.openai.com/v1/models"],env=env,stdin=subprocess.DEVNULL,
             stdout=subprocess.PIPE,stderr=subprocess.DEVNULL,text=True,timeout=23)
-        return p.returncode==0 and p.stdout.strip()=="401"
-    except (OSError,subprocess.TimeoutExpired):
+        code=p.stdout.strip()
+        if p.returncode==0 and re.fullmatch(r"[0-9]{3}",code):
+            _LAST_HTTPS_PROBE_CLASS="HTTP_"+code
+        elif p.returncode!=0:
+            # Curl's exit code is diagnostic, never a proof of network health.
+            # Do not expose curl stderr or the endpoint itself.
+            known={5,6,7,16,28,35,51,52,55,56,60}
+            _LAST_HTTPS_PROBE_CLASS=("CURL_EXIT_"+str(p.returncode)
+                                     if p.returncode in known else "CURL_EXIT_OTHER")
+        else:
+            _LAST_HTTPS_PROBE_CLASS="HTTP_INVALID"
+        return p.returncode==0 and code=="401"
+    except subprocess.TimeoutExpired:
+        _LAST_HTTPS_PROBE_CLASS="PROCESS_TIMEOUT"
+        return False
+    except OSError:
+        _LAST_HTTPS_PROBE_CLASS="PROCESS_ERROR"
         return False
 
 def prove_local_xray():
@@ -610,6 +630,8 @@ def native_return(name):
             print("NATIVE_RETURN_REBOOT=NOT_TESTED")
         except Exception as exc:
             state["failure_code"]=stable_error_code(exc)
+            if state["failure_code"]=="NATIVE_TUN_HTTPS_UNVERIFIED":
+                state["tun_probe_last"]=_LAST_HTTPS_PROBE_CLASS
             state["failed_at"]=state.get("checkpoint","NOT_STARTED")
             if not mutated:
                 stored(path,state,"cancelled")
@@ -1066,6 +1088,8 @@ def apply(index):
         except Exception as exc:
             # Durable, root-only, code-only failure report; no credentials.
             state["failure_code"]=stable_error_code(exc)
+            if state["failure_code"]=="NATIVE_TUN_HTTPS_UNVERIFIED":
+                state["tun_probe_last"]=_LAST_HTTPS_PROBE_CLASS
             state["failed_at"]=state.get("checkpoint","NOT_STARTED")
             if not mutated:
                 stored(path,state,"cancelled")
@@ -1101,7 +1125,7 @@ def last_failure():
     folder=max(snapshots,key=lambda p:p.stat().st_mtime)
     state=json.loads((folder/"state.json").read_text())
     # Expose only enumerated nonsecret words; no profile names or hashes.
-    for key in ("phase","failure_code","failed_at","rollback_failure_code","checkpoint"):
+    for key in ("phase","failure_code","failed_at","rollback_failure_code","checkpoint","tun_probe_last"):
         value=state.get(key,"UNKNOWN")
         safe=value if isinstance(value,str) and re.fullmatch(r"[A-Z][A-Z0-9_]{1,79}|rolled_back|committed|armed|pending|cancelled",value) else "UNKNOWN"
         print("XRAY_MANUAL_"+key.upper()+"="+safe)
