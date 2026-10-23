@@ -1,0 +1,20 @@
+[Unit]
+Description=AWG Pi Gateway Telegram boot event (optional)
+After=local-fs.target
+ConditionPathExists=/etc/awg-pbr/notify/telegram.json
+
+[Service]
+Type=oneshot
+User=root
+Group=root
+ExecStart=/usr/local/sbin/awg-notify emit --kind BOOT --severity info --text "Raspberry Pi запущена; текущее состояние будет отражено в ежедневной сводке."
+UMask=0077
+NoNewPrivileges=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths=/var/lib/awg-pbr/notify
+RestrictAddressFamilies=AF_UNIX
+TimeoutStartSec=15
+
+[Install]
+WantedBy=multi-user.target

@@ -293,6 +293,17 @@ select_transport(){
     "$SYSTEMCTL_BIN" stop "$MIHOMO_SERVICE" >/dev/null 2>&1 || true
   fi
 
+  # Telegram is an optional side-channel: enqueue AFTER all transport
+  # preflight/postchecks. Never abort or roll back a live VPN on notify failure.
+  if [[ -s /etc/awg-pbr/notify/telegram.json &&
+        -x /usr/local/sbin/awg-notify ]] &&
+     systemctl is-enabled --quiet awg-notify-flush.timer 2>/dev/null; then
+    local notify_kind=TRANSPORT_SWITCH
+    [[ "${AWG_NOTIFY_AUTOMATIC:-0}" != 1 ]] || notify_kind=TRANSPORT_FAILOVER
+    printf 'Transport: %s -> %s; postcheck completed' "$previous" "$target" |
+      timeout 2s /usr/local/sbin/awg-notify emit --kind "$notify_kind" \
+        --severity warning >/dev/null 2>&1 || true
+  fi
   printf 'Transport activated: %s\n' "$(awg_transport_label "$target")"
   printf 'Transport ID: %s\n' "$target"
 }
