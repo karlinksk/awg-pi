@@ -719,6 +719,20 @@ auto_xray_candidate(){
     echo "MIHOMO_NODE_FAILOVER=XRAY_TRANSACTION_NOT_CERTIFIED" >&2
     return 2
   fi
+  # Cache status is historical evidence, never a veto or proof of this
+  # exact current provider profile. ALWAYS fresh-probe the selected Xray
+  # index in an isolated sidecar before arming any live transaction. This
+  # also applies to callers of the older bounded AUTO dispatcher.
+  local engine index probe
+  engine="$(sed -n 's/^NODE_ENGINE=//p' <<<"$resolved")"
+  index="$(sed -n 's/^NODE_INDEX=//p' <<<"$resolved")"
+  probe="${MIHOMO_XRAY_NATIVE_RECOVERY_CLI:-/usr/local/sbin/awg-xray-manual-switch}"
+  if [[ "$engine" != XRAY || ! "$index" =~ ^[1-9][0-9]{0,4}$ ||
+        ! -x "$probe" ]] ||
+     ! "$probe" probe-xray "$index" >/dev/null 2>&1; then
+    echo "MIHOMO_NODE_FAILOVER=XRAY_EXACT_FRESH_HTTPS_UNVERIFIED" >&2
+    return 2
+  fi
   # A standby repair while AWG is active MUST NOT mutate its routes.
   # READY has a distinct evidence contract and is not covered by this canary.
   local operating_mode
@@ -727,8 +741,7 @@ auto_xray_candidate(){
         "$MIHOMO_READY_AUTO_CANARY" != 0 ||
         ( "$_xray_auto_mode" != 1 && "$(hostname)" != awg-upgrade ) ||
         ( "$operating_mode" != transit && "$operating_mode" != selective ) ||
-        ( "$operating_mode" == selective && "${MIHOMO_XRAY_SELECTIVE_CANARY:-0}" != 1 ) ||
-        "$(sed -n 's/^NODE_BASIC_NETWORK=//p' <<<"$resolved")" != NETWORK_OK ]]; then
+        ( "$operating_mode" == selective && "${MIHOMO_XRAY_SELECTIVE_CANARY:-0}" != 1 ) ]]; then
     echo "MIHOMO_NODE_FAILOVER=XRAY_AUTO_PREFLIGHT_REJECTED" >&2
     return 2
   fi
@@ -1002,7 +1015,8 @@ failover_unified(){
         return 1
       }
     elif [[ "$engine" == XRAY ]]; then
-      "$native_cli" probe-xray "$idx" >/dev/null 2>&1 || continue
+      # The certified Xray dispatcher performs a fresh isolated HTTPS test
+      # for the exact index even when cached health is expired/UNKNOWN/FAIL.
       # The certified executor handles the cross-core watchdog and guard.
       # This is not the legacy native selector for Reality VLESS profiles.
       if auto_xray_candidate "$current" "$candidate" "$resolved"; then

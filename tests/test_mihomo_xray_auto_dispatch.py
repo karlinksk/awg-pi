@@ -30,6 +30,11 @@ class XrayAutoDispatch(unittest.TestCase):
                    'printf "%s:%s:%s\\n" "$AWG_XRAY_EXPERIMENTAL_APPLY" "$2" "$3" >> "$MOCK_LOG"\n'
                    '[ "$MOCK_RC" = 0 ]')
 
+        self.mkbin("isolated-xray-probe",
+                   '[[ "$1" == probe-xray && "$2" == 3 ]] || exit 3\n'
+                   'echo "PROBE:$2" >> "$MOCK_PROBE_LOG"\n'
+                   '[[ "$MOCK_PROBE_RC" == 0 ]]')
+
     def mkbin(self, name, command):
         path = self.bin / name
         path.write_text("#!/usr/bin/env bash\n" + command + "\n")
@@ -38,7 +43,7 @@ class XrayAutoDispatch(unittest.TestCase):
 
     def run_helper(self, *, optin="0", mode="transit", health="NETWORK_OK",
                    host="awg-upgrade", ready="0", standby="0", rc="0",
-                   executor=True, selective_optin="0"):
+                   executor=True, selective_optin="0", probe_rc="0", index="3"):
         self.mode.write_text(mode + "\n")
         self.mkbin("hostname", "echo " + host)
         exe = self.bin / "transaction"
@@ -53,11 +58,15 @@ class XrayAutoDispatch(unittest.TestCase):
                "MIHOMO_STANDBY_REPAIR": standby,
                "MIHOMO_READY_AUTO_CANARY": ready,
                "MIHOMO_AUTO_MODE_FILE": str(self.mode),
+               "MIHOMO_XRAY_NATIVE_RECOVERY_CLI": str(self.bin/"isolated-xray-probe"),
+               "MOCK_PROBE_RC": probe_rc,
+               "MOCK_PROBE_LOG": str(self.base/"probes"),
                "MIHOMO_XRAY_TRANSACTION_CLI": str(exe),
                "MIHOMO_AUTO_SYSTEMCTL": str(self.bin/"systemctl"),
                "MIHOMO_AUTO_SERVICE": "awg-mihomo.service"}
-        script = FUNCTION + ('auto_xray_candidate FAILED-CURRENT VLESS-CANDIDATE '
-                             '"NODE_ENGINE=XRAY\nNODE_BASIC_NETWORK=$1"')
+        resolved=("NODE_ENGINE=XRAY\nNODE_INDEX="+str(index)+
+                  "\nNODE_BASIC_NETWORK=$1")
+        script=FUNCTION + ('auto_xray_candidate FAILED-CURRENT VLESS-CANDIDATE "'+resolved+'"')
         return subprocess.run(["bash", "-c", script, "test", health],
                               env=env, capture_output=True, text=True, timeout=5)
 
@@ -86,10 +95,26 @@ class XrayAutoDispatch(unittest.TestCase):
                          "TEST_PI_AUTHORIZED:FAILED-CURRENT:VLESS-CANDIDATE")
 
 
-    def test_network_unproven_cannot_activate(self):
-        result = self.run_helper(optin="1", health="UNKNOWN_HTTP")
-        self.assertEqual(result.returncode, 2)
-        self.assertEqual(self.log.read_text(), "")
+    def test_unknown_cached_result_allows_fresh_exact_https_proven_node(self):
+        result=self.run_helper(optin="1",health="UNKNOWN_HTTP")
+        self.assertEqual(result.returncode,0,result.stderr)
+        self.assertIn("PROBE:3",(self.base/"probes").read_text())
+
+    def test_old_network_fail_allows_fresh_exact_https_proven_node(self):
+        result=self.run_helper(optin="1",health="NETWORK_FAIL")
+        self.assertEqual(result.returncode,0,result.stderr)
+        self.assertIn("PROBE:3",(self.base/"probes").read_text())
+
+    def test_fresh_isolated_https_failure_never_activates(self):
+        result=self.run_helper(optin="1",health="NETWORK_OK",probe_rc="1")
+        self.assertEqual(result.returncode,2)
+        self.assertIn("XRAY_EXACT_FRESH_HTTPS_UNVERIFIED",result.stderr)
+        self.assertEqual(self.log.read_text(),"")
+
+    def test_invalid_index_never_activates(self):
+        result=self.run_helper(optin="1",index="bad")
+        self.assertEqual(result.returncode,2)
+        self.assertEqual(self.log.read_text(),"")
 
     def test_non_testpi_refuses(self):
         result = self.run_helper(optin="1", host="production-pi")
