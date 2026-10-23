@@ -412,6 +412,44 @@
   Actual visual checkbox interaction, LAN/failover/reboot/clean install
   release gate still unconfirmed. No MikroTik changes.
   
+## Telegram hooks installed and six synthetic Bot API sends PASS — 2026-10-23 10:34 +07
+
+- Test Pi `awg-upgrade`: operator executed pinned
+  `scripts/awg-notify-failover-hook-accept.py`, received
+  `HOOK_INSTALL=PASS_TEST_PI_ONLY`, `NODE_HOOK=INSTALLED`,
+  `FAILOVER_HOOK=INSTALLED`,
+  `SERVICES_DNS_PBR_TIMERS=UNCHANGED` and
+  `LIVE_QUEUE_SECRET_PREFERENCES=UNMODIFIED`. Root-only backup
+  reported `/var/backups/awg-gateway/notify-failover-hooks-hjcvepti`.
+- All six actual root-only event preferences reported **on**:
+  VPN_LOST, VPN_RESTORED, BOOT, DAILY_REPORT, NODE_SWITCH,
+  TRANSPORT_SWITCH. Operator test `ALL_SIX_CHECKBOX_GATES=PASS`,
+  `WATCH_FAILURE_AND_RECOVERY_GATES=PASS` used isolated database
+  and isolated temporary preferences. Six explicitly labeled
+  synthetic notifications accepted by **actual Telegram Bot API
+  via awg0**, batches 2+2+2, pending 4→2→0;
+  `TEST_BOT_DELIVERY=6_OF_6_API_OK_VIA_AWG0`.
+  **Receipt on user's Telegram client unverified**;
+  this is not proof of a new real automatic failover.
+- Independently verified at 10:33–10:34 +07:
+  `/usr/local/sbin/awg-transport` SHA-256
+  `00207041308e591040a4b45e7e9efbb8820161e3127f905107bdecaba7ecf110`;
+  `/usr/local/sbin/awg-selection-monitor` SHA-256
+  `569e6ac66561fc04ccf98f34378e96a6e03bc46daf5e61e5b6e8dc75a8d06b99`;
+  notify binary SHA `6eab64b8...`, menu SHA `d12c4495...`.
+  All are matching staged PR #158 source. All root-owned 0755,
+  `bash -n` PASS. Selection monitor active since 10:33:02,
+  `Result=success`, `NRestarts=0`. Selected transport still AWG
+  with policy AUTO order Mihomo,AWG; PBR tables 100/101 both
+  `default dev awg0`. SSH, dnsmasq, pbr-health and Watch/flush/daily
+  active/enabled; boot enabled. Watch repeated `up`, flush
+  `pending=0` throughout independent read-only observation.
+- **Status: installed only on TEST PI**; PR #158 remains
+  **draft / not merged** and PR #115 still draft. Real
+  HoneyVPN→AWG follow-up alert, fresh clean install, LAN, reboot
+  and MikroTik SSTP paths **not** release-accepted; production
+  microSD/router unmodified.
+
 ## 1. Главная цель и границы работ
 
 Закончить **AWG Pi Gateway v1.3.0**: воспроизводимый шлюз для Raspberry Pi 4 / чистой Debian 13 ARM64 с двумя транспортами **AmneziaWG** и **Mihomo**. Инсталлятор должен сразу устанавливать всё необходимое, **включая FFmpeg/FFprobe, Stage18 Node.js и yt-dlp** и сами движки — даже если VPN-профиль/подписка будут внесены позднее. После ввода AWG-профиля и/или Mihomo-подписки система должна штатно подбирать пригодные ноды, работать после перезагрузки, сохранять политики и обеспечивать предусмотренный резервный путь.
