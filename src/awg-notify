@@ -615,7 +615,7 @@ def main(argv=None):
         elif args.command == "daily":
             print("NOTIFY_DAILY_QUEUED=" + ("yes" if enqueue_daily(db) else "no"))
         elif args.command == "test":
-            enqueue(db, "TEST", "info", "Test notification from Raspberry Pi", str(now()))
+            enqueue(db, "TEST", "info", "Проверка уведомлений с Raspberry Pi. Доставка Telegram работает.", str(now()))
             print(json.dumps(flush(db), sort_keys=True))
         elif args.command == "flush":
             print(json.dumps(flush(db), sort_keys=True))
