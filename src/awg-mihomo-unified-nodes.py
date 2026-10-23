@@ -234,6 +234,10 @@ def command():
     sub.add_parser("probe-vless-all")
     resolve=sub.add_parser("resolve")
     resolve.add_argument("name")
+    # Full current-provider walk for failover. Unlike "best", do not hide
+    # FALL/unknown entries: each one gets a fresh isolated preflight, and
+    # neither historical cache expiry nor health-pool caps may truncate it.
+    sub.add_parser("candidates")
     best=sub.add_parser("best")
     best.add_argument("--exclude",action="append",default=[])
     best.add_argument("--engine",choices=("ANY","MIHOMO","XRAY"),default="ANY")
@@ -294,6 +298,22 @@ def command():
         persist_cache(adapter,sha,updated)
         return
     rows=inventory(nodes,pool,cache,adapter)
+    if x.cmd=="candidates":
+        # No credentials, endpoints, URLs or subscription keys in output.
+        # Name is JSON-escaped; caller must parse rather than shell-eval.
+        # Names are unique and bound to the same provider SHA as the list.
+        print("UNIFIED_PROVIDER_SHA256="+sha)
+        print("UNIFIED_CANDIDATE_COUNT="+str(len(rows)))
+        for row in rows:
+            if row["engine"] not in ("MIHOMO","XRAY"):
+                continue
+            if row["basic_network"]=="UNUSABLE_DUPLICATE_OR_MISSING_NAME":
+                continue
+            print("CANDIDATE="+json.dumps({
+                "index":row["index"],"name":row["name"],
+                "engine":row["engine"],"provider_sha256":sha},
+                ensure_ascii=False,separators=(",",":")))
+        return
     if x.cmd=="resolve":
         matches=[r for r in rows if r["name"]==x.name]
         if len(matches)!=1 or matches[0]["engine"]=="UNSUPPORTED" or matches[0]["basic_network"]=="UNUSABLE_DUPLICATE_OR_MISSING_NAME":

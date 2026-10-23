@@ -126,14 +126,30 @@ class XrayAutoDispatch(unittest.TestCase):
         self.assertLess(part.index('if [[ "$engine" == XRAY ]]; then'),
                         part.index('"$MIHOMO_CONFIGURE" node select-auto "$candidate"'))
 
-    def test_active_xray_does_not_use_legacy_recovery(self):
+    def test_dead_xray_uses_guarded_transaction_not_legacy_selector(self):
         part = SOURCE.split("failover_auto(){", 1)[1].split("\n}\n", 1)[0]
-        self.assertIn('systemctl is-active --quiet awg-xray-vless.service', part)
-        self.assertIn('XRAY_ACTIVE_DEFER_TO_TRANSPORT_AWG', part)
-        # The Xray service can crash while its boot overlay and selection
-        # remain. AUTO must still refuse unsafe Mihomo-only recovery.
-        self.assertIn('61-awg-xray-bridge.conf', part)
-        self.assertIn('/var/lib/awg-pbr/xray-vless/selected.json', part)
+        self.assertIn("if xray_bridge_present; then",part)
+        self.assertIn('failover_dead_xray_native "$current"',part)
+        self.assertNotIn("XRAY_ACTIVE_DEFER_TO_TRANSPORT_AWG",part)
+        self.assertLess(part.index('failover_dead_xray_native "$current"'),
+                        part.index('"$MIHOMO_CONFIGURE" node select-auto "$candidate"'))
+        guard=SOURCE.split("xray_bridge_present(){",1)[1].split("\n}\n",1)[0]
+        self.assertIn('systemctl is-active --quiet awg-xray-vless.service',guard)
+        self.assertIn('61-awg-xray-bridge.conf',guard)
+        self.assertIn('/var/lib/awg-pbr/xray-vless/selected.json',guard)
+        recovery=SOURCE.split("failover_dead_xray_native(){",1)[1].split("\n}\n",1)[0]
+        self.assertIn('dead-xray-native "$candidate"',recovery)
+        self.assertIn("(( attempt < 3 ))",recovery)
+        self.assertIn("if (( rc != 2 ))",recovery)
+        self.assertNotIn('"$MIHOMO_CONFIGURE" node select-auto',recovery)
+
+    def test_fixed_chain_uses_guarded_recovery_before_legacy_mihomo(self):
+        part=SOURCE.split("failover_fixed(){",1)[1].split("\n}\n",1)[0]
+        self.assertIn("if xray_bridge_present; then",part)
+        self.assertIn('dead-xray-native "$node"',part)
+        self.assertLess(part.index('dead-xray-native "$node"'),
+                        part.index('"$MIHOMO_CONFIGURE" node select-auto "$node"'))
+        self.assertIn('FIXED_DEAD_XRAY_ABORT_AWG_FALLBACK',part)
 
     def test_installer_and_menu_do_not_enable_experiment(self):
         for path in (ROOT / "install.sh", ROOT / "src/awg-menu"):

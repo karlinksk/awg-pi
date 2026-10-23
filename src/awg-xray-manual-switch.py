@@ -631,6 +631,276 @@ def native_return(name):
             except Exception:pass
             raise
 
+
+def dead_xray_xray(index):
+    """Recover failed Xray->different Xray without reviving the broken one.
+
+    Preserves provider identity, uses the exact isolated HTTPS preflight,
+    arms an independent watchdog, and only commits after live Mihomo TUN
+    HTTPS/OpenAI 401, guarded transit/Selective policy and sidecar fingerprint.
+    """
+    if os.geteuid()!=0:
+        raise DeadXrayPreflight("ROOT_REQUIRED")
+    with LOCK.open("a") as lock:
+        fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
+        try:
+            if cmd("/usr/local/sbin/awg-transport","get")!="mihomo":
+                refuse("ACTIVE_TRANSPORT_NOT_MIHOMO")
+            if MODE.read_text().strip() not in ("transit","selective"):
+                refuse("INVALID_GATEWAY_MODE")
+            if not all(unit_active(x) for x in ("ssh.service","dnsmasq.service")):
+                refuse("MANAGEMENT_CHANNEL_NOT_HEALTHY")
+            dead_xray_owned_bridge()
+            con=controller()
+            if con.get("now")!=ALIAS:
+                refuse("FAILED_XRAY_BRIDGE_NOT_SELECTED")
+            if https_ok("tun"):
+                refuse("PREVIOUS_TUN_STILL_HEALTHY")
+            candidate,sha,fingerprint=source_node(index)
+            prior=json.loads(SELECTED.read_text())
+            if prior.get("sha256")==fingerprint:
+                refuse("FAILED_XRAY_CANDIDATE_REUSED")
+            info={"operation":"DEAD_XRAY_XRAY","previous":ALIAS,
+                  "previous_xray":True,"candidate":candidate,
+                  "sha":sha,"fingerprint":fingerprint,
+                  "xray_enabled":unit_enabled(XRAY)}
+            preflight_xray(index,info)
+            if cmd("/usr/local/sbin/awg-transport","get")!="mihomo":
+                refuse("TRANSPORT_CHANGED_DURING_PREFLIGHT")
+        except (OSError,ValueError,RuntimeError,subprocess.TimeoutExpired) as exc:
+            raise DeadXrayPreflight(stable_error_code(exc)) from None
+
+        path,state=save_snap(info)
+        timer=state["watchdog"]+".timer"
+        armed=False
+        mutated=False
+        try:
+            cmd("systemd-run","--unit="+state["watchdog"],
+                "--on-active="+str(WATCH_SECONDS)+"s",str(SWITCH),
+                "watchdog",str(path))
+            if not unit_active(timer):
+                refuse("WATCHDOG_NOT_ARMED")
+            armed=True
+            stored(path,state,"armed")
+            checkpoint(path,state,"QUIESCE_DEAD_XRAY")
+            mutated=True
+            dead_xray_quiesce()
+            checkpoint(path,state,"SELECT_XRAY_CANDIDATE")
+            if source_node(index)!=(candidate,sha,fingerprint):
+                refuse("XRAY_PROVIDER_CHANGED")
+            cmd(str(ADAPTER),"select",str(index))
+            cmd("systemctl","start",XRAY,timeout=35)
+            prove_local_xray()
+            checkpoint(path,state,"START_MIHOMO_BRIDGE")
+            # The old sidecar bridge has been removed; explicitly build a
+            # new owned one only after the new SOCKS HTTPS is verified.
+            # Persistent bridge state belongs to an owned systemd drop-in,
+            # never to provider.env: manual Xray->native must stay possible.
+            native_env("MIHOMO_XRAY_VLESS_BRIDGE","auto")
+            native_env("MIHOMO_EXPECTED_EGRESS_IP",None)
+            MIHOMO_EGRESS.unlink(missing_ok=True)
+            BOOT.parent.mkdir(parents=True,mode=0o755,exist_ok=True)
+            atomic(BOOT,b'[Unit]\nWants=awg-xray-vless.service\nAfter=awg-xray-vless.service\n# AWG_XRAY_MANUAL=1\n[Service]\nEnvironment="MIHOMO_XRAY_VLESS_BRIDGE=1"\n',0o644)
+            cmd("systemctl","daemon-reload")
+            # ExecStartPre renders the bridge using the owned drop-in
+            # Environment; running prepare outside systemd would not see it.
+            cmd("systemctl","start",MIHOMO,timeout=45)
+            wait_native_controller(ALIAS)
+            choose(ALIAS)
+            if MODE.read_text().strip()=="transit":
+                cmd("/usr/local/sbin/awg-transit-routing","apply")
+            checkpoint(path,state,"VERIFY_NEW_XRAY_TUN")
+            native_tun_proof()
+            invariant()
+            if source_node(index)!=(candidate,sha,fingerprint):
+                refuse("XRAY_PROVIDER_CHANGED_BEFORE_COMMIT")
+            if not unit_active(XRAY) or controller().get("now")!=ALIAS:
+                refuse("XRAY_POSTCHECK_ENGINE_MISMATCH")
+            now=json.loads(SELECTED.read_text())
+            if now.get("sha256")!=fingerprint:
+                refuse("XRAY_COMMIT_FINGERPRINT_MISMATCH")
+            atomic(CURRENT,(candidate+"\n").encode())
+            cmd("systemctl","enable",XRAY)
+            native_tun_proof()
+            stored(path,state,"committed")
+            cmd("systemctl","stop",timer)
+            print("DEAD_XRAY_XRAY_TUN=VERIFIED")
+        except Exception as exc:
+            state["failure_code"]=stable_error_code(exc)
+            if mutated:
+                try:
+                    dead_xray_quiesce()
+                    stored(path,state,"rolled_back")
+                    if armed:cmd("systemctl","stop",timer)
+                except Exception:
+                    raise DeadXrayAbort("DEAD_XRAY_WATCHDOG_PENDING") from None
+            else:
+                stored(path,state,"cancelled")
+                if armed:
+                    try:cmd("systemctl","stop",timer)
+                    except Exception:pass
+            raise DeadXrayAbort(stable_error_code(exc)) from None
+
+
+class DeadXrayPreflight(RuntimeError):
+    """No active state was changed: next distinct candidate may be attempted."""
+
+class DeadXrayAbort(RuntimeError):
+    """Fail closed/open under existing gateway policy, then permit AWG fallback."""
+
+def dead_xray_owned_bridge():
+    """Never detach an unrelated systemd override or a foreign sidecar."""
+    for overlay,signature in (
+        (Path("/etc/systemd/system/awg-mihomo.service.d/61-awg-xray-bridge.conf"),
+         b"MIHOMO_XRAY_VLESS_BRIDGE=1"),
+        (Path("/run/systemd/system/awg-mihomo.service.d/61-awg-xray-bridge.conf"),
+         b"MIHOMO_XRAY_VLESS_BRIDGE=1"),
+        (BOOT,b"AWG_XRAY_MANUAL=1")):
+        if overlay.is_symlink() or (overlay.exists() and (
+                not overlay.is_file() or signature not in overlay.read_bytes())):
+            refuse("FOREIGN_XRAY_BOOT_DEPENDENCY")
+    if SELECTED.is_symlink() or not SELECTED.is_file() or SELECTED.stat().st_uid!=0:
+        refuse("XRAY_BRIDGE_SELECTION_UNOWNED")
+
+def dead_xray_quiesce():
+    """A failed Xray is NEVER an acceptable rollback; leave a guarded outage.
+
+    Called while the gateway maintenance lock is held. If AWG already took
+    over, preserve its live route, SSTP management and SSH untouched.
+    """
+    current=cmd("/usr/local/sbin/awg-transport","get")
+    if current=="awg" and cmd("/usr/local/sbin/awg-transport","check","awg")=="healthy":
+        return
+    if current!="mihomo":
+        refuse("FOREIGN_TRANSPORT_DURING_RECOVERY")
+    mode=MODE.read_text().strip()
+    if mode=="transit":
+        cmd("/usr/local/sbin/awg-transit-routing","disable")
+    elif mode=="selective":
+        cmd("/usr/local/sbin/awg-pbr-failopen")
+    else:
+        refuse("INVALID_GATEWAY_MODE")
+    cmd("systemctl","stop",MIHOMO,timeout=35)
+    cmd("systemctl","stop",XRAY,timeout=25)
+    for overlay in (
+        Path("/etc/systemd/system/awg-mihomo.service.d/61-awg-xray-bridge.conf"),
+        Path("/run/systemd/system/awg-mihomo.service.d/61-awg-xray-bridge.conf"),
+        BOOT):
+        # Do not delete foreign overlays if another component changed them.
+        if overlay.exists() or overlay.is_symlink():
+            dead_xray_owned_bridge()
+            overlay.unlink()
+    SELECTED.unlink(missing_ok=True)
+    cmd("systemctl","disable",XRAY)
+    cmd("systemctl","daemon-reload")
+    if unit_active(MIHOMO):
+        refuse("UNVERIFIED_BACKEND_NOT_QUIESCED")
+    if not all(unit_active(x) for x in ("ssh.service","dnsmasq.service")):
+        refuse("MANAGEMENT_CHANNEL_NOT_HEALTHY")
+
+def dead_xray_native(name):
+    """Guarded AUTO repair of a confirmed dead Xray bridge to one native exit.
+
+    Does not reuse healthy-old-TUN manual switching, since old Xray is dead.
+    Return 2 only for pre-mutation rejection, 1 for failed recovery requiring
+    AWG, and 0 only after a newly selected real Mihomo TUN passes HTTPS 401.
+    """
+    if os.geteuid()!=0:
+        raise DeadXrayPreflight("ROOT_REQUIRED")
+    with LOCK.open("a") as lock:
+        fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
+        try:
+            if cmd("/usr/local/sbin/awg-transport","get")!="mihomo":
+                refuse("ACTIVE_TRANSPORT_NOT_MIHOMO")
+            if MODE.read_text().strip() not in ("transit","selective"):
+                refuse("INVALID_GATEWAY_MODE")
+            if not all(unit_active(x) for x in ("ssh.service","dnsmasq.service")):
+                refuse("MANAGEMENT_CHANNEL_NOT_HEALTHY")
+            dead_xray_owned_bridge()
+            con=controller()
+            if con.get("now")!=ALIAS or ALIAS not in con.get("all",[]):
+                refuse("FAILED_XRAY_BRIDGE_NOT_SELECTED")
+            if https_ok("tun"):
+                refuse("PREVIOUS_TUN_STILL_HEALTHY")
+            target=candidate_native(name)
+            preflight_mihomo(name,target)
+            if cmd("/usr/local/sbin/awg-transport","get")!="mihomo":
+                refuse("TRANSPORT_CHANGED_DURING_PREFLIGHT")
+            if hashlib.sha256(PROVIDER.read_bytes()).hexdigest()!=target["sha"]:
+                refuse("PROVIDER_CHANGED_DURING_PREFLIGHT")
+        except (OSError,ValueError,RuntimeError,subprocess.TimeoutExpired) as exc:
+            raise DeadXrayPreflight(stable_error_code(exc)) from None
+
+        target.update({"operation":"DEAD_XRAY_NATIVE","previous_xray":True,
+                       "previous":ALIAS,"xray_enabled":unit_enabled(XRAY)})
+        path,state=save_snap(target)
+        timer=state["watchdog"]+".timer"
+        armed=False
+        mutated=False
+        try:
+            cmd("systemd-run","--unit="+state["watchdog"],
+                "--on-active="+str(WATCH_SECONDS)+"s",str(SWITCH),
+                "watchdog",str(path))
+            if not unit_active(timer):
+                refuse("WATCHDOG_NOT_ARMED")
+            armed=True
+            stored(path,state,"armed")
+            checkpoint(path,state,"QUIESCE_DEAD_XRAY")
+            mutated=True
+            dead_xray_quiesce()
+            checkpoint(path,state,"STAGE_NATIVE")
+            fresh=candidate_native(name)
+            if any(fresh[k]!=target[k] for k in ("candidate","endpoint","filter","sha")):
+                refuse("NATIVE_PROVIDER_CHANGED")
+            # Enforce a native renderer, not even an optional stale SOCKS alias.
+            native_env("MIHOMO_XRAY_VLESS_BRIDGE","auto")
+            native_env("MIHOMO_NODE_FILTER",target["filter"])
+            native_env("MIHOMO_ENDPOINT_IP",target["endpoint"])
+            native_env("MIHOMO_EXPECTED_EGRESS_IP",None)
+            atomic(MIHOMO_ENDPOINT,(target["endpoint"]+"\n").encode())
+            MIHOMO_EGRESS.unlink(missing_ok=True)
+            atomic(CURRENT,(name+"\n").encode())
+            cmd("/usr/local/sbin/awg-mihomo-prepare",timeout=45)
+            if hashlib.sha256(PROVIDER.read_bytes()).hexdigest()!=target["sha"]:
+                refuse("PROVIDER_CHANGED_DURING_NATIVE_STAGE")
+            checkpoint(path,state,"START_NATIVE")
+            cmd("systemctl","start",MIHOMO,timeout=45)
+            wait_native_controller(name)
+            choose(name)
+            if MODE.read_text().strip()=="transit":
+                cmd("/usr/local/sbin/awg-transit-routing","apply")
+            checkpoint(path,state,"VERIFY_NATIVE_TUN")
+            native_tun_proof()
+            invariant()
+            if controller().get("now")!=name or unit_active(XRAY):
+                refuse("NATIVE_POSTCHECK_ENGINE_MISMATCH")
+            if SELECTED.exists() or BOOT.exists():
+                refuse("DEAD_XRAY_METADATA_PERSISTED")
+            if hashlib.sha256(PROVIDER.read_bytes()).hexdigest()!=target["sha"]:
+                refuse("PROVIDER_CHANGED_BEFORE_COMMIT")
+            stored(path,state,"committed")
+            cmd("systemctl","stop",timer)
+            print("DEAD_XRAY_NATIVE_TUN=VERIFIED")
+            print("MIHOMO_NODE_POLICY=UNCHANGED")
+        except Exception as exc:
+            state["failure_code"]=stable_error_code(exc)
+            state["failed_at"]=state.get("checkpoint","NOT_STARTED")
+            if mutated:
+                try:
+                    dead_xray_quiesce()
+                    stored(path,state,"rolled_back")
+                    if armed:
+                        cmd("systemctl","stop",timer)
+                except Exception:
+                    # Watchdog remains ARMED; never restore broken Xray.
+                    raise DeadXrayAbort("DEAD_XRAY_WATCHDOG_PENDING") from None
+            else:
+                stored(path,state,"cancelled")
+                if armed:
+                    try:cmd("systemctl","stop",timer)
+                    except Exception:pass
+            raise DeadXrayAbort(stable_error_code(exc)) from None
+
 def save_snap(info):
     ROOT.mkdir(mode=0o700,parents=True,exist_ok=True)
     path=ROOT/("xray-manual-"+str(int(time.time()))+"-"+str(os.getpid()))
@@ -705,6 +975,13 @@ def watchdog(path):
         fcntl.flock(lock,fcntl.LOCK_EX)
         state=json.loads((path/"state.json").read_text())
         if state.get("phase") not in ("armed","pending"):return
+        if state.get("operation") in ("DEAD_XRAY_NATIVE","DEAD_XRAY_XRAY"):
+            if state["phase"]=="pending":
+                stored(path,state,"cancelled")
+                return
+            dead_xray_quiesce()
+            stored(path,state,"rolled_back")
+            return
         if state["phase"]=="pending":
             stored(path,state,"cancelled")
             return
@@ -829,7 +1106,75 @@ def last_failure():
         safe=value if isinstance(value,str) and re.fullmatch(r"[A-Z][A-Z0-9_]{1,79}|rolled_back|committed|armed|pending|cancelled",value) else "UNKNOWN"
         print("XRAY_MANUAL_"+key.upper()+"="+safe)
 
+def dead_xray_exhausted():
+    """Quiesce only the failed Xray-owned exit after FULL current-provider scan.
+
+    A provider scan can find no viable node while the independently healthy AWG
+    is still standby. Do not leave a broken TUN managing Selective/Transit.
+    This function is never called from the manual picker or subscription scan.
+    """
+    if os.geteuid()!=0:refuse("ROOT_REQUIRED")
+    with LOCK.open("a") as lock:
+        fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
+        if cmd("/usr/local/sbin/awg-transport","get")!="mihomo":
+            refuse("ACTIVE_TRANSPORT_NOT_MIHOMO")
+        dead_xray_owned_bridge()
+        if controller().get("now")!=ALIAS:
+            refuse("CURRENT_XRAY_ALIAS_NOT_SELECTED")
+        if https_ok("tun"):
+            refuse("CURRENT_XRAY_TUN_HEALTHY")
+        dead_xray_quiesce()
+        print("DEAD_XRAY_EXHAUSTED=QUIESCED_SAFE")
+
+
+def fresh_candidate_probe(engine,value):
+    """No gateway mutation: exact provider, independent engine, HTTPS only."""
+    if os.geteuid()!=0:
+        refuse("ROOT_REQUIRED")
+    if engine=="native":
+        info=candidate_native(value)
+        preflight_mihomo(value,info)
+    elif engine=="xray":
+        if not re.fullmatch(r"[1-9][0-9]{0,4}",value):
+            refuse("INVALID_NODE_INDEX")
+        index=int(value)
+        candidate,sha,fingerprint=source_node(index)
+        preflight_xray(index,{"candidate":candidate,"sha":sha,
+                              "fingerprint":fingerprint})
+    else:
+        refuse("INVALID_ENGINE")
+    print("FRESH_CANDIDATE_PROOF=PASS_NO_MUTATION")
+
+
 def main():
+    if len(sys.argv)==2 and sys.argv[1]=="dead-xray-exhausted":
+        dead_xray_exhausted()
+        return
+    if len(sys.argv)==3 and sys.argv[1] in ("probe-native","probe-xray"):
+        fresh_candidate_probe("native" if sys.argv[1]=="probe-native" else "xray",sys.argv[2])
+        return
+    if len(sys.argv)==3 and sys.argv[1]=="dead-xray-xray":
+        if not re.fullmatch(r"[1-9][0-9]{0,4}",sys.argv[2]):
+            raise SystemExit(2)
+        try:
+            dead_xray_xray(int(sys.argv[2]))
+        except DeadXrayPreflight as exc:
+            print("DEAD_XRAY_XRAY_REJECT="+stable_error_code(exc),file=sys.stderr)
+            raise SystemExit(2)
+        except DeadXrayAbort as exc:
+            print("DEAD_XRAY_XRAY_ABORT="+stable_error_code(exc),file=sys.stderr)
+            raise SystemExit(1)
+        return
+    if len(sys.argv)==3 and sys.argv[1]=="dead-xray-native":
+        try:
+            dead_xray_native(sys.argv[2])
+        except DeadXrayPreflight as exc:
+            print("DEAD_XRAY_NATIVE_REJECT="+stable_error_code(exc),file=sys.stderr)
+            raise SystemExit(2)
+        except DeadXrayAbort as exc:
+            print("DEAD_XRAY_NATIVE_ABORT="+stable_error_code(exc),file=sys.stderr)
+            raise SystemExit(1)
+        return
     if len(sys.argv)==3 and sys.argv[1] in ("native-preview","native-apply"):
         if sys.argv[1]=="native-preview":
             candidate=inspect_native(sys.argv[2])
