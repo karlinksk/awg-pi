@@ -1,5 +1,6 @@
 """No-network/rootless contract tests for AWG Notify."""
 import importlib.util
+from contextlib import closing
 import os
 import json
 from pathlib import Path
@@ -137,10 +138,11 @@ class NotifyTests(unittest.TestCase):
         import io
         from contextlib import redirect_stdout
         real_open = mod.open_db
+        opened = []
         case_db = self.folder / "cli-test" / "events.sqlite3"
         checker = mod.event_enabled
         with mock.patch.object(mod, "check_root", return_value=None), \
-             mock.patch.object(mod, "open_db", side_effect=lambda: real_open(case_db)), \
+             mock.patch.object(mod, "open_db", side_effect=lambda: opened.append(real_open(case_db)) or opened[-1]), \
              mock.patch.object(mod, "event_enabled", side_effect=
                                lambda k: checker(k, owner_uid=os.getuid())):
             mod.save_preferences({"TRANSPORT_SWITCH"}, self.preferences,
@@ -154,7 +156,9 @@ class NotifyTests(unittest.TestCase):
                 self.assertEqual(mod.main(["emit", "--kind", "TRANSPORT_FAILOVER",
                                            "--text", "[ТЕСТ] не отправлять"]), 0)
             self.assertIn("NOTIFY_QUEUED=disabled", printed.getvalue())
-        with real_open(case_db) as db:
+        for connection in opened:
+            connection.close()
+        with closing(real_open(case_db)) as db:
             self.assertEqual(db.execute("SELECT kind FROM events").fetchall(),
                              [("TRANSPORT_FAILOVER",)])
 
