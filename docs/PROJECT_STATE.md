@@ -1,5 +1,13 @@
 # AWG Pi Gateway — состояние проекта и согласованные решения
 
+## Срез 2026-10-23 — CI объединённого failover и ручного меню
+
+- В **draft PR #162** после исходного коммита `8c49fa8` добавлены только согласованные с фактическим кодом исправления старых CI тестов: `38fbe58` (отказ при несертифицированном unified inventory), `55214ba` (консервативные лимиты Mihomo scanner), `39d2fe7` (утверждённое отображение строк Mihomo/Xray в меню). **GitHub Actions push run #39927852466 для точного HEAD `39d2fe7`: shell PASS (Bash syntax, ShellCheck, shell Unit, Python discovery); awg-v31 PASS (закреплённые engine и isolated profile).** Текущий код не установлен на Pi, PR всё ещё draft/open, main и released не менялись.
+- Изолированные rootless тесты на Debian 13 ARM64 test Pi: 885 Python test cases, 2 skipped; отдельно rootless mock shell policy и `tests/test-menu.py` PASS. Разделяем CI PASS и реальные сетевые/аппаратные испытания.
+- **Согласованная архитектура:** при отказе активной Mihomo или Xray поочерёдная попытка всех поддерживаемых кандидатов единой текущей подписки в обычной AUTO/FIXED с READY OFF, подтверждение точного профиля и работающего TUN; безопасное AWG fallback при исчерпании или инфраструктурном сбое, без автоматического возврата с исправного AWG. MANUAL из объединённого списка независим от AUTO, без скрытия нод по cache status и без сброса предпочтений. Отдельный включённый READY/Hot Pool сохраняет прежний release-gate алгоритм, не считать все режимы согласованного обхода полностью испытанными.
+- **Незакрытый блокер:** ручной переход, когда предыдущая нода полностью умерла и старый TUN не проходит preflight, ещё может отклоняться намеренными safety guards; не объявлять «из любой в любую при любой аварии» аппаратно доказанным. Приоритет ближайших аппаратных тестов: test Pi-only clean-install/upgrade, active Mihomo→native/Xray и active Xray→native/Xray реальные TUN, HTTPS OpenAI/ChatGPT и YouTube24 при включённом READY, отдельный LAN-клиент, safe fault injection, reboot, SSH/SSTP/DNS invariant и rollback. Не сливать/выпускать до доказательства.
+
+
 ## Срез 2026-10-23 — unified Mihomo/Xray failover (DRAFT PR, НЕ installed)
 
 - Публикация: **PR #162, commit `8c49fa8`**, 9 исходных/тестовых файлов. Соответствующий локальный коммит на тестовой Pi `eb1d6ea`; проектный doc-коммит отдельно. Draft/open, не main и не релиз.
