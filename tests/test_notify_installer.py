@@ -314,35 +314,36 @@ class NotifyWiringTests(unittest.TestCase):
         self.assertEqual(section.count(' "Типы уведомлений [галочки]"'), 1)
 
     def test_daily_checkbox_controls_timer_only_when_delivery_enabled(self):
-        # Execute the exact Bash function against a mocked systemctl. Never
-        # query or mutate the host's real service/timer state.
+        # Run the exact sync function, mocking systemctl entirely in Bash.
         menu = (ROOT / "src/awg-menu").read_text()
         start = menu.index("notify_sync_daily_schedule(){")
-        end = menu.index("\\n}\\n", start) + 2
-        extracted = menu[start:end]
-        scenarios = (
+        end = menu.index("\n}\n", start) + 2
+        function = menu[start:end]
+        cases = (
             ("1", "DAILY_REPORT", "enable --now awg-notify-daily.timer"),
             ("1", "VPN_LOST", "disable --now awg-notify-daily.timer"),
             ("0", "DAILY_REPORT", "disable --now awg-notify-daily.timer"),
             ("0", "", "disable --now awg-notify-daily.timer"),
         )
-        for delivery, selected, expected in scenarios:
-            with self.subTest(delivery=delivery, selected=selected):
-                bash = (extracted + '\\n' +
-                        'systemctl(){\\n'
-                        '  if [[ "$1" == is-enabled ]]; then\\n'
-                        '    [[ "$DELIVERY_ON" == "1" ]]; return\\n'
-                        '  fi\\n'
-                        '  printf "%s\\\\n" "$*"\\n'
-                        '}\\n'
-                        'notify_sync_daily_schedule "$PREFERENCES"\\n')
-                run = subprocess.run(
-                    ["bash", "-c", bash], capture_output=True, text=True,
+        for delivery, enabled_categories, expected in cases:
+            with self.subTest(delivery=delivery, enabled=enabled_categories):
+                script = (
+                    function + "\n" +
+                    'systemctl(){\n'
+                    '  if [[ "$1" == is-enabled ]]; then\n'
+                    '    [[ "$DELIVERY_ON" == "1" ]]; return\n'
+                    '  fi\n'
+                    '  printf "%s\n" "$*"\n'
+                    '}\n'
+                    'notify_sync_daily_schedule "$PREFERENCES"\n'
+                )
+                result = subprocess.run(
+                    ["bash", "-c", script], capture_output=True, text=True,
                     timeout=5, check=False,
                     env={**os.environ, "DELIVERY_ON": delivery,
-                         "PREFERENCES": selected})
-                self.assertEqual(run.returncode, 0, run.stderr)
-                self.assertEqual(run.stdout.strip(), expected)
+                         "PREFERENCES": enabled_categories})
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(result.stdout.strip(), expected)
 
     def test_no_router_or_dns_modifications(self):
         code = (ROOT / "src/awg-notify.py").read_text()
