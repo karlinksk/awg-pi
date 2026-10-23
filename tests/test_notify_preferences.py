@@ -77,8 +77,8 @@ class NotificationPreferenceTests(unittest.TestCase):
         self.assertIn("PREFERENCE_KIND_MAP", source)
         menu = (MODULE.parents[0] / "awg-menu").read_text()
         self.assertIn("--separate-output --checklist", menu)
-        self.assertIn('9 "Типы уведомлений [галочки]"', menu)
-        self.assertIn('9) notify_types_menu ;;', menu)
+        self.assertIn('4 "Типы уведомлений [галочки]"', menu)
+        self.assertIn('4) notify_types_menu ;;', menu)
         self.assertIn("awg-matrix-compositor.py", menu)
         self.assertIn('10 "Telegram — уведомления"', menu)
 
