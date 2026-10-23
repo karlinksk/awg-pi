@@ -764,7 +764,7 @@ auto_xray_candidate(){
 
 failover_auto(){
   local current="$1" candidate item attempts=0 from_ready=0 candidate_visits=0 resolved engine xray_rc
-  local xray_nomination_used=0 max_candidate_visits=3
+  local xray_visits=0 max_xray_visits=2 max_candidate_visits=3
   # An active Xray sidecar already owns the Mihomo TUN. The ordinary node
   # selector cannot safely dismantle its boot bridge or restart a failed
   # predecessor. Let transport AUTO fall back to configured AWG instead.
@@ -783,8 +783,10 @@ failover_auto(){
   [[ "$MIHOMO_READY_AUTO_CANARY" == 1 ]] && max_checks=6
   max_candidate_visits="$max_checks"
   if [[ "${MIHOMO_XRAY_AUTO_FAILOVER_CANARY:-0}" == 1 && "$MIHOMO_READY_AUTO_CANARY" == 0 ]]; then
-    # Three bounded classic Mihomo candidates + one exact fresh Xray candidate.
-    max_candidate_visits=$((max_checks + 1))
+    # Bounded recovery: two independently validated Xray candidates before
+    # AWG fallback. Time-rotated nomination covers a changing subscription
+    # across incidents without a dangerous unbounded outage loop.
+    max_candidate_visits=$((max_checks + max_xray_visits))
   fi
   local -a excludes=("$current") best_args=() hot_args=()
   local -a union_args=(--provider "$MIHOMO_READY_UNION_PROVIDER"
@@ -827,13 +829,13 @@ failover_auto(){
       candidate="$("$MIHOMO_POOL_CLI" "${best_args[@]}" 2>/dev/null)" || candidate=""
     fi
     if [[ -z "$candidate" && "${MIHOMO_XRAY_AUTO_FAILOVER_CANARY:-0}" == 1 &&
-          "$MIHOMO_READY_AUTO_CANARY" == 0 && "$xray_nomination_used" == 0 ]]; then
+          "$MIHOMO_READY_AUTO_CANARY" == 0 && "$xray_visits" -lt "$max_xray_visits" ]]; then
       # The native Mihomo health pool can exclude XHTTP/REALITY candidates.
       # Only when it is exhausted, nominate one exact Xray candidate from
       # the independent provider/fingerprint-aware network health inventory.
-      xray_nomination_used=1
+      xray_visits=$((xray_visits+1))
       if [[ -x "${MIHOMO_UNIFIED_NODE_CLI:-/usr/local/sbin/awg-mihomo-unified-nodes}" ]]; then
-        local -a unified_args=(best --engine XRAY)
+        local -a unified_args=(best --engine XRAY --rotate)
         for item in "${excludes[@]}"; do unified_args+=(--exclude "$item"); done
         candidate="$("${MIHOMO_UNIFIED_NODE_CLI:-/usr/local/sbin/awg-mihomo-unified-nodes}" "${unified_args[@]}" 2>/dev/null)" || candidate=""
       fi
