@@ -345,6 +345,27 @@ class NotifyWiringTests(unittest.TestCase):
                 self.assertEqual(result.returncode, 0, result.stderr)
                 self.assertEqual(result.stdout.strip(), expected)
 
+    def test_menu_only_dedupe_upgrade_has_pinned_rollback(self):
+        code = (ROOT / "scripts/awg-notify-menu-dedupe-test-install.py").read_text()
+        for required in ("ROOT_REQUIRED", "MENU_DEDUPE=PASS_TEST_PI_ONLY",
+                         "MENU_DEDUPE=ROLLED_BACK",
+                         "USER_PREFERENCES_BOT_QUEUE=UNCHANGED",
+                         "AWG_FAILOVER_HOOKS=NOT_TOUCHED",
+                         "SERVICES_ROUTES_TIMERS=UNCHANGED",
+                         "OLD_SHA =", "NEW_SHA ="):
+            self.assertIn(required, code)
+        self.assertNotIn('restart", "awg-selection-monitor', code)
+        self.assertNotIn('restart", "awg-quick', code)
+        self.assertNotIn('systemctl", "enable', code)
+        self.assertNotIn('systemctl", "disable', code)
+        self.assertNotIn("notify preferences-set", code)
+        if os.geteuid() != 0:
+            process = subprocess.run(
+                ["python3", str(ROOT / "scripts/awg-notify-menu-dedupe-test-install.py")],
+                text=True, capture_output=True, check=False, timeout=5)
+            self.assertEqual(process.returncode, 2)
+            self.assertIn("ROOT_REQUIRED", process.stdout)
+
     def test_no_router_or_dns_modifications(self):
         code = (ROOT / "src/awg-notify.py").read_text()
         for keyword in ("ip route replace", "nft add", "mikrotik login", "dnsmasq restart"):
