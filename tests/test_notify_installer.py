@@ -23,7 +23,7 @@ class NotifyWiringTests(unittest.TestCase):
             "install_project_python_helper scripts/awg-notify-pair-repair.py "
             "/usr/local/sbin/awg-notify-pair-repair", install)
         self.assertNotIn("sudo /usr/local/sbin/awg-notify-pair-repair", install)
-        self.assertIn('8 "Исправить привязку чата"', menu)
+        self.assertIn('6 "Исправить привязку чата"', menu)
         self.assertIn('run_interactive "Исправление Telegram chat ID"', menu)
         self.assertIn('if [[ -x /usr/local/sbin/awg-notify-pair-repair ]]', menu)
 
@@ -187,7 +187,7 @@ class NotifyWiringTests(unittest.TestCase):
         self.assertIn("install_project_helper src/awg-menu", install)
         self.assertIn("notify_types_menu(){", menu)
         self.assertIn("--separate-output --checklist", menu)
-        self.assertIn('9 "Типы уведомлений [галочки]"', menu)
+        self.assertIn('4 "Типы уведомлений [галочки]"', menu)
         self.assertIn("appearance_menu(){", menu)
         self.assertIn("awg-matrix-compositor.py", menu)
         self.assertIn('10 "Telegram — уведомления"', menu)
@@ -289,6 +289,29 @@ class NotifyWiringTests(unittest.TestCase):
                 capture_output=True, text=True, timeout=5, check=False)
             self.assertEqual(result.returncode, 2)
             self.assertIn("ROOT_REQUIRED", result.stdout)
+
+    def test_telegram_menu_has_single_controls_no_duplicate_schedule(self):
+        menu = (ROOT / "src/awg-menu").read_text()
+        section = menu.split("notify_menu(){", 1)[1].split("\\nappearance_menu(){", 1)[0]
+        self.assertIn('3 "Доставка Telegram [$note_state]"', section)
+        self.assertIn('4 "Типы уведомлений [галочки]"', section)
+        self.assertIn('5 "Состояние и очередь"', section)
+        self.assertIn('6 "Исправить привязку чата"', section)
+        self.assertIn('      3)', section)
+        self.assertIn('      4) notify_types_menu ;;', section)
+        self.assertIn('      5)', section)
+        self.assertIn('      6)', section)
+        self.assertNotIn('"Включить сводку в 09:00"', section)
+        self.assertNotIn('"Выключить ежедневную сводку"', section)
+        self.assertNotIn('"Выключить уведомления"', section)
+        self.assertIn('--title "Telegram"', section)
+        self.assertNotIn('--title "Система → Telegram — уведомления"', section)
+        self.assertIn('--title "Типы уведомлений"', menu)
+        self.assertIn('notify_sync_daily_schedule "$csv"', menu)
+        self.assertIn('notify_sync_daily_schedule "DAILY_REPORT"', menu)
+        self.assertIn('capture systemctl disable --now awg-notify-daily.timer', section)
+        self.assertIn('      0 "Назад"', section)
+        self.assertEqual(section.count(' "Типы уведомлений [галочки]"'), 1)
 
     def test_no_router_or_dns_modifications(self):
         code = (ROOT / "src/awg-notify.py").read_text()
