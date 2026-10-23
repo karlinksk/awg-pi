@@ -26,8 +26,8 @@ case "${1:-}" in
     ;;
   notify-update)
     [[ "$#" == 1 ]] || exit 2
-    ref='1b6386d8c77782f1846ed522cc0d62882332d4e3'
-    expected='433211e98a08cfc9e05648e37d33562157fa12111c124f79856ee61e40e8aa35'
+    ref='eec2321d27e8910641bb0556cb17911eea8c4bc2'
+    expected='6ec4017b7faee13899297303c315042ae86990a29292cf7c237227273df224d4'
     target='/usr/local/sbin/awg-notify'
     [[ -f "$target" && ! -L "$target" ]] || { echo AWG_GPT=NOTIFIER_MISSING >&2; exit 3; }
     tmp="$(mktemp /tmp/awg-gpt-notify.XXXXXXXX)"
