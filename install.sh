@@ -340,7 +340,7 @@ apt-get update
 apt-get install -y --no-install-recommends \
   ca-certificates curl git jq build-essential make pkg-config \
   iproute2 iputils-ping iputils-arping dnsutils nftables dnsmasq procps \
-  python3-minimal python3-yaml openssl dialog ffmpeg xz-utils tzdata
+  python3-minimal python3-yaml openssl dialog tmux ffmpeg xz-utils tzdata
 
 command -v nft >/dev/null || die "nft не установлен"
 command -v dnsmasq >/dev/null || die "dnsmasq не установлен"
@@ -841,6 +841,16 @@ install_project_helper src/awg-mihomo-configure "$MIHOMO_CONFIGURE_SCRIPT"
 install_project_helper src/awg-first-run "$FIRST_RUN_CLI"
 install_project_helper src/awg-selection "$SELECTION_CLI"
 install_project_helper src/awg-selection-monitor "$SELECTION_MONITOR"
+# Passive AWG Notify: no token, no active timer, no routing changes at install.
+# AWG Notify event checkboxes are stored in root-only
+# /etc/awg-pbr/notify/events-policy.json by awg-notify preferences-set.
+# Do not create or overwrite this policy during install/upgrade: absent
+# policy preserves legacy BOOT/DAILY/VPN alert defaults, while Telegram
+# delivery stays OFF until user configures their bot.
+install_project_python_helper src/awg-notify.py /usr/local/sbin/awg-notify
+# Safe interactive repair for an incorrect chat ID; never invoked by installer.
+install_project_python_helper scripts/awg-notify-pair-repair.py /usr/local/sbin/awg-notify-pair-repair
+install -d -o root -g root -m 0700 /etc/awg-pbr/notify /var/lib/awg-pbr/notify
 # Service eligibility helpers are installed passive: the opt-in balanced
 # mode is NEVER enabled by installation. The Stage18 RAM runtime timer is
 # also passive until separately enabled after acceptance and rollback tests.
@@ -1065,7 +1075,21 @@ install_project_helper src/awg-opencck-update /usr/local/sbin/awg-opencck-update
 install_project_helper src/awg-core-update /usr/local/sbin/awg-core-update
 install_project_helper src/awg-update "$UPDATE_SCRIPT"
 install_project_helper src/awg-traffic "$TRAFFIC_CLI"
+# Matrix is the user-accepted optional visual skin over the existing TUI.
+# The compositor never changes routing, transport, DNS or RouterOS. On a fresh
+# install it is the initial theme; on upgrade preserve the operator's choice.
+# A recovery path always remains: sudo awg-menu --classic.
+install_project_python_helper extras/awg-matrix-compositor.py /usr/local/lib/awg-pi/awg-matrix-compositor.py
 install_project_helper src/awg-menu /usr/local/sbin/awg-menu
+if [[ ! -e /etc/awg-pbr/menu-appearance ]]; then
+  install -d -o root -g root -m 0700 /etc/awg-pbr
+  if (( UPGRADE_EXISTING == 0 )); then
+    echo matrix > /etc/awg-pbr/menu-appearance
+  else
+    echo classic > /etc/awg-pbr/menu-appearance
+  fi
+  chmod 0600 /etc/awg-pbr/menu-appearance
+fi
 
 mkdir -p /etc/awg-pbr/sources/opencck/metadata
 mkdir -p /etc/awg-pbr/transports/mihomo /var/lib/awg-pbr/mihomo/providers /var/lib/awg-pbr/traffic
@@ -1103,6 +1127,13 @@ install_project_unit units/awg-mihomo-update.timer /etc/systemd/system/awg-mihom
 install_project_unit units/awg-mihomo-pool-refresh.service /etc/systemd/system/awg-mihomo-pool-refresh.service
 install_project_unit units/awg-mihomo-pool-refresh.timer /etc/systemd/system/awg-mihomo-pool-refresh.timer
 install_project_unit units/awg-selection-monitor.service /etc/systemd/system/awg-selection-monitor.service
+install_project_unit units/awg-notify-flush.service /etc/systemd/system/awg-notify-flush.service
+install_project_unit units/awg-notify-flush.timer /etc/systemd/system/awg-notify-flush.timer
+install_project_unit units/awg-notify-daily.service /etc/systemd/system/awg-notify-daily.service
+install_project_unit units/awg-notify-daily.timer /etc/systemd/system/awg-notify-daily.timer
+install_project_unit units/awg-notify-boot.service /etc/systemd/system/awg-notify-boot.service
+install_project_unit units/awg-notify-watch.service /etc/systemd/system/awg-notify-watch.service
+install_project_unit units/awg-notify-watch.timer /etc/systemd/system/awg-notify-watch.timer
 # Stage18 is provider-guarded: automatic boot and provider-change recovery,
 # without running an isolated media test during bare installation.
 install_project_unit units/awg-mihomo-stage18-ram-runtime.service /etc/systemd/system/awg-mihomo-stage18-ram-runtime.service

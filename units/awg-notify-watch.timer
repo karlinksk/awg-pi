@@ -1,0 +1,10 @@
+[Unit]
+Description=Optional selected-VPN Telegram outage and recovery observation
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=90sec
+AccuracySec=10s
+
+[Install]
+WantedBy=timers.target

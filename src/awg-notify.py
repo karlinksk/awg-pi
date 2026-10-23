@@ -1,0 +1,603 @@
+#!/usr/bin/env python3
+"""AWG Notify: independent, store-and-forward Telegram notifier.
+
+Never changes a network route, VPN node, DNS, MikroTik or firewall.
+Bot token is sent to curl on stdin as a config, never in argv or logs.
+"""
+import argparse
+import getpass
+import hashlib
+import json
+import os
+from pathlib import Path
+import re
+import secrets
+import sqlite3
+import shutil
+import subprocess
+import sys
+import time
+from urllib.parse import urlencode
+
+DB_PATH = Path("/var/lib/awg-pbr/notify/events.sqlite3")
+SECRET_PATH = Path("/etc/awg-pbr/notify/telegram.json")
+PREFERENCES_PATH = Path("/etc/awg-pbr/notify/events-policy.json")
+# Preserve currently enabled alerts on upgrade. Optional node/transport hooks
+# are deliberately OFF until installed and explicitly enabled by the user.
+PREFERENCE_TYPES = ("VPN_LOST", "VPN_RESTORED", "BOOT", "DAILY_REPORT",
+                    "NODE_SWITCH", "TRANSPORT_SWITCH")
+PREFERENCE_DEFAULTS = {kind: kind in
+                       ("VPN_LOST", "VPN_RESTORED", "BOOT", "DAILY_REPORT")
+                       for kind in PREFERENCE_TYPES}
+PREFERENCE_KIND_MAP = {"TRANSPORT_FAILOVER": "TRANSPORT_SWITCH"}
+
+TRANSPORT_PATH = Path("/etc/awg-pbr/transport")
+# Only an operator-verified fail-closed RouterOS SSTP policy permits eth0 fallback.
+ROUTER_SSTP_APPROVED = Path("/etc/awg-pbr/notify/router-sstp-approved")
+TOKEN_PATTERN = re.compile(r"^[0-9]{5,15}:[A-Za-z0-9_-]{25,150}$")
+KINDS = {"NODE_SWITCH", "TRANSPORT_SWITCH", "TRANSPORT_FAILOVER", "VPN_LOST", "VPN_RESTORED",
+         "POOL_EMPTY", "POOL_RESTORED", "BOOT", "SYSTEM_WARNING",
+         "SUBSCRIPTION_CHANGED", "DAILY_REPORT", "TEST"}
+SEVERITIES = ("info", "warning", "critical")
+# SSTP is an *external RouterOS forwarding decision*. eth0 does NOT prove SSTP.
+ROUTES = ("mihomo0", "awg0", "eth0")
+MAX_PENDING = 500
+MAX_TEXT = 3000
+
+
+def now():
+    return int(time.time())
+
+
+def check_root():
+    if os.geteuid() != 0:
+        raise SystemExit("Requires root; run with sudo.")
+
+
+def load_preferences(path=None, owner_uid=0):
+    """Root-owned 0600 preference file; an absent file preserves legacy alerts."""
+    path = Path(path or PREFERENCES_PATH)
+    if not path.exists() and not path.is_symlink():
+        return dict(PREFERENCE_DEFAULTS)
+    meta = path.lstat()
+    if (not path.is_file() or path.is_symlink() or meta.st_uid != owner_uid or
+            meta.st_mode & 0o077):
+        raise ValueError("Unsafe Telegram preference file")
+    values = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(values, dict) or set(values) != set(PREFERENCE_TYPES):
+        raise ValueError("Invalid Telegram preference keys")
+    if any(type(value) is not bool for value in values.values()):
+        raise ValueError("Invalid Telegram preference values")
+    return values
+
+
+def event_enabled(kind, path=None, owner_uid=0):
+    key = PREFERENCE_KIND_MAP.get(kind, kind)
+    if key not in PREFERENCE_DEFAULTS:
+        return True  # TEST, SYSTEM_WARNING and future reserved events unchanged
+    try:
+        return load_preferences(path, owner_uid=owner_uid)[key]
+    except (OSError, ValueError, TypeError, UnicodeError):
+        return False  # Invalid config cannot accidentally turn alerts back on
+
+
+def save_preferences(enabled, path=None, owner_uid=0):
+    """Atomically replace only the opt-in event policy; never touch bot token."""
+    path = Path(path or PREFERENCES_PATH)
+    if not isinstance(enabled, (set, frozenset)) or not enabled <= set(PREFERENCE_TYPES):
+        raise ValueError("Unknown Telegram event category")
+    if owner_uid is None:
+        owner_uid = os.geteuid()
+    if path.is_symlink():
+        raise ValueError("Refuse symlinked preference file")
+    if path.exists() and (not path.is_file() or path.stat().st_uid != owner_uid):
+        raise ValueError("Refuse unexpected preference owner")
+    path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    if path.parent.is_symlink() or path.parent.stat().st_uid != owner_uid:
+        raise ValueError("Refuse unexpected Telegram config directory")
+    temp = path.with_name(".events-policy-" + secrets.token_hex(8))
+    try:
+        with temp.open("x", encoding="utf-8") as output:
+            os.chmod(temp, 0o600)
+            json.dump({kind: kind in enabled for kind in PREFERENCE_TYPES},
+                      output, sort_keys=True)
+            output.write("\n")
+            output.flush()
+            os.fsync(output.fileno())
+        os.replace(temp, path)
+    finally:
+        temp.unlink(missing_ok=True)
+
+
+def preference_status_lines():
+    values = load_preferences()
+    return ["NOTIFY_PREF_" + key + "=" + ("on" if values[key] else "off")
+            for key in PREFERENCE_TYPES]
+
+
+def open_db(path=DB_PATH):
+    path = Path(path)
+    path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    os.chmod(path.parent, 0o700)
+    db = sqlite3.connect(str(path), timeout=5)
+    db.execute("PRAGMA busy_timeout=5000")
+    db.execute("PRAGMA journal_mode=DELETE")
+    db.execute("PRAGMA synchronous=FULL")
+    db.executescript("""
+    CREATE TABLE IF NOT EXISTS events (
+      id INTEGER PRIMARY KEY,
+      created INTEGER NOT NULL,
+      kind TEXT NOT NULL,
+      severity TEXT NOT NULL,
+      fingerprint TEXT NOT NULL,
+      message TEXT NOT NULL,
+      attempts INTEGER NOT NULL DEFAULT 0,
+      next_try INTEGER NOT NULL DEFAULT 0
+    );
+    CREATE TABLE IF NOT EXISTS recent (
+      fingerprint TEXT PRIMARY KEY,
+      seen INTEGER NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS meta (
+      key TEXT PRIMARY KEY,
+      value TEXT NOT NULL
+    );
+    """)
+    path.touch(mode=0o600, exist_ok=True)
+    os.chmod(path, 0o600)
+    return db
+
+
+def enqueue(db, kind, severity, message, key=None, timestamp=None):
+    if kind not in KINDS or severity not in SEVERITIES:
+        raise ValueError("Invalid event kind or severity")
+    if not isinstance(message, str) or not message.strip() or len(message) > MAX_TEXT:
+        raise ValueError("Invalid message length")
+    t = now() if timestamp is None else timestamp
+    # The explicit key lets producers deduplicate the same logical transition.
+    signature = "|".join((kind, key or message))
+    fingerprint = hashlib.sha256(signature.encode()).hexdigest()
+    with db:
+        seen = db.execute("SELECT seen FROM recent WHERE fingerprint=?",
+                          (fingerprint,)).fetchone()
+        if seen and t - seen[0] < 120:
+            return False
+        db.execute("INSERT OR REPLACE INTO recent VALUES (?, ?)", (fingerprint, t))
+        db.execute("""INSERT INTO events
+                      (created,kind,severity,fingerprint,message,next_try)
+                      VALUES (?,?,?,?,?,?)""",
+                   (t, kind, severity, fingerprint, message, t))
+        db.execute("DELETE FROM recent WHERE seen < ?", (t - 86400,))
+        # Keep the most recent urgent events; only prune if the hard cap is hit.
+        count = db.execute("SELECT count(*) FROM events").fetchone()[0]
+        if count > MAX_PENDING:
+            db.execute("""DELETE FROM events WHERE id IN (
+              SELECT id FROM events ORDER BY
+              CASE severity WHEN 'info' THEN 0 WHEN 'warning' THEN 1 ELSE 2 END,
+              id ASC LIMIT ?)""", (count - MAX_PENDING,))
+    return True
+
+
+def load_secret(path=SECRET_PATH, owner_uid=0):
+    path = Path(path)
+    stat = path.stat()
+    if stat.st_mode & 0o077 or stat.st_uid != owner_uid or not path.is_file():
+        raise ValueError("Telegram secret file must be root-owned and mode 0600")
+    obj = json.loads(path.read_text(encoding="utf-8"))
+    if not TOKEN_PATTERN.fullmatch(str(obj.get("token", ""))):
+        raise ValueError("Invalid Telegram token")
+    chat = str(obj.get("chat_id", ""))
+    if not re.fullmatch(r"-?[0-9]{1,20}", chat):
+        raise ValueError("Invalid chat ID")
+    return obj["token"], chat
+
+
+def _receive_pairing_updates(token, route, timeout=8):
+    """Fetch Bot API updates without leaking token into argv or logs."""
+    if route not in ROUTES:
+        raise ValueError("Unsupported route")
+    config = ('url = "https://api.telegram.org/bot' + token +
+              '/getUpdates"\n' + 'data = "timeout=0&limit=100"\n')
+    argv = ["curl", "-q", "--config", "-", "--ipv4", "--proto", "=https",
+            "--noproxy", "*", "--interface", "if!" + route,
+            "--connect-timeout", "4", "--max-time", str(timeout),
+            "--silent", "--write-out", "\n%{http_code}"]
+    try:
+        reply = subprocess.run(argv, input=config, text=True, capture_output=True,
+                               timeout=timeout + 2, check=False)
+        if reply.returncode or len(reply.stdout) > 65536:
+            return None
+        body, _, status = reply.stdout.rpartition("\n")
+        result = json.loads(body)
+        if status == "200" and result.get("ok") is True:
+            items = result.get("result")
+            return items if isinstance(items, list) else None
+    except (OSError, subprocess.TimeoutExpired, ValueError, TypeError):
+        pass
+    return None
+
+
+def find_pair_chat(token, code, fetch=_receive_pairing_updates):
+    """Only a unique private /pair <random challenge> proves the chat owner."""
+    expected = "/pair " + code
+    matches = set()
+    for route in route_order():
+        updates = fetch(token, route)
+        if updates is None:
+            continue
+        for item in updates:
+            if not isinstance(item, dict):
+                continue
+            msg = item.get("message")
+            if not isinstance(msg, dict) or msg.get("text") != expected:
+                continue
+            chat, author = msg.get("chat", {}), msg.get("from", {})
+            if not isinstance(chat, dict) or not isinstance(author, dict):
+                continue
+            cid, uid = chat.get("id"), author.get("id")
+            if chat.get("type") == "private" and type(cid) is int and cid == uid:
+                matches.add(str(cid))
+        if len(matches) == 1:
+            return next(iter(matches))
+        if len(matches) > 1:
+            raise ValueError("Ambiguous pairing challenge; start again")
+    return None
+
+
+def configure(path=SECRET_PATH):
+    path = Path(path)
+    path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    os.chmod(path.parent, 0o700)
+    token = getpass.getpass("Telegram bot token (input hidden): ").strip()
+    chat = input("Numeric chat ID (Enter = secure /pair setup): ").strip()
+    if not chat:
+        challenge = secrets.token_hex(5)
+        print("In your private bot chat send: /pair " + challenge)
+        input("Press Enter after sending the exact command... ")
+        chat = find_pair_chat(token, challenge)
+        if not chat:
+            raise SystemExit("Private /pair message not found. Nothing saved.")
+        print("Private Telegram chat verified by one-time challenge.")
+    if not TOKEN_PATTERN.fullmatch(token) or not re.fullmatch(r"-?[0-9]{1,20}", chat):
+        raise SystemExit("Invalid token or chat ID; nothing saved.")
+    temp = path.with_name(path.name + ".new")
+    fd = os.open(str(temp), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as stream:
+            json.dump({"token": token, "chat_id": chat}, stream)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temp, path)
+    finally:
+        if temp.exists():
+            temp.unlink()
+    print("Telegram credentials saved (0600). No message sent yet.")
+
+
+def router_sstp_approved(path=ROUTER_SSTP_APPROVED, owner_uid=0):
+    try:
+        stat = Path(path).stat()
+        return (stat.st_uid == owner_uid and not (stat.st_mode & 0o077)
+                and Path(path).is_file()
+                and Path(path).read_text(encoding="ascii").strip()
+                == "SSTP_VERIFIED_FAIL_CLOSED=1")
+    except (OSError, UnicodeError):
+        return False
+
+
+def route_order(active="", router_approved=None):
+    if active not in ("awg", "mihomo"):
+        try:
+            active = TRANSPORT_PATH.read_text(encoding="utf-8").strip()
+        except (FileNotFoundError, PermissionError):
+            active = ""
+    preferred = {"mihomo": "mihomo0", "awg": "awg0"}.get(active)
+    # eth0 may be DIRECT when SSTP drops: never use it without a reviewed
+    # RouterOS fail-closed policy that was tested with the SSTP tunnel down.
+    candidates = ["mihomo0", "awg0"]
+    if router_approved is None:
+        router_approved = router_sstp_approved()
+    if router_approved:
+        candidates.append("eth0")
+    return ([preferred] if preferred else []) + [x for x in candidates if x != preferred]
+
+
+def curl_api(token, payload, route, method="sendMessage", timeout=8):
+    """Use curl config on stdin to hide the bot token from process arguments.
+
+    Binding eth0 sends traffic to MikroTik; it is SSTP only when RouterOS
+    independently routes it through its SSTP tunnel. No implicit DIRECT
+    exception or RouterOS change is made by this module.
+    """
+    if route not in ROUTES or method not in ("sendMessage", "getUpdates"):
+        raise ValueError("Unsupported route/API method")
+    url = "https://api.telegram.org/bot" + token + "/" + method
+    encoded = urlencode(payload)
+    config = 'url = "' + url + '"\n' + 'data = "' + encoded + '"\n'
+    argv = ["curl", "-q", "--config", "-", "--ipv4", "--proto", "=https",
+            "--noproxy", "*", "--interface", "if!" + route,
+            "--connect-timeout", "4", "--max-time", str(timeout),
+            "--silent", "--show-error", "--write-out", "\n%{http_code}"]
+    try:
+        reply = subprocess.run(argv, input=config, text=True, capture_output=True,
+                               timeout=timeout + 2, check=False)
+    except (OSError, subprocess.TimeoutExpired):
+        return False, 0, 0
+    if reply.returncode or len(reply.stdout) > 65536:
+        return False, 0, 0
+    body, _, status = reply.stdout.rpartition("\n")
+    try:
+        code = int(status)
+        data = json.loads(body)
+    except (ValueError, TypeError):
+        return False, 0, 0
+    if code == 200 and data.get("ok") is True:
+        return True, 200, 0
+    retry = data.get("parameters", {}).get("retry_after", 0)
+    return False, code, min(3600, max(0, int(retry))) if str(retry).isdigit() else 0
+
+
+def flush(db, sender=curl_api, secret_path=SECRET_PATH, active="", limit=2, secret_uid=0):
+    # No credentials = intentionally unconfigured; do not delete queued events.
+    try:
+        token, chat = load_secret(secret_path, secret_uid)
+    except (OSError, ValueError, json.JSONDecodeError):
+        return {"sent": 0, "pending": db.execute("SELECT count(*) FROM events").fetchone()[0],
+                "reason": "not_configured"}
+    sent = 0
+    verdict = "idle"
+    for row in db.execute("""SELECT id,created,kind,severity,message,attempts
+                             FROM events WHERE next_try <= ?
+                             ORDER BY id LIMIT ?""", (now(), limit)).fetchall():
+        ident, created, kind, severity, message, attempts = row
+        text = "[AWG Pi] " + kind + " / " + severity.upper() + "\n" + message
+        for route in route_order(active):
+            ok, code, retry = sender(token, {"chat_id": chat, "text": text,
+                                              "disable_web_page_preview": "true"}, route)
+            if ok:
+                with db:
+                    db.execute("DELETE FROM events WHERE id=?", (ident,))
+                    db.execute("INSERT OR REPLACE INTO meta VALUES (?,?)",
+                               ("last_success_route", route))
+                    db.execute("INSERT OR REPLACE INTO meta VALUES (?,?)",
+                               ("last_success_time", str(now())))
+                sent += 1
+                verdict = "sent"
+                break
+            # 401/403 means invalid token, access or permissions: do not try
+            # the same rejected request through every interface.
+            if code in (400, 401, 403, 429):
+                verdict = "telegram_rejected_" + str(code)
+                break
+        else:
+            verdict = "network_unavailable"
+        if verdict != "sent":
+            # Backoff is capped, never prevents VPN recovery/control.
+            pause = retry if "retry" in locals() and retry else min(1800, 30 * (2 ** min(attempts, 6)))
+            with db:
+                db.execute("UPDATE events SET attempts=attempts+1,next_try=? WHERE id=?",
+                           (now() + pause, ident))
+            break
+    return {"sent": sent, "pending": db.execute("SELECT count(*) FROM events").fetchone()[0],
+            "reason": verdict}
+
+
+def _read_first(path, default=""):
+    try:
+        return Path(path).read_text(encoding="utf-8").strip()
+    except (OSError, UnicodeError):
+        return default
+
+
+def _service_active(unit):
+    try:
+        result = subprocess.run(["systemctl", "is-active", "--quiet", unit],
+                                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                                check=False, timeout=3)
+        return result.returncode == 0
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+
+
+def daily_snapshot():
+    """Read-only local telemetry; no VPN restart, DNS probe or route mutation."""
+    total = available = 0
+    for line in _read_first("/proc/meminfo").splitlines():
+        if line.startswith("MemTotal:"):
+            total = int(line.split()[1]) // 1024
+        if line.startswith("MemAvailable:"):
+            available = int(line.split()[1]) // 1024
+    try:
+        disk = shutil.disk_usage("/")
+        used_disk = round((disk.total - disk.free) * 100 / disk.total)
+    except (OSError, ZeroDivisionError):
+        used_disk = -1
+    temp = _read_first("/sys/class/thermal/thermal_zone0/temp")
+    try:
+        temp_label = f"{int(temp) / 1000:.1f} °C"
+    except ValueError:
+        temp_label = "неизвестно"
+    try:
+        uptime = int(float(_read_first("/proc/uptime").split()[0]))
+    except (IndexError, ValueError):
+        uptime = 0
+    transport = _read_first(TRANSPORT_PATH, "не настроен")
+    if transport not in ("awg", "mihomo", "unconfigured"):
+        transport = "неизвестно"
+    mode = _read_first("/etc/awg-pbr/mode", "неизвестно")
+    if mode not in ("selective", "transit"):
+        mode = "неизвестно"
+    service_names = ("awg-selection-monitor.service", "awg-pbr-health.service",
+                     "dnsmasq.service", "ssh.service")
+    health = [unit.removesuffix(".service") + "=" +
+              ("активна" if _service_active(unit) else "неактивна")
+              for unit in service_names]
+    return "\n".join([
+        "Ежедневная сводка AWG Pi Gateway",
+        "Режим: " + mode,
+        "Транспорт (выбранный, не подтверждение HTTPS): " + transport,
+        "Температура CPU: " + temp_label,
+        "RAM: " + str(total - available) + " / " + str(total) + " MiB",
+        "Диск: " + (str(used_disk) + "%" if used_disk >= 0 else "неизвестно"),
+        "Uptime: " + str(uptime // 3600) + " ч",
+        "Службы: " + ", ".join(health),
+    ])
+
+
+def enqueue_daily(db):
+    """One daily report per local calendar day even if invoked twice."""
+    if not SECRET_PATH.exists() or not event_enabled("DAILY_REPORT"):
+        return False
+    stamp = time.strftime("%Y-%m-%d", time.localtime())
+    with db:
+        seen = db.execute("SELECT value FROM meta WHERE key='daily_date'").fetchone()
+        if seen and seen[0] == stamp:
+            return False
+        queued = enqueue(db, "DAILY_REPORT", "info", daily_snapshot(),
+                         "daily:" + stamp)
+        if queued:
+            db.execute("INSERT OR REPLACE INTO meta VALUES ('daily_date', ?)", (stamp,))
+        return queued
+
+
+def _selected_transport_healthy(transport):
+    """Reuse the gateway's existing health decision; do not create a selector."""
+    if transport not in ("awg", "mihomo"):
+        return None
+    try:
+        result = subprocess.run(
+            ["/usr/local/sbin/awg-transport", "check", transport],
+            capture_output=True, check=False, timeout=15)
+        return result.returncode == 0
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+
+
+def observe_transport(db, transport=None, probe=_selected_transport_healthy):
+    """Observe a *selected* transport; do not claim LAN reachability.
+
+    Require two consecutive health failures before declaring a problem.
+    Read-only and disabled unless the operator configured Telegram.
+    """
+    if not SECRET_PATH.exists():
+        return "unconfigured"
+    current = transport or _read_first(TRANSPORT_PATH, "unconfigured")
+    if current not in ("awg", "mihomo"):
+        with db:
+            db.execute("INSERT OR REPLACE INTO meta VALUES ('watch_state','unconfigured')")
+            db.execute("INSERT OR REPLACE INTO meta VALUES ('watch_count','0')")
+            db.execute("INSERT OR REPLACE INTO meta VALUES ('watch_transport',?)", (current,))
+        return "unconfigured"
+    result = probe(current)
+    with db:
+        old_state = db.execute("SELECT value FROM meta WHERE key='watch_state'").fetchone()
+        old = old_state[0] if old_state else "unknown"
+        count_row = db.execute("SELECT value FROM meta WHERE key='watch_count'").fetchone()
+        count = int(count_row[0]) if count_row and count_row[0].isdigit() else 0
+        previous = db.execute("SELECT value FROM meta WHERE key='watch_transport'").fetchone()
+        if previous and previous[0] != current:
+            count = 0
+        if result is True:
+            if old == "down" and event_enabled("VPN_RESTORED"):
+                enqueue(db, "VPN_RESTORED", "info",
+                        "Выбранный транспорт " + current +
+                        " снова проходит штатный health-check. Клиент LAN не проверялся.",
+                        key="recovered:" + current)
+            state, count = "up", 0
+        elif result is False:
+            count += 1
+            state = "down" if count >= 2 else ("down" if old == "down" else "suspect")
+            if state == "down" and old != "down" and event_enabled("VPN_LOST"):
+                enqueue(db, "VPN_LOST", "critical",
+                        "Два последовательных отказа health-check выбранного транспорта " +
+                        current + ". Это не подтверждение отказа всех резервов или LAN.",
+                        key="down:" + current)
+        else:
+            return "unknown"
+        for key, value in (("watch_state", state), ("watch_count", str(count)),
+                           ("watch_transport", current)):
+            db.execute("INSERT OR REPLACE INTO meta VALUES (?,?)", (key, value))
+    return state
+
+
+def show_status(db, secret_path=SECRET_PATH):
+    try:
+        load_secret(secret_path)
+        configured = True
+    except (OSError, ValueError, json.JSONDecodeError):
+        configured = False
+    pending = db.execute("SELECT count(*) FROM events").fetchone()[0]
+    last = db.execute("SELECT value FROM meta WHERE key='last_success_route'").fetchone()
+    print("NOTIFY_CONFIGURED=" + ("yes" if configured else "no"))
+    print("NOTIFY_PENDING=" + str(pending))
+    print("NOTIFY_LAST_ROUTE=" + (last[0] if last else "none"))
+    print("NOTIFY_ROUTE_ETH0=" + ("approved_router_policy" if router_sstp_approved()
+                                   else "disabled_pending_sstp_fail_closed_proof"))
+    for entry in preference_status_lines():
+        print(entry)
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(description="AWG Pi Gateway Telegram notifications")
+    sub = parser.add_subparsers(dest="command", required=True)
+    emit = sub.add_parser("emit")
+    emit.add_argument("--kind", choices=sorted(KINDS), required=True)
+    emit.add_argument("--severity", choices=SEVERITIES, default="info")
+    emit.add_argument("--key", default=None)
+    emit.add_argument("--text", default=None,
+                      help="Safe non-secret text; if omitted read message from stdin")
+    sub.add_parser("configure")
+    sub.add_parser("flush")
+    sub.add_parser("status")
+    prefs = sub.add_parser("preferences-set")
+    prefs.add_argument("--enabled", required=True,
+                       help="Comma-separated enabled event categories; empty means all off")
+
+    sub.add_parser("test")
+    sub.add_parser("daily")
+    sub.add_parser("watch")
+    args = parser.parse_args(argv)
+    check_root()
+    os.umask(0o077)
+    if args.command == "configure":
+        configure()
+        return 0
+    if args.command == "preferences-set":
+        requested = args.enabled.split(",") if args.enabled else []
+        if any(not key or key.strip() != key for key in requested):
+            raise ValueError("Invalid preference list")
+        enabled = set(requested)
+        if len(enabled) != len(requested) or not enabled <= set(PREFERENCE_TYPES):
+            raise ValueError("Unknown or duplicate preference type")
+        save_preferences(enabled)
+        print("NOTIFY_PREFERENCES=SAVED")
+        return 0
+    with open_db() as db:
+        if args.command == "emit":
+            if not event_enabled(args.kind):
+                print("NOTIFY_QUEUED=disabled")
+            else:
+                message = args.text if args.text is not None else sys.stdin.read(MAX_TEXT + 1)
+                created = enqueue(db, args.kind, args.severity, message, args.key)
+                print("NOTIFY_QUEUED=" + ("yes" if created else "deduplicated"))
+        elif args.command == "watch":
+            print("NOTIFY_WATCH=" + observe_transport(db))
+        elif args.command == "daily":
+            print("NOTIFY_DAILY_QUEUED=" + ("yes" if enqueue_daily(db) else "no"))
+        elif args.command == "test":
+            enqueue(db, "TEST", "info", "Test notification from Raspberry Pi", str(now()))
+            print(json.dumps(flush(db), sort_keys=True))
+        elif args.command == "flush":
+            print(json.dumps(flush(db), sort_keys=True))
+        elif args.command == "status":
+            show_status(db)
+    return 0
+
+
+if __name__ == "__main__":
+    try:
+        sys.exit(main())
+    except (ValueError, sqlite3.Error) as exc:
+        # Never echo secret content or raw API response.
+        print("AWG Notify error: " + type(exc).__name__, file=sys.stderr)
+        sys.exit(1)
