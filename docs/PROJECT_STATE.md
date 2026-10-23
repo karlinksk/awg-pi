@@ -1,5 +1,13 @@
 # AWG Pi Gateway — состояние проекта и согласованные решения
 
+## 2026-10-23 19:24 +07 — root-isolated Mihomo stack comparison: mips PASS, system FAIL
+
+- Owner ran exact SHA-pinned **test-Pi-only**, secondary TUN stack experiment on `awg-upgrade`. Receipt `/home/karlinks/awg-v13-isolated-stack-ab-receipt-20261023.txt` confirms `PREEXISTING_GATEWAY_BACKUP=FILE_INTEGRITY_VERIFIED`, `ISOLATED_AB_WATCHDOG=ARMED_240S`, `ISOLATED_XRAY_SOCKS=HTTP_401`; **`STACK_MIPS_MIXED=HTTP_401`, `STACK_MIPS_TUN_HTTP=HTTP_401`, `STACK_MIPS_TUN_PACKETS=VERIFIED_RX_TX_PACKETS`, `STACK_MIPS_TUN_PASS=True`**; **`STACK_SYSTEM_MIXED=HTTP_401`, `STACK_SYSTEM_TUN_HTTP=CURL_EXIT_28`, `STACK_SYSTEM_TUN_PACKETS=VERIFIED_RX_TX_PACKETS`, `STACK_SYSTEM_TUN_PASS=False`**. Both use the *same* isolated Xray profile on a separate test-only `awgdiag0` interface. No proxy-only success falsely counted as TUN success.
+- Independent postcheck after experiment: `awgdiag0` ABSENT; real Mihomo/standby AWG/SSH/DNS/selection-monitor/PBR-health active, Xray inactive, policy routes 100/101 through `mihomo0`, native Pi TUN OpenAI HTTPS `401`, zero failed systemd units; experimental watchdog timer not present. `POSTCHECK=ACTIVE_NATIVE_TUN_401_TRANSIT_SAFE` and `ACTIVE_GATEWAY_SELECTOR=UNCHANGED`. **This is not a forwarded LAN or production Xray TUN PASS.**
+- **Decision:** do NOT change production stack from `mips` to `system`; the experimental `system` stack failed in the same setup, whereas `mips` succeeded. Investigate **configuration delta** between the minimal mips experimental listener and the full production TUN. Strong candidate for controlled *next* isolated A/B: production `auto-detect-interface: true` vs experiment `false`; upstream Mihomo docs say it affects outbound default-interface detection. Other differences include existing provider/selector and network state. No causal claim yet, and no live production change until tested.
+- Existing cross-engine manual test remains `MIXED_PROBE_LAST=HTTP_401`, `TUN_PROBE_LAST=CURL_EXIT_28`; built-in manual restoration PASS. Draft PR #162 holds diagnostic only; PR #115 clean-install, LAN and reboot gates still open. Protect production media, SSTP, WireGuard, DNS and Pi SSH.
+
+
 ## 2026-10-23 19:12 +07 — isolated secondary Mihomo TUN stack A/B test prepared, no live changes
 
 - Latest real Xray three-plane manual attempt remains **SOCKS HTTPS PASS; Mihomo mixed proxy `HTTP_401` PASS; actual `mihomo0` bound TUN `CURL_EXIT_28` FAIL**. Independent isolated Xray SOCKS both hostname and locally resolved IPv4 destinations yielded HTTP 401, disproving the simple SOCKS destination-type hypothesis. The built-in manual rollback and final-original-state receipt PASS; no cross-engine TUN or LAN acceptance.
