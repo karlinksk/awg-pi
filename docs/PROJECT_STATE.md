@@ -429,7 +429,7 @@
   synthetic notifications accepted by **actual Telegram Bot API
   via awg0**, batches 2+2+2, pending 4→2→0;
   `TEST_BOT_DELIVERY=6_OF_6_API_OK_VIA_AWG0`.
-  **Receipt on user's Telegram client unverified**;
+  **Receipt later confirmed by user (6/6) on 2026-10-23**;
   this is not proof of a new real automatic failover.
 - Independently verified at 10:33–10:34 +07:
   `/usr/local/sbin/awg-transport` SHA-256
@@ -449,6 +449,21 @@
   HoneyVPN→AWG follow-up alert, fresh clean install, LAN, reboot
   and MikroTik SSTP paths **not** release-accepted; production
   microSD/router unmodified.
+
+## User confirmed Telegram receipt 6/6 — 2026-10-23
+
+- Оператор подтвердил получение **всех 6 из 6** тестовых уведомлений
+  на своём Telegram-клиенте после `TEST_BOT_DELIVERY=6_OF_6_API_OK_VIA_AWG0`.
+  Таким образом, **синтетическая end-to-end доставка — PASS
+  (user-confirmed)**: 6 типов → изолированная тестовая очередь →
+  Telegram Bot API по `awg0` → пользовательский Telegram.
+- Эта проверка НЕ доказывает отправку уведомления при **новом настоящем**
+  автоматическом переключении Mihomo→AWG, не проверяет LAN,
+  clean-install или reboot. Глобальная доставка и все 6 событий
+  ранее подтверждены включёнными на тестовой Pi; никаких настроек
+  при получении подтверждения не меняли.
+- PR #158 (реализация) и PR #159 (этот PROJECT_STATE) остаются
+  **draft/unmerged**, PR #115 остаётся главным выпускным приоритетом.
 
 ## 1. Главная цель и границы работ
 
