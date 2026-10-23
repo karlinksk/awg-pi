@@ -147,6 +147,31 @@ except Exception:
     print("no")
 PY
 }
+# Progress heartbeat for long installer-only downloads/preparation.
+# Preserves command exit status and never prints private command arguments.
+install_stage_with_heartbeat(){
+  local label="$1" pid elapsed=0 rc
+  shift
+  log "$label: начато; при долгой загрузке статус обновляется каждые 10 с."
+  "$@" &
+  pid=$!
+  while kill -0 "$pid" 2>/dev/null; do
+    sleep 1
+    elapsed=$((elapsed + 1))
+    if (( elapsed % 10 == 0 )) && kill -0 "$pid" 2>/dev/null; then
+      log "$label: выполняется ($elapsed с); установка продолжается."
+    fi
+  done
+  if wait "$pid"; then
+    ok "$label: завершено."
+    return 0
+  else
+    rc=$?
+    err "$label: ошибка подготовки (код $rc)."
+    return "$rc"
+  fi
+}
+
 first_working_url(){
   local u
   for u in "$@"; do
@@ -868,7 +893,7 @@ install_project_helper scripts/awg-system-node.sh "$SYSTEM_NODE_SCRIPT"
 # This is provisioning only: no proxy, routes or active transport are changed.
 if (( UPGRADE_EXISTING == 0 )); then
   STAGE="установка видеодекодера Stage18"
-  /usr/local/sbin/awg-mihomo-stage18-ram-runtime prefetch || die "Не удалось подготовить обязательные Node.js/yt-dlp для проверки YouTube"
+  install_stage_with_heartbeat "Stage18: Node.js и yt-dlp" /usr/local/sbin/awg-mihomo-stage18-ram-runtime prefetch || die "Не удалось подготовить обязательные Node.js/yt-dlp для проверки YouTube"
 fi
 # Fresh Debian 13 ships Node.js 20 (no global WebSocket); DC needs Node 22+.
 # Reuse the exact independently SHA256-verified Stage18 Node.js 22.16 binary.
