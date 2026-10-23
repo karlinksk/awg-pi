@@ -2,6 +2,21 @@
 set -Eeuo pipefail
 [[ ${EUID:-$(id -u)} -eq 0 ]] || exec sudo "$0" "$@"
 
+# Presentation-only dispatcher. Never intercept the Matrix inner dialog instance.
+if [[ "${AWG_MENU_REEXEC:-0}" != 1 && "${1:-}" != "--classic" &&
+      -t 0 && -t 1 && -f /etc/awg-pbr/menu-appearance ]]; then
+  read -r _awg_ui < /etc/awg-pbr/menu-appearance || _awg_ui=classic
+  if [[ "$_awg_ui" == matrix && -r /usr/local/lib/awg-pi/awg-matrix-compositor.py ]] &&
+     command -v tmux >/dev/null 2>&1; then
+    _awg_owner="${SUDO_USER:-}"
+    if [[ -n "$_awg_owner" && "$_awg_owner" != root ]] && id "$_awg_owner" >/dev/null 2>&1; then
+      exec /usr/sbin/runuser -u "$_awg_owner" -- /usr/bin/python3 /usr/local/lib/awg-pi/awg-matrix-compositor.py
+    fi
+  fi
+fi
+[[ "${1:-}" != "--classic" ]] || shift
+
+
 # Run from a temporary copy so a gateway update can safely replace awg-menu.
 if [[ "${AWG_MENU_REEXEC:-0}" != 1 ]]; then
   _menu_tmp="$(mktemp /tmp/awg-menu.XXXXXX)"
@@ -32,11 +47,17 @@ if [[ -t 0 && -t 1 ]]; then
 fi
 
 
-# Consistent 8-color dialog palette for every AWG menu widget. The generated
-# design uses richer shades; native Debian dialog supports terminal colors,
-# so this is a faithful light-panel/dark-selection approximation, not RGB.
+# Consistent high-contrast, 8-color palette for all AWG menu widgets.
+# Termius may highlight words (e.g. OK) green; a light-cyan panel makes those
+# hard to read. Deep-blue panels, white text and black selected rows keep
+# both terminal-colored words and native dialog labels legible on SSH clients.
+# These are terminal ANSI colors, not forced RGB values.
 # A process-owned rc file is necessary because the menu can be launched via
 # sudo from arbitrary SSH accounts and must not mutate ~/.dialogrc or /etc.
+# The surrounding screen uses the former light-cyan dialog background;
+# windows remain deep blue for readable highlighted status text.
+# Breadcrumbs use dialog's title color: white on deep blue, while the
+# position marker, progress gauge and active buttons keep yellow accents.
 AWG_DIALOG_STYLE=""
 awg_dialog_theme_init(){
   AWG_DIALOG_STYLE="$(mktemp /tmp/awg-dialogrc.XXXXXXXX)"
@@ -44,29 +65,29 @@ awg_dialog_theme_init(){
   cat > "$AWG_DIALOG_STYLE" <<'AWG_DIALOG_PALETTE'
 use_colors = ON
 use_shadow = ON
-use_scrollbar = ON
-screen_color = (CYAN,BLUE,OFF)
+use_scrollbar = OFF
+screen_color = (BLACK,CYAN,OFF)
 shadow_color = (BLACK,BLACK,ON)
-dialog_color = (BLACK,CYAN,OFF)
-title_color = (BLUE,CYAN,ON)
-border_color = (BLUE,CYAN,ON)
+dialog_color = (WHITE,BLUE,OFF)
+title_color = (WHITE,BLUE,ON)
+border_color = (CYAN,BLUE,ON)
 border2_color = border_color
 menubox_color = dialog_color
 menubox_border_color = border_color
 menubox_border2_color = border_color
 item_color = dialog_color
-item_selected_color = (WHITE,BLUE,ON)
-tag_color = (BLUE,CYAN,ON)
-tag_selected_color = (CYAN,BLUE,ON)
+item_selected_color = (WHITE,BLACK,ON)
+tag_color = (CYAN,BLUE,ON)
+tag_selected_color = (YELLOW,BLACK,ON)
 tag_key_color = tag_color
 tag_key_selected_color = tag_selected_color
-itemhelp_color = (BLACK,CYAN,OFF)
-button_active_color = (WHITE,BLUE,ON)
-button_inactive_color = (BLUE,CYAN,ON)
+itemhelp_color = (WHITE,BLUE,OFF)
+button_active_color = (WHITE,BLACK,ON)
+button_inactive_color = (WHITE,BLUE,ON)
 button_key_active_color = button_active_color
 button_key_inactive_color = button_inactive_color
-button_label_active_color = (YELLOW,BLUE,ON)
-button_label_inactive_color = (BLUE,CYAN,ON)
+button_label_active_color = (YELLOW,BLACK,ON)
+button_label_inactive_color = (WHITE,BLUE,ON)
 inputbox_color = dialog_color
 inputbox_border_color = border_color
 inputbox_border2_color = border_color
@@ -74,14 +95,14 @@ searchbox_color = dialog_color
 searchbox_title_color = title_color
 searchbox_border_color = border_color
 searchbox_border2_color = border_color
-position_indicator_color = title_color
-uarrow_color = (BLUE,CYAN,ON)
+position_indicator_color = (YELLOW,BLUE,ON)
+uarrow_color = (CYAN,BLUE,ON)
 darrow_color = uarrow_color
 check_color = dialog_color
 check_selected_color = button_active_color
 form_active_text_color = button_active_color
 form_text_color = dialog_color
-gauge_color = title_color
+gauge_color = (YELLOW,BLUE,ON)
 AWG_DIALOG_PALETTE
   export DIALOGRC="$AWG_DIALOG_STYLE"
 }
@@ -122,6 +143,8 @@ awg_dialog_breadcrumb_title(){
       timezone_menu) label="Часовой пояс" ;;
       operating_mode_menu) label="Режим" ;;
       desktop_commander_menu) label="Desktop Commander" ;;
+      notify_menu) label="Telegram" ;;
+      notify_types_menu) label="Типы уведомлений" ;;
       update_menu) label="Обновления" ;;
       mihomo_pool_pick) label="Каталог" ;;
     esac
@@ -171,7 +194,7 @@ dialog(){
   fi
   for ((i=0;i<${#args[@]};i++)); do
     case "${args[i]}" in
-      --menu|--msgbox|--yesno|--inputbox|--editbox|--textbox|--infobox)
+      --menu|--checklist|--msgbox|--yesno|--inputbox|--editbox|--textbox|--infobox)
         hi=$((i+2)); wi=$((i+3))
         if [[ "${args[hi]:-}" =~ ^[0-9]+$ && "${args[wi]:-}" =~ ^[0-9]+$ ]]; then
           ((args[hi] > rows-2)) && args[hi]="$((rows-2))"
@@ -230,7 +253,7 @@ dialog(){
   done
   if ((title_index>=0)); then
     for ((i=0;i<${#args[@]};i++)); do
-      if [[ "${args[i]}" == --menu || "${args[i]}" == --msgbox ||
+      if [[ "${args[i]}" == --menu || "${args[i]}" == --checklist || "${args[i]}" == --msgbox ||
             "${args[i]}" == --yesno || "${args[i]}" == --inputbox ||
             "${args[i]}" == --editbox || "${args[i]}" == --textbox ||
             "${args[i]}" == --infobox ]]; then
@@ -431,6 +454,27 @@ show_operation_result(){
   local rc="$1" heading="$2" label view_tmp dialog_rc=0
   if ((rc == 0)); then label="ВЫПОЛНЕНО"; else label="ОШИБКА (код $rc)"; fi
   [[ -s "$TMP" ]] || printf '%s\n' "Дополнительных сообщений нет." >"$TMP"
+  # Present an actionable human explanation before the retained diagnostics.
+  # Never interpret a failed operation as success solely from its exit code.
+  if ((rc != 0)); then
+    local explanation
+    if grep -Eq 'XRAY_MANUAL_ERROR=MANAGEMENT_OR_MIHOMO_UNHEALTHY|XRAY_MANUAL_ERROR=ACTIVE_TRANSPORT_NOT_MIHOMO' "$TMP"; then
+      explanation="Ручной выбор ноды требует активного и исправного Mihomo. Откройте раздел VPN, выберите транспорт Mihomo и повторите операцию. Действующий VPN не изменён."
+    elif grep -Eq 'XRAY_MANUAL_ERROR=FOREIGN_TRANSPORT_DURING_RECOVERY' "$TMP"; then
+      explanation="Во время восстановления транспорт уже изменился. Для безопасности рабочий VPN оставлен без изменений. Проверьте активный транспорт в главном меню."
+    elif grep -Eq 'XRAY_MANUAL_ERROR=XRAY_ISOLATED_HTTPS_NOT_VERIFIED|UNIFIED_PROBE.*NETWORK_FAIL' "$TMP"; then
+      explanation="Выбранная нода не прошла проверку HTTPS. Переключение не выполнено; выберите другую ноду или повторите проверку позднее."
+    elif grep -Eq 'XRAY_MANUAL_ERROR=PROVIDER_CHANGED|UNIFIED_ERROR=PROVIDER_CHANGED_DURING_PROBE' "$TMP"; then
+      explanation="Подписка изменилась во время проверки. Обновите список нод и повторите выбор."
+    elif grep -Eq 'XRAY_MANUAL_ERROR=XRAY_MANUAL_ROLLBACK_UNCONFIRMED|XRAY_MANUAL_ERROR=FOREIGN_' "$TMP"; then
+      explanation="Не удалось подтвердить завершение восстановления. Не повторяйте переключения; проверьте активный VPN и состояние шлюза."
+    elif grep -Eq 'XRAY_MANUAL_ERROR=|NATIVE_RETURN_ERROR=|UNIFIED_ERROR=' "$TMP"; then
+      explanation="Проверка или переключение ноды завершилось ошибкой. Работоспособность выбранной ноды не подтверждена. Проверьте текущий транспорт и технические подробности ниже."
+    else
+      explanation="Операция не завершилась успешно. Проверьте текущий статус шлюза и прочитайте подробности ниже. Если ошибка повторяется, сохраните её технический код для диагностики."
+    fi
+    sed -i "1iЧто произошло: $explanation\\nЧто делать: сведения о причине и коде приведены ниже.\\n" "$TMP"
+  fi
   sed -i "1iРезультат: $label\\nОперация: $heading\\n" "$TMP"
   view_tmp="$(mktemp)" || return 1
   if ! awg_readable_status_text "$TMP" >"$view_tmp"; then
@@ -1081,6 +1125,15 @@ mihomo_display_node_name(){
   printf '%s\n' "$name"
 }
 
+mihomo_clip_node_label(){
+  local value="$1" limit="${2:-24}"
+  if (( ${#value} > limit )); then
+    printf '%s…' "${value:0:limit-1}"
+  else
+    printf '%s' "$value"
+  fi
+}
+
 mihomo_display_chain(){
   local node shown first=1
   for node in "$@"; do
@@ -1115,6 +1168,7 @@ select_tsv_node_dialog(){
   local dialog_title="$1" prompt="$2" listing="$3" pick provider_idx ui_idx name display_name type endpoint duplicate health country delay description tab
   local query="" filtered count total search_prompt advanced=no scope="${5:-manual}"
   local eligible=0 xray_count=0 fail_count=0 node_health state_label source_total="" shown_total
+  local engine_label shown_endpoint shown_delay line_label item_help cols narrow=no
   if (( $# >= 4 )); then advanced="$4"; fi
   local -a items=()
   local -A choice_name=() choice_health=()
@@ -1125,6 +1179,9 @@ select_tsv_node_dialog(){
   fi
   [[ "$source_total" =~ ^[1-9][0-9]*$ ]] || source_total="$total"
   shown_total="$source_total"
+  cols="$(stty size </dev/tty 2>/dev/null | awk '{print $2}' || true)"
+  [[ "$cols" =~ ^[0-9]+$ ]] || cols=120
+  (( cols < 110 )) && narrow=yes
   while true; do
     if [[ -n "$query" ]]; then
       filtered="$(grep -iF -- "$query" <<<"$listing" || true)"
@@ -1155,41 +1212,37 @@ select_tsv_node_dialog(){
         XRAY_HTTPS) xray_count=$((xray_count + 1)) ;;
         MIHOMO_FAIL) fail_count=$((fail_count + 1)) ;;
       esac
-      display_name="$(mihomo_display_node_name "$name")"
-      description="$type | сервер: $endpoint (НЕ IP выхода)"
-      [[ -z "$country" || "$country" == "??" ]] || description="$description | страна выхода: $country"
-      [[ -z "$delay" || "$delay" == "-" ]] || description="$description | $delay"
+      display_name="$(mihomo_clip_node_label "$(mihomo_display_node_name "$name")" 24)"
+      shown_endpoint="$(mihomo_clip_node_label "$endpoint" 25)"
+      shown_delay="—"
+      if [[ "$delay" =~ ^[0-9]+ms$ ]]; then
+        shown_delay="${delay%ms}мс"
+      fi
       case "$health" in
-        MIHOMO_OK) description="$description | Mihomo: тест пройден" ;;
-        MIHOMO_FAIL) description="$description | Mihomo: тест не пройден" ;;
-        MIHOMO_UNTESTED) description="$description | Mihomo: ещё не проверен" ;;
-        UNSUPPORTED) description="$description | НЕ ПОДДЕРЖИВАЕТСЯ" ;;
-        DUPLICATE) description="$description | ДУБЛИКАТ: выбор запрещён" ;;
-        XRAY_HTTPS) description="$description | Xray: HTTPS OK (не TUN)" ;;
-        XRAY_UNTESTED) description="$description | Xray: ещё не проверен" ;;
-        XRAY_NETWORK_FAIL) description="$description | Xray: ошибка сети" ;;
-        XRAY_UNKNOWN_HTTP) description="$description | Xray: HTTP не подтверждён" ;;
-        XRAY_UNKNOWN_ERROR) description="$description | Xray: ошибка проверки" ;;
-        XRAY_UNAVAILABLE) description="$description | Xray: движок недоступен" ;;
+        MIHOMO_OK) engine_label="Mihomo"; state_label="OK" ;;
+        MIHOMO_FAIL) engine_label="Mihomo"; state_label="FAIL" ;;
+        MIHOMO_UNTESTED) engine_label="Mihomo"; state_label="" ;;
+        XRAY_HTTPS) engine_label="Xray"; state_label="OK" ;;
+        XRAY_NETWORK_FAIL) engine_label="Xray"; state_label="FAIL" ;;
+        XRAY_*) engine_label="Xray"; state_label="" ;;
+        *) engine_label="—"; state_label="" ;;
       esac
-      [[ "$health" == DEAD ]] && description="$description | НЕДОСТУПЕН"
-      [[ "$duplicate" == DUPLICATE ]] && description="$description | ДУБЛИКАТ ИМЕНИ"
-      case "$health" in
-        MIHOMO_OK) state_label="Mihomo тест OK" ;;
-        MIHOMO_FAIL) state_label="Mihomo тест FAIL" ;;
-        MIHOMO_UNTESTED) state_label="Mihomo не проверен" ;;
-        XRAY_HTTPS) state_label="Xray HTTPS" ;;
-        XRAY_UNTESTED) state_label="Xray не проверен" ;;
-        XRAY_NETWORK_FAIL) state_label="Xray отказ" ;;
-        DUPLICATE) state_label="дубликат" ;;
-        *) state_label="недоступен" ;;
-      esac
-      items+=("$ui_idx" "$display_name [$state_label] — $description" "Статус виден, но не является гарантией LAN/TUN. Проверка безопасности перед переключением обязательна.")
+      # An untested/unsupported profile has no fabricated third status.
+      # The isolated manual preflight can still try a previously failed node.
+      [[ "$duplicate" == DUPLICATE ]] && state_label=""
+      if [[ "$narrow" == yes ]]; then
+        line_label="$display_name | $engine_label/$type | $shown_delay | $state_label"
+      else
+        line_label="$display_name | $engine_label | $type | $shown_endpoint | $shown_delay | $state_label"
+      fi
+      item_help="Полное имя: $name. Сервер подключения: $endpoint (не публичный IP выхода). RTT: $shown_delay. Статус $state_label — результат отдельной проверки, не гарантия TUN/LAN."
+      items+=("$ui_idx" "$line_label" "$item_help")
     done <<<"$filtered"
-    search_prompt="$prompt\n\nПоказано: $count из $shown_total | Mihomo тест OK: $eligible | Xray HTTPS: $xray_count | Mihomo тест FAIL: $fail_count"
+    search_prompt="$prompt\n\nПоказано: $count из $shown_total | Mihomo OK: $eligible | Xray OK: $xray_count | Mihomo FAIL: $fail_count"
     if [[ "$scope" == fixed ]]; then
       search_prompt="$prompt\n\nПоказано: $count из $shown_total | Для FIXED допустимы только исправные Mihomo: $eligible"
     fi
+    search_prompt="$search_prompt\nСервер = адрес подключения, не IP выхода; RTT = задержка теста. Xray HTTPS = прокси, не TUN/LAN."
     [[ -z "$query" ]] || search_prompt="$search_prompt | поиск: $query"
     pick="$(dialog --backtitle "$BACKTITLE" --title "$dialog_title" --item-help --menu "$search_prompt" 28 116 17 "${items[@]}" 3>&1 1>&2 2>&3)" || return 1
     case "$pick" in
@@ -1516,6 +1569,13 @@ mihomo_node_menu(){
   fi
   node_name="$MIHOMO_POOL_PICKED_NODE"
   [[ -n "$node_name" ]] || { msg "Выбор узла" "Имя узла не задано."; return 0; }
+
+  # Do not begin a manual Mihomo/Xray node transaction while AUTO is on AWG.
+  # The current AWG is intentionally sticky; only the operator may restore Mihomo.
+  if [[ "$(cat /etc/awg-pbr/transport 2>/dev/null)" != mihomo ]]; then
+    msg "Ручной выбор ноды" "Сейчас активен не Mihomo, а другой VPN-транспорт (например, AWG). Сначала вручную выберите транспорт Mihomo в меню VPN, затем повторите выбор ноды. Действующий VPN не изменён."
+    return 0
+  fi
 
   resolver="$("$MIHOMO_UNIFIED" resolve "$node_name" 2>/dev/null)" || {
     msg "Выбор узла" "Профиль изменился или имя неоднозначно. Обновите проверку; переключения не было."
@@ -2702,6 +2762,154 @@ desktop_commander_menu(){
   done
 }
 
+notify_sync_daily_schedule(){
+  # One source of truth: the DAILY_REPORT checkmark. A disabled global
+  # Telegram delivery never keeps the report timer running.
+  local enabled_csv="$1"
+  if systemctl is-enabled --quiet awg-notify-flush.timer 2>/dev/null &&
+     [[ ",$enabled_csv," == *",DAILY_REPORT,"* ]]; then
+    systemctl enable --now awg-notify-daily.timer
+  else
+    systemctl disable --now awg-notify-daily.timer
+  fi
+}
+
+notify_types_menu(){
+  local current selection csv
+  local lost=off restored=off boot=off daily=off nodes=off transport=off
+  current="$(/usr/local/sbin/awg-notify status 2>/dev/null)" || {
+    msg "Типы уведомлений" "Не удалось прочитать настройки. Изменений нет."
+    return 0
+  }
+  grep -Fxq 'NOTIFY_PREF_VPN_LOST=on' <<<"$current" && lost=on
+  grep -Fxq 'NOTIFY_PREF_VPN_RESTORED=on' <<<"$current" && restored=on
+  grep -Fxq 'NOTIFY_PREF_BOOT=on' <<<"$current" && boot=on
+  grep -Fxq 'NOTIFY_PREF_DAILY_REPORT=on' <<<"$current" && daily=on
+  grep -Fxq 'NOTIFY_PREF_NODE_SWITCH=on' <<<"$current" && nodes=on
+  grep -Fxq 'NOTIFY_PREF_TRANSPORT_SWITCH=on' <<<"$current" && transport=on
+  selection="$(dialog --backtitle "$BACKTITLE" --title "Типы уведомлений" \
+    --separate-output --checklist \
+    "Пробел — поставить/снять галочку; ОК — сохранить; Отмена — выйти.
+
+Сводка в 09:00 настраивается только здесь. При включённой общей доставке её таймер синхронизируется автоматически. Остальные галочки управляют созданием событий и не меняют VPN." \
+    25 110 8 \
+    VPN_LOST "Отказ выбранного VPN (две проверки)" "$lost" \
+    VPN_RESTORED "Восстановление выбранного VPN" "$restored" \
+    BOOT "Запуск Raspberry Pi" "$boot" \
+    DAILY_REPORT "Ежедневная сводка в 09:00" "$daily" \
+    NODE_SWITCH "Переключение ноды" "$nodes" \
+    TRANSPORT_SWITCH "Смена транспорта / failover" "$transport" \
+    3>&1 1>&2 2>&3)" || return 0
+  csv="$(printf '%s\n' "$selection" | paste -sd, -)"
+  title="Типы уведомлений"
+  if capture /usr/local/sbin/awg-notify preferences-set --enabled "$csv"; then
+    if notify_sync_daily_schedule "$csv"; then
+      msg "Типы уведомлений" "Выбор сохранён. Сводка в 09:00 синхронизирована с её галочкой.
+
+При выключенной общей доставке сводка не запускается. Накопленная очередь сохранена. Другие службы, VPN, DNS и MikroTik не менялись."
+    else
+      msg "Типы уведомлений" "Выбор сообщений сохранён, но состояние таймера ежедневной сводки обновить не удалось. Проверьте состояние Telegram и повторите."
+    fi
+  fi
+}
+
+notify_menu(){
+  local choice note_state daily_state watch_state current
+  while true; do
+    if [[ ! -x /usr/local/sbin/awg-notify ]]; then
+      msg "Telegram" "AWG Notify не установлен. Проверьте состав инсталлятора."
+      return 0
+    fi
+    note_state="выключена"
+    systemctl is-enabled --quiet awg-notify-flush.timer 2>/dev/null && note_state="включена" || true
+    watch_state="выключен"
+    systemctl is-enabled --quiet awg-notify-watch.timer 2>/dev/null && watch_state="включен" || true
+    current="$(/usr/local/sbin/awg-notify status 2>/dev/null || echo NOTIFY_CONFIGURED=no)"
+    daily_state="отключена"
+    if grep -Fxq 'NOTIFY_PREF_DAILY_REPORT=on' <<<"$current"; then
+      daily_state="включена"
+      systemctl is-enabled --quiet awg-notify-daily.timer 2>/dev/null || daily_state="ожидает включения доставки"
+    fi
+    choice="$(dialog --backtitle "$BACKTITLE" --title "Telegram" --item-help --menu \
+      "Доставка: $note_state. Watch: $watch_state. Сводка: $daily_state.
+$(grep -E '^NOTIFY_(CONFIGURED|PENDING|LAST_ROUTE)=' <<<"$current" || true)
+
+Типы уведомлений — отдельными галочками. Оповещения не управляют VPN и MikroTik." 23 106 7 \
+      1 "Настроить Telegram-бота" "Защищённый ввод токена и привязка чата." \
+      2 "Проверить доставку" "Тестовое сообщение по разрешённым VPN-маршрутам." \
+      3 "Доставка Telegram [$note_state]" "Включить или выключить доставку, Watch, загрузку и расписание сводки." \
+      4 "Типы уведомлений [галочки]" "Отказ, восстановление, запуск, сводка, нода и транспорт." \
+      5 "Состояние и очередь" "Просмотр без токена и секретов." \
+      6 "Исправить привязку чата" "Безопасная повторная привязка /pair." \
+      0 "Назад" "Возврат в системное меню." 3>&1 1>&2 2>&3)" || return 0
+    case "$choice" in
+      1) run_interactive "Настройка Telegram-бота" /usr/local/sbin/awg-notify configure ;;
+      2) run_interactive "Проверка отправки Telegram" /usr/local/sbin/awg-notify test ;;
+      3)
+        if [[ "$note_state" == "включена" ]]; then
+          if confirm "Доставка Telegram" "Выключить все уведомления? Очередь и выбор типов останутся сохранёнными."; then
+            title="Telegram — выключение доставки"
+            capture systemctl disable --now awg-notify-flush.timer || true
+            capture systemctl disable --now awg-notify-watch.timer || true
+            capture systemctl disable --now awg-notify-daily.timer || true
+            capture systemctl disable --now awg-notify-boot.service || true
+          fi
+        elif grep -Fxq 'NOTIFY_CONFIGURED=yes' <<<"$current"; then
+          if confirm "Доставка Telegram" "Включить уведомления через настроенного бота? VPN и MikroTik не меняются."; then
+            title="Telegram — включение доставки"
+            capture systemctl enable --now awg-notify-flush.timer || true
+            capture systemctl enable --now awg-notify-watch.timer || true
+            capture systemctl enable awg-notify-boot.service || true
+            if grep -Fxq 'NOTIFY_PREF_DAILY_REPORT=on' <<<"$current"; then
+              notify_sync_daily_schedule "DAILY_REPORT" || msg "Telegram" "Не удалось включить таймер сводки."
+            else
+              notify_sync_daily_schedule "" || msg "Telegram" "Не удалось отключить таймер сводки."
+            fi
+          fi
+        else
+          msg "Telegram" "Сначала настройте бота через пункт 1."
+        fi
+        ;;
+      4) notify_types_menu ;;
+      5) title="Telegram — состояние"; capture /usr/local/sbin/awg-notify status || true ;;
+      6) if [[ -x /usr/local/sbin/awg-notify-pair-repair ]]; then
+           run_interactive "Исправление Telegram chat ID" /usr/local/sbin/awg-notify-pair-repair
+         else
+           msg "Telegram" "Помощник привязки чата ещё не установлен."
+         fi ;;
+      0) return 0 ;;
+    esac
+  done
+}
+
+appearance_menu(){
+  local choice current style_tmp
+  while true; do
+    current="$(cat /etc/awg-pbr/menu-appearance 2>/dev/null || printf classic)"
+    [[ "$current" == matrix ]] && current="Matrix Gradient" || current="Классическое"
+    choice="$(dialog --backtitle "$BACKTITLE" --title "Оформление интерфейса" --item-help --menu \
+      "Текущее оформление: $current. Изменение действует после перезапуска меню." 17 88 3 \
+      classic "Классическое" "Без анимации. Резервный интерфейс." \
+      matrix "Matrix Gradient" "Зелёный цифровой дождь за окнами штатного меню." \
+      back "Назад" "Без изменений." 3>&1 1>&2 2>&3)" || return 0
+    case "$choice" in
+      back) return 0 ;;
+      classic|matrix)
+        if [[ "$choice" == matrix ]] &&
+           { ! command -v tmux >/dev/null 2>&1 || [[ ! -r /usr/local/lib/awg-pi/awg-matrix-compositor.py ]]; }; then
+          msg "Оформление интерфейса" "Matrix Gradient не установлен полностью. Классическое меню остаётся доступным."
+          continue
+        fi
+        style_tmp="$(mktemp /etc/awg-pbr/.menu-appearance.XXXXXXXX)"
+        printf '%s\n' "$choice" > "$style_tmp"
+        chmod 0600 "$style_tmp"
+        mv -f "$style_tmp" /etc/awg-pbr/menu-appearance
+        msg "Оформление интерфейса" "Сохранено: $choice. Изменение действует при следующем запуске.\n\nРезервный вход: sudo /usr/local/sbin/awg-menu --classic"
+        return 0 ;;
+    esac
+  done
+}
+
 system_menu(){
   local choice mode_badge
   while true; do
@@ -2717,6 +2925,8 @@ system_menu(){
       7 "Часовой пояс" "Просмотр доступных часовых поясов IANA и изменение системного часового пояса." \
       8 "Статистика трафика" "Трафик за сегодня и месяц только по транспортным интерфейсам Pi: awg0 и mihomo0, с отдельной статистикой по AWG и Mihomo." \
       9 "Desktop Commander — удалённый доступ" "Подключение устройства, проверка авторизации, включение и выключение автозапуска." \
+      10 "Telegram — уведомления" "Бот, доставка, очередь, Watch, ежедневная сводка." \
+      11 "Оформление интерфейса" "Классическое / Matrix Gradient." \
       0 "Назад" "Возвращает в главное меню без изменений." 3>&1 1>&2 2>&3)" || return 0
     case "$choice" in
       1)
@@ -2735,6 +2945,8 @@ system_menu(){
       7) timezone_menu ;;
       8) traffic_screen ;;
       9) desktop_commander_menu ;;
+      10) notify_menu ;;
+      11) appearance_menu ;;
       0) return 0 ;;
     esac
   done

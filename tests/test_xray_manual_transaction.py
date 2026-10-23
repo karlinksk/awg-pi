@@ -16,6 +16,55 @@ mod=importlib.util.module_from_spec(spec)
 spec.loader.exec_module(mod)
 
 class ManualSwitchContract(unittest.TestCase):
+    def setUp(self):
+        # Transaction tests cover watchdog/rollback; the separate preflight
+        # is mocked to avoid touching installed providers or starting engines.
+        for name in ("preflight_xray", "preflight_mihomo"):
+            patcher=mock.patch.object(mod,name)
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
+    def test_manual_preflight_is_mandatory_before_mutation(self):
+        script=SCRIPT.read_text()
+        for marker in ('preflight_xray(index,info)', 'preflight_mihomo(name,info)',
+                       'XRAY_ISOLATED_HTTPS_NOT_VERIFIED',
+                       'NATIVE_ISOLATED_HTTPS_NOT_VERIFIED',
+                       'PROVIDER_CHANGED_DURING_PROBE'):
+            self.assertIn(marker,script)
+        self.assertLess(script.index('preflight_xray(index,info)'),
+                        script.index('path,state=save_snap(info)',script.index('def apply(')))
+    def test_failed_xray_preflight_never_arms_watchdog_or_mutates(self):
+        with tempfile.TemporaryDirectory() as td:
+            info={"candidate":"SyntheticXray","sha":"test-sha","fingerprint":"id"}
+            with mock.patch.multiple(mod,LOCK=Path(td)/"lock"), \
+                 mock.patch.object(mod.os,"geteuid",return_value=0), \
+                 mock.patch.object(mod,"inspect",return_value=info), \
+                 mock.patch.object(mod,"preflight_xray",
+                     side_effect=RuntimeError("XRAY_ISOLATED_HTTPS_NOT_VERIFIED")) as preflight, \
+                 mock.patch.object(mod,"save_snap") as save, \
+                 mock.patch.object(mod,"cmd") as command:
+                with self.assertRaisesRegex(RuntimeError,"XRAY_ISOLATED_HTTPS_NOT_VERIFIED"):
+                    mod.apply(2)
+                preflight.assert_called_once_with(2,info)
+                save.assert_not_called()
+                command.assert_not_called()
+
+    def test_failed_mihomo_preflight_never_arms_watchdog_or_mutates(self):
+        with tempfile.TemporaryDirectory() as td:
+            info={"candidate":"SyntheticMihomo","sha":"test-sha"}
+            with mock.patch.multiple(mod,LOCK=Path(td)/"lock"), \
+                 mock.patch.object(mod.os,"geteuid",return_value=0), \
+                 mock.patch.object(mod,"inspect_native",return_value=info), \
+                 mock.patch.object(mod,"preflight_mihomo",
+                     side_effect=RuntimeError("NATIVE_ISOLATED_HTTPS_NOT_VERIFIED")) as preflight, \
+                 mock.patch.object(mod,"save_snap") as save, \
+                 mock.patch.object(mod,"cmd") as command:
+                with self.assertRaisesRegex(RuntimeError,"NATIVE_ISOLATED_HTTPS_NOT_VERIFIED"):
+                    mod.native_return("SyntheticMihomo")
+                preflight.assert_called_once_with("SyntheticMihomo",info)
+                save.assert_not_called()
+                command.assert_not_called()
+
     def test_installer_contains_manual_executor_and_ui(self):
         install=(ROOT/"install.sh").read_text()
         menu=(ROOT/"src/awg-menu").read_text()
@@ -29,7 +78,7 @@ class ManualSwitchContract(unittest.TestCase):
         s=SCRIPT.read_text()
         self.assertIn("if not https_ok(\"tun\"):refuse(\"PREVIOUS_TUN_NOT_PROVEN\")",s)
         self.assertIn('if ALIAS not in con.get("all",[]):refuse("XRAY_BRIDGE_NOT_IN_RUNNING_CONFIG")',s)
-        self.assertIn("XRAY_FRESH_NETWORK_PROOF_REQUIRED",s)
+        self.assertIn("XRAY_ISOLATED_HTTPS_NOT_VERIFIED",s)
         self.assertIn("systemd-run",s)
         self.assertIn("xray-manual-",s)
         self.assertNotIn("shell=True",s)

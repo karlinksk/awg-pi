@@ -311,6 +311,23 @@ def write_atomic(path, data,mode=0o600):
         os.replace(tmp,path)
     finally:tmp.unlink(missing_ok=True)
 
+# Preflight proof must be independent of health-cache freshness. A direct
+# caller of this guarded backend must meet the same requirement as AUTO.
+FRESH_XRAY_PROOF=Path("/usr/local/sbin/awg-xray-manual-switch")
+
+def fresh_exact_xray_https(index,expected_provider_sha):
+    proof=FRESH_XRAY_PROOF
+    if (not proof.is_file() or proof.is_symlink() or proof.stat().st_uid!=0):
+        raise RuntimeError("XRAY_FRESH_PROOF_HELPER_UNTRUSTED")
+    try:
+        result=run(str(proof),"probe-xray",str(index),timeout=75)
+    except (OSError,RuntimeError,subprocess.TimeoutExpired):
+        raise RuntimeError("XRAY_EXACT_ISOLATED_HTTPS_UNVERIFIED") from None
+    if result!="FRESH_CANDIDATE_PROOF=PASS_NO_MUTATION":
+        raise RuntimeError("XRAY_EXACT_ISOLATED_HTTPS_UNVERIFIED")
+    if hashlib.sha256(PROVIDER.read_bytes()).hexdigest()!=expected_provider_sha:
+        raise RuntimeError("XRAY_PROVIDER_CHANGED_DURING_PROOF")
+
 class LinuxBackend:
     def __init__(self,failed,candidate):
         self.failed,self.candidate=failed,candidate
@@ -379,9 +396,12 @@ class LinuxBackend:
         fields=dict(line.split("=",1) for line in resolution.splitlines() if "=" in line)
         if (fields.get("NODE_ENGINE")!="XRAY" or
             fields.get("NODE_INDEX")!=str(self.index) or
-            fields.get("NODE_PROVIDER_SHA256")!=self.provider_hash or
-            fields.get("NODE_BASIC_NETWORK")!="NETWORK_OK"):
-            raise RuntimeError("XRAY_CANDIDATE_NOT_FRESHLY_NETWORK_QUALIFIED")
+            fields.get("NODE_PROVIDER_SHA256")!=self.provider_hash):
+            raise RuntimeError("XRAY_CANDIDATE_IDENTITY_CHANGED")
+        # Historical pool status is never a freshness guarantee or a veto.
+        # Exact isolated HTTPS must pass *inside this executor's own preflight*
+        # BEFORE the watchdog arms or any live interface/service can change.
+        fresh_exact_xray_https(self.index,self.provider_hash)
         # Do not call awg-route while holding the maintenance lock: that CLI
         # acquires the same flock. The transit-routing helper is lock-free.
         if operating_mode=="transit":
