@@ -386,6 +386,32 @@
   запускал ранее подготовленный root acceptance для уведомлений
   при реальном failover. PR #115 по-прежнему основной release gate.
 
+## Telegram menu de-duplication installed — 2026-10-23 10:28 +07
+
+- User executed root-only `awg-notify-menu-dedupe-test-install.py`
+  successfully on test Pi `awg-upgrade`, returned
+  `MENU_DEDUPE=PASS_TEST_PI_ONLY`, `SERVICES_ROUTES_TIMERS=UNCHANGED`,
+  `USER_PREFERENCES_BOT_QUEUE=UNCHANGED`,
+  `AWG_FAILOVER_HOOKS=NOT_TOUCHED`.
+  Root-only backup reported
+  `/var/backups/awg-gateway/telegram-menu-dedupe-f3er0xui`.
+- Independently verified `/usr/local/sbin/awg-menu` SHA-256
+  `d12c44952db7ba1270b0f71cc48cb0947994f0bd454eff3a0f84b7e73aa2dc53`
+  matches approved staged source; syntax `bash -n` PASS.
+  Old redundant daily-summary ON/OFF menu commands removed; item 3
+  now toggles delivery, item 4 opens checklist, item 6 repairs pairing.
+- Live `awg-transport` SHA-256 `d5eb7639...`,
+  `awg-selection-monitor` SHA-256 `e98b697d...` remain unmodified.
+  Thus previous failover Telegram emit root defect is **not yet fixed
+  in running selection monitor**. Staged hook acceptance/root install
+  script remains `scripts/awg-notify-failover-hook-accept.py`
+  pinned SHA-256 `0e7d4d7b5298b954cf0fb6f8f403dd5c77e97de58c455292952e9a8a52823d62`.
+  Its six synthetic Bot API messages **have not yet been sent**;
+  operator has not run that script.
+- UI code is **installed on test Pi**, not merged/released.
+  Actual visual checkbox interaction, LAN/failover/reboot/clean install
+  release gate still unconfirmed. No MikroTik changes.
+  
 ## 1. Главная цель и границы работ
 
 Закончить **AWG Pi Gateway v1.3.0**: воспроизводимый шлюз для Raspberry Pi 4 / чистой Debian 13 ARM64 с двумя транспортами **AmneziaWG** и **Mihomo**. Инсталлятор должен сразу устанавливать всё необходимое, **включая FFmpeg/FFprobe, Stage18 Node.js и yt-dlp** и сами движки — даже если VPN-профиль/подписка будут внесены позднее. После ввода AWG-профиля и/или Mihomo-подписки система должна штатно подбирать пригодные ноды, работать после перезагрузки, сохранять политики и обеспечивать предусмотренный резервный путь.
