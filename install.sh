@@ -446,8 +446,19 @@ STAGE="установка AmneziaWG"
 log "[4/12] AmneziaWG"
 GO_REPO="https://github.com/amnezia-vpn/amneziawg-go.git"
 TOOLS_REPO="https://github.com/amnezia-vpn/amneziawg-tools.git"
-latest_tag(){
-  git ls-remote --tags --refs "$1" 'refs/tags/v*' | awk -F/ '{print $3}' | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -1
+# Release-pinned AWG v3.1 source revisions. Dynamic "latest tag" makes a
+# clean install non-reproducible and can silently change the tested engine.
+# Keep these exactly aligned with .github/workflows/ci.yml.
+GO_TAG="v3.1.20260828"
+TOOLS_TAG="v3.1.20260812"
+GO_REVISION="b5928efb6ca19f0153958460c3d141f04abc5c2e"
+TOOLS_REVISION="ee0f0a9aa34ff0a0da4b3433b9512781cfe02843"
+verify_release_tag(){
+  local repo="$1" tag="$2" expected="$3" actual
+  actual="$(git ls-remote --tags --refs "$repo" "refs/tags/$tag" |
+    awk -v wanted="refs/tags/$tag" '$2==wanted {print $1}')"
+  [[ "$actual" == "$expected" ]] ||
+    die "AmneziaWG upstream ref не совпадает с проверенным CI commit ($tag)"
 }
 sync_repo(){
   local repo="$1" dir="$2" tag="$3"
@@ -462,20 +473,23 @@ sync_repo(){
   fi
 }
 
-GO_TAG="$(latest_tag "$GO_REPO")"
-TOOLS_TAG="$(latest_tag "$TOOLS_REPO")"
-[[ -n "$GO_TAG" && -n "$TOOLS_TAG" ]] || die "Не удалось получить стабильные теги AmneziaWG"
-printf "Найдены стабильные теги: amneziawg-go=%s, tools=%s\n" "$GO_TAG" "$TOOLS_TAG"
+verify_release_tag "$GO_REPO" "$GO_TAG" "$GO_REVISION"
+verify_release_tag "$TOOLS_REPO" "$TOOLS_TAG" "$TOOLS_REVISION"
+printf "Проверенные версии AmneziaWG: go=%s, tools=%s\n" "$GO_TAG" "$TOOLS_TAG"
 if [[ "$AUTO_UPGRADE" != 1 ]]; then
   confirm "Установить эти стабильные версии?" "Y" || die "Установка отменена пользователем"
 fi
 
 sync_repo "$GO_REPO" "$SRC_ROOT/amneziawg-go" "$GO_TAG"
+[[ "$(git -C "$SRC_ROOT/amneziawg-go" rev-parse HEAD)" == "$GO_REVISION" ]] ||
+  die "AmneziaWG go revision не совпадает с проверенным CI commit"
 make -C "$SRC_ROOT/amneziawg-go" clean >/dev/null 2>&1 || true
 make -C "$SRC_ROOT/amneziawg-go"
 make -C "$SRC_ROOT/amneziawg-go" PREFIX=/usr install
 
 sync_repo "$TOOLS_REPO" "$SRC_ROOT/amneziawg-tools" "$TOOLS_TAG"
+[[ "$(git -C "$SRC_ROOT/amneziawg-tools" rev-parse HEAD)" == "$TOOLS_REVISION" ]] ||
+  die "AmneziaWG tools revision не совпадает с проверенным CI commit"
 make -C "$SRC_ROOT/amneziawg-tools/src" clean >/dev/null 2>&1 || true
 make -C "$SRC_ROOT/amneziawg-tools/src"
 make -C "$SRC_ROOT/amneziawg-tools/src" install PREFIX=/usr WITH_WGQUICK=yes WITH_SYSTEMDUNITS=yes
