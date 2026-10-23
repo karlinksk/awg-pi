@@ -1,4 +1,10 @@
 # AWG Pi Gateway — состояние проекта и согласованные решения
+## 2026-10-23 20:24 +07 — provider-shaped isolated Xray TUN verified on test Pi
+
+Operator's corrected, checksum-verified RAM-only A/B receipt `/home/karlinks/awg-v13-provider-ab-fixed-receipt-20261023.txt` confirms both `MINIMAL_TUN_PASS=True` and `PROVIDER_GROUP_TUN_PASS=True`. Each selected the exact temporary local Xray alias, returned HTTP 401 via both mixed proxy and a distinct real TUN, and showed kernel RX/TX packet increments. The exact production provider was cloned into protected RAM; original subscription, selectors and routes were not changed. Existing gateway backup archive file integrity was verified; experiment-only 240-second watchdog was armed. Independent postcheck: native Mihomo, standby AWG, SSH/DNS/PBR health active; Xray inactive; both 100/101 routes via `mihomo0`, native OpenAI TUN HTTPS 401, zero failed units. NO production Xray TUN, LAN, automatic failover, reboot or clean install PASS is implied.
+
+Evidence now excludes the simple `mips` stack, `auto-detect-interface`, domain vs IPv4 SOCKS destination, and provider-shaped Xray selector as sufficient standalone explanations of production `mihomo0` cross-engine `CURL_EXIT_28`. Keep production settings. Next verify the **actual production TUN connection chain and return traffic** during the existing guarded manual switch, using sanitized read-only controller telemetry, before any code or network-policy change. PR #115 and PR #162 still draft; no release.
+
 
 ## 2026-10-23 20:18 +07 — provider parse triage passes; A/B runner corrected
 
