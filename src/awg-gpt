@@ -24,5 +24,26 @@ case "${1:-}" in
     cmp -s "$tmp" /usr/local/sbin/awg-menu
     echo 'AWG_GPT_MENU_UPDATE=PASS'
     ;;
-  *) echo 'Usage: sudo awg-gpt menu-update' >&2; exit 2 ;;
+  notify-update)
+    [[ "$#" == 1 ]] || exit 2
+    ref='92132c411e8c06605790b2d76dc897072ccec7e3'
+    expected='a47e2ad29db3b7b28a3cb42226803d116cebd2bbda43b4215f551b2611232ead'
+    target='/usr/local/sbin/awg-notify'
+    [[ -f "$target" && ! -L "$target" ]] || { echo AWG_GPT=NOTIFIER_MISSING >&2; exit 3; }
+    tmp="$(mktemp /tmp/awg-gpt-notify.XXXXXXXX)"
+    trap 'rm -f "$tmp"' EXIT
+    curl -fL --connect-timeout 10 --max-time 60 "https://raw.githubusercontent.com/karlinksk/awg-pi/$ref/src/awg-notify" -o "$tmp"
+    printf '%s  %s\n' "$expected" "$tmp" | sha256sum -c - >/dev/null
+    python3 -B -c 'import ast,sys; ast.parse(open(sys.argv[1],encoding="utf-8").read())' "$tmp"
+    backup="/var/backups/awg-gateway/awg-notify.$(date +%Y%m%d%H%M%S).bak"
+    install -d -m 0700 /var/backups/awg-gateway
+    cp -a -- "$target" "$backup"
+    if ! install -o root -g root -m 0755 "$tmp" "$target" || ! cmp -s "$tmp" "$target"; then
+      cp -a -- "$backup" "$target"
+      echo AWG_GPT_NOTIFY_UPDATE=ROLLBACK >&2
+      exit 1
+    fi
+    echo AWG_GPT_NOTIFY_UPDATE=PASS
+    ;;
+  *) echo 'Usage: sudo awg-gpt {menu-update|notify-update}' >&2; exit 2 ;;
 esac
