@@ -2811,11 +2811,23 @@ desktop_commander_menu(){
   done
 }
 
+notify_sync_daily_schedule(){
+  # One source of truth: the DAILY_REPORT checkmark. A disabled global
+  # Telegram delivery never keeps the report timer running.
+  local enabled_csv="$1"
+  if systemctl is-enabled --quiet awg-notify-flush.timer 2>/dev/null &&
+     [[ ",$enabled_csv," == *",DAILY_REPORT,"* ]]; then
+    systemctl enable --now awg-notify-daily.timer
+  else
+    systemctl disable --now awg-notify-daily.timer
+  fi
+}
+
 notify_types_menu(){
   local current selection csv
   local lost=off restored=off boot=off daily=off nodes=off transport=off
   current="$(/usr/local/sbin/awg-notify status 2>/dev/null)" || {
-    msg "Telegram" "Не удалось прочитать типы уведомлений. Изменений нет."
+    msg "Типы уведомлений" "Не удалось прочитать настройки. Изменений нет."
     return 0
   }
   grep -Fxq 'NOTIFY_PREF_VPN_LOST=on' <<<"$current" && lost=on
@@ -2824,25 +2836,29 @@ notify_types_menu(){
   grep -Fxq 'NOTIFY_PREF_DAILY_REPORT=on' <<<"$current" && daily=on
   grep -Fxq 'NOTIFY_PREF_NODE_SWITCH=on' <<<"$current" && nodes=on
   grep -Fxq 'NOTIFY_PREF_TRANSPORT_SWITCH=on' <<<"$current" && transport=on
-  selection="$(dialog --backtitle "$BACKTITLE" --title "Telegram — переключатели" \
+  selection="$(dialog --backtitle "$BACKTITLE" --title "Типы уведомлений" \
     --separate-output --checklist \
-    "Пробел — включить/выключить, ОК — сохранить, Отмена — без изменений.
+    "Пробел — поставить/снять галочку; ОК — сохранить; Отмена — выйти.
 
-Сообщения о переключениях начнут приходить лишь после установки соответствующих hooks из PR #158. Никакие VPN-маршруты не меняются." \
+Сводка в 09:00 настраивается только здесь. При включённой общей доставке её таймер синхронизируется автоматически. Остальные галочки управляют созданием событий и не меняют VPN." \
     25 110 8 \
     VPN_LOST "Отказ выбранного VPN (две проверки)" "$lost" \
     VPN_RESTORED "Восстановление выбранного VPN" "$restored" \
     BOOT "Запуск Raspberry Pi" "$boot" \
     DAILY_REPORT "Ежедневная сводка в 09:00" "$daily" \
-    NODE_SWITCH "Переключение ноды (после установки hooks)" "$nodes" \
-    TRANSPORT_SWITCH "Смена транспорта / failover (после hooks)" "$transport" \
+    NODE_SWITCH "Переключение ноды" "$nodes" \
+    TRANSPORT_SWITCH "Смена транспорта / failover" "$transport" \
     3>&1 1>&2 2>&3)" || return 0
   csv="$(printf '%s\n' "$selection" | paste -sd, -)"
-  title="Telegram — сохранение переключателей"
+  title="Типы уведомлений"
   if capture /usr/local/sbin/awg-notify preferences-set --enabled "$csv"; then
-    msg "Telegram" "Настройки сохранены. Отключённые события не добавляются в очередь.
+    if notify_sync_daily_schedule "$csv"; then
+      msg "Типы уведомлений" "Выбор сохранён. Сводка в 09:00 синхронизирована с её галочкой.
 
-Таймеры и общая доставка остаются в прежнем состоянии; старые сообщения в очереди сохраняются."
+При выключенной общей доставке сводка не запускается. Накопленная очередь сохранена. Другие службы, VPN, DNS и MikroTik не менялись."
+    else
+      msg "Типы уведомлений" "Выбор сообщений сохранён, но состояние таймера ежедневной сводки обновить не удалось. Проверьте состояние Telegram и повторите."
+    fi
   fi
 }
 
@@ -2850,70 +2866,70 @@ notify_menu(){
   local choice note_state daily_state watch_state current
   while true; do
     if [[ ! -x /usr/local/sbin/awg-notify ]]; then
-      msg "Система → Telegram" "AWG Notify не установлен. Проверьте состав инсталлятора.\nДействующие службы шлюза не изменялись."
+      msg "Telegram" "AWG Notify не установлен. Проверьте состав инсталлятора."
       return 0
     fi
-    note_state="выключены"
-    daily_state="выключена"
-    systemctl is-enabled --quiet awg-notify-flush.timer 2>/dev/null && note_state="включены" || true
-    systemctl is-enabled --quiet awg-notify-daily.timer 2>/dev/null && daily_state="включена" || true
+    note_state="выключена"
+    systemctl is-enabled --quiet awg-notify-flush.timer 2>/dev/null && note_state="включена" || true
     watch_state="выключен"
     systemctl is-enabled --quiet awg-notify-watch.timer 2>/dev/null && watch_state="включен" || true
     current="$(/usr/local/sbin/awg-notify status 2>/dev/null || echo NOTIFY_CONFIGURED=no)"
-    choice="$(dialog --backtitle "$BACKTITLE" --title "Система → Telegram — уведомления" --item-help --menu \
-      "Отправка: $note_state. Watch: $watch_state. Сводка: $daily_state.
+    daily_state="отключена"
+    if grep -Fxq 'NOTIFY_PREF_DAILY_REPORT=on' <<<"$current"; then
+      daily_state="включена"
+      systemctl is-enabled --quiet awg-notify-daily.timer 2>/dev/null || daily_state="ожидает включения доставки"
+    fi
+    choice="$(dialog --backtitle "$BACKTITLE" --title "Telegram" --item-help --menu \
+      "Доставка: $note_state. Watch: $watch_state. Сводка: $daily_state.
 $(grep -E '^NOTIFY_(CONFIGURED|PENDING|LAST_ROUTE)=' <<<"$current" || true)
 
-Оповещения не меняют VPN-маршруты и не управляют MikroTik." 27 106 10 \
-      1 "Настроить Telegram-бота" "Безопасный ввод токена и числового chat ID в SSH-терминале." \
-      2 "Проверить доставку" "Пробует Mihomo и AWG; выход через SSTP только после отдельного подтверждения." \
-      3 "Включить уведомления" "Активирует только таймер доставки; требует валидного токена." \
-      4 "Выключить уведомления" "Отключает таймер; уже сохранённые события остаются в очереди." \
-      5 "Включить сводку в 09:00" "Создаёт ежедневный отчёт о состоянии Pi по системному времени." \
-      6 "Выключить ежедневную сводку" "Отключает только ежедневный отчёт." \
-      7 "Состояние и очередь" "Просмотр параметров без токена и секретов." \
-      8 "Исправить привязку чата" "Проверяет имя бота и исправляет ошибочный chat ID=1 через личную команду /pair." \
-      9 "Типы уведомлений [галочки]" "Отдельно включить или выключить каждую категорию сообщений." \
+Типы уведомлений — отдельными галочками. Оповещения не управляют VPN и MikroTik." 23 106 7 \
+      1 "Настроить Telegram-бота" "Защищённый ввод токена и привязка чата." \
+      2 "Проверить доставку" "Тестовое сообщение по разрешённым VPN-маршрутам." \
+      3 "Доставка Telegram [$note_state]" "Включить или выключить доставку, Watch, загрузку и расписание сводки." \
+      4 "Типы уведомлений [галочки]" "Отказ, восстановление, запуск, сводка, нода и транспорт." \
+      5 "Состояние и очередь" "Просмотр без токена и секретов." \
+      6 "Исправить привязку чата" "Безопасная повторная привязка /pair." \
       0 "Назад" "Возврат в системное меню." 3>&1 1>&2 2>&3)" || return 0
     case "$choice" in
       1) run_interactive "Настройка Telegram-бота" /usr/local/sbin/awg-notify configure ;;
       2) run_interactive "Проверка отправки Telegram" /usr/local/sbin/awg-notify test ;;
       3)
-        if grep -Fxq 'NOTIFY_CONFIGURED=yes' <<<"$current"; then
-          if confirm "Telegram" "Включить фоновую доставку Telegram-сообщений? VPN и MikroTik не изменяются."; then
+        if [[ "$note_state" == "включена" ]]; then
+          if confirm "Доставка Telegram" "Выключить все уведомления? Очередь и выбор типов останутся сохранёнными."; then
+            title="Telegram — выключение доставки"
+            capture systemctl disable --now awg-notify-flush.timer || true
+            capture systemctl disable --now awg-notify-watch.timer || true
+            capture systemctl disable --now awg-notify-daily.timer || true
+            capture systemctl disable --now awg-notify-boot.service || true
+          fi
+        elif grep -Fxq 'NOTIFY_CONFIGURED=yes' <<<"$current"; then
+          if confirm "Доставка Telegram" "Включить уведомления через настроенного бота? VPN и MikroTik не меняются."; then
+            title="Telegram — включение доставки"
             capture systemctl enable --now awg-notify-flush.timer || true
-            capture systemctl enable awg-notify-boot.service || true
             capture systemctl enable --now awg-notify-watch.timer || true
+            capture systemctl enable awg-notify-boot.service || true
+            if grep -Fxq 'NOTIFY_PREF_DAILY_REPORT=on' <<<"$current"; then
+              notify_sync_daily_schedule "DAILY_REPORT" || msg "Telegram" "Не удалось включить таймер сводки."
+            else
+              notify_sync_daily_schedule "" || msg "Telegram" "Не удалось отключить таймер сводки."
+            fi
           fi
         else
-          msg "Telegram" "Сначала настройте токен и chat ID через пункт 1."
+          msg "Telegram" "Сначала настройте бота через пункт 1."
         fi
         ;;
-      4)
-        capture systemctl disable --now awg-notify-flush.timer || true
-        capture systemctl disable --now awg-notify-boot.service || true
-        capture systemctl disable --now awg-notify-watch.timer || true
-        ;;
-      5)
-        if grep -Fxq 'NOTIFY_CONFIGURED=yes' <<<"$current"; then
-          capture systemctl enable --now awg-notify-daily.timer || true
-        else
-          msg "Telegram" "Сначала настройте Telegram-бота."
-        fi
-        ;;
-      6) capture systemctl disable --now awg-notify-daily.timer || true ;;
-      7) capture /usr/local/sbin/awg-notify status || true ;;
-      8) if [[ -x /usr/local/sbin/awg-notify-pair-repair ]]; then
+      4) notify_types_menu ;;
+      5) title="Telegram — состояние"; capture /usr/local/sbin/awg-notify status || true ;;
+      6) if [[ -x /usr/local/sbin/awg-notify-pair-repair ]]; then
            run_interactive "Исправление Telegram chat ID" /usr/local/sbin/awg-notify-pair-repair
          else
            msg "Telegram" "Помощник привязки чата ещё не установлен."
          fi ;;
-      9) notify_types_menu ;;
       0) return 0 ;;
     esac
   done
 }
-
 
 appearance_menu(){
   local choice current style_tmp
