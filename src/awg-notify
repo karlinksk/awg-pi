@@ -353,6 +353,26 @@ EVENT_LABELS = {
 }
 
 
+def readable_transport(value):
+    return {"mihomo": "Mihomo", "awg": "AmneziaWG",
+            "unconfigured": "не настроен"}.get(value, value)
+
+
+def readable_message(kind, message):
+    """Translate known producer messages without changing stored events."""
+    if kind == "NODE_SWITCH" and message.startswith("Automatic Mihomo node switch: "):
+        detail = message.split(": ", 1)[1]
+        return "Mihomo автоматически переключил узел. Подробности: " + detail
+    if kind in ("TRANSPORT_SWITCH", "TRANSPORT_FAILOVER"):
+        match = re.fullmatch(r"Transport: (mihomo|awg|unconfigured) -> (mihomo|awg|unconfigured); postcheck completed", message)
+        if match:
+            previous, current = (readable_transport(value) for value in match.groups())
+            return (f"Транспорт переключён: {previous} → {current}. "
+                    "Проверка после переключения завершена. "
+                    "Доступность сайтов и устройств LAN этим сообщением не подтверждается.")
+    return message
+
+
 def format_event(kind, severity, message):
     """Human-friendly Telegram display; never modifies persisted event data."""
     if kind in ("VPN_LOST", "POOL_EMPTY") or severity == "critical":
@@ -364,7 +384,7 @@ def format_event(kind, severity, message):
     else:
         symbol = "🟩"
     title = EVENT_LABELS.get(kind, kind)
-    return f"{symbol} AWG Pi — {title}\n{message}"
+    return f"{symbol} AWG Pi — {title}\n{readable_message(kind, message)}"
 
 
 def flush(db, sender=curl_api, secret_path=SECRET_PATH, active="", limit=2, secret_uid=0):
