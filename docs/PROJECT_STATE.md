@@ -1,3 +1,10 @@
+## 2026-10-24 — предрелизный интеграционный кандидат (без выпуска)
+
+- Draft PR #164 (`integration/v1.3.0-pre-rc-20261024`) объединяет утверждённый installer candidate #162 и русские уведомления AWG Notify с закреплением Telegram IPv4 `149.154.166.110` для резервного `eth0`. Root-only разрешение `router-sstp-approved` намеренно не создаётся инсталлятором без локального RouterOS FAIL-CLOSED gate.
+- На test Pi `awg-upgrade` получено реальное сообщение Telegram через Pi → MikroTik → SSTP. При временном отключении отдельного Telegram SSTP-маршрута соединение завершилось timeout, после восстановления HTTPS снова ответил 302. Сам SSTP не отключался. Автоматический переход после отказа обоих транспортов Pi отдельно не проверен.
+- Интегрированы Matrix UI, Mihomo/AWG/Xray/VLESS, общий пул, медиа-зависимости, опциональные READY/Hot Pool, Telegram, DC и ограниченный `awg-gpt`; clean-install этой точной версии ещё не пройден. IPTV updater в данном дереве не подтверждён, отложен, не выдавать за готовый.
+- PR #115/#162/#163/#164 — draft/open; не merged/released. Остаются аппаратные gate: clean-install, LAN-клиент, автоматический failover, Transit FAIL-CLOSED, reboot и rollback. Рабочий носитель и приоритетный SSTP сохранять.
+
 # AWG Pi Gateway — состояние проекта и согласованные решения
 
 ## 2026-10-23 — pre-clean-install audit and pinned AWG v3.1 sources
