@@ -102,7 +102,7 @@ def notify_manual_node_change(kind, node):
             timeout=2,check=False)
         if enabled.returncode!=0:
             return
-        clean=re.sub(r"[\\r\\n\\t]+"," ",node).strip()[:120]
+        clean=re.sub(r"[\r\n\t]+"," ",node).strip()[:120]
         text=(f"Ручное переключение ноды: {kind}. "
               f"Выбран узел: {clean}. "
               "Проверена готовность локального шлюза; LAN отдельно не проверялся.")
