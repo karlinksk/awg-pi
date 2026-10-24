@@ -602,7 +602,28 @@ class LinuxBackend:
         state["boot_tested"]=False
         write_atomic(self.snapshot/"state.json",json.dumps(state).encode())
     def disarm_watchdog(self):
-        run("systemctl","stop",self.watchdog_unit+".timer",timeout=9)
+        timer=self.watchdog_unit+".timer"
+        try:
+            run("systemctl","stop",timer,timeout=9)
+        except (OSError,RuntimeError,subprocess.TimeoutExpired):
+            # systemd may unload an ephemeral systemd-run timer while stopping
+            # it and report failure despite successful removal. Never treat
+            # that as a failed VPN activation if cancellation is proven.
+            # A missing/active/unknown verification or pre-commit snapshot
+            # still raises, preserving the fail-closed transaction contract.
+            if not self.snapshot:
+                raise
+            state=json.loads((self.snapshot/"state.json").read_text()).get("state")
+            if state not in ("committed","quiesced"):
+                raise
+            for unit in (timer,self.watchdog_unit+".service"):
+                result=subprocess.run(
+                    ["systemctl","show",unit,"-p","ActiveState","--value"],
+                    stdout=subprocess.PIPE,stderr=subprocess.DEVNULL,
+                    text=True,timeout=6)
+                if result.returncode or result.stdout.strip()!="inactive":
+                    raise RuntimeError("WATCHDOG_CANCEL_NOT_CONFIRMED")
+            auto_fault("WATCHDOG","TIMER_ALREADY_INACTIVE")
     def fail_closed(self):
         return failclosed()
 
