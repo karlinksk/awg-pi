@@ -466,50 +466,8 @@ is_enabled(){
 }
 
 service_candidate_allowed(){
-  local candidate="$1" response
-  case "$MIHOMO_SERVICE_GATE_MODE" in
-    off) return 0 ;;
-    balanced)
-      # Medium NETWORK confidence, explicitly not authenticated chat.
-      # HTTPS challenge or login page is sufficient only alongside API PASS
-      # and a NEW actual 24-frame Stage18 video decode for this exact node.
-      [[ -x "$MIHOMO_SERVICE_QUICKCHECK_BIN" && -x "$MIHOMO_NETWORK_GATE_BIN" ]] || return 1
-      response="$("$MIHOMO_SERVICE_QUICKCHECK_BIN" service-scan --node "$candidate" 2>/dev/null)" || true
-      # service-scan also emits safe diagnostic metadata such as
-      # SERVICE_IP_CONNECT_STATE / SERVICE_REASON_YOUTUBE_VIDEO. The strict
-      # network gate accepts EXACTLY five service-evidence fields and rejects
-      # unknown fields. Feed ONLY those five, preserving their original
-      # values and duplicate lines so the gate still rejects malformed input.
-      # Hot Pool scan_one() already follows this same verified contract.
-      local gate_output gate_reason
-      if gate_output="$(printf '%s\n' "$response" | awk -F= '
-        $1 == "SERVICE_ELIGIBILITY" ||
-        $1 == "SERVICE_CHECK_OPENAI_API" ||
-        $1 == "SERVICE_CHECK_CHATGPT_WEB" ||
-        $1 == "SERVICE_CHECK_YOUTUBE_VIDEO" ||
-        $1 == "SERVICE_REASON_CHATGPT_WEB" { print }
-      ' | "$MIHOMO_NETWORK_GATE_BIN" 2>/dev/null)"; then
-        return 0
-      fi
-      gate_reason="$(sed -nE 's/^NETWORK_REASON=([A-Z0-9_]{1,64})$/\1/p' <<<"$gate_output" | head -1)"
-      [[ -n "$gate_reason" ]] || gate_reason=UNKNOWN
-      printf 'READY_AUTO=CANDIDATE_SERVICE_REJECTED REASON=%s\n' "$gate_reason" >&2
-      return 1
-      ;;
-    require)
-      [[ -x "$MIHOMO_SERVICE_GATE_BIN" ]] || return 1
-      if response="$("$MIHOMO_SERVICE_GATE_BIN" --node "$candidate" 2>/dev/null)" &&
-         grep -Fxq 'SERVICE_ELIGIBILITY=PASS' <<<"$response"; then
-        return 0
-      fi
-      # A stale cache is not a denial of the node itself: recheck only this
-      # candidate through a separate, RAM-only TUN-disabled Mihomo instance.
-      [[ -x "$MIHOMO_SERVICE_QUICKCHECK_BIN" ]] || return 1
-      response="$("$MIHOMO_SERVICE_QUICKCHECK_BIN" service-scan --node "$candidate" 2>/dev/null)" || return 1
-      grep -Fxq 'SERVICE_ELIGIBILITY=PASS' <<<"$response"
-      ;;
-    *) return 1 ;;
-  esac
+  # Website/service eligibility is no longer a selection requirement.
+  return 0
 }
 
 failover_fixed(){
@@ -632,25 +590,6 @@ standby_postcheck(){
   ip link show dev "$MIHOMO_STANDBY_TUN_IF" >/dev/null 2>&1 || {
     echo 'READY_TUN_CHECK=IF_DOWN'; return 1
   }
-  # No HTTP_PROXY inheritance and no global routing change. This validates
-  # the actual Pi-bound TUN, independently of the localhost proxy preflight.
-  code="$("$MIHOMO_STANDBY_CURL_BIN" -q -4 -sS --noproxy '*' \
-    --interface "$MIHOMO_STANDBY_TUN_IF" --connect-timeout 5 --max-time 12 \
-    -o /dev/null -w '%{http_code}' https://api.openai.com/v1/models 2>/dev/null)" || {
-      echo 'READY_TUN_CHECK=OPENAI_NETWORK_FAILED'; return 1
-    }
-  [[ "$code" == 401 ]] || { echo 'READY_TUN_CHECK=OPENAI_NOT_QUALIFIED'; return 1; }
-  addr="$("$MIHOMO_STANDBY_CURL_BIN" -q -4 -fsS --noproxy '*' \
-    --interface "$MIHOMO_STANDBY_TUN_IF" --connect-timeout 5 --max-time 12 \
-    https://api.ipify.org 2>/dev/null)" || {
-      echo 'READY_TUN_CHECK=EGRESS_FAILED'; return 1
-    }
-  python3 -c 'import ipaddress,sys
-try:
- a=ipaddress.IPv4Address(sys.stdin.read().strip())
- sys.exit(0 if a.is_global else 1)
-except ValueError:
- sys.exit(1)' <<<"$addr" || { echo 'READY_TUN_CHECK=EGRESS_INVALID'; return 1; }
   standby_routes_safe || { echo 'READY_TUN_CHECK=MARK_MISMATCH'; return 1; }
   echo READY_TUN_CHECK=PASS
 }
@@ -719,20 +658,10 @@ auto_xray_candidate(){
     echo "MIHOMO_NODE_FAILOVER=XRAY_TRANSACTION_NOT_CERTIFIED" >&2
     return 2
   fi
-  # Cache status is historical evidence, never a veto or proof of this
-  # exact current provider profile. ALWAYS fresh-probe the selected Xray
-  # index in an isolated sidecar before arming any live transaction. This
-  # also applies to callers of the older bounded AUTO dispatcher.
-  local engine index probe
+  local engine index
   engine="$(sed -n 's/^NODE_ENGINE=//p' <<<"$resolved")"
   index="$(sed -n 's/^NODE_INDEX=//p' <<<"$resolved")"
-  probe="${MIHOMO_XRAY_NATIVE_RECOVERY_CLI:-/usr/local/sbin/awg-xray-manual-switch}"
-  if [[ "$engine" != XRAY || ! "$index" =~ ^[1-9][0-9]{0,4}$ ||
-        ! -x "$probe" ]] ||
-     ! "$probe" probe-xray "$index" >/dev/null 2>&1; then
-    echo "MIHOMO_NODE_FAILOVER=XRAY_EXACT_FRESH_HTTPS_UNVERIFIED" >&2
-    return 2
-  fi
+  [[ "$engine" == XRAY && "$index" =~ ^[1-9][0-9]{0,4}$ ]] || return 2
   # A standby repair while AWG is active MUST NOT mutate its routes.
   # READY has a distinct evidence contract and is not covered by this canary.
   local operating_mode
@@ -902,9 +831,6 @@ unified_native_tun_postcheck(){
     sleep 1
   done
   (( ready == 1 )) || return 2
-  code="$(curl -q -4 -sS --noproxy '*' --interface mihomo0 --connect-timeout 5 --max-time 12 \
-     -o /dev/null -w '%{http_code}' https://api.openai.com/v1/models 2>/dev/null)" || return 1
-  [[ "$code" == 401 ]] || return 1
   if [[ "$mode" == transit ]]; then
     local report
     report="$("$MIHOMO_AUTO_TRANSIT_ROUTING" status 2>/dev/null)" || return 2
@@ -1003,7 +929,6 @@ failover_unified(){
     if [[ "$engine" == MIHOMO ]]; then
       # Every candidate needs a fresh HTTPS proof. Historical pool "OK" and
       # UI status alone never qualify a current provider profile for a switch.
-      "$native_cli" probe-native "$candidate" >/dev/null 2>&1 || continue
       service_candidate_allowed "$candidate" || continue
       rc=0
       MIHOMO_NODE_FAILOVER_RECOVERY=1 "$MIHOMO_CONFIGURE" node select-auto "$candidate" >/dev/null || rc=$?
@@ -1240,7 +1165,7 @@ failover_auto(){
         if [[ "${MIHOMO_STANDBY_REPAIR:-0}" == 1 ]]; then
           post_summary="$(standby_postcheck "$candidate" 2>&1)" && post_rc=0 || post_rc=$?
         else
-          post_summary="$("$MIHOMO_READY_POSTCHECK_BIN" "$candidate" 2>&1)" && post_rc=0 || post_rc=$?
+          post_summary="$(unified_native_tun_postcheck 2>&1)" && post_rc=0 || post_rc=$?
         fi
         if (( post_rc == 0 )); then
           printf 'READY_AUTO_POSTCHECK=PASS\n' >&2

@@ -22,14 +22,14 @@ linux=load("retry_linux","awg-xray-live-backend.py")
 class RetryContract(unittest.TestCase):
     def backend(self):
         backend=mock.Mock(spec=tx.Backend)
-        for method in ("check_local_https","check_provider_unchanged","check_tun_https",
+        for method in ("check_local_ready","check_provider_unchanged","check_tun_ready",
                        "check_policy_routes","check_boot_dependencies","verify_committed_node",
                        "fail_closed","finalize_retryable_abort"):
             getattr(backend,method).return_value=True
         return backend
 
     def test_https_failure_can_retry_after_confirmed_cleanup(self):
-        for method in ("check_local_https","check_tun_https"):
+        for method in ("check_local_ready","check_tun_ready"):
             with self.subTest(method=method):
                 backend=self.backend();getattr(backend,method).return_value=False
                 with self.assertRaises(tx.ActivationFailure) as error:
@@ -40,7 +40,7 @@ class RetryContract(unittest.TestCase):
                 backend.commit.assert_not_called()
 
     def test_unconfirmed_cleanup_retains_watchdog_and_blocks_retry(self):
-        backend=self.backend();backend.check_tun_https.return_value=False
+        backend=self.backend();backend.check_tun_ready.return_value=False
         backend.fail_closed.return_value=False
         with self.assertRaisesRegex(tx.ActivationFailure,"FAIL_CLOSED_UNCONFIRMED") as error:
             tx.activate("dead","next",backend)
@@ -50,7 +50,7 @@ class RetryContract(unittest.TestCase):
 
     def test_failed_or_raised_retirement_blocks_retry(self):
         for raises in (False,True):
-            backend=self.backend();backend.check_tun_https.return_value=False
+            backend=self.backend();backend.check_tun_ready.return_value=False
             if raises:backend.finalize_retryable_abort.side_effect=RuntimeError("TIMER_FAILED")
             else:backend.finalize_retryable_abort.return_value=False
             with self.assertRaises(tx.ActivationFailure) as error:
@@ -68,7 +68,7 @@ class RetryContract(unittest.TestCase):
 
     def test_backend_exception_text_cannot_forge_candidate_failure(self):
         backend=self.backend()
-        backend.stage_mihomo_bridge.side_effect=RuntimeError("LIVE_TUN_HTTPS_FAILED")
+        backend.stage_mihomo_bridge.side_effect=RuntimeError("LIVE_TUN_NOT_READY")
         with self.assertRaises(tx.ActivationFailure) as error:
             tx.activate("dead","next",backend)
         self.assertFalse(error.exception.retryable)

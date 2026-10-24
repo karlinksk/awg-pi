@@ -2,34 +2,30 @@
 
 ## Current candidate contract — 2026-10-24, PR #165
 
-This section supersedes historical READY/Hot Pool/FIXED acceptance criteria
-below for the simplified candidate. Retain fresh per-candidate qualification,
-actual native TUN OpenAI HTTPS 401 and bounded route recovery. AUTO tries native
-Mihomo candidates before Xray; AWG is the final sticky fallback. Retired READY
-priority must not redirect this path. Legacy state remains in upgrade backups.
+Owner-directed revision: manual and AUTO selection must not require external
+HTTPS, OpenAI HTTP401, ipify, ChatGPT or YouTube eligibility. This supersedes
+the earlier service/HTTPS acceptance requirements below. No substitute website
+probe is introduced. Retained checks cover profile identity and core config,
+running services/local SOCKS5, selected controller target, TUN interface,
+route ownership, Transit guard, SSH/DNS, persistence and independent rollback.
 
-The native postcheck re-arms guarded Transit routing before waiting up to 20
-seconds for both route tables. Exit 2 denotes infrastructure/management/guard
-failure; HTTPS proof failure is exit 1. Neither is evidence that every provider
-node is dead. A failed attempt must quiesce successfully before another attempt.
-Synthetic shell tests cover these boundaries; they never establish hardware PASS.
+Local runtime readiness is not proof that a remote node or website works.
+AUTO continues to react to local transport/runtime failures; provider-side
+outages with an apparently ready local core may remain undetected without
+the core's own failure evidence. Never call a local-ready receipt HTTPS/LAN PASS.
+Xray inventory background checks validate local engine/SOCKS readiness only.
+Persisted legacy website-eligibility settings cannot veto manual or AUTO.
 
-The native-to-Xray AUTO dispatcher may continue after candidate HTTPS failure
-only when the live backend returns exit 3: the provider/current identity and
-quiesced mode guard were rechecked, snapshot state was durably set to quiesced,
-and that transaction's watchdog timer was retired. A queued old watchdog must
-ignore the retired snapshot. Generic aborts, infrastructure/persistence errors
-and unconfirmed cleanup still stop the event for AWG fallback. This source
-contract does not certify live Xray TUN, nor retry from an already-active Xray
-bridge; those require separate guarded hardware evidence.
+Regression must prove that blocked/unreachable OpenAI never prevents selection,
+while invalid/changed profiles, missing services/interfaces, unsafe routes,
+failed guard/SSH/DNS and unconfirmed rollback still prevent success. Retain
+native-before-Xray order, bounded retries, watchdog retirement and sticky AWG.
 
-Before marking #165 ready, attach exact-commit results for full Python discovery,
-CI shell suites, ShellCheck, pinned AWG build/preflight, clean test-media install,
-preserving upgrade/rollback, real native and cross-engine candidate retry,
-pool exhaustion and healthy AWG fallback, forwarded LAN packet FAIL-CLOSED,
-Selective FAIL-OPEN, DNS/SSH/SSTP, Telegram/Matrix and reboot recovery. Do not
-modify MikroTik or working media for these tests without separate authorization.
-Absent evidence remains OPEN even when source tests pass.
+Hardware acceptance still requires real independent traffic observation,
+manual/native/cross-engine AUTO, exhaustion/AWG fallback, forwarded LAN,
+Selective FAIL-OPEN and Transit FAIL-CLOSED, install/upgrade/reboot/rollback.
+External traffic observations are test evidence, never activation prerequisites.
+Do not touch MikroTik or working media without separate authorization.
 
 This document is the hardware/release gate for v1.3.0.
 

@@ -33,6 +33,11 @@ case "$*" in
   *) exit 1 ;;
 esac
 MOCK
+cat >"$TMP/bin/systemctl" <<'MOCK'
+#!/usr/bin/env bash
+[[ "${MOCK_CORE_STATE:-up}" == up ]]
+MOCK
+export SYSTEMCTL_BIN="$TMP/bin/systemctl"
 chmod +x "$TMP/bin/"*
 echo '45.86.66.170' >"$TMP/expected"
 export AWG_ENV_FILE="$TMP/env"
@@ -64,8 +69,10 @@ OUT="$($CLI status)"
 grep -Fq 'Transport ID: mihomo' <<<"$OUT"
 OUT="$($CLI check mihomo)"
 [[ "$OUT" == healthy ]]
-if MOCK_TUN_STATE=bad "$CLI" check mihomo >/dev/null 2>&1; then
-  echo 'broken Pi-bound TUN was accepted as a healthy Mihomo transport' >&2
+# External HTTPS failure must not veto a locally ready core.
+MOCK_TUN_STATE=bad "$CLI" check mihomo | grep -Fxq healthy
+if MOCK_CORE_STATE=down "$CLI" check mihomo >/dev/null 2>&1; then
+  echo 'stopped core was accepted' >&2
   exit 1
 fi
 printf '%s\n' broken >"$TMP/transport"

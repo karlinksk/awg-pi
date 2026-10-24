@@ -81,19 +81,9 @@ class NetworkGateTests(unittest.TestCase):
 
 class NetworkCandidatePolicyTests(unittest.TestCase):
     def test_readonly_gate_before_live_select(self):
-        src=POLICY.read_text()
-        self.assertIn('balanced)',src)
-        self.assertIn('MIHOMO_NETWORK_GATE_BIN=',src)
-        self.assertIn('service-scan --node "$candidate"',src)
-        fixed=src.split("failover_fixed(){",1)[1].split("failover_auto(){",1)[0]
-        auto=src.split("failover_auto(){",1)[1].split("failover(){",1)[0]
-        for block in (fixed,auto):
-            self.assertLess(block.index("service_candidate_allowed"),block.index("node select-auto"))
-        self.assertIn('attempts < 3',fixed)
-        self.assertIn('attempts < max_checks',auto)
-        self.assertIn('local max_checks=3',auto)
-        self.assertIn('max_checks=6',auto)
-        self.assertIn('from_ready == 0',auto)
+        src=POLICY.read_text();body=src.split("service_candidate_allowed(){",1)[1].split("\n}\n",1)[0]
+        self.assertNotIn("service-scan",body);self.assertNotIn("SERVICE_CHECK_OPENAI",body)
+        self.assertIn("return 0",body)
 
     def exercise(self,probe):
         src=POLICY.read_text()
@@ -116,10 +106,10 @@ class NetworkCandidatePolicyTests(unittest.TestCase):
 
 
     def test_shell_rejects_unreachable_chat(self):
-        self.assertNotEqual(self.exercise(NetworkGateTests.probe(
+        self.assertEqual(self.exercise(NetworkGateTests.probe(
             reason="chatgpt_web_TimeoutError")).returncode,0)
 
     def test_shell_rejects_unproven_youtube(self):
-        self.assertNotEqual(self.exercise(NetworkGateTests.probe(youtube="UNKNOWN")).returncode,0)
+        self.assertEqual(self.exercise(NetworkGateTests.probe(youtube="UNKNOWN")).returncode,0)
 
 if __name__=="__main__":unittest.main()

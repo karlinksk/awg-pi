@@ -66,21 +66,18 @@ def routes_ok():
             return False
     return True
 
-def http_code(args):
-    env={k:v for k,v in os.environ.items() if k.lower() not in
-         ("http_proxy","https_proxy","all_proxy","no_proxy")}
+def tun_runtime_ready():
+    if not active(MIHOMO):return False
     try:
-        return run("curl","-q","-4","-sS","--connect-timeout","7","--max-time","20",
-          "-o","/dev/null","-w","%{http_code}",*args,
-          "https://api.openai.com/v1/models",timeout=25,env=env)=="401"
-    except (OSError,RuntimeError,subprocess.TimeoutExpired):
-        return False
+        run("ip","link","show","dev","mihomo0",timeout=4)
+        return bool(controller().get("now"))
+    except (OSError,RuntimeError,ValueError,subprocess.TimeoutExpired):return False
 
-def original_tun_unreachable_twice():
-    # This emergency executor is NOT a manual healthy-node selector.
-    # Never disrupt a proven reachable incumbent just to try VLESS.
-    return (not http_code(["--interface","mihomo0","--noproxy","*"]) and
-            not http_code(["--interface","mihomo0","--noproxy","*"]))
+
+def original_tun_unready_twice():
+    # AUTO does not replace a locally ready incumbent for performance.
+    return not tun_runtime_ready() and not tun_runtime_ready()
+
 
 def controller():
     opener=urllib.request.build_opener(urllib.request.ProxyHandler({}))
@@ -112,10 +109,10 @@ def verified_awg_backup_safe():
         else:
             # A healthy Selective AWG backup has the same ownership
             # priority as a healthy Transit AWG backup. Keep SSH/DNS and
-            # prove an actual AWG HTTPS response before protecting it.
+            # require the AWG handshake and route ownership before protecting it.
             if not active("ssh.service") or not active("dnsmasq.service") or \
                run("/usr/local/sbin/awg-transport","check","awg",timeout=12)!="healthy" or \
-               not http_code(["--interface","awg0","--noproxy","*"]):
+               run("/usr/local/sbin/awg-transport","check","awg",timeout=12)!="healthy":
                 return False
         for table in ("100","101"):
             lines=run("ip","-4","route","show","table",table,timeout=6).splitlines()
@@ -183,7 +180,7 @@ def verified_degraded_fixed_baseline():
 
     Only Transit FAIL-CLOSED with an inactive Mihomo, absent Transit rule,
     and no foreign policy routes is eligible. Direct/Selective is forbidden.
-    The external dispatcher still must prove TWO failed incumbent HTTPS tests.
+    The external dispatcher still must prove two locally unready incumbent observations.
     """
     if (socket.gethostname()!="awg-upgrade" or
         os.environ.get("AWG_XRAY_DEGRADED_FIXED")!="1" or
@@ -311,22 +308,9 @@ def write_atomic(path, data,mode=0o600):
         os.replace(tmp,path)
     finally:tmp.unlink(missing_ok=True)
 
-# Preflight proof must be independent of health-cache freshness. A direct
-# caller of this guarded backend must meet the same requirement as AUTO.
-FRESH_XRAY_PROOF=Path("/usr/local/sbin/awg-xray-manual-switch")
 
-def fresh_exact_xray_https(index,expected_provider_sha):
-    proof=FRESH_XRAY_PROOF
-    if (not proof.is_file() or proof.is_symlink() or proof.stat().st_uid!=0):
-        raise RuntimeError("XRAY_FRESH_PROOF_HELPER_UNTRUSTED")
-    try:
-        result=run(str(proof),"probe-xray",str(index),timeout=75)
-    except (OSError,RuntimeError,subprocess.TimeoutExpired):
-        raise RuntimeError("XRAY_EXACT_ISOLATED_HTTPS_UNVERIFIED") from None
-    if result!="FRESH_CANDIDATE_PROOF=PASS_NO_MUTATION":
-        raise RuntimeError("XRAY_EXACT_ISOLATED_HTTPS_UNVERIFIED")
-    if hashlib.sha256(PROVIDER.read_bytes()).hexdigest()!=expected_provider_sha:
-        raise RuntimeError("XRAY_PROVIDER_CHANGED_DURING_PROOF")
+
+
 
 class LinuxBackend:
     def __init__(self,failed,candidate):
@@ -399,9 +383,7 @@ class LinuxBackend:
             fields.get("NODE_PROVIDER_SHA256")!=self.provider_hash):
             raise RuntimeError("XRAY_CANDIDATE_IDENTITY_CHANGED")
         # Historical pool status is never a freshness guarantee or a veto.
-        # Exact isolated HTTPS must pass *inside this executor's own preflight*
-        # BEFORE the watchdog arms or any live interface/service can change.
-        fresh_exact_xray_https(self.index,self.provider_hash)
+        # Exact profile validation above is sufficient; no external HTTPS gate.
         # Do not call awg-route while holding the maintenance lock: that CLI
         # acquires the same flock. The transit-routing helper is lock-free.
         if operating_mode=="transit":
@@ -446,30 +428,16 @@ class LinuxBackend:
     def start_xray(self):
         run("systemctl","start",XRAY,timeout=25)
         if not active(XRAY):raise RuntimeError("XRAY_SERVICE_NOT_ACTIVE")
-    def check_local_https(self):
-        """Bounded Xray SOCKS5 warmup followed by exact OpenAI HTTPS 401 proof.
-
-        systemd Type=simple returns "active" before the Xray TCP listener
-        necessarily binds. A single immediate curl used to abort within 1 ms
-        of core startup. Wait for localhost listen (not a PASS), then allow
-        up to three real outbound TLS checks. Never accept a bare socket
-        connection, HTTP 403/5xx, or a stopped/restarted Xray as ready.
-        """
+    def check_local_ready(self):
         deadline=time.monotonic()+12
         while time.monotonic()<deadline:
             if not active(XRAY):return False
             try:
-                with socket.create_connection(("127.0.0.1",17892),timeout=.5):
-                    break
-            except OSError:
-                time.sleep(.25)
-        else:
-            return False
-        for attempt in range(3):
-            if not active(XRAY):return False
-            if http_code(["--socks5-hostname","127.0.0.1:17892","--noproxy",""]):
-                return True
-            if attempt<2:time.sleep(1)
+                with socket.create_connection(("127.0.0.1",17892),timeout=.5) as sock:
+                    sock.settimeout(.5);sock.sendall(b"\x05\x01\x00")
+                    if sock.recv(2)==b"\x05\x00":return True
+            except OSError:pass
+            time.sleep(.25)
         return False
     def stage_mihomo_bridge(self):
         if not self.check_provider_unchanged():raise RuntimeError("PROVIDER_ROTATED")
@@ -519,8 +487,8 @@ class LinuxBackend:
             except Exception:pass
             time.sleep(.3)
         raise RuntimeError("BRIDGE_NOT_SELECTABLE")
-    def check_tun_https(self):
-        return http_code(["--interface","mihomo0","--noproxy","*"])
+    def check_tun_ready(self):
+        return tun_runtime_ready()
     def check_policy_routes(self):
         if MODE.read_text().strip()=="selective":
             if not routes_ok() or self.degraded_fixed:
@@ -538,8 +506,8 @@ class LinuxBackend:
                     # this same check again after the first pass re-arms 0x100.
                     # Reject a PRE-EXISTING rule on the first check, but accept
                     # our own re-armed rule only while ownership, live TUN
-                    # HTTPS and all safety prerequisites still pass.
-                    if (not self.check_tun_https() or
+                    # local readiness and all safety prerequisites still pass.
+                    if (not self.check_tun_ready() or
                         VPN_ENABLED.read_text().strip()!="1" or
                         not verified_selective_route_ownership()):
                         return False
@@ -561,9 +529,9 @@ class LinuxBackend:
                 return False
         # For an exhausted FIXED chain, the previous failed Mihomo attempt
         # intentionally disabled Transit. Re-enable the rule ONLY after the
-        # newly selected Xray-backed Mihomo TUN actually passed HTTPS 401.
+        # newly selected Xray-backed Mihomo TUN is locally ready.
         if self.degraded_fixed:
-            if not routes_ok() or not self.check_tun_https():
+            if not routes_ok() or not self.check_tun_ready():
                 return False
             try:
                 run("/usr/local/sbin/awg-transit-routing","apply",timeout=16)
@@ -574,7 +542,7 @@ class LinuxBackend:
                 "Transit policy rule: ACTIVE" in status and
                 "Transit VPN table: READY" in status)
     def install_boot_dependencies(self):
-        # Called strictly AFTER live TUN HTTPS + policy route postcheck.
+        # Called strictly after local TUN and policy-route checks.
         # Up to this point an interrupted reboot discards /run overrides.
         if not BRIDGE_RUNTIME.is_file() or BRIDGE_RUNTIME.is_symlink():
             raise RuntimeError("EPHEMERAL_BRIDGE_NOT_READY")
@@ -681,7 +649,7 @@ def watchdog(path):
                                  for l in rules.splitlines())
                 else:good=False
             except Exception:good=False
-            if good and routes_ok() and http_code(["--interface","mihomo0","--noproxy","*"]):
+            if good and routes_ok() and tun_runtime_ready():
                 return
         if not failclosed():raise RuntimeError("FAIL_CLOSED_NOT_CONFIRMED")
         state["state"]="quiesced"
@@ -704,7 +672,7 @@ def cli():
     loader.exec_module(module)
     with Path("/run/awg-maintenance.lock").open("a") as lock:
         fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
-        if not original_tun_unreachable_twice():
+        if not original_tun_unready_twice():
             raise SystemExit("XRAY_TRANSACTION_ABORT=ORIGINAL_TUN_STILL_REACHABLE")
         try:
             receipt=module.activate(sys.argv[2],sys.argv[3],LinuxBackend(sys.argv[2],sys.argv[3]))
@@ -713,7 +681,7 @@ def cli():
                 print("XRAY_TRANSACTION_CANDIDATE_FAILED_RETRY_SAFE=YES")
                 raise SystemExit(3)
             raise
-    print("XRAY_TRANSACTION_RUNTIME_TUN_VERIFIED="+str(receipt.tun_verified).upper())
+    print("XRAY_TRANSACTION_LOCAL_RUNTIME_READY="+str(receipt.runtime_ready).upper())
     print("XRAY_TRANSACTION_REBOOT_TESTED=NO")
 
 if __name__=="__main__":

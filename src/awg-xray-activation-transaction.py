@@ -3,7 +3,7 @@
 
 The Linux backend is deliberately not activated by this module. Every state
 change is delegated to an explicitly installed backend. The transaction will
-not disarm its independent watchdog or report PASS before live TUN validation
+not disarm its independent watchdog or report PASS before local runtime validation
 AND persistence/reboot wiring are validated. A failed predecessor is never
 restored by this transaction.
 """
@@ -20,12 +20,12 @@ class Backend(Protocol):
     def arm_watchdog(self) -> None: ...
     def stage_xray(self, candidate: str) -> None: ...
     def start_xray(self) -> None: ...
-    def check_local_https(self) -> bool: ...
+    def check_local_ready(self) -> bool: ...
     def stage_mihomo_bridge(self) -> None: ...
     def restart_mihomo(self) -> None: ...
     def restore_kernel_routes(self) -> None: ...
     def select_xray_bridge(self) -> None: ...
-    def check_tun_https(self) -> bool: ...
+    def check_tun_ready(self) -> bool: ...
     def check_policy_routes(self) -> bool: ...
     def check_provider_unchanged(self) -> bool: ...
     def install_boot_dependencies(self) -> None: ...
@@ -40,7 +40,7 @@ class Backend(Protocol):
 class Receipt:
     candidate: str
     stages: tuple[str, ...]
-    tun_verified: bool
+    runtime_ready: bool
     boot_wiring_verified: bool
 
 def activate(failed: str, candidate: str, backend: Backend) -> Receipt:
@@ -56,20 +56,20 @@ def activate(failed: str, candidate: str, backend: Backend) -> Receipt:
         stages.append("WATCHDOG_ARMED")
         backend.stage_xray(candidate)
         backend.start_xray()
-        if not backend.check_local_https():
-            raise ActivationFailure("XRAY_LOCAL_HTTPS_FAILED")
-        stages.append("XRAY_LOCAL_VERIFIED")
+        if not backend.check_local_ready():
+            raise ActivationFailure("XRAY_LOCAL_NOT_READY")
+        stages.append("XRAY_LOCAL_READY")
         if not backend.check_provider_unchanged():
             raise ActivationFailure("PROVIDER_CHANGED")
         backend.stage_mihomo_bridge()
         backend.restart_mihomo()
         backend.restore_kernel_routes()
         backend.select_xray_bridge()
-        if not backend.check_tun_https():
-            raise ActivationFailure("LIVE_TUN_HTTPS_FAILED")
+        if not backend.check_tun_ready():
+            raise ActivationFailure("LIVE_TUN_NOT_READY")
         if not backend.check_policy_routes():
             raise ActivationFailure("POLICY_ROUTES_CHANGED")
-        stages.append("TUN_VERIFIED")
+        stages.append("TUN_RUNTIME_READY")
         backend.install_boot_dependencies()
         if not backend.check_boot_dependencies():
             raise ActivationFailure("BOOT_DEPENDENCIES_UNVERIFIED")
@@ -91,11 +91,11 @@ def activate(failed: str, candidate: str, backend: Backend) -> Receipt:
                 safe = False
             if not safe:
                 raise ActivationFailure("FAIL_CLOSED_UNCONFIRMED_WATCHDOG_ARMED") from exc
-            # Only a candidate HTTPS failure can permit the next AUTO node.
+            # Only typed candidate runtime failure can permit another AUTO node.
             # Retire this transaction's watchdog durably before any retry:
             # an old armed watchdog must never quiesce a later healthy node.
             if (isinstance(exc, ActivationFailure) and
-                str(exc) in ("XRAY_LOCAL_HTTPS_FAILED", "LIVE_TUN_HTTPS_FAILED")):
+                str(exc) in ("XRAY_LOCAL_NOT_READY", "LIVE_TUN_NOT_READY")):
                 finalize = getattr(backend, "finalize_retryable_abort", None)
                 try:
                     retryable = bool(finalize and finalize())

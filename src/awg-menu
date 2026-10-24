@@ -1382,11 +1382,11 @@ mihomo_pool_pick(){
       choice=1
     else
       choice="$(dialog --backtitle "$BACKTITLE" --title "$dialog_title" --item-help --menu \
-      "Mihomo: проверка узла. Xray VLESS: изолированный OpenAI HTTPS, НЕ READY/TUN/LAN. Xray проверяется в фоне; переключение требует ручного подтверждения." 26 114 12 \
+      "Mihomo: проверка узла. Xray VLESS: локальная проверка Xray/SOCKS5, НЕ READY/TUN/LAN. Xray проверяется в фоне; переключение требует ручного подтверждения." 26 114 12 \
       1 "Выбрать узел Mihomo / Xray [$region_label]" "Показать Mihomo и все Xray из подписки, включая ещё не проверенные. Ручное переключение Xray требует подтверждения и проверки TUN." \
       2 "Фильтр: Только Европа [$region_label]" "Для Xray страна без независимого GeoIP не подтверждена — такие ноды скрыты этим фильтром." \
-      3 "Протокол [$protocol_label]" "Фильтр выбора: все, VLESS, Trojan, HY2, SS, VMess. Mihomo pool и отдельная Xray HTTPS-проверка независимы." \
-      4 "Обновить проверку сейчас" "Проверить Mihomo; на live дополнительно Xray VLESS HTTPS в RAM. Рабочий VPN не переключается." \
+      3 "Протокол [$protocol_label]" "Фильтр выбора: все, VLESS, Trojan, HY2, SS, VMess. Mihomo pool и локальная Xray-проверка независимы." \
+      4 "Обновить проверку сейчас" "Проверить Mihomo; на live дополнительно локальный Xray/SOCKS5 в RAM. Рабочий VPN не переключается." \
       5 "Статистика пула Mihomo" "Счётчики относятся к Mihomo; работающие через Xray ноды отмечены отдельно в результатах." \
       6 "Показать все результаты" "Михомо и Xray раздельно: HTTPS Xray не означает READY/TUN/LAN; просмотр ничего не меняет." \
       0 "Назад" "Вернуться без выбора узла." 3>&1 1>&2 2>&3)" || return 1
@@ -1396,7 +1396,7 @@ mihomo_pool_pick(){
         title="Проверка пула Mihomo"
         if ! run_with_progress "$title" "$MIHOMO_POOL" ensure "$target" --geo-if-policy; then
           # A Mihomo-only scan can fail all Reality VLESS nodes while the
-          # independent Xray OpenAI network gate remains valid.
+          # Xray catalog readiness does not gate manual selection.
           [[ "$target" == live ]] || {
             dialog --backtitle "$BACKTITLE" --title "$title" --textbox "$TMP" 30 110
             continue
@@ -1548,18 +1548,6 @@ select_chain_index(){
   printf '%s\n' "$pick"
 }
 
-mihomo_live_egress_ip(){
-  # Public egress through TUN is not the provider's endpoint address.
-  local address
-  address="$(env -u http_proxy -u https_proxy -u all_proxy -u HTTP_PROXY -u HTTPS_PROXY -u ALL_PROXY \
-    curl -q -4 -fsS --noproxy '*' --interface mihomo0 \
-      --connect-timeout 5 --max-time 12 https://api.ipify.org 2>/dev/null)" || return 1
-  python3 - "$address" <<'PYEGRESS'
-import ipaddress,sys
-try: print(ipaddress.IPv4Address(sys.argv[1].strip()))
-except ValueError: raise SystemExit(1)
-PYEGRESS
-}
 
 mihomo_node_menu(){
   local node_name info_tmp current rc preview fixed_chain="" confirm_text sync_out updated_chain="" resolver engine index proof egress_ip
@@ -1583,75 +1571,25 @@ mihomo_node_menu(){
   }
   engine="$(sed -n 's/^NODE_ENGINE=//p' <<<"$resolver" | head -n1)"
   if [[ "$engine" == XRAY ]]; then
-    proof="$(sed -n 's/^NODE_BASIC_NETWORK=//p' <<<"$resolver" | head -n1)"
     index="$(sed -n 's/^NODE_INDEX=//p' <<<"$resolver" | head -n1)"
-    if [[ "$proof" != NETWORK_OK || ! "$index" =~ ^[0-9]+$ ]]; then
-      # One selection, one transaction. Qualify in isolation automatically.
-      if [[ ! "$index" =~ ^[1-9][0-9]*$ ]]; then
-        msg "Xray VLESS" "Нет корректного индекса Xray. Рабочая нода не изменена."
-        return 0
-      fi
-      title="Проверка выбранной Xray VLESS"
-      if ! run_with_progress "$title" "$MIHOMO_UNIFIED" probe "$index"; then
-        show_operation_result 1 "$title"
-        msg "Xray VLESS" "Изолированная проверка не прошла. Рабочая нода не изменена."
-        return 0
-      fi
-      resolver="$("$MIHOMO_UNIFIED" resolve "$node_name" 2>/dev/null)" || {
-        msg "Xray VLESS" "Подписка изменилась. Выберите ноду заново; активный VPN не изменён."
-        return 0
-      }
-      [[ "$(sed -n 's/^NODE_ENGINE=//p' <<<"$resolver" | head -n1)" == XRAY &&
-         "$(sed -n 's/^NODE_INDEX=//p' <<<"$resolver" | head -n1)" == "$index" &&
-         "$(sed -n 's/^NODE_BASIC_NETWORK=//p' <<<"$resolver" | head -n1)" == NETWORK_OK ]] || {
-        msg "Xray VLESS" "Нет свежего подтверждения HTTPS для той же ноды. Рабочий VPN не изменён."
-        return 0
-      }
-    fi
-    # Do not reuse AUTO's failed-incumbent transaction against a healthy node.
-    # The dedicated manual transaction must prove the current TUN, a fresh
-    # candidate and independent previous-node rollback before any mutation.
-    title="Ручной Xray — предварительная проверка"
+    [[ "$index" =~ ^[1-9][0-9]*$ ]] || {
+      msg "Xray VLESS" "Профиль изменился или индекс неверен. Обновите список."
+      return 0
+    }
+    title="Ручной Xray — проверка конфигурации"
     if ! run_with_progress "$title" "$XRAY_MANUAL_SWITCH" preview "$index"; then
-      # The catalog may still label a candidate NETWORK_OK even though its
-      # isolated proof is older than the manual transaction's 600s bound.
-      # Refresh only that exact proof and retry once without another menu.
-      if grep -Fxq 'XRAY_MANUAL_ERROR=XRAY_FRESH_NETWORK_PROOF_REQUIRED' "$TMP"; then
-        title="Обновление доказательства Xray HTTPS"
-        if ! run_with_progress "$title" "$MIHOMO_UNIFIED" probe "$index"; then
-          show_operation_result 1 "$title"
-          return 0
-        fi
-        resolver="$("$MIHOMO_UNIFIED" resolve "$node_name" 2>/dev/null)" || {
-          msg "Xray VLESS" "Подписка изменилась; активная нода не переключалась."
-          return 0
-        }
-        [[ "$(sed -n 's/^NODE_ENGINE=//p' <<<"$resolver" | head -n1)" == XRAY &&
-           "$(sed -n 's/^NODE_INDEX=//p' <<<"$resolver" | head -n1)" == "$index" &&
-           "$(sed -n 's/^NODE_BASIC_NETWORK=//p' <<<"$resolver" | head -n1)" == NETWORK_OK ]] || {
-          msg "Xray VLESS" "После обновления не подтверждён тот же Xray-профиль. Переключения нет."
-          return 0
-        }
-        title="Ручной Xray — предварительная проверка"
-        if ! run_with_progress "$title" "$XRAY_MANUAL_SWITCH" preview "$index"; then
-          show_operation_result 1 "$title"
-          return 0
-        fi
-      else
-        show_operation_result 1 "$title"
-        return 0
-      fi
-    fi
-    if grep -Fxq 'XRAY_MANUAL_ALREADY_SELECTED=YES' "$TMP"; then
-      msg "Xray VLESS" "Этот Xray-профиль уже выбран, HTTPS через текущий TUN работает. Повторная остановка Xray и переключение не требуются."
+      show_operation_result 1 "$title"
       return 0
     fi
-    confirm "Переключение на Xray" "Выполнить ручное переключение рабочего VPN на выбранную Xray-ноду?\\n\\nСначала проверяется текущий TUN и резервный путь, затем Xray HTTPS, после переключения — HTTPS через mihomo0. При ошибке выполняется откат к прежней ноде под защитой независимого таймера.\\n\\nDNS, SSH и MikroTik не меняются." || return 0
+    if grep -Fxq 'XRAY_MANUAL_ALREADY_SELECTED=YES' "$TMP"; then
+      msg "Xray VLESS" "Этот Xray-профиль уже выбран, локальный TUN готов. Повторная остановка Xray и переключение не требуются."
+      return 0
+    fi
+    confirm "Переключение на Xray" "Выполнить ручное переключение рабочего VPN на выбранную Xray-ноду?\\n\\nПроверяются конфигурация, сервис Xray, локальный TUN и маршруты. При ошибке выполняется откат к прежней ноде под защитой независимого таймера.\\n\\nDNS, SSH и MikroTik не меняются." || return 0
     title="Ручной переход на Xray"
     if run_with_progress "$title" "$XRAY_MANUAL_SWITCH" apply "$index"; then
-      egress_ip="$(mihomo_live_egress_ip || true)"
-      [[ -n "$egress_ip" ]] || egress_ip="не подтверждён"
-      msg "Xray VLESS — выбран" "Движок: Xray VLESS\nУзел: $node_name\nПубличный IP выхода через mihomo0: $egress_ip\n\nАдрес сервера в списке — не IP выхода. TUN HTTPS подтверждён; LAN и reboot не тестировались."
+
+      msg "Xray VLESS — выбран" "Движок: Xray VLESS\nУзел: $node_name\nДоступность внешних сайтов не проверялась\n\nАдрес сервера в списке — не IP выхода. Локальная готовность подтверждена; доступность сайтов, LAN и reboot не тестировались."
     else
       show_operation_result 1 "$title"
     fi
@@ -1679,15 +1617,14 @@ mihomo_node_menu(){
     return 0
   fi
   if grep -Fxq 'NATIVE_MANUAL_ALREADY_SELECTED=YES' "$TMP"; then
-    msg "Узел Mihomo" "Этот профиль уже выбран и HTTPS через текущий TUN работает. Повторное переключение не требуется."
+    msg "Узел Mihomo" "Этот профиль уже выбран и локальный TUN готов. Повторное переключение не требуется."
     return 0
   fi
-  confirm "Переключение на Mihomo" "Сделать выбранную ноду рабочим выходом независимо от текущего движка?\n\nНовый профиль и IP подготавливаются под защитой watchdog; возможен короткий перерыв TUN при перезапуске Mihomo. После переключения будет проверено реальное HTTPS через mihomo0.\n\nПри ошибке прежний Xray/Mihomo и конфигурация восстанавливаются. FIXED/AUTO, READY, DNS, SSH и MikroTik не меняются." || return 0
+  confirm "Переключение на Mihomo" "Сделать выбранную ноду рабочим выходом независимо от текущего движка?\n\nНовый профиль и IP подготавливаются под защитой watchdog; возможен короткий перерыв TUN при перезапуске Mihomo. После переключения будут проверены сервис, выбранная нода и маршруты.\n\nПри ошибке прежний Xray/Mihomo и конфигурация восстанавливаются. FIXED/AUTO, READY, DNS, SSH и MikroTik не меняются." || return 0
   title="Защищённый выбор ноды Mihomo"
   if run_with_progress "$title" "$XRAY_MANUAL_SWITCH" native-apply "$node_name"; then
-    egress_ip="$(mihomo_live_egress_ip || true)"
-    [[ -n "$egress_ip" ]] || egress_ip="не подтверждён"
-    msg "Mihomo — выбран" "Движок: Mihomo\nУзел: $node_name\nПубличный IP выхода через mihomo0: $egress_ip\n\nАдрес сервера в списке — не IP выхода. TUN HTTPS подтверждён; LAN и reboot не тестировались."
+
+    msg "Mihomo — выбран" "Движок: Mihomo\nУзел: $node_name\nДоступность внешних сайтов не проверялась\n\nАдрес сервера в списке — не IP выхода. Локальная готовность подтверждена; доступность сайтов, LAN и reboot не тестировались."
   else
     show_operation_result 1 "$title"
   fi

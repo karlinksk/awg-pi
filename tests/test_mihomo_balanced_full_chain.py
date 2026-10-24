@@ -246,19 +246,18 @@ exec /usr/bin/systemctl "$@"
         self.assertEqual((self.run/"failures").read_text().strip(),"0")
 
     def test_three_rejected_candidates_then_awg_fallback(self):
-        self.fixtures.write_text("ss-first|FAIL|UNKNOWN|PASS|chatgpt_web_http_403\n"
-            "vless-second|PASS|UNKNOWN|UNKNOWN|chatgpt_web_http_403\n"
-            "trojan-third|PASS|UNKNOWN|PASS|chatgpt_web_TimeoutError\n")
+        self.nodes.write_text("one\ntwo\nthree\n")
+        (self.root/"deny").write_text("one\ntwo\nthree\n")
         out=self.cycles()
         self.assertEqual(out[-1],"FAILOVER=mihomo->awg")
         self.assertEqual(self.selected.read_text().strip(),"awg")
         self.assertEqual(self.node.read_text().strip(),"current-node")
         self.assertIn("transport:awg",self.trace.read_text())
-        self.assertEqual(self.node_trace.read_text(),"quiesce\n")
+        self.assertIn("node:three",self.node_trace.read_text())
         self.assertEqual((self.run/"failures").read_text().strip(),"0")
 
     def test_unconfigured_awg_is_not_retried_after_node_exhaustion(self):
-        self.fixtures.write_text("")
+        self.nodes.write_text("")
         self.awg_profile.unlink()
         self.cycles(5)
         self.assertEqual(self.selected.read_text().strip(),"mihomo")
@@ -266,7 +265,7 @@ exec /usr/bin/systemctl "$@"
         self.assertEqual((self.run/"failures").read_text().strip(),"3")
 
     def test_failed_awg_rollback_keeps_mihomo_and_saturates(self):
-        self.fixtures.write_text("")
+        self.nodes.write_text("")
         self.awg.write_text("down\n")
         self.cycles()
         self.assertEqual(self.selected.read_text().strip(),"mihomo")
@@ -274,7 +273,7 @@ exec /usr/bin/systemctl "$@"
         self.assertEqual(self.trace.read_text().count("transport:awg"),1)
 
     def test_awg_after_recovery_is_sticky_and_no_switch_back(self):
-        self.fixtures.write_text("")
+        self.nodes.write_text("")
         self.cycles()
         self.assertEqual(self.selected.read_text().strip(),"awg")
         self.health.write_text("up\n")

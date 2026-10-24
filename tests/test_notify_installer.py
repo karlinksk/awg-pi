@@ -37,11 +37,10 @@ class NotifyWiringTests(unittest.TestCase):
         self.assertIn('AWG_NOTIFY_AUTOMATIC=1 "$AWG_TRANSPORT_CLI" select', selection)
 
     def test_source_notifies_after_transport_postcheck(self):
-        code = (ROOT / "src/awg-transport").read_text()
-        self.assertLess(code.index('if [[ "$target" == mihomo ]]; then mihomo_tun_https_ok; fi'),
-                        code.index('--kind "$notify_kind"'))
-        self.assertIn("timeout 2s /usr/local/sbin/awg-notify", code)
-        self.assertIn("/etc/awg-pbr/notify/telegram.json", code)
+        code=(ROOT/"src/awg-transport").read_text()
+        self.assertLess(code.rindex('wait_transport_healthy "$target"'),code.index('--kind "$notify_kind"'))
+        self.assertIn("timeout 2s /usr/local/sbin/awg-notify",code)
+        self.assertIn("/etc/awg-pbr/notify/telegram.json",code)
 
     def test_monitor_does_not_send_network_messages(self):
         code = (ROOT / "src/awg-selection-monitor").read_text()

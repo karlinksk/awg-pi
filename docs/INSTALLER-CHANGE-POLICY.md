@@ -24,6 +24,14 @@ This applies to both **Selective Gateway** and **MikroTik Transit / Backup VPN**
 - [ ] Secret-free documentation updated
 - [ ] Commit verified; PR status and remaining hardware gates reported accurately
 
+## Owner-directed selection revision — 2026-10-24
+
+Manual/AUTO no longer gate on external HTTPS, OpenAI/ipify or service
+eligibility. This owner instruction supersedes the older HTTPS/READY
+requirements below. Keep local core/profile/route/guard/management checks and
+rollback. Local readiness must not be represented as external connectivity.
+Independent hardware traffic tests remain required for release evidence.
+
 ## Ground rules specific to Mihomo
 
 - **Backend/proxy availability**, **Pi-bound `mihomo0` HTTPS**, and **forwarded LAN-client success** are separate levels of evidence. Do not report one as another.

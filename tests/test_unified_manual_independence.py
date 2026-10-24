@@ -27,7 +27,7 @@ class ManualIndependence(unittest.TestCase):
         self.assertIn('def native_return(name)',MANUAL)
         self.assertIn('def apply(index)',MANUAL)
         self.assertIn('def choose(node)',MANUAL)
-        self.assertIn('native_tun_proof()',MANUAL)
+        self.assertIn('native_runtime_proof()',MANUAL)
 
     def test_auto_failover_changes_neither_user_policy_nor_manual_actions(self):
         auto=POLICY.split('failover_unified(){',1)[1].split("\n}\n",1)[0]

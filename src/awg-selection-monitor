@@ -93,39 +93,8 @@ except (ValueError,UnicodeError):
 }
 
 service_healthy_mihomo(){
-  local node now age verdict
-  case "$MIHOMO_SERVICE_GATE_MODE" in
-    off) return 0 ;;
-    require|balanced) ;;
-    *) return 1 ;;
-  esac
-  node="$(cat "$MIHOMO_SERVICE_NODE_FILE" 2>/dev/null || true)"
-  [[ -n "$node" ]] || return 1
-  if [[ "$node" != "$SERVICE_LAST_NODE" ]]; then
-    SERVICE_LAST_NODE="$node"
-    SERVICE_BAD_PROBES=0
-    SERVICE_LAST_TS=0
-  fi
-  now="$(date +%s)"
-  age=$((now - SERVICE_LAST_TS))
-  # Positive, distinct probes avoid reacting to one transient Cloudflare
-  # challenge or YouTube bot-detection response. No disk writes.
-  if (( SERVICE_LAST_TS == 0 || age < 0 || age >= MIHOMO_SERVICE_CHECK_INTERVAL )); then
-    SERVICE_LAST_TS="$now"
-    verdict=UNKNOWN
-    if [[ -x "$MIHOMO_SERVICE_CHECK_BIN" ]]; then
-      verdict="$(service_probe_verdict)"
-    fi
-    # A 403 Cloudflare challenge or YouTube bot restriction returns UNKNOWN.
-    # Do NOT accumulate outages or trigger fallback without explicit FAIL.
-    # A successful check resets the streak; any UNKNOWN breaks consecutiveness.
-    case "$verdict" in
-      FAIL) SERVICE_BAD_PROBES=$((SERVICE_BAD_PROBES + 1)) ;;
-      PASS|UNKNOWN) SERVICE_BAD_PROBES=0 ;;
-      *) SERVICE_BAD_PROBES=0 ;;
-    esac
-  fi
-  (( SERVICE_BAD_PROBES < 2 ))
+  # Persisted legacy service eligibility must not veto a transport.
+  return 0
 }
 
 policy_csv(){
