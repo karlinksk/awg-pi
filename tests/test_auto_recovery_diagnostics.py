@@ -139,5 +139,45 @@ exit 2
         self.assertEqual(observed[1][-1], "AUTO_XRAY_GATE=UNCLASSIFIED")
 
 
+    def test_one_success_record_for_committed_xray(self):
+        """The unified dispatcher must not duplicate the Xray success record."""
+        policy = (ROOT / "src/awg-mihomo-node-policy").read_text()
+        func = ("failover_unified(){" +
+                policy.split("failover_unified(){", 1)[1]
+                .split("\n}\n", 1)[0] + "\n}\n")
+        with tempfile.TemporaryDirectory() as td:
+            p = Path(td) / "resolver"
+            p.write_text(
+                "#!/usr/bin/env bash\n"
+                "if [[ \"$1\" == resolve ]]; then\n"
+                "  echo NODE_PROVIDER_SHA256=" + "a" * 64 + "\n"
+                "  echo NODE_ENGINE=XRAY\n"
+                "  echo NODE_INDEX=1\n"
+                "else exit 2; fi\n"
+            )
+            p.chmod(0o755)
+            body = (
+                "set -Eeuo pipefail\n" + func +
+                "mode_get(){ echo auto; }\n"
+                "xray_bridge_present(){ return 1; }\n"
+                "unified_recovery_candidates(){ printf 'XRAY\\t1\\t%s\\tXray-1\\n' '" + "a" * 64 + "'; }\n"
+                "validate_node_name(){ return 0; }\n"
+                "auto_xray_candidate(){ printf 'MIHOMO_NODE_FAILOVER=%s->%s\\n' \"$1\" \"$2\"; }\n"
+                "MIHOMO_UNIFIED_NODE_CLI=\"$RESOLVER\"\n"
+                "failover_unified Native-1\n"
+            )
+            r = subprocess.run(
+                ["bash", "-c", body],
+                env={**os.environ, "RESOLVER": str(p)}, text=True,
+                capture_output=True, timeout=10)
+            self.assertEqual(r.returncode, 0, r.stderr)
+            self.assertEqual(
+                r.stdout.splitlines(),
+                ["MIHOMO_NODE_FAILOVER=Native-1->Xray-1"])
+            self.assertIn(
+                "MIHOMO_UNIFIED_RECOVERY_ATTEMPTS=1 ENGINE=XRAY",
+                r.stderr)
+
+
 if __name__ == "__main__":
     unittest.main()
