@@ -65,6 +65,7 @@ class AutoBridgeNativeReturn(unittest.TestCase):
                    "filter":"test","endpoint":"198.51.100.3",
                    "sha":hashlib.sha256(self.provider.read_bytes()).hexdigest()}
         self.state={"watchdog":"awg-xray-manual-test",
+                    "previous":m.ALIAS,
                     "previous_xray":True,"auto_bridge":True,"xray_enabled":True}
         self.patches=[
             mock.patch.object(m,"AUTO_BOOT",self.auto_boot),
@@ -191,6 +192,7 @@ class AutoBridgeNativeReturn(unittest.TestCase):
         self.auto_runtime.unlink()
         self.graph=False
         self.info["auto_bridge"]=False
+        self.state["auto_bridge"]=False
         with mock.patch.object(m,"owned_auto_bridge",return_value=False):
             m.native_return("NativeNew")
         self.assertTrue(self.native)
