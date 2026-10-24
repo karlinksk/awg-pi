@@ -1,3 +1,10 @@
+### 2026-10-24 — промежуточный результат рефакторинга (НЕ release gate)
+
+- Коммиты в draft PR #165: AUTO направлен в unified failover, удалён FIXED приоритет в его переборе, меню скрывает FIXED/Hot Pool, clean-install больше не устанавливает Hot Pool shadow и не вызывает READY enable/disable. Это НЕ полное удаление legacy-кода и НЕ подтверждённая чистая установка.
+- Проверено без изменения работающих сервисов Pi: bash -n install.sh, src/awg-menu, src/awg-mihomo-node-policy — PASS; test_unified_recovery_policy.py — 9/9 PASS; test_unified_manual_independence.py — 4/4 PASS; test_mihomo_xray_unified_picker.py — 18/18 PASS.
+- test_installer_auto_strategy.py — 3/6 FAIL: прежние ожидания READY disable и Hot Pool timer disable. Требуется обновить контракт и повторить проверки.
+- Не завершено: удаление legacy READY/FIXED команд из node-policy, оставшихся меню-входов и installer upgrade ветвей; проверка остальных тестов и реальный clean-install ARM64/TUN/LAN/failover/reboot. Важное замечание: существующая unified ветвь при неудачном native TUN postcheck вызывает quiesce, поэтому повторные попытки в рамках того же события требуют отдельной проверки и исправления до аппаратного gate. Не утверждать, что преждевременный AWG fallback устранён.
+
 ## 2026-10-24 — согласованное сокращение v1.3.0
 
 - Исключить Hot Pool, READY и редактируемую FIXED-цепочку из установщика, меню, таймеров и логики управления. Сохранить свежую сетевую квалификацию кандидата и реальный TUN postcheck: это не READY.
