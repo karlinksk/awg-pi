@@ -36,7 +36,7 @@ echo "NATIVE:$3" >> "$MOCK_LOG";exit 0
 ''')
     def write(self,name,body):
         path=self.bin/name;path.write_text("#!/usr/bin/env bash\n"+body);path.chmod(0o755)
-    def run_case(self,bridge=True,success="Node13",fixed=False,decline=False,xray_guard=False,infra=False,cleanup=True,xray_retry=False):
+    def run_case(self,bridge=True,success="Node13",fixed=False,decline=False,xray_guard=False,infra=False,cleanup=True,xray_retry=False,require_anchor=False):
         self.log.write_text("")
         self.mode.write_text("fixed\n" if fixed else "auto\n")
         self.order.write_text("Node11\nNode2\n")
@@ -51,7 +51,7 @@ echo "NATIVE:$3" >> "$MOCK_LOG";exit 0
             'service_candidate_allowed(){ return 0; }\n',
             'unified_native_tun_postcheck(){ return '+('2' if infra else '1')+'; }\n',
             'unified_native_quiesce(){ echo QUIESCE >> "$MOCK_LOG"; return '+('0' if cleanup else '1')+'; }\n',
-            'auto_xray_candidate(){ echo "XRAY:$2" >> "$MOCK_LOG"; if [ "$XRAY_GUARD" = 1 ]; then return 2; fi; if [ "$UNIFIED_SUCCESS" = "$2" ]; then return 0; fi; if [ "$XRAY_RETRY" = 1 ]; then return 3; fi; return 1; }\n',
+            'auto_xray_candidate(){ echo "XRAY:$2" >> "$MOCK_LOG"; if [ "$REQUIRE_ANCHOR" = 1 ] && [ "$1" != Node13 ]; then echo FAILED_ANCHOR_STALE >&2; return 1; fi; if [ "$XRAY_GUARD" = 1 ]; then return 2; fi; if [ "$UNIFIED_SUCCESS" = "$2" ]; then return 0; fi; if [ "$XRAY_RETRY" = 1 ]; then return 3; fi; return 1; }\n',
             'failover_unified FailedNode\n'
         ))
         env={**os.environ,"MOCK_SHA":self.sha,"MOCK_LOG":str(self.log),
@@ -61,9 +61,15 @@ echo "NATIVE:$3" >> "$MOCK_LOG";exit 0
              "MIHOMO_XRAY_NATIVE_RECOVERY_CLI":str(self.bin/"executor"),
              "MIHOMO_CONFIGURE":str(self.bin/"configure"),
              "UNIFIED_SUCCESS":success,"MOCK_SUCCESS":success,"XRAY_GUARD":"1" if xray_guard else "0",
-             "XRAY_RETRY":"1" if xray_retry else "0"}
+             "XRAY_RETRY":"1" if xray_retry else "0","REQUIRE_ANCHOR":"1" if require_anchor else "0"}
         if decline:self.write("executor","exit 2")
         return subprocess.run(["bash","-c",script],env=env,capture_output=True,text=True,timeout=10)
+    def test_xray_uses_last_committed_failed_native_anchor(self):
+        r=self.run_case(bridge=False,success="Node3",require_anchor=True)
+        self.assertEqual(r.returncode,0,r.stderr)
+        self.assertNotIn('FAILED_ANCHOR_STALE',r.stderr)
+        self.assertEqual(self.log.read_text().splitlines()[-1],'XRAY:Node3')
+
     def test_thirteenth_candidate_can_win(self):
         r=self.run_case()
         self.assertEqual(r.returncode,0,r.stderr)

@@ -863,6 +863,7 @@ unified_native_quiesce(){
 
 failover_unified(){
   local current="$1" mode engine idx provider_sha candidate resolved resolved_sha
+  local recovery_current="$current"
   local active_bridge=0 rc=0 attempts=0 start_epoch now line item selected=0
   local xray_guard_rejected=0 infrastructure_failed=0
   local native_cli="${MIHOMO_XRAY_NATIVE_RECOVERY_CLI:-/usr/local/sbin/awg-xray-manual-switch}"
@@ -934,6 +935,11 @@ failover_unified(){
       rc=0
       MIHOMO_NODE_FAILOVER_RECOVERY=1 "$MIHOMO_CONFIGURE" node select-auto "$candidate" >/dev/null || rc=$?
       if (( rc == 0 )); then
+        # Configure committed this exact profile before its network postcheck.
+        # A later Xray transaction must validate that most recent failed
+        # native identity, not the original incumbent from before the loop.
+        # The backend still checks this identity under its maintenance lock.
+        recovery_current="$candidate"
         unified_native_tun_postcheck || rc=$?
       else
         infrastructure_failed=1
@@ -955,7 +961,7 @@ failover_unified(){
       # for the exact index even when cached health is expired/UNKNOWN/FAIL.
       # The certified executor handles the cross-core watchdog and guard.
       # This is not the legacy native selector for Reality VLESS profiles.
-      if auto_xray_candidate "$current" "$candidate" "$resolved"; then
+      if auto_xray_candidate "$recovery_current" "$candidate" "$resolved"; then
         printf 'MIHOMO_NODE_FAILOVER=%s->%s\n' "$current" "$candidate"
         printf 'MIHOMO_UNIFIED_RECOVERY_ATTEMPTS=%s ENGINE=%s\n' "$attempts" "$engine" >&2
         return 0
