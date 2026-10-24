@@ -991,16 +991,12 @@ failover_unified(){
         printf 'MIHOMO_UNIFIED_RECOVERY_ATTEMPTS=%s ENGINE=%s\n' "$attempts" "$engine" >&2
         return 0
       fi
-      # A failed activation/TUN postcheck is not proof that the remaining
-      # provider nodes are dead. A quiesced Mihomo service cannot safely
-      # run another native transaction; stop this recovery event explicitly.
-      # The monitor may use AWG only as a guarded transport fallback.
-      echo 'MIHOMO_NODE_FAILOVER=UNIFIED_NATIVE_ACTIVATION_UNVERIFIED' >&2
+      # Keep existing cross-engine recovery semantics until a verified
+      # transaction-safe native retry is available. Regression gate required.
       unified_native_quiesce || {
-        echo 'MIHOMO_NODE_FAILOVER=UNIFIED_NATIVE_CLEANUP_FAILED' >&2
+        echo 'MIHOMO_NODE_FAILOVER=UNIFIED_NATIVE_CLEANUP_FAILED_AWG_FALLBACK' >&2
         return 1
       }
-      return 1
     elif [[ "$engine" == XRAY ]]; then
       # The certified Xray dispatcher performs a fresh isolated HTTPS test
       # for the exact index even when cached health is expired/UNKNOWN/FAIL.
