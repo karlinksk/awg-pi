@@ -26,13 +26,10 @@ class ManualSwitchContract(unittest.TestCase):
 
     def test_manual_preflight_is_mandatory_before_mutation(self):
         script=SCRIPT.read_text()
-        for marker in ('preflight_xray(index,info)', 'preflight_mihomo(name,info)',
-                       'XRAY_ISOLATED_HTTPS_NOT_VERIFIED',
-                       'NATIVE_ISOLATED_HTTPS_NOT_VERIFIED',
-                       'PROVIDER_CHANGED_DURING_PROBE'):
+        for marker in ('preflight_xray(index,info)','preflight_mihomo(name,info)','PROVIDER_CHANGED_BEFORE_SELECTION','NATIVE_PROVIDER_CHANGED_BEFORE_SELECTION'):
             self.assertIn(marker,script)
-        self.assertLess(script.index('preflight_xray(index,info)'),
-                        script.index('path,state=save_snap(info)',script.index('def apply(')))
+        self.assertNotIn('api.openai.com',script)
+        self.assertLess(script.index('preflight_xray(index,info)'),script.index('path,state=save_snap(info)',script.index('def apply(')))
     def test_failed_xray_preflight_never_arms_watchdog_or_mutates(self):
         with tempfile.TemporaryDirectory() as td:
             info={"candidate":"SyntheticXray","sha":"test-sha","fingerprint":"id"}
@@ -76,9 +73,9 @@ class ManualSwitchContract(unittest.TestCase):
 
     def test_does_not_reuse_failed_incumbent_auto_executor(self):
         s=SCRIPT.read_text()
-        self.assertIn("if not https_ok(\"tun\"):refuse(\"PREVIOUS_TUN_NOT_PROVEN\")",s)
+        self.assertIn("if not tun_runtime_ready():refuse(\"PREVIOUS_RUNTIME_NOT_READY\")",s)
         self.assertIn('if ALIAS not in con.get("all",[]):refuse("XRAY_BRIDGE_NOT_IN_RUNNING_CONFIG")',s)
-        self.assertIn("XRAY_ISOLATED_HTTPS_NOT_VERIFIED",s)
+        self.assertIn("PROVIDER_CHANGED_BEFORE_SELECTION",s)
         self.assertIn("systemd-run",s)
         self.assertIn("xray-manual-",s)
         self.assertNotIn("shell=True",s)
@@ -98,9 +95,9 @@ class ManualSwitchContract(unittest.TestCase):
              mock.patch.object(mod,"controller",return_value={"now":"Native","all":[mod.ALIAS]}), \
              mock.patch.object(mod,"unit_active",return_value=False), \
              mock.patch.object(mod,"unit_enabled",return_value=False), \
-             mock.patch.object(mod,"https_ok",return_value=False), \
+             mock.patch.object(mod,"tun_runtime_ready",return_value=False), \
              mock.patch.object(mod,"BOOT",Path("/nonexistent/xray-manual-test-absent")):
-            with self.assertRaisesRegex(RuntimeError,"PREVIOUS_TUN_NOT_PROVEN"):
+            with self.assertRaisesRegex(RuntimeError,"PREVIOUS_RUNTIME_NOT_READY"):
                 mod.inspect(3)
 
     def test_missing_bridge_rejects_before_any_mutation(self):
@@ -117,7 +114,7 @@ class ManualSwitchContract(unittest.TestCase):
     def test_postcommit_and_native_rollback_wait_for_route_recovery(self):
         code=SCRIPT.read_text()
         self.assertIn("XRAY_POSTCOMMIT_SERVICE_NOT_ENABLED",code)
-        self.assertNotIn('if not https_ok("tun"):refuse("PREVIOUS_TUN_RESTORE_FAILED")',code)
+        self.assertNotIn('if not tun_runtime_ready("tun"):refuse("PREVIOUS_TUN_RESTORE_FAILED")',code)
         self.assertNotIn("XRAY_POSTCOMMIT_UNVERIFIED",code)
 
     def test_controller_restore_is_idempotent_no_put_for_selected_node(self):
@@ -166,8 +163,8 @@ class ManualSwitchContract(unittest.TestCase):
                 POLICY=targets["policy"],ORDER=targets["order"]), \
                  mock.patch.object(mod,"cmd",side_effect=fake_cmd), \
                  mock.patch.object(mod,"choose") as choose, \
-                 mock.patch.object(mod,"https_ok",return_value=True), \
-                 mock.patch.object(mod,"native_tun_proof"), \
+                 mock.patch.object(mod,"tun_runtime_ready",return_value=True), \
+                 mock.patch.object(mod,"native_runtime_proof"), \
                  mock.patch.object(mod,"prove_local_xray"), \
                  mock.patch.object(mod,"invariant"):
                 mod.restore(snap,{"previous":"Native","previous_xray":False,
@@ -192,7 +189,7 @@ class ManualSwitchContract(unittest.TestCase):
                 CURRENT=p/"current",POLICY=p/"policy",ORDER=p/"order"), \
                  mock.patch.object(mod,"cmd",side_effect=fake_cmd), \
                  mock.patch.object(mod,"choose") as choose, \
-                 mock.patch.object(mod,"https_ok",return_value=True), \
+                 mock.patch.object(mod,"tun_runtime_ready",return_value=True), \
                  mock.patch.object(mod,"unit_active",return_value=True), \
                  mock.patch.object(mod,"prove_local_xray"), \
                  mock.patch.object(mod,"invariant"):
@@ -227,7 +224,7 @@ class ManualSwitchContract(unittest.TestCase):
                  mock.patch.object(mod,"cmd",return_value=""), \
                  mock.patch.object(mod,"unit_active",return_value=True), \
                  mock.patch.object(mod,"unit_enabled",return_value=True), \
-                 mock.patch.object(mod,"https_ok",return_value=True), \
+                 mock.patch.object(mod,"tun_runtime_ready",return_value=True), \
                  mock.patch.object(mod,"prove_local_xray"), \
                  mock.patch.object(mod,"routing_ok",return_value=True), \
                  mock.patch.object(mod,"invariant"), \
@@ -240,47 +237,30 @@ class ManualSwitchContract(unittest.TestCase):
             self.assertIn(b"AWG_XRAY_MANUAL=1",boot.read_bytes())
 
     def test_local_xray_waits_for_listener_and_tries_https_twice(self):
-        fake_socket=mock.MagicMock()
-        with mock.patch.object(mod,"unit_active",return_value=True), \
-             mock.patch.object(mod.socket,"create_connection",return_value=fake_socket), \
-             mock.patch.object(mod,"https_ok",side_effect=[False,True]) as https, \
-             mock.patch.object(mod.time,"sleep"):
+        sock=mock.MagicMock();sock.__enter__.return_value.recv.return_value=b"\x05\x00"
+        with mock.patch.object(mod,"unit_active",return_value=True),mock.patch.object(mod.socket,"create_connection",return_value=sock),mock.patch.object(mod,"tun_runtime_ready",side_effect=AssertionError("no TUN/HTTPS during local readiness")):
             mod.prove_local_xray()
-        self.assertEqual(https.call_count,2)
-        self.assertEqual(fake_socket.__enter__.call_count,1)
+        sock.__enter__.return_value.sendall.assert_called_once_with(b"\x05\x01\x00")
 
     def test_local_xray_reports_service_inactive(self):
-        with mock.patch.object(mod,"unit_active",return_value=False), \
-             mock.patch.object(mod.time,"monotonic",side_effect=[0,11]), \
-             mock.patch.object(mod.time,"sleep"):
-            with self.assertRaisesRegex(RuntimeError,"XRAY_SERVICE_NOT_ACTIVE"):
-                mod.prove_local_xray()
+        with mock.patch.object(mod,"unit_active",return_value=False),mock.patch.object(mod.time,"monotonic",side_effect=[0,1]),mock.patch.object(mod,"choose") as choose:
+            with self.assertRaisesRegex(RuntimeError,"XRAY_SERVICE_NOT_ACTIVE"):mod.prove_local_xray()
+        choose.assert_not_called()
 
     def test_local_xray_reports_missing_fixed_socks_listener(self):
-        with mock.patch.object(mod,"unit_active",return_value=True), \
-             mock.patch.object(mod.socket,"create_connection",side_effect=OSError("unavailable")), \
-             mock.patch.object(mod.time,"monotonic",side_effect=[0,11]), \
-             mock.patch.object(mod.time,"sleep"):
-            with self.assertRaisesRegex(RuntimeError,"XRAY_SOCKS_PORT_NOT_LISTENING"):
-                mod.prove_local_xray()
+        with mock.patch.object(mod,"unit_active",return_value=False),mock.patch.object(mod.time,"monotonic",side_effect=[0,11]),mock.patch.object(mod,"choose") as choose:
+            with self.assertRaisesRegex(RuntimeError,"XRAY_SOCKS_NOT_READY"):mod.prove_local_xray()
+        choose.assert_not_called()
 
     def test_local_xray_reports_https_failure_before_selector_change(self):
-        fake_socket=mock.MagicMock()
-        with mock.patch.object(mod,"unit_active",return_value=True), \
-             mock.patch.object(mod.socket,"create_connection",return_value=fake_socket), \
-             mock.patch.object(mod,"https_ok",return_value=False), \
-             mock.patch.object(mod.time,"sleep"):
-            with self.assertRaisesRegex(RuntimeError,"XRAY_SOCKS_HTTPS_NOT_VERIFIED"):
-                mod.prove_local_xray()
+        with mock.patch.object(mod,"unit_active",return_value=False),mock.patch.object(mod.time,"monotonic",side_effect=[0,11]),mock.patch.object(mod,"choose") as choose:
+            with self.assertRaisesRegex(RuntimeError,"XRAY_SOCKS_NOT_READY"):mod.prove_local_xray()
+        choose.assert_not_called()
 
     def test_local_xray_reports_process_exit_during_https(self):
-        fake_socket=mock.MagicMock()
-        with mock.patch.object(mod,"unit_active",side_effect=[True,True,False]), \
-             mock.patch.object(mod.socket,"create_connection",return_value=fake_socket), \
-             mock.patch.object(mod,"https_ok",return_value=False), \
-             mock.patch.object(mod.time,"sleep"):
-            with self.assertRaisesRegex(RuntimeError,"XRAY_SERVICE_EXITED_DURING_HTTPS"):
-                mod.prove_local_xray()
+        with mock.patch.object(mod,"unit_active",return_value=False),mock.patch.object(mod.time,"monotonic",side_effect=[0,11]),mock.patch.object(mod,"choose") as choose:
+            with self.assertRaisesRegex(RuntimeError,"XRAY_SOCKS_NOT_READY"):mod.prove_local_xray()
+        choose.assert_not_called()
 
 
     def test_exact_current_xray_identity_is_recognized_only_by_fingerprint(self):
@@ -299,7 +279,7 @@ class ManualSwitchContract(unittest.TestCase):
                                    return_value={"now":mod.ALIAS,"all":[mod.ALIAS]}), \
                  mock.patch.object(mod,"unit_active",return_value=True), \
                  mock.patch.object(mod,"unit_enabled",return_value=True), \
-                 mock.patch.object(mod,"https_ok",return_value=True):
+                 mock.patch.object(mod,"tun_runtime_ready",return_value=True):
                 same=mod.inspect(1)
                 self.assertTrue(same["already_selected"])
                 with mock.patch.object(mod,"source_node",
@@ -331,7 +311,7 @@ class ManualSwitchContract(unittest.TestCase):
 
     def test_previous_xray_restore_waits_for_transient_tun_recovery(self):
         with mock.patch.object(mod,"unit_active",return_value=True), \
-             mock.patch.object(mod,"https_ok",side_effect=[False,False,True]) as probe, \
+             mock.patch.object(mod,"tun_runtime_ready",side_effect=[False,False,True]) as probe, \
              mock.patch.object(mod.time,"sleep") as sleep:
             mod.prove_previous_tun()
             self.assertEqual(probe.call_count,3)
@@ -339,7 +319,7 @@ class ManualSwitchContract(unittest.TestCase):
 
     def test_previous_xray_restore_fails_closed_if_tun_never_recovers(self):
         with mock.patch.object(mod,"unit_active",return_value=True), \
-             mock.patch.object(mod,"https_ok",return_value=False), \
+             mock.patch.object(mod,"tun_runtime_ready",return_value=False), \
              mock.patch.object(mod.time,"sleep"):
             with self.assertRaisesRegex(RuntimeError,"PREVIOUS_TUN_RESTORE_FAILED"):
                 mod.prove_previous_tun()
@@ -427,7 +407,7 @@ class ManualSwitchContract(unittest.TestCase):
                      "now":mod.ALIAS,"all":[mod.ALIAS,"OldNative"]}), \
                  mock.patch.object(mod,"unit_active",return_value=True), \
                  mock.patch.object(mod,"unit_enabled",return_value=True), \
-                 mock.patch.object(mod,"https_ok",return_value=True):
+                 mock.patch.object(mod,"tun_runtime_ready",return_value=True):
                 info=mod.inspect_native("NewNative")
                 self.assertTrue(info["previous_xray"])
                 self.assertEqual(info["previous"],mod.ALIAS)
@@ -441,7 +421,7 @@ class ManualSwitchContract(unittest.TestCase):
                      "now":"OldNative","all":["OldNative"]}), \
                  mock.patch.object(mod,"unit_active",return_value=False), \
                  mock.patch.object(mod,"unit_enabled",return_value=False), \
-                 mock.patch.object(mod,"https_ok",return_value=True):
+                 mock.patch.object(mod,"tun_runtime_ready",return_value=True):
                 info=mod.inspect_native("NewNative")
                 self.assertFalse(info["previous_xray"])
                 self.assertEqual(info["previous"],"OldNative")
@@ -503,7 +483,7 @@ class ManualSwitchContract(unittest.TestCase):
                  mock.patch.object(mod,"cmd",side_effect=fake_cmd), \
                  mock.patch.object(mod,"native_env"), \
                  mock.patch.object(mod,"wait_native_controller"), \
-                 mock.patch.object(mod,"native_tun_proof"), \
+                 mock.patch.object(mod,"native_runtime_proof"), \
                  mock.patch.object(mod,"unit_active",side_effect=lambda name:name.endswith(".timer")), \
                  mock.patch.object(mod,"invariant"), \
                  mock.patch.object(mod,"controller",return_value={
@@ -549,7 +529,7 @@ class ManualSwitchContract(unittest.TestCase):
                  mock.patch.object(mod,"unit_active",return_value=True), \
                  mock.patch.object(mod,"native_env"), \
                  mock.patch.object(mod,"wait_native_controller"), \
-                 mock.patch.object(mod,"native_tun_proof",
+                 mock.patch.object(mod,"native_runtime_proof",
                       side_effect=RuntimeError("NATIVE_TUN_HTTPS_UNVERIFIED")), \
                  mock.patch.object(mod,"choose"), \
                  mock.patch.object(mod,"restore_native") as restore:
@@ -584,7 +564,7 @@ class ManualSwitchContract(unittest.TestCase):
                  mock.patch.object(mod,"unit_active",return_value=False), \
                  mock.patch.object(mod,"prove_local_xray"), \
                  mock.patch.object(mod,"wait_native_controller"), \
-                 mock.patch.object(mod,"native_tun_proof"), \
+                 mock.patch.object(mod,"native_runtime_proof"), \
                  mock.patch.object(mod,"choose") as choose, \
                  mock.patch.object(mod,"invariant"):
                 mod.restore_native(snapshot,state)
@@ -635,7 +615,7 @@ class ManualSwitchContract(unittest.TestCase):
                  mock.patch.object(mod,"cmd",side_effect=fake_cmd), \
                  mock.patch.object(mod,"native_env"), \
                  mock.patch.object(mod,"wait_native_controller"), \
-                 mock.patch.object(mod,"native_tun_proof"), \
+                 mock.patch.object(mod,"native_runtime_proof"), \
                  mock.patch.object(mod,"unit_active",side_effect=lambda x:x.endswith(".timer")), \
                  mock.patch.object(mod,"invariant"), \
                  mock.patch.object(mod,"controller",return_value={"now":"NewNative"}), \
@@ -648,20 +628,20 @@ class ManualSwitchContract(unittest.TestCase):
 
     def test_native_tun_waits_for_selective_rule_restoration(self):
         with mock.patch.object(mod, "routing_ok", side_effect=[False,False,True]) as routes, \
-             mock.patch.object(mod, "https_ok", return_value=True) as https, \
+             mock.patch.object(mod, "tun_runtime_ready", return_value=True) as https, \
              mock.patch.object(mod.time, "sleep") as pause:
-            mod.native_tun_proof()
+            mod.native_runtime_proof()
             self.assertEqual(routes.call_count, 3)
             self.assertEqual(pause.call_count, 2)
-            https.assert_called_once_with("tun")
+            https.assert_called_once_with()
 
     def test_native_tun_never_accepts_missing_route(self):
         with mock.patch.object(mod, "routing_ok", return_value=False), \
              mock.patch.object(mod.time, "monotonic", side_effect=[0,21]), \
              mock.patch.object(mod.time, "sleep") as pause, \
-             mock.patch.object(mod, "https_ok") as https:
+             mock.patch.object(mod, "tun_runtime_ready") as https:
             with self.assertRaisesRegex(RuntimeError,"NATIVE_ROUTING_NOT_RESTORED"):
-                mod.native_tun_proof()
+                mod.native_runtime_proof()
             https.assert_not_called()
             pause.assert_not_called()
 

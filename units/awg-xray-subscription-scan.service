@@ -1,5 +1,5 @@
 [Unit]
-Description=AWG Pi Gateway isolated Xray subscription eligibility scan
+Description=AWG Pi Gateway isolated Xray local runtime check
 Documentation=man:systemd.service(5)
 Wants=network-online.target
 After=network-online.target

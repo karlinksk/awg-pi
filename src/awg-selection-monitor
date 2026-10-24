@@ -72,7 +72,10 @@ maintenance_in_progress(){
 transport_healthy(){
   local t="$1"
   awg_transport_backend_valid "$t" || return 1
-  "$AWG_TRANSPORT_CLI" check "$t" >/dev/null 2>&1
+  "$AWG_TRANSPORT_CLI" check "$t" >/dev/null 2>&1 || return 1
+  if [[ "$t" == mihomo ]]; then
+    "$AWG_TRANSPORT_CLI" network-check >/dev/null 2>&1
+  fi
 }
 
 service_probe_verdict(){
@@ -93,39 +96,8 @@ except (ValueError,UnicodeError):
 }
 
 service_healthy_mihomo(){
-  local node now age verdict
-  case "$MIHOMO_SERVICE_GATE_MODE" in
-    off) return 0 ;;
-    require|balanced) ;;
-    *) return 1 ;;
-  esac
-  node="$(cat "$MIHOMO_SERVICE_NODE_FILE" 2>/dev/null || true)"
-  [[ -n "$node" ]] || return 1
-  if [[ "$node" != "$SERVICE_LAST_NODE" ]]; then
-    SERVICE_LAST_NODE="$node"
-    SERVICE_BAD_PROBES=0
-    SERVICE_LAST_TS=0
-  fi
-  now="$(date +%s)"
-  age=$((now - SERVICE_LAST_TS))
-  # Positive, distinct probes avoid reacting to one transient Cloudflare
-  # challenge or YouTube bot-detection response. No disk writes.
-  if (( SERVICE_LAST_TS == 0 || age < 0 || age >= MIHOMO_SERVICE_CHECK_INTERVAL )); then
-    SERVICE_LAST_TS="$now"
-    verdict=UNKNOWN
-    if [[ -x "$MIHOMO_SERVICE_CHECK_BIN" ]]; then
-      verdict="$(service_probe_verdict)"
-    fi
-    # A 403 Cloudflare challenge or YouTube bot restriction returns UNKNOWN.
-    # Do NOT accumulate outages or trigger fallback without explicit FAIL.
-    # A successful check resets the streak; any UNKNOWN breaks consecutiveness.
-    case "$verdict" in
-      FAIL) SERVICE_BAD_PROBES=$((SERVICE_BAD_PROBES + 1)) ;;
-      PASS|UNKNOWN) SERVICE_BAD_PROBES=0 ;;
-      *) SERVICE_BAD_PROBES=0 ;;
-    esac
-  fi
-  (( SERVICE_BAD_PROBES < 2 ))
+  # Persisted legacy service eligibility must not veto a transport.
+  return 0
 }
 
 policy_csv(){
@@ -184,7 +156,7 @@ try_failover(){
 }
 
 selection_cycle(){
-  local current failures node_policy_enabled=0 transport_policy_enabled=0
+  local current failures health_rc=0 node_policy_enabled=0 transport_policy_enabled=0
 
   # Configuration/node transactions hold the same maintenance lock. Never
   # interpret their intentional short outage as a real transport failure.
@@ -233,11 +205,17 @@ selection_cycle(){
     return 0
   fi
 
-  if transport_healthy "$current"; then
+  transport_healthy "$current" || health_rc=$?
+  if (( health_rc == 0 )); then
     if [[ "$current" != mihomo ]] || service_healthy_mihomo; then
       reset_failures
       return 0
     fi
+  fi
+
+  if (( health_rc == 2 )); then
+    log_event 'AUTO network assessment unavailable or selection changed; no node-failure evidence'
+    return 0
   fi
 
   failures="$(read_failures)"

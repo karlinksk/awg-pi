@@ -160,7 +160,7 @@ class ServiceEligibilityTests(unittest.TestCase):
             stub=Path(temp)/"fake-gate"
             stub.write_text("#!/bin/sh\nprintf 'SERVICE_ELIGIBILITY=UNKNOWN\\n'\nexit 1\n")
             stub.chmod(0o700)
-            for mode,expected in (("require",1),("off",0),("bad",1)):
+            for mode,expected in (("require",0),("off",0),("bad",0)):
                 script=(harness+'MIHOMO_SERVICE_GATE_MODE='+mode+'\n'
                         +'MIHOMO_SERVICE_GATE_BIN="'+str(stub)+'"\n'
                         +'service_candidate_allowed node-good\n')

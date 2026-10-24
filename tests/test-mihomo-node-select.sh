@@ -131,10 +131,18 @@ case "${1:-}" in
 esac
 MOCK
 
+cat >"$tmp/bin/python" <<'MOCK'
+#!/usr/bin/env bash
+if [[ "${1:-}" == - && "${2:-}" == --awg-controller-select ]]; then
+  echo controller-selection >>"${MOCK_SYSTEMCTL_LOG:?}"
+  exit 0
+fi
+exec python3 "$@"
+MOCK
 chmod +x "$tmp/bin/"*
 
 run_cli(){
-  sudo env     AWG_COMMON_FILE="$repo_root/src/awg-common"     AWG_MODE_FILE="$tmp/mode"     AWG_TRANSPORT_FILE="$tmp/transport"     AWG_LOCK_FILE="$tmp/lock"     AWG_FAILOPEN="$tmp/bin/failopen"     AWG_TRANSIT_ROUTING="$tmp/bin/transit-routing"     AWG_HEALTH_SERVICE="awg-pbr-health.service"     MIHOMO_ENV_FILE="$tmp/etc/provider.env"     MIHOMO_ENDPOINT_IP_FILE="$tmp/etc/endpoint-ip"     MIHOMO_EXPECTED_EGRESS_IP_FILE="$tmp/etc/expected-egress-ip"     MIHOMO_NODE_NAME_FILE="$tmp/etc/node-name"     MIHOMO_PROVIDER_FILE="$tmp/state/providers/subscription.yaml"     MIHOMO_CONFIG_FILE="$tmp/etc/config.yaml"     MIHOMO_PROVIDER_HELPER="$repo_root/src/awg-mihomo-provider.py"     MIHOMO_POOL_CLI="$tmp/bin/pool"     MOCK_PROVIDER_HELPER="$repo_root/src/awg-mihomo-provider.py"     MIHOMO_PREPARE="$tmp/bin/prepare"     AWG_TRANSPORT_CLI="$tmp/bin/transport"     SYSTEMCTL_BIN="$tmp/bin/systemctl"     MIHOMO_BIN="$tmp/bin/mihomo"     PYTHON_BIN=python3     SLEEP_BIN=/bin/true     MOCK_UNIT_STATE="$tmp/unit-state"     MOCK_SYSTEMCTL_LOG="$tmp/systemctl.log"     MOCK_DATAPLANE_LOG="$tmp/dataplane.log"     MOCK_CONFIG_FILE="$tmp/etc/config.yaml"     MOCK_HEALTH="${MOCK_HEALTH:-up}"     MOCK_PREPARE_FAIL="${MOCK_PREPARE_FAIL:-0}"     bash "$repo_root/src/awg-mihomo-configure" "$@"
+  sudo env     AWG_COMMON_FILE="$repo_root/src/awg-common"     AWG_MODE_FILE="$tmp/mode"     AWG_TRANSPORT_FILE="$tmp/transport"     AWG_LOCK_FILE="$tmp/lock"     AWG_FAILOPEN="$tmp/bin/failopen"     AWG_TRANSIT_ROUTING="$tmp/bin/transit-routing"     AWG_HEALTH_SERVICE="awg-pbr-health.service"     MIHOMO_ENV_FILE="$tmp/etc/provider.env"     MIHOMO_ENDPOINT_IP_FILE="$tmp/etc/endpoint-ip"     MIHOMO_EXPECTED_EGRESS_IP_FILE="$tmp/etc/expected-egress-ip"     MIHOMO_NODE_NAME_FILE="$tmp/etc/node-name"     MIHOMO_PROVIDER_FILE="$tmp/state/providers/subscription.yaml"     MIHOMO_CONFIG_FILE="$tmp/etc/config.yaml"     MIHOMO_PROVIDER_HELPER="$repo_root/src/awg-mihomo-provider.py"     MIHOMO_POOL_CLI="$tmp/bin/pool"     MOCK_PROVIDER_HELPER="$repo_root/src/awg-mihomo-provider.py"     MIHOMO_PREPARE="$tmp/bin/prepare"     AWG_TRANSPORT_CLI="$tmp/bin/transport"     SYSTEMCTL_BIN="$tmp/bin/systemctl"     MIHOMO_BIN="$tmp/bin/mihomo"     PYTHON_BIN="$tmp/bin/python"     SLEEP_BIN=/bin/true     MOCK_UNIT_STATE="$tmp/unit-state"     MOCK_SYSTEMCTL_LOG="$tmp/systemctl.log"     MOCK_DATAPLANE_LOG="$tmp/dataplane.log"     MOCK_CONFIG_FILE="$tmp/etc/config.yaml"     MOCK_HEALTH="${MOCK_HEALTH:-up}"     MOCK_PREPARE_FAIL="${MOCK_PREPARE_FAIL:-0}"     bash "$repo_root/src/awg-mihomo-configure" "$@"
 }
 
 echo "=== safe node list ==="

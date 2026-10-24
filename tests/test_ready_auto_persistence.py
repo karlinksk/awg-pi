@@ -17,9 +17,10 @@ MONITOR = ROOT / "src/awg-selection-monitor"
 class ReadyAutoPersistence(unittest.TestCase):
     def test_fresh_installer_defaults_ready_priority_off(self):
         s = INSTALL.read_text()
-        self.assertIn('"$MIHOMO_NODE_POLICY_CLI" ready-auto disable >/dev/null', s)
-        self.assertLess(s.index('install_project_helper src/awg-mihomo-ready-postcheck-tun'),
-                        s.index('"$MIHOMO_NODE_POLICY_CLI" ready-auto disable'))
+        self.assertNotIn('"$MIHOMO_NODE_POLICY_CLI" ready-auto disable >/dev/null', s)
+        self.assertNotIn('install_project_unit extras/mihomo-hot-pool-shadow/', s)
+        self.assertIn('"$SELECTION_CLI" mode auto mihomo awg', s)
+        self.assertIn('install_project_helper src/awg-mihomo-node-policy', s)
         self.assertIn('if (( UPGRADE_EXISTING == 0 )); then', s)
 
     def test_bounded_service_check_is_only_on_candidate_failover(self):
@@ -27,7 +28,8 @@ class ReadyAutoPersistence(unittest.TestCase):
         self.assertIn("MIHOMO_SERVICE_GATE_MODE=balanced", s)
         self.assertIn('if [[ "$MIHOMO_READY_AUTO_CANARY" == 1', s)
         self.assertIn('candidate="$("$MIHOMO_HOT_POOL_CLI"', s)
-        self.assertIn('"$MIHOMO_READY_POSTCHECK_BIN" "$candidate"', s)
+        self.assertNotIn('"$MIHOMO_READY_POSTCHECK_BIN" "$candidate"', s)
+        self.assertIn("unified_native_tun_postcheck",s)
         self.assertIn('service_candidate_allowed "$candidate"', s)
         self.assertIn('excludes+=("$candidate")', s)
         self.assertIn('READY_AUTO=RETRY_NEXT_READY', s)

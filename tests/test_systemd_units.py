@@ -16,7 +16,7 @@ import unittest
 ROOT = Path(__file__).resolve().parents[1]
 INSTALLER = (ROOT / "install.sh").read_text()
 UNIT_SOURCES = sorted(
-    p for folder in (ROOT / "units", ROOT / "extras/mihomo-hot-pool-shadow")
+    p for folder in (ROOT / "units",)
     for p in folder.iterdir()
     if p.is_file() and p.suffix in (".service", ".timer", ".path")
 )

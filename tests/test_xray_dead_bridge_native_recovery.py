@@ -50,7 +50,7 @@ class DeadXrayRecovery(unittest.TestCase):
             mock.patch.object(mod,"cmd",side_effect=cmd),
             mock.patch.object(mod,"dead_xray_owned_bridge"),
             mock.patch.object(mod,"controller",return_value={"now":mod.ALIAS,"all":[mod.ALIAS,"HealthyNative"]}),
-            mock.patch.object(mod,"https_ok",return_value=False),
+            mock.patch.object(mod,"tun_runtime_ready",return_value=False),
             mock.patch.object(mod,"candidate_native",return_value=self.target.copy()),
             mock.patch.object(mod,"preflight_mihomo"),
             mock.patch.object(mod,"unit_active",side_effect=active),
@@ -64,7 +64,9 @@ class DeadXrayRecovery(unittest.TestCase):
             mock.patch.object(mod,"atomic"),
             mock.patch.object(mod,"wait_native_controller"),
             mock.patch.object(mod,"choose"),
-            mock.patch.object(mod,"native_tun_proof"),
+            mock.patch.object(mod,"native_runtime_proof"),
+            mock.patch.object(mod,"auto_candidate_network_proof"),
+            mock.patch.object(mod.subprocess,"run",return_value=mock.Mock(returncode=0)),
             mock.patch.object(mod,"invariant")
         ]
         for patch in self.patches:
@@ -82,7 +84,7 @@ class DeadXrayRecovery(unittest.TestCase):
         mod.save_snap.assert_not_called()
 
     def test_live_tun_must_already_be_failed(self):
-        with mock.patch.object(mod,"https_ok",return_value=True),self.assertRaisesRegex(
+        with mock.patch.object(mod,"tun_runtime_ready",return_value=True),self.assertRaisesRegex(
              mod.DeadXrayPreflight,"PREVIOUS_TUN_STILL_HEALTHY"):
             mod.dead_xray_native("HealthyNative")
         mod.dead_xray_quiesce.assert_not_called()
@@ -108,17 +110,29 @@ class DeadXrayRecovery(unittest.TestCase):
             mod.controller,"return_value",{"now":name,"all":[name]})
         with contextlib.redirect_stdout(buf):
             mod.dead_xray_native("HealthyNative")
-        self.assertIn("DEAD_XRAY_NATIVE_TUN=VERIFIED",buf.getvalue())
+        self.assertIn("DEAD_XRAY_NATIVE_LOCAL_RUNTIME=READY",buf.getvalue())
         self.assertEqual(mod.dead_xray_quiesce.call_count,1)
-        mod.native_tun_proof.assert_called_once()
+        mod.native_runtime_proof.assert_called_once()
         mod.native_env.assert_any_call("MIHOMO_XRAY_VLESS_BRIDGE","auto")
         mod.stored.assert_any_call(self.root/"snap",mock.ANY,"committed")
         self.assertIn(("systemd-run","--unit=xray-manual-test","--on-active=180s",
                        str(mod.SWITCH),"watchdog",str(self.root/"snap")),self.commands)
         self.assertIn(("systemctl","stop","xray-manual-test.timer"),self.commands)
 
+    def test_network_negative_retries_only_after_cleanup_and_watchdog_retirement(self):
+        with mock.patch.object(mod,"auto_candidate_network_proof",side_effect=mod.DeadXrayNetworkFailure("ENGINE_NETWORK_UNREACHABLE")),self.assertRaises(mod.DeadXrayNetworkFailure):
+            mod.dead_xray_native("HealthyNative")
+        self.assertEqual(mod.dead_xray_quiesce.call_count,2)
+        mod.stored.assert_any_call(self.root/"snap",mock.ANY,"rolled_back")
+        self.assertIn(("systemctl","stop","xray-manual-test.timer"),self.commands)
+
+    def test_network_infrastructure_abort_never_becomes_retry_safe(self):
+        with mock.patch.object(mod,"auto_candidate_network_proof",side_effect=RuntimeError("ENGINE_NETWORK_INFRASTRUCTURE_UNCONFIRMED")),self.assertRaises(mod.DeadXrayAbort):
+            mod.dead_xray_native("HealthyNative")
+        mod.stored.assert_any_call(self.root/"snap",mock.ANY,"rolled_back")
+
     def test_postcheck_failure_quiesces_not_revives_old_xray(self):
-        with mock.patch.object(mod,"native_tun_proof",side_effect=RuntimeError(
+        with mock.patch.object(mod,"native_runtime_proof",side_effect=RuntimeError(
              "NATIVE_TUN_HTTPS_UNVERIFIED")),self.assertRaisesRegex(
              mod.DeadXrayAbort,"NATIVE_TUN_HTTPS_UNVERIFIED"):
             mod.dead_xray_native("HealthyNative")
@@ -129,7 +143,7 @@ class DeadXrayRecovery(unittest.TestCase):
     def test_quiesce_fails_keeps_independent_watchdog(self):
         def quiesce():
             if mod.dead_xray_quiesce.call_count>=2:raise RuntimeError("ROUTE_UNSAFE")
-        with mock.patch.object(mod,"native_tun_proof",side_effect=RuntimeError(
+        with mock.patch.object(mod,"native_runtime_proof",side_effect=RuntimeError(
              "NATIVE_TUN_HTTPS_UNVERIFIED")),mock.patch.object(
              mod,"dead_xray_quiesce",side_effect=quiesce),self.assertRaisesRegex(
              mod.DeadXrayAbort,"DEAD_XRAY_WATCHDOG_PENDING"):
@@ -156,7 +170,7 @@ class DeadXrayRecovery(unittest.TestCase):
         mod.dead_xray_quiesce.assert_not_called()
 
     def test_exhausted_healthy_old_tun_cannot_quiesce(self):
-        with mock.patch.object(mod,"https_ok",return_value=True):
+        with mock.patch.object(mod,"tun_runtime_ready",return_value=True):
             with self.assertRaisesRegex(RuntimeError,"CURRENT_XRAY_TUN_HEALTHY"):
                 mod.dead_xray_exhausted()
         mod.dead_xray_quiesce.assert_not_called()

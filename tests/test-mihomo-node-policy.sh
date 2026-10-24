@@ -1,273 +1,47 @@
 #!/usr/bin/env bash
+# Current AUTO entry contract; no sudo, live services or provider credentials.
 set -Eeuo pipefail
-
-ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-TMP="$(mktemp -d)"
-trap 'sudo rm -rf "$TMP"' EXIT
-mkdir -p "$TMP/bin" "$TMP/etc"
-printf '%s\n' '🇫🇮 Finland' >"$TMP/etc/node-name"
-: >"$TMP/log"
-
-cat >"$TMP/bin/configure" <<'MOCK'
-#!/usr/bin/env bash
-set -Eeuo pipefail
-printf '%s\n' "$*" >>"${MOCK_NODE_LOG:?}"
-case "$*" in
-  "node prepare 🇫🇮 Finland"|"node prepare DE (backup)+1"|"node prepare NL [test]*")
-    printf 'Resolved IPv4 endpoints:\n  - 192.0.2.10\n'
-    ;;
-  "node select-auto 🇫🇮 Finland")
-    printf '%s\n' '🇫🇮 Finland' >"${MOCK_NODE_NAME_FILE:?}"
-    ;;
-  "node select-auto DE (backup)+1")
-    [[ "${MOCK_DE_OK:-1}" == 1 ]] || exit 1
-    printf '%s\n' 'DE (backup)+1' >"${MOCK_NODE_NAME_FILE:?}"
-    ;;
-  "node select-auto NL [test]*")
-    [[ "${MOCK_NL_OK:-1}" == 1 ]] || exit 1
-    printf '%s\n' 'NL [test]*' >"${MOCK_NODE_NAME_FILE:?}"
-    ;;
-  *)
-    exit 1
-    ;;
-esac
-MOCK
-chmod +x "$TMP/bin/configure"
-
-cat >"$TMP/bin/pool" <<'MOCK'
-#!/usr/bin/env bash
-set -Eeuo pipefail
-printf '%s\n' "$*" >>"${MOCK_POOL_LOG:?}"
-case "${1:-}" in
-  policy)
-    case "${2:-}" in
-      status) printf 'MIHOMO_POOL_REGION=europe\nEurope only: yes\n' ;;
-      get) printf 'europe\n' ;;
-      *) exit 2 ;;
-    esac
-    ;;
-  status)
-    printf 'Mihomo pool target: live\nPool state: ready\nNodes healthy: 2\nNodes Europe: 2\n'
-    ;;
-  ensure)
-    exit 0
-    ;;
-  cooldown)
-    exit 0
-    ;;
-  best)
-    if [[ " $* " == *" --exclude DE (backup)+1 "* ]]; then
-      printf '%s\n' 'NL [test]*'
-    else
-      printf '%s\n' 'DE (backup)+1'
-    fi
-    ;;
-  *)
-    exit 2
-    ;;
-esac
-MOCK
-chmod +x "$TMP/bin/pool"
-: >"$TMP/pool.log"
-
-run_policy(){
-  sudo env \
-    MIHOMO_NODE_POLICY_MODE_FILE="$TMP/etc/node-policy.mode" \
-    MIHOMO_NODE_POLICY_ORDER_FILE="$TMP/etc/node-policy.nodes" \
-    MIHOMO_NODE_NAME_FILE="$TMP/etc/node-name" \
-    MIHOMO_CONFIGURE_BIN="$TMP/bin/configure" \
-    MIHOMO_UNIFIED_NODE_CLI="$TMP/bin/resolver" \
-    MIHOMO_POOL_CLI="$TMP/bin/pool" \
-    MOCK_NODE_LOG="$TMP/log" \
-    MOCK_POOL_LOG="$TMP/pool.log" \
-    MOCK_NODE_NAME_FILE="$TMP/etc/node-name" \
-    MOCK_DE_OK="${MOCK_DE_OK:-1}" \
-    MOCK_NL_OK="${MOCK_NL_OK:-1}" \
-    bash "$ROOT/src/awg-mihomo-node-policy" "$@"
-}
-
-echo "=== MANUAL is the node-policy default ==="
-out="$(run_policy status)"
-grep -Fqx 'Mihomo node policy: manual' <<<"$out"
-grep -Fqx 'Automatic Mihomo node switching: disabled' <<<"$out"
-grep -Fqx 'Country inference from node names: disabled' <<<"$out"
-
-echo "=== FIXED validates exact user-listed nodes ==="
-: >"$TMP/log"
-out="$(run_policy mode fixed '🇫🇮 Finland' 'DE (backup)+1' 'NL [test]*')"
-grep -Fqx 'MIHOMO_NODE_POLICY=fixed' <<<"$out"
-sudo grep -Fqx '🇫🇮 Finland' "$TMP/etc/node-policy.nodes"
-sudo grep -Fqx 'DE (backup)+1' "$TMP/etc/node-policy.nodes"
-sudo grep -Fqx 'NL [test]*' "$TMP/etc/node-policy.nodes"
-grep -Fqx 'node prepare 🇫🇮 Finland' "$TMP/log"
-grep -Fqx 'node prepare DE (backup)+1' "$TMP/log"
-grep -Fqx 'node prepare NL [test]*' "$TMP/log"
-
-echo "=== duplicate exact node is rejected even with shell metacharacters elsewhere ==="
-if run_policy mode fixed 'NL [test]*' 'NL [test]*' >"$TMP/out" 2>"$TMP/err"; then
-  echo 'FAIL: duplicate exact node was accepted' >&2
-  exit 1
-fi
-grep -Fq 'Duplicate node in failover order' "$TMP/err"
-
-echo "=== unknown node is rejected before policy commit ==="
-sudo cp "$TMP/etc/node-policy.nodes" "$TMP/order.before"
-if run_policy mode fixed '🇫🇮 Finland' 'Unknown country/node' >"$TMP/out" 2>"$TMP/err"; then
-  echo 'FAIL: unknown node was accepted' >&2
-  exit 1
-fi
-sudo cmp -s "$TMP/order.before" "$TMP/etc/node-policy.nodes"
-grep -Fq 'not present/resolvable' "$TMP/err"
-
-echo "=== failover never chooses an unlisted node ==="
-printf '%s\n' '🇫🇮 Finland' | sudo tee "$TMP/etc/node-name" >/dev/null
-: >"$TMP/log"
-out="$(run_policy failover)"
-grep -Fqx 'MIHOMO_NODE_FAILOVER=🇫🇮 Finland->DE (backup)+1' <<<"$out"
-grep -Fqx 'node select-auto DE (backup)+1' "$TMP/log"
-if grep -Fq 'Unknown' "$TMP/log"; then
-  echo 'FAIL: failover attempted an unlisted node' >&2
-  exit 1
-fi
-
-echo "=== failed first fallback tries next explicitly allowed exact node ==="
-printf '%s\n' '🇫🇮 Finland' | sudo tee "$TMP/etc/node-name" >/dev/null
-: >"$TMP/log"
-out="$(MOCK_DE_OK=0 MOCK_NL_OK=1 run_policy failover)"
-grep -Fqx 'MIHOMO_NODE_FAILOVER=🇫🇮 Finland->NL [test]*' <<<"$out"
-grep -Fqx 'node select-auto DE (backup)+1' "$TMP/log"
-grep -Fqx 'node select-auto NL [test]*' "$TMP/log"
-
-echo "=== failover chain never wraps back to an earlier node ==="
-printf '%s\n' 'DE (backup)+1' | sudo tee "$TMP/etc/node-name" >/dev/null
-: >"$TMP/log"
-out="$(run_policy failover)"
-grep -Fqx 'MIHOMO_NODE_FAILOVER=DE (backup)+1->NL [test]*' <<<"$out"
-grep -Fqx 'node select-auto NL [test]*' "$TMP/log"
-if grep -Fq 'node select-auto 🇫🇮 Finland' "$TMP/log"; then
-  echo 'FAIL: failover wrapped back to an earlier node' >&2
-  exit 1
-fi
-
-echo "=== last allowed node exhausts node failover ==="
-printf '%s\n' 'NL [test]*' | sudo tee "$TMP/etc/node-name" >/dev/null
-: >"$TMP/log"
-if run_policy failover >"$TMP/out" 2>"$TMP/err"; then
-  echo 'FAIL: last node unexpectedly produced another node failover' >&2
-  exit 1
-fi
-[[ ! -s "$TMP/log" ]]
-
-echo "=== current node outside policy disables node auto-failover ==="
-printf '%s\n' 'Unlisted current' | sudo tee "$TMP/etc/node-name" >/dev/null
-: >"$TMP/log"
-if run_policy failover >"$TMP/out" 2>"$TMP/err"; then
-  echo 'FAIL: failover acted on a current node outside the explicit allow-list' >&2
-  exit 1
-fi
-[[ ! -s "$TMP/log" ]]
-
-echo "=== manual selection previews FIXED head replacement without mutating policy ==="
-run_policy mode fixed '🇫🇮 Finland' 'DE (backup)+1' 'NL [test]*' >/dev/null
-printf '%s\n' '🇫🇮 Finland' | sudo tee "$TMP/etc/node-name" >/dev/null
-sudo cp "$TMP/etc/node-policy.nodes" "$TMP/order.before-manual"
-out="$(run_policy manual-selection preview 'DE (backup)+1')"
-grep -Fqx 'FIXED_CHAIN_CHANGE=yes' <<<"$out"
-grep -Fqx 'FIXED_CHAIN_NEW=DE (backup)+1 -> NL [test]*' <<<"$out"
-sudo cmp -s "$TMP/order.before-manual" "$TMP/etc/node-policy.nodes"
-
-echo "=== FIXED head changes only after the selected node is actually active ==="
-if run_policy manual-selection apply 'DE (backup)+1' >"$TMP/out" 2>"$TMP/err"; then
-  echo 'FAIL: FIXED head changed before manual node activation' >&2
-  exit 1
-fi
-grep -Fq 'selected node is not the active Mihomo node' "$TMP/err"
-sudo cmp -s "$TMP/order.before-manual" "$TMP/etc/node-policy.nodes"
-
-printf '%s\n' 'DE (backup)+1' | sudo tee "$TMP/etc/node-name" >/dev/null
-out="$(run_policy manual-selection apply 'DE (backup)+1')"
-grep -Fqx 'FIXED_CHAIN_UPDATED=yes' <<<"$out"
-grep -Fqx 'MIHOMO_NODE_ORDER=DE (backup)+1 -> NL [test]*' <<<"$out"
-sudo sed -n '1p' "$TMP/etc/node-policy.nodes" | grep -Fqx 'DE (backup)+1'
-sudo sed -n '2p' "$TMP/etc/node-policy.nodes" | grep -Fqx 'NL [test]*'
-[[ "$(sudo wc -l "$TMP/etc/node-policy.nodes" | awk '{print $1}')" -eq 2 ]]
-
-echo "=== manual selection of an external healthy node replaces only old primary ==="
-run_policy mode fixed '🇫🇮 Finland' 'DE (backup)+1' 'NL [test]*' >/dev/null
-printf '%s\n' 'Kazakhstan manual' | sudo tee "$TMP/etc/node-name" >/dev/null
-out="$(run_policy manual-selection apply 'Kazakhstan manual')"
-grep -Fqx 'MIHOMO_NODE_ORDER=Kazakhstan manual -> DE (backup)+1 -> NL [test]*' <<<"$out"
-sudo sed -n '1p' "$TMP/etc/node-policy.nodes" | grep -Fqx 'Kazakhstan manual'
-sudo sed -n '2p' "$TMP/etc/node-policy.nodes" | grep -Fqx 'DE (backup)+1'
-sudo sed -n '3p' "$TMP/etc/node-policy.nodes" | grep -Fqx 'NL [test]*'
-
-echo "=== AUTO uses health-pool best node and honors pool policy ==="
-printf '%s\n' '🇫🇮 Finland' | sudo tee "$TMP/etc/node-name" >/dev/null
-: >"$TMP/log"; : >"$TMP/pool.log"
-out="$(run_policy mode auto)"
-grep -Fqx 'MIHOMO_NODE_POLICY=auto' <<<"$out"
-run_policy enabled
-status="$(run_policy status)"
-grep -Fqx 'Mihomo node policy: auto' <<<"$status"
-grep -Fqx 'Automatic Mihomo node switching: health-pool AUTO' <<<"$status"
-grep -Fqx 'MIHOMO_POOL_REGION=europe' <<<"$status"
-out="$(run_policy failover)"
-grep -Fqx 'MIHOMO_NODE_FAILOVER=🇫🇮 Finland->DE (backup)+1' <<<"$out"
-grep -Fqx 'node select-auto DE (backup)+1' "$TMP/log"
-grep -Fq 'ensure live --geo-if-policy' "$TMP/pool.log"
-grep -Fq 'cooldown add 🇫🇮 Finland' "$TMP/pool.log"
-
-echo "=== AUTO cools a failed candidate and tries the next healthy node ==="
-printf '%s\n' '🇫🇮 Finland' | sudo tee "$TMP/etc/node-name" >/dev/null
-: >"$TMP/log"; : >"$TMP/pool.log"
-out="$(MOCK_DE_OK=0 MOCK_NL_OK=1 run_policy failover)"
-grep -Fqx 'MIHOMO_NODE_FAILOVER=🇫🇮 Finland->NL [test]*' <<<"$out"
-grep -Fqx 'node select-auto DE (backup)+1' "$TMP/log"
-grep -Fqx 'node select-auto NL [test]*' "$TMP/log"
-grep -Fq 'cooldown add DE (backup)+1' "$TMP/pool.log"
-
-echo "=== MANUAL clears the fallback allow-list ==="
-out="$(run_policy mode manual)"
-grep -Fqx 'MIHOMO_NODE_POLICY=manual' <<<"$out"
-sudo test ! -e "$TMP/etc/node-policy.nodes"
-
-echo "=== uncertified unified inventory cannot dispatch a cross-core node ==="
-# The mock resolver has no candidates action. Never send an unknown Xray
-# node through native Mihomo configure when provider inventory is missing.
-cat >"$TMP/bin/resolver" <<'MOCK'
-#!/usr/bin/env bash
-[[ "${1:-}" == resolve ]] || exit 2
-case "${2:-}" in
-  "DE (backup)+1") printf 'NODE_ENGINE=XRAY\nNODE_ACTIVATED=NO\n' ;;
-  "NL [test]*") printf 'NODE_ENGINE=MIHOMO\nNODE_ACTIVATED=NO\n' ;;
-  *) printf 'NODE_ENGINE=MIHOMO\nNODE_ACTIVATED=NO\n' ;;
-esac
-MOCK
-chmod +x "$TMP/bin/resolver"
-run_policy mode fixed '🇫🇮 Finland' 'DE (backup)+1' 'NL [test]*' >/dev/null
-printf '%s\n' '🇫🇮 Finland' | sudo tee "$TMP/etc/node-name" >/dev/null
-: >"$TMP/log"
-if run_policy failover >"$TMP/out" 2>"$TMP/err"; then
-  echo 'FAIL: uncertified fixed inventory unexpectedly triggered a switch' >&2
-  exit 1
-fi
-grep -Fq 'UNIFIED_EMPTY_OR_STALE_AWG_FALLBACK' "$TMP/err"
-[[ ! -s "$TMP/log" ]]
-run_policy mode auto >/dev/null
-printf '%s\n' '🇫🇮 Finland' | sudo tee "$TMP/etc/node-name" >/dev/null
-: >"$TMP/log"
-if run_policy failover >"$TMP/out" 2>"$TMP/err"; then
-  echo 'FAIL: uncertified AUTO inventory unexpectedly triggered a switch' >&2
-  exit 1
-fi
-grep -Fq 'UNIFIED_EMPTY_OR_STALE_AWG_FALLBACK' "$TMP/err"
-[[ ! -s "$TMP/log" ]]
-chmod -x "$TMP/bin/resolver"
-if run_policy failover >"$TMP/out" 2>"$TMP/err"; then
-  echo 'FAIL: non-executable unified inventory switched node' >&2
-  exit 1
-fi
-[[ ! -s "$TMP/log" ]]
-grep -Fq 'ENGINE_RESOLVER_UNAVAILABLE' "$TMP/err"
-
-echo "Mihomo exact-node policy: OK"
+cd "$(dirname "$0")/.."
+python3 -B tests/test_unified_recovery_policy.py
+python3 -B tests/test_unified_manual_independence.py
+python3 -B - <<'PY'
+import os
+from pathlib import Path
+import subprocess
+import tempfile
+s=Path('src/awg-mihomo-node-policy').read_text()
+entry='failover(){'+s.split('failover(){',1)[1].split('\n}\n',1)[0]+'\n}\n'
+with tempfile.TemporaryDirectory() as directory:
+    root=Path(directory)
+    node=root/'node';node.write_text('current\n')
+    helper=root/'inventory';helper.write_text('#!/bin/sh\nexit 0\n');helper.chmod(0o700)
+    actions=root/'actions'
+    script='''set -Eeuo pipefail
+mode_get(){ echo "$MODE"; }
+is_enabled(){ [[ "$ENABLED" == 1 ]]; }
+failover_unified(){ printf 'unified:%s\\n' "$1" >> "$ACTIONS"; }
+'''+entry+'\nfailover\n'
+    def run(mode='auto',enabled='1',inventory=None):
+        actions.write_text('')
+        return subprocess.run(['bash','-c',script],capture_output=True,text=True,timeout=3,
+          env=dict(os.environ,MODE=mode,ENABLED=enabled,ACTIONS=str(actions),
+                   MIHOMO_NODE_NAME_FILE=str(node),
+                   MIHOMO_UNIFIED_NODE_CLI=str(inventory or helper)))
+    for mode in ('manual','fixed','invalid'):
+        assert run(mode).returncode != 0, mode
+        assert actions.read_text() == '', mode
+    assert run(enabled='0').returncode != 0
+    assert actions.read_text() == ''
+    assert run().returncode == 0
+    assert actions.read_text() == 'unified:current\n'
+    r=run(inventory=root/'missing')
+    assert r.returncode != 0 and 'UNIFIED_INVENTORY_MISSING' in r.stderr
+    assert actions.read_text() == ''
+    helper.chmod(0o600)
+    assert run().returncode != 0
+    assert actions.read_text() == ''
+    helper.chmod(0o700);node.write_text('')
+    assert run().returncode != 0
+    assert actions.read_text() == ''
+print('UNIFIED_NODE_POLICY_ENTRY=PASS_OFFLINE_ONLY')
+PY

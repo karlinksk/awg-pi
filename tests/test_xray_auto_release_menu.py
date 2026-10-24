@@ -34,5 +34,5 @@ class XrayAutoReleaseMenu(unittest.TestCase):
         self.assertIn('MIHOMO_XRAY_AUTO_MODE_FILE=',policy)
         self.assertIn('  xray-auto)',policy)
         self.assertIn('XRAY_AUTO_REQUIRES_CONFIGURED_AWG_BACKUP',policy)
-        self.assertIn('XRAY_AUTO_REQUIRES_READY_OFF',policy)
+        self.assertNotIn('XRAY_AUTO_REQUIRES_READY_OFF',policy)
 if __name__=="__main__": unittest.main()

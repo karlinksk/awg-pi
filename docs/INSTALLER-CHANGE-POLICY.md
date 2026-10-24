@@ -24,6 +24,17 @@ This applies to both **Selective Gateway** and **MikroTik Transit / Backup VPN**
 - [ ] Secret-free documentation updated
 - [ ] Commit verified; PR status and remaining hardware gates reported accurately
 
+## Owner-directed selection revision — 2026-10-24
+
+Manual never gates on external reachability. AUTO uses fresh engine-native
+fixed-Selector network assessment, independent of OpenAI/ipify/ChatGPT/YouTube,
+for incumbent failure and candidate recovery. This latest owner instruction
+supersedes the earlier local-only AUTO contract and older HTTPS/READY rules.
+Distinguish negative engine network evidence from controller/infrastructure
+unknown; preserve local core/profile/route/guard/management checks, quiesce,
+retry and rollback. Engine delay is not proof of Pi TUN or LAN forwarding.
+Independent hardware traffic tests remain required for release evidence.
+
 ## Ground rules specific to Mihomo
 
 - **Backend/proxy availability**, **Pi-bound `mihomo0` HTTPS**, and **forwarded LAN-client success** are separate levels of evidence. Do not report one as another.

@@ -1,5 +1,31 @@
 # AWG Pi Gateway v1.3.0 — release validation
 
+## Current candidate contract — 2026-10-24, PR #165
+
+Owner-directed revision: manual selection must not require external HTTPS,
+OpenAI HTTP401, ipify, ChatGPT or YouTube eligibility. AUTO uses fresh engine
+network assessment through Mihomo's native fixed-Selector delay API (the existing
+pool health URL, default generate_204); it never tests service eligibility.
+The local `check`/manual activation contract stays independent of network tests.
+
+AUTO observes both its incumbent and every activated candidate. A negative
+engine URL-test is network evidence, not proof of provider fault; controller
+failure, missing proxy, malformed result and concurrent selection are separate
+infrastructure/unknown outcomes. Never turn these into “all provider nodes dead”.
+Preserve threshold, full current-provider native-before-Xray traversal, safe
+quiesce/retry, watchdog retirement, sticky AWG, exact identity, route ownership,
+Transit guard and SSH/DNS. Xray uses the same selected bridge engine assessment.
+Background Xray inventory local readiness is only advisory.
+
+Regression must prove remote-endpoint failure triggers AUTO despite a live core,
+a working later candidate prevents premature AWG, infrastructure unknown is not
+counted as node failure, and MANUAL never calls network assessment. OpenAI
+unavailability alone must not prevent selection. Keep guard/route/identity and
+rollback failures fatal. Hardware release evidence still needs real independent
+TUN traffic, cross-engine recovery, exhaustion/AWG, forwarded LAN, Selective
+FAIL-OPEN, Transit FAIL-CLOSED, install/upgrade/reboot/restore. Engine delay is not
+Pi-bound TUN or LAN evidence. No MikroTik/working-media changes without permission.
+
 This document is the hardware/release gate for v1.3.0.
 
 **Full 150-case execution matrix (all modes, transports, selectors and negative cases):** [RELEASE-ACCEPTANCE-MATRIX-v1.3.0.md](RELEASE-ACCEPTANCE-MATRIX-v1.3.0.md). Items in that checklist remain unaccepted until scoped evidence is attached to the current candidate.

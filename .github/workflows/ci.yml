@@ -7,10 +7,12 @@ on:
       - 'feature/v1.3-*'
       - 'integration/v1.3.0-*'
       - 'rc/v1.3.0-*'
+      - 'refactor/v1.3-*'
   pull_request:
     branches:
       - main
       - 'develop/v1.3.0'
+      - 'integration/v1.3.0-*'
 
 jobs:
   shell:

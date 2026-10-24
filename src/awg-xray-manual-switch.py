@@ -49,6 +49,23 @@ _LAST_HTTPS_PROBE_CLASS="NOT_RUN"
 def refuse(code):
     raise RuntimeError(code)
 
+def auto_incumbent_unready():
+    if not tun_runtime_ready():return True
+    result=subprocess.run(['/usr/local/sbin/awg-transport','network-check'],
+        stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,timeout=15)
+    if result.returncode not in (0,1):
+        refuse('ENGINE_NETWORK_INFRASTRUCTURE_UNCONFIRMED')
+    return result.returncode==1
+
+class DeadXrayNetworkFailure(RuntimeError):
+    """Negative engine network observation, retry only after verified cleanup."""
+
+def auto_candidate_network_proof():
+    result=subprocess.run(['/usr/local/sbin/awg-transport','network-check'],
+        stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,timeout=15)
+    if result.returncode==1:raise DeadXrayNetworkFailure('ENGINE_NETWORK_UNREACHABLE')
+    if result.returncode!=0:refuse('ENGINE_NETWORK_INFRASTRUCTURE_UNCONFIRMED')
+
 def cmd(*args,timeout=20):
     p=subprocess.run(args,stdin=subprocess.DEVNULL,stdout=subprocess.PIPE,
                      stderr=subprocess.DEVNULL,text=True,timeout=timeout)
@@ -101,78 +118,30 @@ def choose(node):
             time.sleep(.5)
     refuse("CONTROLLER_SELECTION_NOT_CONFIRMED")
 
-def https_ok(via):
-    global _LAST_HTTPS_PROBE_CLASS
-    _LAST_HTTPS_PROBE_CLASS="NOT_COMPLETED"
-    env={k:v for k,v in os.environ.items() if k.lower() not in
-         ("http_proxy","https_proxy","all_proxy","no_proxy")}
-    if via=="tun":
-        params=["--interface","mihomo0","--noproxy","*"]
-    elif via=="socks":
-        params=["--socks5-hostname","127.0.0.1:17892","--noproxy",""]
-    elif via=="mixed":
-        # Only a diagnostic: test the running Mihomo selector through its
-        # loopback HTTP proxy. This never substitutes for the real TUN gate.
-        params=["--proxy","http://127.0.0.1:7890","--noproxy",""]
-    else:
-        _LAST_HTTPS_PROBE_CLASS="UNKNOWN_PROBE_MODE"
-        return False
+def tun_runtime_ready():
+    """Local runtime evidence only; no claim of external connectivity."""
+    if not unit_active(MIHOMO):return False
     try:
-        p=subprocess.run(["curl","-q","-4","-sS","--connect-timeout",
-            ("5" if via=="mixed" else "7"),"--max-time",
-            ("10" if via=="mixed" else "18"),"-o","/dev/null","-w","%{http_code}",*params,
-            "https://api.openai.com/v1/models"],env=env,stdin=subprocess.DEVNULL,
-            stdout=subprocess.PIPE,stderr=subprocess.DEVNULL,text=True,
-            timeout=(15 if via=="mixed" else 23))
-        code=p.stdout.strip()
-        if p.returncode==0 and re.fullmatch(r"[0-9]{3}",code):
-            _LAST_HTTPS_PROBE_CLASS="HTTP_"+code
-        elif p.returncode!=0:
-            # Curl's exit code is diagnostic, never a proof of network health.
-            # Do not expose curl stderr or the endpoint itself.
-            known={5,6,7,16,28,35,51,52,55,56,60}
-            _LAST_HTTPS_PROBE_CLASS=("CURL_EXIT_"+str(p.returncode)
-                                     if p.returncode in known else "CURL_EXIT_OTHER")
-        else:
-            _LAST_HTTPS_PROBE_CLASS="HTTP_INVALID"
-        return p.returncode==0 and code=="401"
-    except subprocess.TimeoutExpired:
-        _LAST_HTTPS_PROBE_CLASS="PROCESS_TIMEOUT"
-        return False
-    except OSError:
-        _LAST_HTTPS_PROBE_CLASS="PROCESS_ERROR"
-        return False
+        cmd("ip","link","show","dev","mihomo0",timeout=4)
+        selected=controller().get("now")
+        return (isinstance(selected,str) and bool(selected) and
+                (selected!=ALIAS or unit_active(XRAY)))
+    except (OSError,ValueError,RuntimeError,subprocess.TimeoutExpired):return False
+
 
 def prove_local_xray():
-    """Bounded readiness + two HTTPS probes, before the TUN selector changes.
-
-    An isolated candidate can pass when the systemd service has not yet bound
-    its fixed SOCKS port. Do not conflate service crashes, missing listener and
-    an actual HTTPS failure; expose a stable error code, never credentials.
-    """
+    """Require the running core and its SOCKS5 listener, without a website."""
     until=time.monotonic()+10
-    listener=False
     while time.monotonic()<until:
-        if unit_active(XRAY):
-            try:
-                with socket.create_connection(("127.0.0.1",17892),timeout=.4):
-                    listener=True
-                    break
-            except OSError:
-                pass
+        if not unit_active(XRAY):refuse("XRAY_SERVICE_NOT_ACTIVE")
+        try:
+            with socket.create_connection(("127.0.0.1",17892),timeout=.4) as sock:
+                sock.settimeout(.5)
+                sock.sendall(b"\x05\x01\x00")
+                if sock.recv(2)==b"\x05\x00":return
+        except OSError:pass
         time.sleep(.3)
-    if not unit_active(XRAY):
-        refuse("XRAY_SERVICE_NOT_ACTIVE")
-    if not listener:
-        refuse("XRAY_SOCKS_PORT_NOT_LISTENING")
-    for attempt in range(2):
-        if https_ok("socks"):
-            return
-        if not unit_active(XRAY):
-            refuse("XRAY_SERVICE_EXITED_DURING_HTTPS")
-        if attempt==0:
-            time.sleep(1)
-    refuse("XRAY_SOCKS_HTTPS_NOT_VERIFIED")
+    refuse("XRAY_SOCKS_NOT_READY")
 
 
 def stable_error_code(exc):
@@ -187,7 +156,7 @@ def prove_previous_tun():
     for attempt in range(3):
         if not unit_active(XRAY):
             refuse("PREVIOUS_XRAY_SERVICE_EXITED")
-        if https_ok("tun"):
+        if tun_runtime_ready():
             return
         if attempt<2:
             time.sleep(1)
@@ -241,102 +210,17 @@ def source_node(index):
 
 
 def preflight_xray(index,expected):
-    """Probe exact candidate in RAM without stopping the incumbent sidecar."""
-    from importlib.machinery import SourceFileLoader
-    path=Path("/usr/local/sbin/awg-mihomo-unified-nodes")
-    if not path.is_file() or path.is_symlink() or path.stat().st_uid!=0:
-        refuse("XRAY_ISOLATED_PROBE_MISSING")
-    spec=importlib.util.spec_from_loader("awg_manual_probe",SourceFileLoader("awg_manual_probe",str(path)))
-    module=importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    # Imported test helpers support environment overrides; privileged manual
-    # activation MUST use the pinned root-owned production engine and provider.
-    module.PROVIDER=PROVIDER
-    module.XRAY=Path("/usr/local/bin/awg-xray-vless-core")
-    module.ADAPTER=ADAPTER
-    module.PROBE_URL="https://api.openai.com/v1/models"
-    raw=PROVIDER.read_bytes()
-    if hashlib.sha256(raw).hexdigest()!=expected["sha"]:
-        refuse("PROVIDER_CHANGED_BEFORE_PROBE")
-    profiles=yaml.safe_load(raw).get("proxies",[])
-    if not isinstance(profiles,list) or not 1<=index<=len(profiles):
-        refuse("PROVIDER_CHANGED_BEFORE_PROBE")
-    node=profiles[index-1]
-    adapter=module.load_adapter()
-    if adapter.sha_profile(node)!=expected["fingerprint"]:
-        refuse("PROFILE_CHANGED_BEFORE_PROBE")
-    try:
-        result=module.isolated_probe(adapter,node)
-    except (OSError,ValueError,subprocess.TimeoutExpired,SystemExit):
-        refuse("XRAY_ISOLATED_PROBE_ERROR")
-    if hashlib.sha256(PROVIDER.read_bytes()).hexdigest()!=expected["sha"]:
-        refuse("PROVIDER_CHANGED_DURING_PROBE")
-    if result!="NETWORK_OK":
-        refuse("XRAY_ISOLATED_HTTPS_NOT_VERIFIED")
+    """Validate the exact profile/credentials; never gate selection on HTTPS."""
+    name,sha,fingerprint=source_node(index)
+    if (name,sha,fingerprint)!=(expected["candidate"],expected["sha"],expected["fingerprint"]):
+        refuse("PROVIDER_CHANGED_BEFORE_SELECTION")
+
 
 def preflight_mihomo(name,expected):
-    """Isolated Mihomo HTTPS test; never reconfigure the live TUN."""
-    from importlib.machinery import SourceFileLoader
-    import tempfile
-    pool_path=Path("/usr/local/sbin/awg-mihomo-pool")
-    if not pool_path.is_file() or pool_path.is_symlink() or pool_path.stat().st_uid!=0:
-        refuse("MIHOMO_ISOLATED_PROBE_MISSING")
-    raw=PROVIDER.read_bytes()
-    if hashlib.sha256(raw).hexdigest()!=expected["sha"]:
-        refuse("NATIVE_PROVIDER_CHANGED_BEFORE_PROBE")
-    doc=yaml.safe_load(raw)
-    profiles=doc.get("proxies",[]) if isinstance(doc,dict) else []
-    selected=[p for p in profiles if isinstance(p,dict) and p.get("name")==name]
-    if len(selected)!=1:refuse("NATIVE_PROFILE_CHANGED_BEFORE_PROBE")
-    spec=importlib.util.spec_from_loader("awg_manual_mihomo_probe",
-                                        SourceFileLoader("awg_manual_mihomo_probe",str(pool_path)))
-    module=importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    module.MIHOMO_BIN="/usr/local/bin/mihomo"
-    module.HEALTH_URL="https://www.gstatic.com/generate_204"
-    module.DELAY_TIMEOUT_MS=7000
-    node=selected[0]
-    if module.uses_xray_sidecar(node):refuse("NATIVE_WRONG_PROBE_ENGINE")
-    with tempfile.TemporaryDirectory(prefix="awg-manual-mihomo-",dir="/dev/shm") as tmp:
-        root=Path(tmp);root.chmod(0o700)
-        port=module.choose_free_port()
-        controller_port=module.choose_free_port()
-        while controller_port==port:controller_port=module.choose_free_port()
-        config,rows=module.make_probe_config([node],port,controller_port)
-        if len(rows)!=1 or not rows[0].get("valid"):
-            refuse("NATIVE_INVALID_PROBE_PROFILE")
-        cfg=root/"config.yaml"
-        cfg.write_text(yaml.safe_dump(config,allow_unicode=True,sort_keys=False))
-        cfg.chmod(0o600)
-        with (root/"probe.log").open("wb") as log:
-            process=subprocess.Popen([module.MIHOMO_BIN,"-d",str(root),"-f",str(cfg)],
-                        stdin=subprocess.DEVNULL,stdout=log,stderr=subprocess.STDOUT)
-            try:
-                # Suppress diagnostic output from the embedded scanner:
-                # operator messages must never echo subscription credentials.
-                import contextlib,io
-                try:
-                    with contextlib.redirect_stderr(io.StringIO()):
-                        module.wait_controller(process,controller_port,timeout=12)
-                        loaded=module.wait_probe_inventory(process,controller_port,
-                                            [rows[0]["probe_name"]],timeout=12)
-                except (OSError,ValueError,subprocess.TimeoutExpired,SystemExit):
-                    refuse("NATIVE_ISOLATED_PROBE_START_FAILED")
-                if rows[0]["probe_name"] not in loaded:
-                    refuse("NATIVE_ISOLATED_PROFILE_NOT_LOADED")
-                ok,_,_=module.probe_delay(controller_port,rows[0])
-                if not ok:
-                    time.sleep(15)
-                    ok,_,_=module.probe_delay(controller_port,rows[0])
-                if not ok:refuse("NATIVE_ISOLATED_HTTPS_NOT_VERIFIED")
-            finally:
-                if process.poll() is None:
-                    process.terminate()
-                    try:process.wait(timeout=3)
-                    except subprocess.TimeoutExpired:
-                        process.kill();process.wait(timeout=3)
-    if hashlib.sha256(PROVIDER.read_bytes()).hexdigest()!=expected["sha"]:
-        refuse("NATIVE_PROVIDER_CHANGED_DURING_PROBE")
+    """Validate identity; normal core configuration validation runs on apply."""
+    current=candidate_native(name)
+    if current["sha"]!=expected["sha"]:
+        refuse("NATIVE_PROVIDER_CHANGED_BEFORE_SELECTION")
 
 
 def routing_ok():
@@ -373,7 +257,7 @@ def inspect(index):
     if not isinstance(previous,str) or not previous:refuse("MISSING_PREVIOUS_NODE")
     if previous==ALIAS and not unit_active(XRAY):refuse("PREVIOUS_XRAY_DEAD")
     if previous!=ALIAS and unit_active(XRAY):refuse("FOREIGN_XRAY_RUNNING")
-    if not https_ok("tun"):refuse("PREVIOUS_TUN_NOT_PROVEN")
+    if not tun_runtime_ready():refuse("PREVIOUS_RUNTIME_NOT_READY")
     if (BOOT.exists() or BOOT.is_symlink()) and (
         BOOT.is_symlink() or b"AWG_XRAY_MANUAL=1" not in BOOT.read_bytes()):
         refuse("FOREIGN_BOOT_DEPENDENCY")
@@ -466,20 +350,13 @@ def wait_native_controller(name):
         time.sleep(.5)
     refuse("NATIVE_CONTROLLER_NOT_READY")
 
-def native_tun_proof():
-    # Selective FAIL-OPEN intentionally removes the fwmark rule while the TUN
-    # restarts. The independent health service restores it after a successful
-    # transport health cycle; waiting for it is not the same as passing a TUN
-    # HTTPS check. Transit re-arms synchronously through its guarded command.
+def native_runtime_proof():
+    """Bounded local TUN/routing readiness, without an external HTTPS gate."""
     until=time.monotonic()+20
-    while not routing_ok():
-        if time.monotonic()>=until:
-            refuse("NATIVE_ROUTING_NOT_RESTORED")
+    while not routing_ok() or not tun_runtime_ready():
+        if time.monotonic()>=until:refuse("NATIVE_ROUTING_NOT_RESTORED")
         time.sleep(.5)
-    for attempt in range(2):
-        if https_ok("tun"):return
-        if attempt==0:time.sleep(1)
-    refuse("NATIVE_TUN_HTTPS_UNVERIFIED")
+
 
 def inspect_native(name):
     """One preflight for native→native and Xray→native, no mutation."""
@@ -505,7 +382,7 @@ def inspect_native(name):
     if BOOT.is_symlink() or (BOOT.exists() and
             b"AWG_XRAY_MANUAL=1" not in BOOT.read_bytes()):
         refuse("FOREIGN_BOOT_DEPENDENCY")
-    if not https_ok("tun"):refuse("PREVIOUS_TUN_NOT_PROVEN")
+    if not tun_runtime_ready():refuse("PREVIOUS_RUNTIME_NOT_READY")
     if was_xray:
         try:
             digest=json.loads(SELECTED.read_text()).get("sha256")
@@ -550,7 +427,7 @@ def restore_native(path,state):
     choose(state["previous"])
     if MODE.read_text().strip()=="transit":
         cmd("/usr/local/sbin/awg-transit-routing","apply")
-    native_tun_proof()
+    native_runtime_proof()
     if not state["previous_xray"]:
         if state.get("xray_active") and not unit_active(XRAY):
             cmd("systemctl","start",XRAY)
@@ -567,7 +444,7 @@ def native_return(name):
         info=inspect_native(name)
         if info.get("already_selected"):
             print("NATIVE_MANUAL_ALREADY_SELECTED=YES")
-            print("NATIVE_RETURN_TUN=EXISTING_HEALTHY_NOT_SWITCHED")
+            print("NATIVE_RETURN_TUN=EXISTING_RUNTIME_READY_NOT_SWITCHED")
             return
         # A manual native target is qualified before live Mihomo is stopped.
         preflight_mihomo(name,info)
@@ -615,7 +492,7 @@ def native_return(name):
                 checkpoint(path,state,"NATIVE_TRANSIT_REARM")
                 cmd("/usr/local/sbin/awg-transit-routing","apply")
             checkpoint(path,state,"NATIVE_TUN_PROOF")
-            native_tun_proof()
+            native_runtime_proof()
             invariant()
             if hashlib.sha256(PROVIDER.read_bytes()).hexdigest()!=info["sha"]:
                 refuse("NATIVE_PROVIDER_CHANGED_BEFORE_COMMIT")
@@ -631,11 +508,11 @@ def native_return(name):
             if controller().get("now")!=name or (
                     state["previous_xray"] and unit_active(XRAY)):
                 refuse("NATIVE_EXIT_MISMATCH")
-            native_tun_proof()
+            native_runtime_proof()
             invariant()
             stored(path,state,"committed")
             cmd("systemctl","stop",timer)
-            print("NATIVE_RETURN_TUN=VERIFIED")
+            print("NATIVE_RETURN_LOCAL_RUNTIME=READY")
             print("ACTIVE_EXIT=MIHOMO_NATIVE")
             print("MIHOMO_NODE_POLICY=UNCHANGED")
             print("NATIVE_RETURN_REBOOT=NOT_TESTED")
@@ -668,9 +545,9 @@ def native_return(name):
 def dead_xray_xray(index):
     """Recover failed Xray->different Xray without reviving the broken one.
 
-    Preserves provider identity, uses the exact isolated HTTPS preflight,
+    Preserves provider identity and validates the exact profile,
     arms an independent watchdog, and only commits after live Mihomo TUN
-    HTTPS/OpenAI 401, guarded transit/Selective policy and sidecar fingerprint.
+    local readiness, guarded Transit/Selective policy and sidecar fingerprint.
     """
     if os.geteuid()!=0:
         raise DeadXrayPreflight("ROOT_REQUIRED")
@@ -687,7 +564,7 @@ def dead_xray_xray(index):
             con=controller()
             if con.get("now")!=ALIAS:
                 refuse("FAILED_XRAY_BRIDGE_NOT_SELECTED")
-            if https_ok("tun"):
+            if not auto_incumbent_unready():
                 refuse("PREVIOUS_TUN_STILL_HEALTHY")
             candidate,sha,fingerprint=source_node(index)
             prior=json.loads(SELECTED.read_text())
@@ -726,7 +603,7 @@ def dead_xray_xray(index):
             prove_local_xray()
             checkpoint(path,state,"START_MIHOMO_BRIDGE")
             # The old sidecar bridge has been removed; explicitly build a
-            # new owned one only after the new SOCKS HTTPS is verified.
+            # new owned one only after the new local SOCKS5 listener is ready.
             # Persistent bridge state belongs to an owned systemd drop-in,
             # never to provider.env: manual Xray->native must stay possible.
             native_env("MIHOMO_XRAY_VLESS_BRIDGE","auto")
@@ -743,8 +620,9 @@ def dead_xray_xray(index):
             if MODE.read_text().strip()=="transit":
                 cmd("/usr/local/sbin/awg-transit-routing","apply")
             checkpoint(path,state,"VERIFY_NEW_XRAY_TUN")
-            native_tun_proof()
+            native_runtime_proof()
             invariant()
+            auto_candidate_network_proof()
             if source_node(index)!=(candidate,sha,fingerprint):
                 refuse("XRAY_PROVIDER_CHANGED_BEFORE_COMMIT")
             if not unit_active(XRAY) or controller().get("now")!=ALIAS:
@@ -754,10 +632,10 @@ def dead_xray_xray(index):
                 refuse("XRAY_COMMIT_FINGERPRINT_MISMATCH")
             atomic(CURRENT,(candidate+"\n").encode())
             cmd("systemctl","enable",XRAY)
-            native_tun_proof()
+            native_runtime_proof()
             stored(path,state,"committed")
             cmd("systemctl","stop",timer)
-            print("DEAD_XRAY_XRAY_TUN=VERIFIED")
+            print("DEAD_XRAY_XRAY_LOCAL_RUNTIME=READY")
         except Exception as exc:
             state["failure_code"]=stable_error_code(exc)
             if mutated:
@@ -772,6 +650,8 @@ def dead_xray_xray(index):
                 if armed:
                     try:cmd("systemctl","stop",timer)
                     except Exception:pass
+            if mutated and isinstance(exc,DeadXrayNetworkFailure):
+                raise DeadXrayNetworkFailure('ENGINE_NETWORK_RETRY_SAFE') from None
             raise DeadXrayAbort(stable_error_code(exc)) from None
 
 
@@ -836,7 +716,7 @@ def dead_xray_native(name):
 
     Does not reuse healthy-old-TUN manual switching, since old Xray is dead.
     Return 2 only for pre-mutation rejection, 1 for failed recovery requiring
-    AWG, and 0 only after a newly selected real Mihomo TUN passes HTTPS 401.
+    AWG, and 0 only after the selected local Mihomo TUN and routes are ready.
     """
     if os.geteuid()!=0:
         raise DeadXrayPreflight("ROOT_REQUIRED")
@@ -853,7 +733,7 @@ def dead_xray_native(name):
             con=controller()
             if con.get("now")!=ALIAS or ALIAS not in con.get("all",[]):
                 refuse("FAILED_XRAY_BRIDGE_NOT_SELECTED")
-            if https_ok("tun"):
+            if not auto_incumbent_unready():
                 refuse("PREVIOUS_TUN_STILL_HEALTHY")
             target=candidate_native(name)
             preflight_mihomo(name,target)
@@ -903,8 +783,9 @@ def dead_xray_native(name):
             if MODE.read_text().strip()=="transit":
                 cmd("/usr/local/sbin/awg-transit-routing","apply")
             checkpoint(path,state,"VERIFY_NATIVE_TUN")
-            native_tun_proof()
+            native_runtime_proof()
             invariant()
+            auto_candidate_network_proof()
             if controller().get("now")!=name or unit_active(XRAY):
                 refuse("NATIVE_POSTCHECK_ENGINE_MISMATCH")
             if SELECTED.exists() or BOOT.exists():
@@ -913,7 +794,7 @@ def dead_xray_native(name):
                 refuse("PROVIDER_CHANGED_BEFORE_COMMIT")
             stored(path,state,"committed")
             cmd("systemctl","stop",timer)
-            print("DEAD_XRAY_NATIVE_TUN=VERIFIED")
+            print("DEAD_XRAY_NATIVE_LOCAL_RUNTIME=READY")
             print("MIHOMO_NODE_POLICY=UNCHANGED")
         except Exception as exc:
             state["failure_code"]=stable_error_code(exc)
@@ -932,6 +813,8 @@ def dead_xray_native(name):
                 if armed:
                     try:cmd("systemctl","stop",timer)
                     except Exception:pass
+            if mutated and isinstance(exc,DeadXrayNetworkFailure):
+                raise DeadXrayNetworkFailure('ENGINE_NETWORK_RETRY_SAFE') from None
             raise DeadXrayAbort(stable_error_code(exc)) from None
 
 def save_snap(info):
@@ -988,7 +871,7 @@ def restore(path,state):
     else:
         choose(previous)
         # Routes can lag after restoring the incumbent node.
-        native_tun_proof()
+        native_runtime_proof()
     for name,target in (("selected.prev",SELECTED),("boot.prev",BOOT),
                         ("current.prev",CURRENT),("policy.prev",POLICY),
                         ("order.prev",ORDER)):
@@ -1036,10 +919,10 @@ def apply(index):
         if info.get("already_selected"):
             # inspect has already proved service/TUN health; no change needed.
             print("XRAY_MANUAL_ALREADY_SELECTED=YES")
-            print("XRAY_MANUAL_TUN=EXISTING_HEALTHY_NOT_SWITCHED")
+            print("XRAY_MANUAL_TUN=EXISTING_RUNTIME_READY_NOT_SWITCHED")
             print("MIHOMO_NODE_POLICY=UNCHANGED")
             return
-        # Fresh on-demand HTTPS test comes before snapshot/watchdog and,
+        # Exact profile identity validation comes before snapshot/watchdog and,
         # critically, before stopping the current Xray process.
         preflight_xray(index,info)
         path,state=save_snap(info)
@@ -1063,7 +946,7 @@ def apply(index):
             cmd("systemctl","start",XRAY)
             checkpoint(path,state,"PROBE_NEW_XRAY_SOCKS")
             # systemctl start only confirms the launch was queued, not that
-            # the SOCKS listener or outbound HTTPS is ready. This probe uses
+            # the SOCKS listener is ready. This local check uses
             # the same local-socks path as isolated validation, with a bounded
             # startup wait and actionable failure codes.
             prove_local_xray()
@@ -1071,17 +954,8 @@ def apply(index):
                 refuse("PROVIDER_CHANGED")
             checkpoint(path,state,"SWITCH_TUN")
             choose(ALIAS)
-            # Third independent leg of the proof chain:
-            # (1) Xray SOCKS was already HTTPS-proven before this selection;
-            # (2) Mihomo's own mixed proxy now tests the selected Xray alias;
-            # (3) ONLY the subsequent mihomo0 bound-TUN 401 can commit.
-            # An unsuccessful mixed proxy diagnostic never passes OR vetoes
-            # a healthy TUN; it is recorded solely for failure isolation.
-            state["mixed_probe_last"]="NOT_RUN"
-            mixed_ok=https_ok("mixed")
-            state["mixed_probe_last"]=_LAST_HTTPS_PROBE_CLASS
-            # This remains the sole approval for real TUN HTTPS:
-            native_tun_proof()
+            # Local service/selector/TUN and routing evidence only.
+            native_runtime_proof()
             invariant()
             if source_node(index)[1:]!=(info["sha"],info["fingerprint"]):
                 refuse("PROVIDER_CHANGED_BEFORE_COMMIT")
@@ -1097,12 +971,12 @@ def apply(index):
             checkpoint(path,state,"POSTCOMMIT_TUN")
             if not unit_enabled(XRAY):
                 refuse("XRAY_POSTCOMMIT_SERVICE_NOT_ENABLED")
-            native_tun_proof()
+            native_runtime_proof()
             if source_node(index)[1:]!=(info["sha"],info["fingerprint"]):
                 refuse("PROVIDER_CHANGED_AFTER_TUN_POSTCHECK")
             stored(path,state,"committed")
             cmd("systemctl","stop",timer)
-            print("XRAY_MANUAL_TUN=VERIFIED")
+            print("XRAY_MANUAL_RUNTIME=READY_EXTERNAL_CONNECTIVITY_NOT_TESTED")
             print("MIHOMO_NODE_POLICY=UNCHANGED")
             print("XRAY_MANUAL_REBOOT=NOT_TESTED")
         except Exception as exc:
@@ -1165,14 +1039,14 @@ def dead_xray_exhausted():
         dead_xray_owned_bridge()
         if controller().get("now")!=ALIAS:
             refuse("CURRENT_XRAY_ALIAS_NOT_SELECTED")
-        if https_ok("tun"):
+        if not auto_incumbent_unready():
             refuse("CURRENT_XRAY_TUN_HEALTHY")
         dead_xray_quiesce()
         print("DEAD_XRAY_EXHAUSTED=QUIESCED_SAFE")
 
 
 def fresh_candidate_probe(engine,value):
-    """No gateway mutation: exact provider, independent engine, HTTPS only."""
+    """No gateway mutation: exact profile configuration validation only."""
     if os.geteuid()!=0:
         refuse("ROOT_REQUIRED")
     if engine=="native":
@@ -1187,7 +1061,7 @@ def fresh_candidate_probe(engine,value):
                               "fingerprint":fingerprint})
     else:
         refuse("INVALID_ENGINE")
-    print("FRESH_CANDIDATE_PROOF=PASS_NO_MUTATION")
+    print("CANDIDATE_CONFIG=VALID_NO_MUTATION")
 
 
 def main():
@@ -1205,6 +1079,9 @@ def main():
         except DeadXrayPreflight as exc:
             print("DEAD_XRAY_XRAY_REJECT="+stable_error_code(exc),file=sys.stderr)
             raise SystemExit(2)
+        except DeadXrayNetworkFailure:
+            print('DEAD_XRAY_XRAY_NETWORK_RETRY_SAFE=YES',file=sys.stderr)
+            raise SystemExit(2)
         except DeadXrayAbort as exc:
             print("DEAD_XRAY_XRAY_ABORT="+stable_error_code(exc),file=sys.stderr)
             raise SystemExit(1)
@@ -1214,6 +1091,9 @@ def main():
             dead_xray_native(sys.argv[2])
         except DeadXrayPreflight as exc:
             print("DEAD_XRAY_NATIVE_REJECT="+stable_error_code(exc),file=sys.stderr)
+            raise SystemExit(2)
+        except DeadXrayNetworkFailure:
+            print('DEAD_XRAY_NATIVE_NETWORK_RETRY_SAFE=YES',file=sys.stderr)
             raise SystemExit(2)
         except DeadXrayAbort as exc:
             print("DEAD_XRAY_NATIVE_ABORT="+stable_error_code(exc),file=sys.stderr)
@@ -1225,7 +1105,7 @@ def main():
             print("NATIVE_RETURN_PREFLIGHT=PASS")
             if candidate["already_selected"]:
                 print("NATIVE_MANUAL_ALREADY_SELECTED=YES")
-                print("NATIVE_RETURN_TUN=EXISTING_HEALTHY_NOT_SWITCHED")
+                print("NATIVE_RETURN_TUN=EXISTING_RUNTIME_READY_NOT_SWITCHED")
             else:print("NATIVE_RETURN_TUN=NOT_TESTED")
         else:native_return(sys.argv[2])
         return
@@ -1242,7 +1122,7 @@ def main():
             print("XRAY_MANUAL_PREFLIGHT=PASS")
             if result.get("already_selected"):
                 print("XRAY_MANUAL_ALREADY_SELECTED=YES")
-                print("XRAY_MANUAL_TUN=EXISTING_HEALTHY_NOT_SWITCHED")
+                print("XRAY_MANUAL_TUN=EXISTING_RUNTIME_READY_NOT_SWITCHED")
             else:
                 print("XRAY_MANUAL_TUN=NOT_TESTED")
         else:apply(index)

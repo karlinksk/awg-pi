@@ -39,6 +39,7 @@ MOCK
 cat >"$tmp/bin/curl" <<'MOCK'
 #!/usr/bin/env bash
 case "$*" in
+  *127.0.0.1:9090/proxies/AWG-MIHOMO*) echo '{"now":"Native"}' ;;
   *127.0.0.1:9090/version*)
     [[ "${MOCK_MIHOMO_HEALTH:-up}" == up ]] || exit 1
     echo '{}'
@@ -180,18 +181,13 @@ sudo grep -Fqx awg "$tmp/transport"
 [[ ! -e "$tmp/mihomo.active" ]]
 grep -Fq 'Target transport is unhealthy; state unchanged: mihomo' "$tmp/err"
 
-echo "=== proxy healthy but Pi-bound TUN HTTPS fails: AWG stays active ==="
+echo "=== external HTTPS unavailable does not veto local-ready transport ==="
 : >"$tmp/systemctl.log"; : >"$tmp/route.log"; rm -f "$tmp/mihomo.active"
-if MOCK_MIHOMO_TUN_HEALTH=down run_select mihomo >"$tmp/out" 2>"$tmp/err"; then
-  echo 'FAIL: Mihomo was selected without Pi-bound TUN HTTPS' >&2
-  exit 1
-fi
-sudo grep -Fqx awg "$tmp/transport"
-[[ ! -s "$tmp/route.log" ]]
-[[ ! -e "$tmp/mihomo.active" ]]
-grep -Fq 'Target transport is unhealthy; state unchanged: mihomo' "$tmp/err"
-# check_mihomo now includes Pi-bound TUN HTTPS in the initial health loop;
-# a failed gate rejects the candidate before the later explicit TUN branch.
+MOCK_MIHOMO_TUN_HEALTH=down run_select mihomo >"$tmp/out" 2>"$tmp/err"
+sudo grep -Fqx mihomo "$tmp/transport"
+grep -Fqx reload "$tmp/route.log"
+[[ -e "$tmp/mihomo.active" ]]
+run_select awg >/dev/null
 
 echo "=== Transit preflight failure leaves state unchanged ==="
 : >"$tmp/systemctl.log"; : >"$tmp/route.log"; : >"$tmp/preflight.log"; rm -f "$tmp/mihomo.active"
