@@ -53,7 +53,7 @@ class StaleXrayCleanupTests(unittest.TestCase):
                               side_effect=lambda p:p.is_file() and not p.is_symlink()),
             mock.patch.object(m,"verified_awg_backup_safe",return_value=True),
             mock.patch.object(m,"active",side_effect=self.active),
-            mock.patch.object(m,"run",side_effect=self.run),
+            mock.patch.object(m,"run",side_effect=self.fake_run),
             mock.patch.object(m.os,"geteuid",return_value=0),
             mock.patch.object(m.socket,"gethostname",return_value="awg-upgrade"),
             mock.patch.dict(os.environ,{"AWG_XRAY_STALE_CLEANUP":"TEST_PI_AUTHORIZED"})
@@ -65,7 +65,7 @@ class StaleXrayCleanupTests(unittest.TestCase):
         if name==m.XRAY:return self.xray_running
         if name in ("ssh.service","dnsmasq.service"):return True
         raise AssertionError("Unexpected unit "+str(name))
-    def run(self,*args,**kwargs):
+    def fake_run(self,*args,**kwargs):
         self.calls.append(args)
         if args[:2]==("systemctl","is-enabled"):
             return "enabled" if self.xray_enabled else "disabled"
