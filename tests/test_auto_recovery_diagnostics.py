@@ -162,7 +162,7 @@ exit 2
                 "xray_bridge_present(){ return 1; }\n"
                 "unified_recovery_candidates(){ printf 'XRAY\\t1\\t%s\\tXray-1\\n' '" + "a" * 64 + "'; }\n"
                 "validate_node_name(){ return 0; }\n"
-                "auto_xray_candidate(){ printf 'MIHOMO_NODE_FAILOVER=%s->%s\\n' \"$1\" \"$2\"; }\n"
+                "auto_xray_candidate(){ return 0; }\n"
                 "MIHOMO_UNIFIED_NODE_CLI=\"$RESOLVER\"\n"
                 "failover_unified Native-1\n"
             )
