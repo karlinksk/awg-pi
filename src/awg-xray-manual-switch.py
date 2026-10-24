@@ -30,6 +30,8 @@ POLICY=Path("/etc/awg-pbr/transports/mihomo/node-policy.mode")
 ORDER=Path("/etc/awg-pbr/transports/mihomo/node-policy.nodes")
 MODE=Path("/etc/awg-pbr/mode")
 BOOT=Path("/etc/systemd/system/awg-mihomo.service.d/62-awg-xray-manual.conf")
+AUTO_BOOT=Path("/etc/systemd/system/awg-mihomo.service.d/61-awg-xray-bridge.conf")
+AUTO_RUNTIME=Path("/run/systemd/system/awg-mihomo.service.d/61-awg-xray-bridge.conf")
 LOCK=Path("/run/awg-maintenance.lock")
 ADAPTER=Path("/usr/local/sbin/awg-xray-vless")
 SWITCH=Path("/usr/local/sbin/awg-xray-manual-switch")
@@ -358,6 +360,30 @@ def native_runtime_proof():
         time.sleep(.5)
 
 
+def owned_auto_bridge():
+    """Only the complete, root-owned AUTO bridge may be detached."""
+    exists=[p.exists() or p.is_symlink() for p in (AUTO_BOOT,AUTO_RUNTIME)]
+    if not any(exists):return False
+    if not all(exists):refuse("AUTO_XRAY_BRIDGE_INCOMPLETE")
+    for p in (AUTO_BOOT,AUTO_RUNTIME):
+        if p.is_symlink() or not p.is_file() or p.stat().st_uid!=0:
+            refuse("AUTO_XRAY_BRIDGE_NOT_OWNED")
+        data=p.read_bytes()
+        if (b"MIHOMO_XRAY_VLESS_BRIDGE=1" not in data or
+            b"Requires=awg-xray-vless.service" not in data):
+            refuse("AUTO_XRAY_BRIDGE_FOREIGN")
+    if AUTO_BOOT.read_bytes()!=AUTO_RUNTIME.read_bytes():
+        refuse("AUTO_XRAY_BRIDGE_MISMATCH")
+    return True
+
+def xray_detached_from_mihomo():
+    """Check systemd's loaded dependency graph, not just on-disk files."""
+    for prop in ("Requires","After","BindsTo","PartOf"):
+        if XRAY in cmd("systemctl","show",MIHOMO,"-p",prop,
+                       "--value",timeout=8).split():
+            return False
+    return True
+
 def inspect_native(name):
     """One preflight for native→native and Xray→native, no mutation."""
     if os.geteuid()!=0:refuse("ROOT_REQUIRED")
@@ -390,12 +416,16 @@ def inspect_native(name):
             refuse("PREVIOUS_XRAY_PROFILE_INVALID")
         if not isinstance(digest,str) or not re.fullmatch(r"[0-9a-f]{64}",digest):
             refuse("PREVIOUS_XRAY_PROFILE_INVALID")
+    auto_bridge=owned_auto_bridge()
+    if auto_bridge and not was_xray:
+        refuse("AUTO_XRAY_BRIDGE_WITH_NATIVE_SELECTOR")
     configured=read(CURRENT)
     already=(not was_xray and previous==name and configured is not None and
             configured.decode("utf-8","replace").strip()==name)
     target.update({"previous":previous,"previous_xray":was_xray,
         "xray_enabled":unit_enabled(XRAY),"xray_active":xray_active,
-        "operation":"NATIVE_SWITCH","already_selected":already})
+        "operation":"NATIVE_SWITCH","already_selected":already,
+        "auto_bridge":auto_bridge})
     return target
 
 def restore_native(path,state):
@@ -418,6 +448,15 @@ def restore_native(path,state):
         original=read(path/label)
         if original is None:dest.unlink(missing_ok=True)
         else:atomic(dest,original,0o644 if dest==BOOT else 0o600)
+    if "auto_bridge" in state:
+        for label,dest in (("auto-boot.prev",AUTO_BOOT),
+                           ("auto-runtime.prev",AUTO_RUNTIME)):
+            original=read(path/label)
+            if state["auto_bridge"]:
+                if original is None:refuse("AUTO_XRAY_ROLLBACK_SNAPSHOT_MISSING")
+                atomic(dest,original,0o600)
+            elif dest.exists() or dest.is_symlink():
+                refuse("AUTO_XRAY_BRIDGE_CHANGED_DURING_ROLLBACK")
     cmd("systemctl","daemon-reload")
     if state["previous_xray"]:
         if not unit_active(XRAY):cmd("systemctl","start",XRAY)
@@ -498,12 +537,27 @@ def native_return(name):
                 refuse("NATIVE_PROVIDER_CHANGED_BEFORE_COMMIT")
             checkpoint(path,state,"NATIVE_COMMIT")
             if state["previous_xray"]:
-                # Commit new native exit before detaching the standby sidecar.
+                # AUTO owns a Requires= edge; remove the loaded graph edge
+                # BEFORE stopping Xray, otherwise native Mihomo may stop too.
+                if owned_auto_bridge()!=state.get("auto_bridge",False):
+                    refuse("AUTO_XRAY_BRIDGE_CHANGED_DURING_RETURN")
+                if state.get("auto_bridge",False):
+                    for overlay,label in ((AUTO_BOOT,"auto-boot.prev"),
+                                          (AUTO_RUNTIME,"auto-runtime.prev")):
+                        if read(overlay)!=read(path/label):
+                            refuse("AUTO_XRAY_BRIDGE_CHANGED_DURING_RETURN")
                 BOOT.unlink(missing_ok=True)
-                SELECTED.unlink(missing_ok=True)
+                if state.get("auto_bridge",False):
+                    AUTO_BOOT.unlink()
+                    AUTO_RUNTIME.unlink()
                 cmd("systemctl","daemon-reload")
+                if not xray_detached_from_mihomo():
+                    refuse("AUTO_XRAY_DEPENDENCY_NOT_DETACHED")
+                if not unit_active(MIHOMO):
+                    refuse("NATIVE_STOPPED_DURING_XRAY_DETACH")
                 cmd("systemctl","stop",XRAY)
                 cmd("systemctl","disable",XRAY)
+                SELECTED.unlink(missing_ok=True)
             checkpoint(path,state,"NATIVE_FINAL_VERIFY")
             if controller().get("now")!=name or (
                     state["previous_xray"] and unit_active(XRAY)):
@@ -825,7 +879,9 @@ def save_snap(info):
     atomic(path/"state.json",json.dumps(state).encode())
     for name,source in (("selected.prev",SELECTED),("current.prev",CURRENT),
                         ("policy.prev",POLICY),("order.prev",ORDER),
-                        ("boot.prev",BOOT),("env.prev",MIHOMO_ENV),
+                        ("boot.prev",BOOT),("auto-boot.prev",AUTO_BOOT),
+                        ("auto-runtime.prev",AUTO_RUNTIME),
+                        ("env.prev",MIHOMO_ENV),
                         ("config.prev",MIHOMO_CONFIG),
                         ("endpoint.prev",MIHOMO_ENDPOINT),("egress.prev",MIHOMO_EGRESS)):
         data=read(source)
