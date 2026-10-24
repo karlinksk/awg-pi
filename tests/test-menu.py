@@ -16,7 +16,7 @@ required = [
     '"Откатить предыдущую конфигурацию [$rollback_state]"',
     '"Mihomo"',
     '"Резервирование узлов Mihomo"',
-    '"Редактировать цепочку FIXED"',
+    '"Ручной выбор ноды доступен всегда. AUTO — автоматический поиск работоспособной ноды в объединённом пуле Mihomo/Xray; AWG — последний резерв."',
     '"Часовой пояс"',
     '"Статистика трафика"',
     '"Проверить / восстановить Mihomo"',
@@ -47,6 +47,12 @@ required = [
 ]
 for needle in required:
     assert needle in menu, f"missing menu safety/config feature: {needle}"
+
+policy_menu=menu.split('mihomo_node_policy_menu(){',1)[1].split('\n}\n',1)[0]
+assert '3) mihomo_node_chain_editor' not in policy_menu
+assert '5) mihomo_auto_strategy_menu' not in policy_menu
+assert '2)\n' in policy_menu and 'mode manual' in policy_menu
+assert '4) mihomo_node_auto_menu' in policy_menu
 
 # Pasted AWG profile is always checked before replacement.
 check_pos = menu.index('config check "$PASTE_TMP"')
