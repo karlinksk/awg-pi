@@ -193,6 +193,15 @@ case "${1:-}" in
 esac
 MOCK
 
+cat >"$tmp/bin/python" <<'MOCK'
+#!/usr/bin/env bash
+# Controller itself is covered by real loopback tests; this is a transaction fixture.
+if [[ "${1:-}" == - && "${2:-}" == --awg-controller-select ]]; then
+  echo controller-selection >>"${MOCK_SYSTEMCTL_LOG:?}"
+  exit 0
+fi
+exec python3 "$@"
+MOCK
 chmod +x "$tmp/bin/"*
 
 run_cli(){
@@ -223,7 +232,7 @@ run_cli(){
     MIHOMO_PREPARE="$tmp/bin/prepare" \
     MIHOMO_PROVIDER_HELPER="$repo_root/src/awg-mihomo-provider.py" \
     MIHOMO_POOL_CLI="$tmp/bin/pool" \
-    PYTHON_BIN=python3 \
+    PYTHON_BIN="$tmp/bin/python" \
     AWG_TRANSPORT_CLI="$tmp/bin/transport" \
     SYSTEMCTL_BIN="$tmp/bin/systemctl" \
     MIHOMO_BIN="$tmp/bin/mihomo" \
