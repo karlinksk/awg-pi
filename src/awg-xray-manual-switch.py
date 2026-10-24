@@ -93,9 +93,9 @@ def notify_manual_node_change(kind, node):
         return
     config=Path("/etc/awg-pbr/notify/telegram.json")
     notifier=Path("/usr/local/sbin/awg-notify")
-    if not config.is_file() or not notifier.is_file():
-        return
     try:
+        if not config.is_file() or not notifier.is_file():
+            return
         enabled=subprocess.run(
             ["systemctl","is-enabled","--quiet","awg-notify-flush.timer"],
             stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,
