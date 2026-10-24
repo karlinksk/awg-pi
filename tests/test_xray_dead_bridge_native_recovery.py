@@ -65,6 +65,8 @@ class DeadXrayRecovery(unittest.TestCase):
             mock.patch.object(mod,"wait_native_controller"),
             mock.patch.object(mod,"choose"),
             mock.patch.object(mod,"native_runtime_proof"),
+            mock.patch.object(mod,"auto_candidate_network_proof"),
+            mock.patch.object(mod.subprocess,"run",return_value=mock.Mock(returncode=0)),
             mock.patch.object(mod,"invariant")
         ]
         for patch in self.patches:
@@ -116,6 +118,18 @@ class DeadXrayRecovery(unittest.TestCase):
         self.assertIn(("systemd-run","--unit=xray-manual-test","--on-active=180s",
                        str(mod.SWITCH),"watchdog",str(self.root/"snap")),self.commands)
         self.assertIn(("systemctl","stop","xray-manual-test.timer"),self.commands)
+
+    def test_network_negative_retries_only_after_cleanup_and_watchdog_retirement(self):
+        with mock.patch.object(mod,"auto_candidate_network_proof",side_effect=mod.DeadXrayNetworkFailure("ENGINE_NETWORK_UNREACHABLE")),self.assertRaises(mod.DeadXrayNetworkFailure):
+            mod.dead_xray_native("HealthyNative")
+        self.assertEqual(mod.dead_xray_quiesce.call_count,2)
+        mod.stored.assert_any_call(self.root/"snap",mock.ANY,"rolled_back")
+        self.assertIn(("systemctl","stop","xray-manual-test.timer"),self.commands)
+
+    def test_network_infrastructure_abort_never_becomes_retry_safe(self):
+        with mock.patch.object(mod,"auto_candidate_network_proof",side_effect=RuntimeError("ENGINE_NETWORK_INFRASTRUCTURE_UNCONFIRMED")),self.assertRaises(mod.DeadXrayAbort):
+            mod.dead_xray_native("HealthyNative")
+        mod.stored.assert_any_call(self.root/"snap",mock.ANY,"rolled_back")
 
     def test_postcheck_failure_quiesces_not_revives_old_xray(self):
         with mock.patch.object(mod,"native_runtime_proof",side_effect=RuntimeError(

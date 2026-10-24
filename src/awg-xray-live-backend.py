@@ -77,8 +77,17 @@ def tun_runtime_ready():
 
 
 def original_tun_unready_twice():
-    # AUTO does not replace a locally ready incumbent for performance.
-    return not tun_runtime_ready() and not tun_runtime_ready()
+    # Only the AUTO executor uses engine reachability; MANUAL remains local.
+    def unready():
+        return not tun_runtime_ready() or not engine_network_ready()
+    return unready() and unready()
+
+def engine_network_ready():
+    result=subprocess.run(['/usr/local/sbin/awg-transport','network-check'],
+        stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,timeout=15)
+    if result.returncode not in (0,1):
+        raise RuntimeError('ENGINE_NETWORK_INFRASTRUCTURE_UNCONFIRMED')
+    return result.returncode==0
 
 
 def controller():
@@ -490,7 +499,7 @@ class LinuxBackend:
             time.sleep(.3)
         raise RuntimeError("BRIDGE_NOT_SELECTABLE")
     def check_tun_ready(self):
-        return tun_runtime_ready()
+        return tun_runtime_ready() and engine_network_ready()
     def check_policy_routes(self):
         if MODE.read_text().strip()=="selective":
             if not routes_ok() or self.degraded_fixed:

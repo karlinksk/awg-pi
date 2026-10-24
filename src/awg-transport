@@ -38,6 +38,7 @@ Usage:
   awg-transport status
   awg-transport list
   awg-transport check [awg|mihomo]
+  awg-transport network-check  # AUTO only: fresh selected-node engine delay
   awg-transport select awg|mihomo
 USAGE
 }
@@ -69,6 +70,41 @@ check_mihomo(){
 }
 
 # Local proxy success does not validate the selected node's Pi-bound TUN.
+
+# Separate from check/select: MANUAL never requires external reachability.
+# Use the same engine URL-test mechanism as awg-mihomo-pool, not service
+# eligibility. rc1 is a negative network observation; rc2 is infrastructure
+# or changed selection, and must never be counted as a dead provider node.
+network_check(){
+  check_mihomo || return 2
+  MIHOMO_NETWORK_API="$MIHOMO_API" python3 - <<'PY'
+import json,os,sys,urllib.request,urllib.parse,urllib.error
+api=os.environ['MIHOMO_NETWORK_API'].rstrip('/')
+opener=urllib.request.build_opener(urllib.request.ProxyHandler({}))
+def get(path,timeout=3):
+    with opener.open(api+path,timeout=timeout) as response:
+        return json.load(response)
+try:
+    before=get('/proxies/AWG-MIHOMO').get('now')
+    if not isinstance(before,str) or not before:sys.exit(2)
+    query=urllib.parse.urlencode({'url':os.environ.get('MIHOMO_POOL_HEALTH_URL',
+        'https://www.gstatic.com/generate_204'),'timeout':5000})
+    verdict=2
+    try:
+        result=get('/proxies/'+urllib.parse.quote(before,safe='')+'/delay?'+query,7)
+        delay=result.get('delay')
+        if type(delay) is int and delay>0:verdict=0
+    except urllib.error.HTTPError as exc:
+        # Mihomo's delay endpoint reports an unsuccessful URL-test as 503/504.
+        if exc.code in (503,504):verdict=1
+    # Read back even after a negative test. A controller failure, absent
+    # target or concurrent switch invalidates the network observation.
+    if get('/proxies/AWG-MIHOMO').get('now')!=before:verdict=2
+    sys.exit(verdict)
+except (OSError,ValueError,TypeError,AttributeError):
+    sys.exit(2)
+PY
+}
 
 
 check_transport(){
@@ -280,6 +316,9 @@ select_transport(){
 
 cmd="${1:-status}"
 case "$cmd" in
+  network-check)
+    network_check
+    ;;
   get)
     awg_transport_get
     ;;

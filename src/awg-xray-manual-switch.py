@@ -49,6 +49,23 @@ _LAST_HTTPS_PROBE_CLASS="NOT_RUN"
 def refuse(code):
     raise RuntimeError(code)
 
+def auto_incumbent_unready():
+    if not tun_runtime_ready():return True
+    result=subprocess.run(['/usr/local/sbin/awg-transport','network-check'],
+        stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,timeout=15)
+    if result.returncode not in (0,1):
+        refuse('ENGINE_NETWORK_INFRASTRUCTURE_UNCONFIRMED')
+    return result.returncode==1
+
+class DeadXrayNetworkFailure(RuntimeError):
+    """Negative engine network observation, retry only after verified cleanup."""
+
+def auto_candidate_network_proof():
+    result=subprocess.run(['/usr/local/sbin/awg-transport','network-check'],
+        stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,timeout=15)
+    if result.returncode==1:raise DeadXrayNetworkFailure('ENGINE_NETWORK_UNREACHABLE')
+    if result.returncode!=0:refuse('ENGINE_NETWORK_INFRASTRUCTURE_UNCONFIRMED')
+
 def cmd(*args,timeout=20):
     p=subprocess.run(args,stdin=subprocess.DEVNULL,stdout=subprocess.PIPE,
                      stderr=subprocess.DEVNULL,text=True,timeout=timeout)
@@ -547,7 +564,7 @@ def dead_xray_xray(index):
             con=controller()
             if con.get("now")!=ALIAS:
                 refuse("FAILED_XRAY_BRIDGE_NOT_SELECTED")
-            if tun_runtime_ready():
+            if not auto_incumbent_unready():
                 refuse("PREVIOUS_TUN_STILL_HEALTHY")
             candidate,sha,fingerprint=source_node(index)
             prior=json.loads(SELECTED.read_text())
@@ -605,6 +622,7 @@ def dead_xray_xray(index):
             checkpoint(path,state,"VERIFY_NEW_XRAY_TUN")
             native_runtime_proof()
             invariant()
+            auto_candidate_network_proof()
             if source_node(index)!=(candidate,sha,fingerprint):
                 refuse("XRAY_PROVIDER_CHANGED_BEFORE_COMMIT")
             if not unit_active(XRAY) or controller().get("now")!=ALIAS:
@@ -632,6 +650,8 @@ def dead_xray_xray(index):
                 if armed:
                     try:cmd("systemctl","stop",timer)
                     except Exception:pass
+            if mutated and isinstance(exc,DeadXrayNetworkFailure):
+                raise DeadXrayNetworkFailure('ENGINE_NETWORK_RETRY_SAFE') from None
             raise DeadXrayAbort(stable_error_code(exc)) from None
 
 
@@ -713,7 +733,7 @@ def dead_xray_native(name):
             con=controller()
             if con.get("now")!=ALIAS or ALIAS not in con.get("all",[]):
                 refuse("FAILED_XRAY_BRIDGE_NOT_SELECTED")
-            if tun_runtime_ready():
+            if not auto_incumbent_unready():
                 refuse("PREVIOUS_TUN_STILL_HEALTHY")
             target=candidate_native(name)
             preflight_mihomo(name,target)
@@ -765,6 +785,7 @@ def dead_xray_native(name):
             checkpoint(path,state,"VERIFY_NATIVE_TUN")
             native_runtime_proof()
             invariant()
+            auto_candidate_network_proof()
             if controller().get("now")!=name or unit_active(XRAY):
                 refuse("NATIVE_POSTCHECK_ENGINE_MISMATCH")
             if SELECTED.exists() or BOOT.exists():
@@ -792,6 +813,8 @@ def dead_xray_native(name):
                 if armed:
                     try:cmd("systemctl","stop",timer)
                     except Exception:pass
+            if mutated and isinstance(exc,DeadXrayNetworkFailure):
+                raise DeadXrayNetworkFailure('ENGINE_NETWORK_RETRY_SAFE') from None
             raise DeadXrayAbort(stable_error_code(exc)) from None
 
 def save_snap(info):
@@ -1016,7 +1039,7 @@ def dead_xray_exhausted():
         dead_xray_owned_bridge()
         if controller().get("now")!=ALIAS:
             refuse("CURRENT_XRAY_ALIAS_NOT_SELECTED")
-        if tun_runtime_ready():
+        if not auto_incumbent_unready():
             refuse("CURRENT_XRAY_TUN_HEALTHY")
         dead_xray_quiesce()
         print("DEAD_XRAY_EXHAUSTED=QUIESCED_SAFE")
@@ -1056,6 +1079,9 @@ def main():
         except DeadXrayPreflight as exc:
             print("DEAD_XRAY_XRAY_REJECT="+stable_error_code(exc),file=sys.stderr)
             raise SystemExit(2)
+        except DeadXrayNetworkFailure:
+            print('DEAD_XRAY_XRAY_NETWORK_RETRY_SAFE=YES',file=sys.stderr)
+            raise SystemExit(2)
         except DeadXrayAbort as exc:
             print("DEAD_XRAY_XRAY_ABORT="+stable_error_code(exc),file=sys.stderr)
             raise SystemExit(1)
@@ -1065,6 +1091,9 @@ def main():
             dead_xray_native(sys.argv[2])
         except DeadXrayPreflight as exc:
             print("DEAD_XRAY_NATIVE_REJECT="+stable_error_code(exc),file=sys.stderr)
+            raise SystemExit(2)
+        except DeadXrayNetworkFailure:
+            print('DEAD_XRAY_NATIVE_NETWORK_RETRY_SAFE=YES',file=sys.stderr)
             raise SystemExit(2)
         except DeadXrayAbort as exc:
             print("DEAD_XRAY_NATIVE_ABORT="+stable_error_code(exc),file=sys.stderr)

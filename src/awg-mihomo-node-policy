@@ -845,6 +845,7 @@ unified_native_tun_postcheck(){
   fi
   "$MIHOMO_AUTO_SYSTEMCTL" is-active --quiet ssh.service &&
     "$MIHOMO_AUTO_SYSTEMCTL" is-active --quiet dnsmasq.service || return 2
+  "$MIHOMO_AUTO_TRANSPORT_CLI" network-check >/dev/null 2>&1
 }
 
 unified_native_quiesce(){
@@ -927,8 +928,8 @@ failover_unified(){
     fi
 
     if [[ "$engine" == MIHOMO ]]; then
-      # Every candidate needs a fresh HTTPS proof. Historical pool "OK" and
-      # UI status alone never qualify a current provider profile for a switch.
+      # AUTO assesses the newly selected candidate through the engine delay
+      # API. Cached status and website eligibility never qualify a switch.
       service_candidate_allowed "$candidate" || continue
       rc=0
       MIHOMO_NODE_FAILOVER_RECOVERY=1 "$MIHOMO_CONFIGURE" node select-auto "$candidate" >/dev/null || rc=$?

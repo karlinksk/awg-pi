@@ -26,10 +26,13 @@ This applies to both **Selective Gateway** and **MikroTik Transit / Backup VPN**
 
 ## Owner-directed selection revision — 2026-10-24
 
-Manual/AUTO no longer gate on external HTTPS, OpenAI/ipify or service
-eligibility. This owner instruction supersedes the older HTTPS/READY
-requirements below. Keep local core/profile/route/guard/management checks and
-rollback. Local readiness must not be represented as external connectivity.
+Manual never gates on external reachability. AUTO uses fresh engine-native
+network assessment, independent of OpenAI/ipify/ChatGPT/YouTube eligibility,
+for incumbent failure and candidate recovery. This latest owner instruction
+supersedes the earlier local-only AUTO contract and older HTTPS/READY rules.
+Distinguish negative engine network evidence from controller/infrastructure
+unknown; preserve local core/profile/route/guard/management checks, quiesce,
+retry and rollback. Engine delay is not proof of Pi TUN or LAN forwarding.
 Independent hardware traffic tests remain required for release evidence.
 
 ## Ground rules specific to Mihomo

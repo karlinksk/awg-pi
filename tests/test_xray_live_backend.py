@@ -88,15 +88,24 @@ class LinuxBackendTests(unittest.TestCase):
                 self.assertFalse(m.failclosed())
             self.assertTrue(bridge.exists())
     def test_healthy_original_tun_forbids_live_emergency_activation(self):
-        with mock.patch.object(m,"tun_runtime_ready",return_value=True) as check:
+        with mock.patch.object(m,"engine_network_ready",return_value=True), mock.patch.object(m,"tun_runtime_ready",return_value=True) as check:
             self.assertFalse(m.original_tun_unready_twice())
         check.assert_called_once_with()
-        with mock.patch.object(m,"tun_runtime_ready",side_effect=[False,True]) as check:
+        with mock.patch.object(m,"engine_network_ready",return_value=True), mock.patch.object(m,"tun_runtime_ready",side_effect=[False,True]) as check:
             self.assertFalse(m.original_tun_unready_twice())
         self.assertEqual(check.call_count,2)
         with mock.patch.object(m,"tun_runtime_ready",side_effect=[False,False]) as check:
             self.assertTrue(m.original_tun_unready_twice())
         self.assertEqual(check.call_count,2)
+
+    def test_live_core_remote_outage_authorizes_auto_recovery(self):
+        with mock.patch.object(m,"tun_runtime_ready",return_value=True),mock.patch.object(m,"engine_network_ready",return_value=False):
+            self.assertTrue(m.original_tun_unready_twice())
+
+    def test_network_unknown_cannot_authorize_auto_recovery(self):
+        with mock.patch.object(m,"tun_runtime_ready",return_value=True),mock.patch.object(m,"engine_network_ready",side_effect=RuntimeError("ENGINE_NETWORK_INFRASTRUCTURE_UNCONFIRMED")):
+            with self.assertRaisesRegex(RuntimeError,"INFRASTRUCTURE"):
+                m.original_tun_unready_twice()
 
     def test_degraded_fixed_requires_explicit_test_pi_failclosed(self):
         import os

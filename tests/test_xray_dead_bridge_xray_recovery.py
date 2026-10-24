@@ -64,6 +64,8 @@ class DeadXrayToXray(unittest.TestCase):
             mock.patch.object(module,"wait_native_controller"),
             mock.patch.object(module,"choose"),
             mock.patch.object(module,"native_runtime_proof"),
+            mock.patch.object(module,"auto_candidate_network_proof"),
+            mock.patch.object(module.subprocess,"run",return_value=mock.Mock(returncode=0)),
             mock.patch.object(module,"invariant")
         ]
         for patch in self.patches:

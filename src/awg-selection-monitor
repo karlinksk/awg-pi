@@ -72,7 +72,10 @@ maintenance_in_progress(){
 transport_healthy(){
   local t="$1"
   awg_transport_backend_valid "$t" || return 1
-  "$AWG_TRANSPORT_CLI" check "$t" >/dev/null 2>&1
+  "$AWG_TRANSPORT_CLI" check "$t" >/dev/null 2>&1 || return 1
+  if [[ "$t" == mihomo ]]; then
+    "$AWG_TRANSPORT_CLI" network-check >/dev/null 2>&1
+  fi
 }
 
 service_probe_verdict(){
@@ -153,7 +156,7 @@ try_failover(){
 }
 
 selection_cycle(){
-  local current failures node_policy_enabled=0 transport_policy_enabled=0
+  local current failures health_rc=0 node_policy_enabled=0 transport_policy_enabled=0
 
   # Configuration/node transactions hold the same maintenance lock. Never
   # interpret their intentional short outage as a real transport failure.
@@ -202,11 +205,17 @@ selection_cycle(){
     return 0
   fi
 
-  if transport_healthy "$current"; then
+  transport_healthy "$current" || health_rc=$?
+  if (( health_rc == 0 )); then
     if [[ "$current" != mihomo ]] || service_healthy_mihomo; then
       reset_failures
       return 0
     fi
+  fi
+
+  if (( health_rc == 2 )); then
+    log_event 'AUTO network assessment unavailable or selection changed; no node-failure evidence'
+    return 0
   fi
 
   failures="$(read_failures)"

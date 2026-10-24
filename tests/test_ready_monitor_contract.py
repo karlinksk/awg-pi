@@ -13,7 +13,7 @@ class MonitorContract(unittest.TestCase):
    (p/'transport').write_text('''#!/bin/bash
 echo "transport:$*" >> "$LOG"
 case "$1" in
- check) [[ "$TRANSPORT_OK" == 1 ]];;
+ check|network-check) [[ "$TRANSPORT_OK" == 1 ]];;
  select) [[ "$2" == awg ]];;
  *) exit 1;;
 esac

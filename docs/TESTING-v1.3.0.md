@@ -2,30 +2,29 @@
 
 ## Current candidate contract — 2026-10-24, PR #165
 
-Owner-directed revision: manual and AUTO selection must not require external
-HTTPS, OpenAI HTTP401, ipify, ChatGPT or YouTube eligibility. This supersedes
-the earlier service/HTTPS acceptance requirements below. No substitute website
-probe is introduced. Retained checks cover profile identity and core config,
-running services/local SOCKS5, selected controller target, TUN interface,
-route ownership, Transit guard, SSH/DNS, persistence and independent rollback.
+Owner-directed revision: manual selection must not require external HTTPS,
+OpenAI HTTP401, ipify, ChatGPT or YouTube eligibility. AUTO uses fresh engine
+network assessment through Mihomo's native per-proxy delay API (the existing
+pool health URL, default generate_204); it never tests service eligibility.
+The local `check`/manual activation contract stays independent of network tests.
 
-Local runtime readiness is not proof that a remote node or website works.
-AUTO continues to react to local transport/runtime failures; provider-side
-outages with an apparently ready local core may remain undetected without
-the core's own failure evidence. Never call a local-ready receipt HTTPS/LAN PASS.
-Xray inventory background checks validate local engine/SOCKS readiness only.
-Persisted legacy website-eligibility settings cannot veto manual or AUTO.
+AUTO observes both its incumbent and every activated candidate. A negative
+engine URL-test is network evidence, not proof of provider fault; controller
+failure, missing proxy, malformed result and concurrent selection are separate
+infrastructure/unknown outcomes. Never turn these into “all provider nodes dead”.
+Preserve threshold, full current-provider native-before-Xray traversal, safe
+quiesce/retry, watchdog retirement, sticky AWG, exact identity, route ownership,
+Transit guard and SSH/DNS. Xray uses the same selected bridge engine assessment.
+Background Xray inventory local readiness is only advisory.
 
-Regression must prove that blocked/unreachable OpenAI never prevents selection,
-while invalid/changed profiles, missing services/interfaces, unsafe routes,
-failed guard/SSH/DNS and unconfirmed rollback still prevent success. Retain
-native-before-Xray order, bounded retries, watchdog retirement and sticky AWG.
-
-Hardware acceptance still requires real independent traffic observation,
-manual/native/cross-engine AUTO, exhaustion/AWG fallback, forwarded LAN,
-Selective FAIL-OPEN and Transit FAIL-CLOSED, install/upgrade/reboot/rollback.
-External traffic observations are test evidence, never activation prerequisites.
-Do not touch MikroTik or working media without separate authorization.
+Regression must prove remote-endpoint failure triggers AUTO despite a live core,
+a working later candidate prevents premature AWG, infrastructure unknown is not
+counted as node failure, and MANUAL never calls network assessment. OpenAI
+unavailability alone must not prevent selection. Keep guard/route/identity and
+rollback failures fatal. Hardware release evidence still needs real independent
+TUN traffic, cross-engine recovery, exhaustion/AWG, forwarded LAN, Selective
+FAIL-OPEN, Transit FAIL-CLOSED, install/upgrade/reboot/restore. Engine delay is not
+Pi-bound TUN or LAN evidence. No MikroTik/working-media changes without permission.
 
 This document is the hardware/release gate for v1.3.0.
 
