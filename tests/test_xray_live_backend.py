@@ -254,7 +254,7 @@ class LinuxBackendTests(unittest.TestCase):
                 raise RuntimeError("PROCESS_FAILED_systemctl")
             def inactive(args,**kwargs):
                 self.assertEqual(args[:2],["systemctl","show"])
-                return __import__("subprocess").CompletedProcess(args,0,"inactive\\n","")
+                return __import__("subprocess").CompletedProcess(args,0,"inactive\n","")
             with (mock.patch.object(m,"run",side_effect=stop_failed),
                   mock.patch.object(m.subprocess,"run",side_effect=inactive) as show,
                   mock.patch.object(m,"auto_fault") as fault):
@@ -270,7 +270,7 @@ class LinuxBackendTests(unittest.TestCase):
             backend.snapshot=snap
             backend.watchdog_unit="awg-xray-failover-test"
             def active_timer(args,**kwargs):
-                return __import__("subprocess").CompletedProcess(args,0,"active\\n","")
+                return __import__("subprocess").CompletedProcess(args,0,"active\n","")
             with (mock.patch.object(m,"run",side_effect=RuntimeError("PROCESS_FAILED_systemctl")),
                   mock.patch.object(m.subprocess,"run",side_effect=active_timer)):
                 with self.assertRaisesRegex(RuntimeError,"WATCHDOG_CANCEL_NOT_CONFIRMED"):
