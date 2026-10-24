@@ -708,7 +708,9 @@ auto_xray_candidate(){
     logger -t awg-xray-auto 'SELECTIVE_FAILOPEN=PREPARED_BEFORE_XRAY'
   fi
   if AWG_XRAY_EXPERIMENTAL_APPLY=TEST_PI_AUTHORIZED "$executor" apply "$current" "$candidate" >/dev/null; then
-    printf 'MIHOMO_NODE_FAILOVER=%s->%s\n' "$current" "$candidate"
+    # Internal status only: the enclosing dispatcher is the sole owner of
+    # MIHOMO_NODE_FAILOVER stdout. Duplicating it makes the strict monitor
+    # reject a successfully committed Xray bridge and select standby AWG.
     return 0
   else
     transaction_rc=$?
