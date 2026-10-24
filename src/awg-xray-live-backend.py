@@ -27,6 +27,15 @@ VPN_ENABLED=Path("/etc/awg-pbr/vpn-enabled")
 CURRENT=Path("/etc/awg-pbr/transports/mihomo/node-name")
 NODE_POLICY_MODE=Path("/etc/awg-pbr/transports/mihomo/node-policy.mode")
 XRAY_AUTO_MODE=Path("/etc/awg-pbr/transports/mihomo/xray-auto.mode")
+def auto_fault(stage, code):
+    """Write only fixed-token diagnostics; never log node names or providers."""
+    safe = code if isinstance(code, str) and re.fullmatch(r"[A-Z][A-Z0-9_]{2,120}", code) else "UNCLASSIFIED"
+    try:
+        subprocess.run(["logger", "-t", "awg-xray-auto", "AUTO_XRAY_"+stage+"="+safe],
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=2)
+    except (OSError, subprocess.TimeoutExpired):
+        pass
+
 def xray_auto_authorized():
     try:
         return ((XRAY_AUTO_MODE.is_file() and not XRAY_AUTO_MODE.is_symlink() and XRAY_AUTO_MODE.read_text().strip()=="1") or
@@ -682,12 +691,24 @@ def cli():
     sys.modules[loader.name]=module
     loader.exec_module(module)
     with Path("/run/awg-maintenance.lock").open("a") as lock:
-        fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
-        if not original_tun_unready_twice():
+        try:
+            fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
+        except BlockingIOError:
+            auto_fault("GATE", "MAINTENANCE_LOCK_BUSY")
+            raise
+        auto_fault("GATE", "EXECUTOR_ENTERED")
+        try:
+            incumbent_unready = original_tun_unready_twice()
+        except Exception as exc:
+            auto_fault("GATE", str(exc))
+            raise
+        if not incumbent_unready:
+            auto_fault("GATE", "ORIGINAL_TUN_STILL_REACHABLE")
             raise SystemExit("XRAY_TRANSACTION_ABORT=ORIGINAL_TUN_STILL_REACHABLE")
         try:
             receipt=module.activate(sys.argv[2],sys.argv[3],LinuxBackend(sys.argv[2],sys.argv[3]))
         except module.ActivationFailure as exc:
+            auto_fault("TRANSACTION", str(exc))
             if getattr(exc,"retryable",False):
                 print("XRAY_TRANSACTION_CANDIDATE_FAILED_RETRY_SAFE=YES")
                 raise SystemExit(3)
