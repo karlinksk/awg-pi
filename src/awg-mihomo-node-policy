@@ -924,37 +924,21 @@ failover_unified(){
   local -a rows=() prioritized=() normalized=() order=()
   # The caller is the node-policy monitor, not manual node selection.
   mode="$(mode_get 2>/dev/null || echo invalid)"
-  [[ "$mode" == auto || "$mode" == fixed ]] || return 1
+  [[ "$mode" == auto ]] || return 1
   xray_bridge_present && active_bridge=1
   mapfile -t rows < <(unified_recovery_candidates)
   [[ "${#rows[@]}" -gt 0 ]] || {
     echo 'MIHOMO_NODE_FAILOVER=UNIFIED_EMPTY_OR_STALE_AWG_FALLBACK' >&2
     return 1
   }
-  # Respect the configured FIXED chain first, but then try every other
-  # current subscription node; no artificial per-engine candidate caps.
-  if [[ "$mode" == fixed && -f "$MIHOMO_NODE_POLICY_ORDER_FILE" ]]; then
-    while IFS= read -r item; do
-      for line in "${rows[@]}"; do
-        candidate="${line#*$'\t'}"
-        candidate="${candidate#*$'\t'}"
-        candidate="${candidate#*$'\t'}"
-        if [[ "$item" == "$candidate" && "$candidate" != "$current" ]]; then
-          prioritized+=("$line")
-        fi
-      done
-    done < "$MIHOMO_NODE_POLICY_ORDER_FILE"
-  fi
+  # AUTO considers every current subscription candidate in provider order.
+  # No editable FIXED priority or artificial per-engine candidate limit.
   for line in "${rows[@]}"; do
-    candidate="${line#*$'\t'}"
-    candidate="${candidate#*$'\t'}"
-    candidate="${candidate#*$'\t'}"
+    candidate="${line#*$'\\t'}"
+    candidate="${candidate#*$'\\t'}"
+    candidate="${candidate#*$'\\t'}"
     [[ "$candidate" == "$current" ]] && continue
-    selected=0
-    for item in "${prioritized[@]}"; do
-      [[ "$line" != "$item" ]] || selected=1
-    done
-    (( selected == 1 )) || prioritized+=("$line")
+    prioritized+=("$line")
   done
 
   start_epoch="$(date +%s)"
@@ -1291,26 +1275,19 @@ failover_auto(){
 }
 
 failover(){
-  local current mode
+  local current mode unified_cli
   mode="$(mode_get 2>/dev/null || echo invalid)"
+  [[ "$mode" == auto ]] || return 1
+  is_enabled || return 1
   current="$(cat "$MIHOMO_NODE_NAME_FILE" 2>/dev/null || true)"
   [[ -n "$current" ]] || return 1
-  # Unified AUTO is independent of legacy READY/Hot Pool settings.
-  # Legacy fallback is retained only when the unified selector is absent.
-  local unified_cli="${MIHOMO_UNIFIED_NODE_CLI:-/usr/local/sbin/awg-mihomo-unified-nodes}"
-  if [[ ! -x "$unified_cli" ]]; then
-    case "$mode" in
-      fixed) is_fixed && failover_fixed "$current" ;;
-      auto) is_enabled && failover_auto "$current" ;;
-      *) return 1 ;;
-    esac
-  else
-    case "$mode" in
-      fixed) is_fixed && failover_unified "$current" ;;
-      auto) is_enabled && failover_unified "$current" ;;
-      *) return 1 ;;
-    esac
-  fi
+  unified_cli="${MIHOMO_UNIFIED_NODE_CLI:-/usr/local/sbin/awg-mihomo-unified-nodes}"
+  # Do not interpret a missing inventory as exhausted nodes and jump to AWG.
+  [[ -x "$unified_cli" ]] || {
+    echo 'MIHOMO_NODE_FAILOVER=UNIFIED_INVENTORY_MISSING' >&2
+    return 1
+  }
+  failover_unified "$current"
 }
 
 case "${1:-status}" in
