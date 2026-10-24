@@ -45,6 +45,7 @@ class SafeChain(unittest.TestCase):
              "vmess-fifth|PASS|UNKNOWN|PASS|chatgpt_web_http_403\n")
         (self.root/"selection.env").write_text("SELECTION_MODE=auto\nSELECTION_ORDER=mihomo,awg\n")
         (self.root/"node-policy.mode").write_text("auto\n")
+        (self.root/"mode").write_text("transit\n")
         (self.root/"common.sh").write_text("""
 awg_transport_get(){ cat "$MOCK_TRANSPORT_STATE"; }
 awg_transport_backend_valid(){ [[ "$1" == mihomo || "$1" == awg ]]; }
@@ -112,6 +113,36 @@ printf 'node:%s\\n' "$3" >>"$MOCK_NODE_TRACE"
 if [[ -e "$MOCK_NODE_DENY" ]] && grep -Fxq -- "$3" "$MOCK_NODE_DENY"; then exit 1; fi
 printf '%s\\n' "$3" >"$MOCK_NODE_NAME_FILE"
 """)
+        self.put("unified", """#!/bin/bash
+case "$1" in
+ candidates)
+   index=0
+   while IFS= read -r name; do
+     [[ -n "$name" ]] || continue
+     index=$((index+1))
+     printf 'CANDIDATE={"name":"%s","engine":"MIHOMO","index":%s,"provider_sha256":"%s"}\\n' "$name" "$index" "$MOCK_PROVIDER_SHA"
+   done < "$MOCK_POOL_NAMES"
+   ;;
+ resolve)
+   printf 'NODE_ENGINE=MIHOMO\\nNODE_PROVIDER_SHA256=%s\\n' "$MOCK_PROVIDER_SHA"
+   ;;
+ *) exit 2 ;;
+esac
+""")
+        self.put("native", """#!/bin/bash
+case "$1" in
+ probe-native) exit 0 ;;
+ *) exit 2 ;;
+esac
+""")
+        self.put("postcheck", "#!/bin/sh\\nexit 0\\n")
+        self.put("systemctl", """#!/bin/bash
+case "$1" in
+ is-active) exit 1 ;;
+ stop) exit 0 ;;
+esac
+exit 1
+""")
         self.put("logger","#!/bin/sh\nexit 0\n")
         self.put("service-active", "#!/bin/sh\nprintf '{\"status\":\"UNKNOWN\"}\n'\nexit 1\n")
         script=POLICY.read_text()
@@ -152,7 +183,13 @@ exec /usr/bin/systemctl "$@"
           MIHOMO_NODE_NAME_FILE=str(self.node),
           MIHOMO_POOL_CLI=str(self.bin/"pool"),
           MIHOMO_CONFIGURE_BIN=str(self.bin/"configure"),
-          MIHOMO_UNIFIED_NODE_CLI=str(self.bin/"missing-unified-cli"),
+          MIHOMO_UNIFIED_NODE_CLI=str(self.bin/"unified"),
+          MIHOMO_XRAY_NATIVE_RECOVERY_CLI=str(self.bin/"native"),
+          MIHOMO_AUTO_MODE_FILE=str(self.root/"mode"),
+          MIHOMO_AUTO_TRANSPORT_CLI=str(self.bin/"transport"),
+          MIHOMO_AUTO_TRANSIT_ROUTING=str(self.bin/"postcheck"),
+          MIHOMO_AUTO_SYSTEMCTL=str(self.bin/"systemctl"),
+          MOCK_PROVIDER_SHA="a"*64,
           MIHOMO_SERVICE_QUICKCHECK_BIN=str(self.bin/"scan"),
           MIHOMO_NETWORK_GATE_BIN=str(GATE),
           MOCK_TRANSPORT_STATE=str(self.selected),
