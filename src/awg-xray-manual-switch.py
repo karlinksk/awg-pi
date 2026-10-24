@@ -82,6 +82,39 @@ def unit_enabled(name):
     return subprocess.run(["systemctl","is-enabled","--quiet",name],
         stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,timeout=6).returncode==0
 
+def notify_manual_node_change(kind, node):
+    """Optional Telegram enqueue only AFTER committed manual transaction.
+
+    No network request, VPN mutation, or token in process args. The notifier
+    itself checks the user's NODE_SWITCH preference and persists the event.
+    A missing/broken notifier cannot affect a successful node selection.
+    """
+    if not isinstance(node, str):
+        return
+    config=Path("/etc/awg-pbr/notify/telegram.json")
+    notifier=Path("/usr/local/sbin/awg-notify")
+    if not config.is_file() or not notifier.is_file():
+        return
+    try:
+        enabled=subprocess.run(
+            ["systemctl","is-enabled","--quiet","awg-notify-flush.timer"],
+            stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,
+            timeout=2,check=False)
+        if enabled.returncode!=0:
+            return
+        clean=re.sub(r"[\\r\\n\\t]+"," ",node).strip()[:120]
+        text=(f"Ручное переключение ноды: {kind}. "
+              f"Выбран узел: {clean}. "
+              "Проверена готовность локального шлюза; LAN отдельно не проверялся.")
+        subprocess.run(
+            [str(notifier),"emit","--kind","NODE_SWITCH",
+             "--severity","info","--text",text],
+            stdin=subprocess.DEVNULL,stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,timeout=2,check=False)
+    except (OSError,subprocess.TimeoutExpired):
+        pass
+
+
 def controller():
     opener=urllib.request.build_opener(urllib.request.ProxyHandler({}))
     with opener.open("http://127.0.0.1:9090/proxies/AWG-MIHOMO",timeout=5) as response:
@@ -566,6 +599,7 @@ def native_return(name):
             invariant()
             stored(path,state,"committed")
             cmd("systemctl","stop",timer)
+            notify_manual_node_change("Mihomo native",name)
             print("NATIVE_RETURN_LOCAL_RUNTIME=READY")
             print("ACTIVE_EXIT=MIHOMO_NATIVE")
             print("MIHOMO_NODE_POLICY=UNCHANGED")
@@ -1032,6 +1066,7 @@ def apply(index):
                 refuse("PROVIDER_CHANGED_AFTER_TUN_POSTCHECK")
             stored(path,state,"committed")
             cmd("systemctl","stop",timer)
+            notify_manual_node_change("Xray VLESS",info["candidate"])
             print("XRAY_MANUAL_RUNTIME=READY_EXTERNAL_CONNECTIVITY_NOT_TESTED")
             print("MIHOMO_NODE_POLICY=UNCHANGED")
             print("XRAY_MANUAL_REBOOT=NOT_TESTED")
