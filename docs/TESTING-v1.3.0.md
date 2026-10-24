@@ -14,6 +14,15 @@ failure; HTTPS proof failure is exit 1. Neither is evidence that every provider
 node is dead. A failed attempt must quiesce successfully before another attempt.
 Synthetic shell tests cover these boundaries; they never establish hardware PASS.
 
+The native-to-Xray AUTO dispatcher may continue after candidate HTTPS failure
+only when the live backend returns exit 3: the provider/current identity and
+quiesced mode guard were rechecked, snapshot state was durably set to quiesced,
+and that transaction's watchdog timer was retired. A queued old watchdog must
+ignore the retired snapshot. Generic aborts, infrastructure/persistence errors
+and unconfirmed cleanup still stop the event for AWG fallback. This source
+contract does not certify live Xray TUN, nor retry from an already-active Xray
+bridge; those require separate guarded hardware evidence.
+
 Before marking #165 ready, attach exact-commit results for full Python discovery,
 CI shell suites, ShellCheck, pinned AWG build/preflight, clean test-media install,
 preserving upgrade/rollback, real native and cross-engine candidate retry,

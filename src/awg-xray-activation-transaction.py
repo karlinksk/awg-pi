@@ -11,7 +11,9 @@ from dataclasses import dataclass
 from typing import Protocol
 
 class ActivationFailure(RuntimeError):
-    pass
+    def __init__(self, message, *, retryable=False):
+        super().__init__(message)
+        self.retryable = retryable
 
 class Backend(Protocol):
     def preflight(self, failed: str, candidate: str) -> None: ...
@@ -32,6 +34,7 @@ class Backend(Protocol):
     def commit(self) -> None: ...
     def disarm_watchdog(self) -> None: ...
     def fail_closed(self) -> bool: ...
+    def finalize_retryable_abort(self) -> bool: ...
 
 @dataclass(frozen=True)
 class Receipt:
@@ -88,5 +91,18 @@ def activate(failed: str, candidate: str, backend: Backend) -> Receipt:
                 safe = False
             if not safe:
                 raise ActivationFailure("FAIL_CLOSED_UNCONFIRMED_WATCHDOG_ARMED") from exc
-            # Watchdog stays armed; it may independently reconfirm fail-closed.
+            # Only a candidate HTTPS failure can permit the next AUTO node.
+            # Retire this transaction's watchdog durably before any retry:
+            # an old armed watchdog must never quiesce a later healthy node.
+            if (isinstance(exc, ActivationFailure) and
+                str(exc) in ("XRAY_LOCAL_HTTPS_FAILED", "LIVE_TUN_HTTPS_FAILED")):
+                finalize = getattr(backend, "finalize_retryable_abort", None)
+                try:
+                    retryable = bool(finalize and finalize())
+                except Exception:
+                    retryable = False
+                if retryable:
+                    raise ActivationFailure("ACTIVATION_ABORTED_"+str(exc),
+                                            retryable=True) from exc
+            # Unsafe/infrastructure failures retain the independent watchdog.
         raise ActivationFailure("ACTIVATION_ABORTED_"+str(exc)) from exc

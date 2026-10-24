@@ -618,6 +618,30 @@ class LinuxBackend:
     def fail_closed(self):
         return failclosed()
 
+    def finalize_retryable_abort(self):
+        """Permit another AUTO candidate only from a proven quiesced state."""
+        if not self.snapshot or not self.watchdog_unit:
+            return False
+        if (NODE_POLICY_MODE.read_text().strip()!="auto" or
+            CURRENT.read_text().strip()!=self.failed or
+            run("/usr/local/sbin/awg-transport","get",timeout=10)!="mihomo" or
+            not self.check_provider_unchanged() or
+            any(p.exists() or p.is_symlink() for p in (BRIDGE,BRIDGE_RUNTIME,SELECTED))):
+            return False
+        operating_mode=MODE.read_text().strip()
+        if operating_mode=="transit":
+            safe=verified_degraded_auto_transit_baseline()
+        elif operating_mode=="selective":
+            safe=verified_degraded_selective_baseline()
+        else:
+            return False
+        if not safe or not snapshot_transition(self.snapshot,"armed","quiesced"):
+            return False
+        # Persist quiesced BEFORE cancelling the timer: an already queued
+        # watchdog will read this state and leave the next candidate alone.
+        self.disarm_watchdog()
+        return True
+
 def watchdog(path):
     if path.parent!=BASE or not re.fullmatch(r"xray-failover-[0-9]+-[0-9]+",path.name):
         raise RuntimeError("INVALID_SNAPSHOT")
@@ -682,7 +706,13 @@ def cli():
         fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
         if not original_tun_unreachable_twice():
             raise SystemExit("XRAY_TRANSACTION_ABORT=ORIGINAL_TUN_STILL_REACHABLE")
-        receipt=module.activate(sys.argv[2],sys.argv[3],LinuxBackend(sys.argv[2],sys.argv[3]))
+        try:
+            receipt=module.activate(sys.argv[2],sys.argv[3],LinuxBackend(sys.argv[2],sys.argv[3]))
+        except module.ActivationFailure as exc:
+            if getattr(exc,"retryable",False):
+                print("XRAY_TRANSACTION_CANDIDATE_FAILED_RETRY_SAFE=YES")
+                raise SystemExit(3)
+            raise
     print("XRAY_TRANSACTION_RUNTIME_TUN_VERIFIED="+str(receipt.tun_verified).upper())
     print("XRAY_TRANSACTION_REBOOT_TESTED=NO")
 

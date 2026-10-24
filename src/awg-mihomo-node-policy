@@ -714,7 +714,7 @@ quiesce_failed_mihomo(){
 # guarded TUN activation, and fail-closed abort. This dispatcher never retries
 # the known failed node or routes VLESS through the legacy Mihomo selector.
 auto_xray_candidate(){
-  local current="$1" candidate="$2" resolved="$3" executor
+  local current="$1" candidate="$2" resolved="$3" executor transaction_rc
   if [[ "${MIHOMO_XRAY_AUTO_FAILOVER_CANARY:-0}" != 1 ]]; then
     echo "MIHOMO_NODE_FAILOVER=XRAY_TRANSACTION_NOT_CERTIFIED" >&2
     return 2
@@ -781,6 +781,12 @@ auto_xray_candidate(){
   if AWG_XRAY_EXPERIMENTAL_APPLY=TEST_PI_AUTHORIZED "$executor" apply "$current" "$candidate" >/dev/null; then
     printf 'MIHOMO_NODE_FAILOVER=%s->%s\n' "$current" "$candidate"
     return 0
+  else
+    transaction_rc=$?
+    if (( transaction_rc == 3 )); then
+      echo 'MIHOMO_NODE_FAILOVER=XRAY_CANDIDATE_FAILED_QUIESCED_RETRY_SAFE' >&2
+      return 3
+    fi
   fi
   # An aborted transaction may have quiesced the old, known-dead transport.
   # Stop node recovery here; allow the normal selection monitor to try AWG.
@@ -1029,6 +1035,11 @@ failover_unified(){
         return 0
       else
         rc=$?
+        # The backend alone may certify a candidate-only failure after
+        # verified quiesce and durable retirement of its own watchdog.
+        if (( rc == 3 )); then
+          continue
+        fi
         # rc=2 means candidate untouched; rc=1 means guarded abort to AWG.
         if (( rc == 2 )); then
           # The Xray auto executor can reject a candidate because its

@@ -36,7 +36,7 @@ echo "NATIVE:$3" >> "$MOCK_LOG";exit 0
 ''')
     def write(self,name,body):
         path=self.bin/name;path.write_text("#!/usr/bin/env bash\n"+body);path.chmod(0o755)
-    def run_case(self,bridge=True,success="Node13",fixed=False,decline=False,xray_guard=False,infra=False,cleanup=True):
+    def run_case(self,bridge=True,success="Node13",fixed=False,decline=False,xray_guard=False,infra=False,cleanup=True,xray_retry=False):
         self.log.write_text("")
         self.mode.write_text("fixed\n" if fixed else "auto\n")
         self.order.write_text("Node11\nNode2\n")
@@ -51,7 +51,7 @@ echo "NATIVE:$3" >> "$MOCK_LOG";exit 0
             'service_candidate_allowed(){ return 0; }\n',
             'unified_native_tun_postcheck(){ return '+('2' if infra else '1')+'; }\n',
             'unified_native_quiesce(){ echo QUIESCE >> "$MOCK_LOG"; return '+('0' if cleanup else '1')+'; }\n',
-            'auto_xray_candidate(){ echo "XRAY:$2" >> "$MOCK_LOG"; if [ "$XRAY_GUARD" = 1 ]; then return 2; fi; [ "$UNIFIED_SUCCESS" = "$2" ]; }\n',
+            'auto_xray_candidate(){ echo "XRAY:$2" >> "$MOCK_LOG"; if [ "$XRAY_GUARD" = 1 ]; then return 2; fi; if [ "$UNIFIED_SUCCESS" = "$2" ]; then return 0; fi; if [ "$XRAY_RETRY" = 1 ]; then return 3; fi; return 1; }\n',
             'failover_unified FailedNode\n'
         ))
         env={**os.environ,"MOCK_SHA":self.sha,"MOCK_LOG":str(self.log),
@@ -60,7 +60,8 @@ echo "NATIVE:$3" >> "$MOCK_LOG";exit 0
              "MIHOMO_UNIFIED_NODE_CLI":str(self.bin/"resolver"),
              "MIHOMO_XRAY_NATIVE_RECOVERY_CLI":str(self.bin/"executor"),
              "MIHOMO_CONFIGURE":str(self.bin/"configure"),
-             "UNIFIED_SUCCESS":success,"MOCK_SUCCESS":success,"XRAY_GUARD":"1" if xray_guard else "0"}
+             "UNIFIED_SUCCESS":success,"MOCK_SUCCESS":success,"XRAY_GUARD":"1" if xray_guard else "0",
+             "XRAY_RETRY":"1" if xray_retry else "0"}
         if decline:self.write("executor","exit 2")
         return subprocess.run(["bash","-c",script],env=env,capture_output=True,text=True,timeout=10)
     def test_thirteenth_candidate_can_win(self):
@@ -107,6 +108,31 @@ echo "NATIVE:$3" >> "$MOCK_LOG";exit 0
         r=self.run_case(bridge=False,success="Node3")
         self.assertEqual(r.returncode,0,r.stderr)
         self.assertIn("XRAY:Node3",self.log.read_text().splitlines())
+    def test_later_xray_wins_after_certified_candidate_failures(self):
+        r=self.run_case(bridge=False,success="Node9",xray_retry=True)
+        self.assertEqual(r.returncode,0,r.stderr)
+        self.assertEqual([x for x in self.log.read_text().splitlines() if x.startswith("XRAY:")],
+                         ["XRAY:Node3","XRAY:Node6","XRAY:Node9"])
+    def test_uncertified_xray_abort_never_tries_later_node(self):
+        r=self.run_case(bridge=False,success="Node9")
+        self.assertEqual(r.returncode,1)
+        self.assertIn("UNIFIED_XRAY_ABORT_AWG_FALLBACK",r.stderr)
+        self.assertNotIn("XRAY:Node6",self.log.read_text())
+    def test_dispatcher_propagates_only_certified_retry_status(self):
+        self.mode.write_text("transit\n")
+        for status,expected in ((3,3),(1,1),(2,1)):
+            with self.subTest(status=status):
+                self.write("backend","exit "+str(status))
+                script=("set -Eeuo pipefail\n"+extract("auto_xray_candidate")+
+                        'auto_xray_candidate FailedNode Node3 "$RESOLVED"\n')
+                env={**os.environ,"MIHOMO_XRAY_AUTO_FAILOVER_CANARY":"1",
+                     "MIHOMO_READY_AUTO_CANARY":"0","_xray_auto_mode":"1",
+                     "MIHOMO_AUTO_MODE_FILE":str(self.mode),
+                     "MIHOMO_XRAY_NATIVE_RECOVERY_CLI":str(self.bin/"executor"),
+                     "MIHOMO_XRAY_TRANSACTION_CLI":str(self.bin/"backend"),
+                     "RESOLVED":"NODE_ENGINE=XRAY\nNODE_INDEX=3\n"}
+                result=subprocess.run(["bash","-c",script],env=env,capture_output=True,text=True,timeout=10)
+                self.assertEqual(result.returncode,expected,result.stderr)
     def test_preflight_exhaustion_does_not_mutate(self):
         r=self.run_case(decline=True)
         self.assertEqual(r.returncode,1)
