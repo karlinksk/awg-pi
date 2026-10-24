@@ -250,7 +250,8 @@ selection_cycle(){
     if (( node_out_rc != 0 )); then
       log_event "AUTO_NODE_RECOVERY_EXIT=$node_out_rc"
     fi
-    if (( node_out_rc == 0 )) && [[ "$node_out" == MIHOMO_NODE_FAILOVER=* && "$node_out" != *
+    if (( node_out_rc == 0 )) && [[ "$node_out" == MIHOMO_NODE_FAILOVER=* ]] &&
+       [[ $(wc -l <<< "$node_out") -eq 1 ]]; then
       log_event "Automatic Mihomo node failover: ${node_out#MIHOMO_NODE_FAILOVER=}"
       # Passive notification after the node-policy confirmed the switch.
       # Never hold recovery for a Telegram network request.
