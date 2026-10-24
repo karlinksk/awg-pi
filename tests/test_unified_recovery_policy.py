@@ -111,7 +111,7 @@ echo "NATIVE:$3" >> "$MOCK_LOG";exit 0
 echo "NATIVE:$3" >> "$MOCK_LOG"
 exit 0
 ''')
-        data="".join("printf '%s\\t%s\\t%s\\t%s\\n' MIHOMO '"+str(i)+"' '"+self.sha+"' Node"+str(i)+"\\n" for i in (1,2))
+        data="".join("printf '%s\\t%s\\t%s\\t%s\\n' MIHOMO '"+str(i)+"' '"+self.sha+"' Node"+str(i)+"\n" for i in (1,2))
         script="".join((
             "set -Eeuo pipefail\n",extract("failover_unified"),
             'validate_node_name(){ [[ -n "$1" ]]; }\n',
