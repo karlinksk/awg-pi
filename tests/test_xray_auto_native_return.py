@@ -16,6 +16,8 @@ spec=importlib.util.spec_from_file_location("xray_native_auto_return_test",SOURC
 m=importlib.util.module_from_spec(spec)
 sys.modules[spec.name]=m
 spec.loader.exec_module(m)
+REAL_SAVE_SNAP=m.save_snap
+REAL_OWNED_AUTO_BRIDGE=m.owned_auto_bridge
 
 
 class AutoBridgeNativeReturn(unittest.TestCase):
@@ -170,6 +172,30 @@ class AutoBridgeNativeReturn(unittest.TestCase):
         rescue.assert_called_once()
         self.assertNotIn(("systemctl","stop",m.XRAY),self.calls)
         self.assertTrue(self.xray)
+
+    def test_real_snapshot_captures_both_auto_dropins(self):
+        snapshot, state=REAL_SAVE_SNAP(self.info)
+        self.assertEqual((snapshot/"auto-boot.prev").read_bytes(),self.text)
+        self.assertEqual((snapshot/"auto-runtime.prev").read_bytes(),self.text)
+        self.assertEqual(state["auto_bridge"],True)
+
+    def test_incomplete_auto_dropin_is_rejected(self):
+        self.auto_runtime.unlink()
+        with mock.patch.object(m,"owned_auto_bridge",
+                               side_effect=REAL_OWNED_AUTO_BRIDGE):
+            with self.assertRaisesRegex(RuntimeError,"AUTO_XRAY_BRIDGE_INCOMPLETE"):
+                m.owned_auto_bridge()
+
+    def test_manual_boot_without_auto_dropins_keeps_legacy_return(self):
+        self.auto_boot.unlink()
+        self.auto_runtime.unlink()
+        self.graph=False
+        self.info["auto_bridge"]=False
+        with mock.patch.object(m,"owned_auto_bridge",return_value=False):
+            m.native_return("NativeNew")
+        self.assertTrue(self.native)
+        self.assertFalse(self.xray)
+        self.assertIn("committed",self.phases)
 
     def test_auto_bridge_snapshot_restored_on_rollback(self):
         self.auto_boot.unlink()
