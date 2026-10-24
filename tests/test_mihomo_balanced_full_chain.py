@@ -154,6 +154,23 @@ exit 1
                       "/run/systemd/system/awg-mihomo.service.d/61-awg-xray-bridge.conf",
                       "/var/lib/awg-pbr/xray-vless/selected.json"):
             script=script.replace(fixed,str(self.root/"absent-xray-fixture"/Path(fixed).name))
+        # Integration fixture: the actual postcheck uses live TUN, routes,
+        # HTTPS and systemd. Replace only its external evidence with a
+        # deterministic mock; never claim a real dataplane PASS here.
+        begin=script.index("unified_native_tun_postcheck(){")
+        end=script.index("\\n}\\n",begin)+3
+        script=script[:begin]+"""unified_native_tun_postcheck(){
+  [[ "$(cat "$MOCK_NODE_NAME_FILE")" != current-node ]] &&
+    [[ "$(cat "$MOCK_NODE_NAME_FILE")" != ss-first ]]
+}
+"""+script[end:]
+        begin=script.index("unified_native_quiesce(){")
+        end=script.index("\\n}\\n",begin)+3
+        script=script[:begin]+"""unified_native_quiesce(){
+  printf 'quiesce\\n' >> "$MOCK_NODE_TRACE"
+  return 0
+}
+"""+script[end:]
         self.put("node-policy",script)
         self.put("systemctl",'''#!/bin/bash
 if [[ "$1" == is-active && "$2" == --quiet &&
