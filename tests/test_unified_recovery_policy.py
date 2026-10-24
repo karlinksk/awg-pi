@@ -78,10 +78,14 @@ echo "NATIVE:$3" >> "$MOCK_LOG";exit 0
         self.assertEqual(r.returncode,1)
         self.assertEqual(len(self.log.read_text().splitlines()),13)
         self.assertIn("UNIFIED_EXHAUSTED_NO_VERIFIED_CANDIDATE_AWG_FALLBACK",r.stderr)
-    def test_fixed_order_first_then_unified_remainder(self):
+    def test_retired_fixed_mode_cannot_invoke_auto_failover(self):
         r=self.run_case(success="Node11",fixed=True)
+        self.assertEqual(r.returncode,1,r.stderr)
+        self.assertEqual(self.log.read_text(),"")
+    def test_auto_does_not_apply_stale_fixed_order(self):
+        r=self.run_case(success="Node11")
         self.assertEqual(r.returncode,0,r.stderr)
-        self.assertEqual(self.log.read_text().splitlines(),["dead-xray-native:Node11"])
+        self.assertEqual(self.log.read_text().splitlines()[0],"dead-xray-native:Node1")
     def test_native_failure_can_choose_xray(self):
         r=self.run_case(bridge=False,success="Node3")
         self.assertEqual(r.returncode,0,r.stderr)
