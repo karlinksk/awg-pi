@@ -4,7 +4,7 @@
 
 Owner-directed revision: manual selection must not require external HTTPS,
 OpenAI HTTP401, ipify, ChatGPT or YouTube eligibility. AUTO uses fresh engine
-network assessment through Mihomo's native per-proxy delay API (the existing
+network assessment through Mihomo's native fixed-Selector delay API (the existing
 pool health URL, default generate_204); it never tests service eligibility.
 The local `check`/manual activation contract stays independent of network tests.
 

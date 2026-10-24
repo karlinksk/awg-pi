@@ -13,7 +13,7 @@ SOURCE=(ROOT/'src/awg-transport').read_text()
 FUNCTION='network_check(){'+SOURCE.split('network_check(){',1)[1].split('\n}\n',1)[0]+'\n}\n'
 
 class EngineNetwork(unittest.TestCase):
-    def probe(self,delay=42,status=200,changed=False,malformed=False):
+    def probe(self,delay=42,status=200,changed=False,malformed=False,group_type='Selector'):
         calls=[]
         class Handler(BaseHTTPRequestHandler):
             def log_message(self,*args):pass
@@ -23,7 +23,7 @@ class EngineNetwork(unittest.TestCase):
                 self.send_response(status if is_delay else 200);self.end_headers()
                 if malformed and is_delay:self.wfile.write(b'not json');return
                 obj=({'delay':delay} if is_delay else
-                     {'now':'Changed' if changed and len(calls)>1 else 'Node / A'})
+                     {'type':group_type,'now':'Changed' if changed and len(calls)>1 else 'Node / A'})
                 self.wfile.write(json.dumps(obj).encode())
         server=ThreadingHTTPServer(('127.0.0.1',0),Handler)
         thread=threading.Thread(target=server.serve_forever,daemon=True);thread.start()
@@ -37,15 +37,19 @@ class EngineNetwork(unittest.TestCase):
         finally:
             server.shutdown();server.server_close();thread.join()
 
-    def test_fresh_delay_success_encoded_exact_target(self):
+    def test_fresh_delay_uses_fixed_selected_group_not_provider_leaf(self):
         rc,calls=self.probe();self.assertEqual(rc,0)
-        self.assertIn('/proxies/Node%20%2F%20A/delay?',calls[1])
+        self.assertIn('/proxies/AWG-MIHOMO/delay?',calls[1])
+        self.assertTrue(all('Node' not in path for path in calls))
         self.assertIn('generate_204',calls[1])
         self.assertEqual(calls[0],calls[-1])
     def test_engine_negative_network_result(self):
         for status in (503,504):
             with self.subTest(status=status):self.assertEqual(self.probe(status=status)[0],1)
     def test_missing_proxy_is_infrastructure(self):self.assertEqual(self.probe(status=404)[0],2)
+    def test_autonomous_group_cannot_certify_exact_current_node(self):
+        rc,calls=self.probe(group_type='URLTest')
+        self.assertEqual(rc,2);self.assertEqual(len(calls),1)
     def test_malformed_delay_is_infrastructure(self):self.assertEqual(self.probe(malformed=True)[0],2)
     def test_invalid_delay_is_not_remote_failure(self):
         for delay in (None,0,-1,True,'5'):

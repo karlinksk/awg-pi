@@ -85,13 +85,18 @@ def get(path,timeout=3):
     with opener.open(api+path,timeout=timeout) as response:
         return json.load(response)
 try:
-    before=get('/proxies/AWG-MIHOMO').get('now')
+    group=get('/proxies/AWG-MIHOMO')
+    if group.get('type')!='Selector':sys.exit(2)
+    before=group.get('now')
     if not isinstance(before,str) or not before:sys.exit(2)
     query=urllib.parse.urlencode({'url':os.environ.get('MIHOMO_POOL_HEALTH_URL',
         'https://www.gstatic.com/generate_204'),'timeout':5000})
     verdict=2
     try:
-        result=get('/proxies/'+urllib.parse.quote(before,safe='')+'/delay?'+query,7)
+        # Provider-owned leaves need not exist in /proxies. The fixed Selector
+        # URL-test delegates to its current node, including the Xray bridge.
+        # Never PUT/select or use a URLTest/fallback group here.
+        result=get('/proxies/AWG-MIHOMO/delay?'+query,7)
         delay=result.get('delay')
         if type(delay) is int and delay>0:verdict=0
     except urllib.error.HTTPError as exc:

@@ -27,7 +27,7 @@ This applies to both **Selective Gateway** and **MikroTik Transit / Backup VPN**
 ## Owner-directed selection revision — 2026-10-24
 
 Manual never gates on external reachability. AUTO uses fresh engine-native
-network assessment, independent of OpenAI/ipify/ChatGPT/YouTube eligibility,
+fixed-Selector network assessment, independent of OpenAI/ipify/ChatGPT/YouTube,
 for incumbent failure and candidate recovery. This latest owner instruction
 supersedes the earlier local-only AUTO contract and older HTTPS/READY rules.
 Distinguish negative engine network evidence from controller/infrastructure
