@@ -56,9 +56,16 @@ check_awg(){
 }
 
 check_mihomo(){
+  local selected
   "$SYSTEMCTL_BIN" is-active --quiet "$MIHOMO_SERVICE" || return 1
   "$IP_BIN" link show "$MIHOMO_TUN_IF" >/dev/null 2>&1 || return 1
-  "$CURL_BIN" -q -fsS --noproxy '*' --max-time "$MIHOMO_API_TIMEOUT" "$MIHOMO_API/version" >/dev/null 2>&1
+  "$CURL_BIN" -q -fsS --noproxy '*' --max-time "$MIHOMO_API_TIMEOUT" "$MIHOMO_API/version" >/dev/null 2>&1 || return 1
+  selected="$("$CURL_BIN" -q -fsS --noproxy '*' --max-time "$MIHOMO_API_TIMEOUT" "$MIHOMO_API/proxies/AWG-MIHOMO" 2>/dev/null |
+    python3 -c 'import json,sys; x=json.load(sys.stdin).get("now"); assert isinstance(x,str) and x; print(x)' 2>/dev/null)" || return 1
+  # A live Mihomo cannot hide a stopped selected Xray sidecar.
+  if [[ "$selected" == AWG-XRAY-VLESS-LOCAL ]]; then
+    "$SYSTEMCTL_BIN" is-active --quiet awg-xray-vless.service || return 1
+  fi
 }
 
 # Local proxy success does not validate the selected node's Pi-bound TUN.

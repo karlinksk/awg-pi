@@ -106,7 +106,9 @@ def tun_runtime_ready():
     if not unit_active(MIHOMO):return False
     try:
         cmd("ip","link","show","dev","mihomo0",timeout=4)
-        return isinstance(controller().get("now"),str) and bool(controller().get("now"))
+        selected=controller().get("now")
+        return (isinstance(selected,str) and bool(selected) and
+                (selected!=ALIAS or unit_active(XRAY)))
     except (OSError,ValueError,RuntimeError,subprocess.TimeoutExpired):return False
 
 

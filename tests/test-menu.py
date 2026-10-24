@@ -173,7 +173,8 @@ assert '"$XRAY_MANUAL_SWITCH" native-apply "$node_name"' in menu
 assert '--direct-confirmed' not in menu
 assert 'run_with_progress "$title" "$MIHOMO_CONFIGURE" node prepare "$node_name"' in menu
 assert 'Адрес сервера в списке — не IP выхода' in menu
-assert 'TUN HTTPS подтверждён' in menu
+assert 'TUN HTTPS подтверждён' not in menu
+assert 'Доступность внешних сайтов не проверялась' in menu
 assert 'Введите один из показанных выше IPv4-адресов сервера:' not in menu
 assert 'повторно вводить его не нужно' in menu
 

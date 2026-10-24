@@ -8,12 +8,16 @@ import unittest
 SOURCE=(Path(__file__).resolve().parents[1]/'src/awg-transport').read_text()
 
 class TransportReadiness(unittest.TestCase):
-    def probe(self, service=0, interface=0, api=0):
+    def probe(self, service=0, interface=0, api=0, selected="Native", xray=0):
         with tempfile.TemporaryDirectory() as td:
             p=Path(td);log=p/'calls'
             for name,rc in [('systemctl',service),('ip',interface),('curl',api)]:
                 f=p/name
                 f.write_text('#!/bin/sh\nprintf "%s\\n" "'+name+':$*" >> "$LOG"\nexit '+str(rc)+'\n')
+                if name=='curl':
+                    f.write_text(f.read_text().replace('exit '+str(rc),"printf '%s\\n' '{\"now\":\""+selected+"\"}'\nexit "+str(rc)))
+                if name=='systemctl':
+                    f.write_text(f.read_text().replace('exit '+str(rc),'if [ "$3" = awg-xray-vless.service ]; then exit '+str(xray)+'; fi\nexit '+str(rc)))
                 f.chmod(0o755)
             function='check_mihomo(){'+SOURCE.split('check_mihomo(){',1)[1].split('\n}\n',1)[0]+'\n}\n'
             script=function+f'''
@@ -48,3 +52,10 @@ check_mihomo
     def test_no_extra_https_gate_on_switch_or_recovery(self):
         self.assertNotIn('mihomo_tun_https_ok',SOURCE)
         self.assertNotIn('api.openai.com',SOURCE)
+
+    def test_selected_xray_requires_its_own_service(self):
+        self.assertNotEqual(self.probe(selected="AWG-XRAY-VLESS-LOCAL",xray=3)[0].returncode,0)
+    def test_native_does_not_depend_on_dormant_xray(self):
+        self.assertEqual(self.probe(selected="Native",xray=3)[0].returncode,0)
+    def test_missing_selected_target_is_unready(self):
+        self.assertNotEqual(self.probe(selected="")[0].returncode,0)

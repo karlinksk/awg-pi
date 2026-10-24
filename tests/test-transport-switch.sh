@@ -39,6 +39,7 @@ MOCK
 cat >"$tmp/bin/curl" <<'MOCK'
 #!/usr/bin/env bash
 case "$*" in
+  *127.0.0.1:9090/proxies/AWG-MIHOMO*) echo '{"now":"Native"}' ;;
   *127.0.0.1:9090/version*)
     [[ "${MOCK_MIHOMO_HEALTH:-up}" == up ]] || exit 1
     echo '{}'

@@ -34,3 +34,10 @@ class Runtime(unittest.TestCase):
         src=(ROOT/"src/awg-xray-manual-switch.py").read_text()
         self.assertIn("restore(path,state)",src);self.assertIn("restore_native(path,state)",src)
         self.assertIn("WATCHDOG_NOT_ARMED",src)
+
+    def test_dead_selected_sidecar_is_not_hidden_by_live_mihomo(self):
+        with mock.patch.object(m,"unit_active",side_effect=lambda u:u!=m.XRAY),mock.patch.object(m,"cmd"),mock.patch.object(m,"controller",return_value={"now":m.ALIAS}):
+            self.assertFalse(m.tun_runtime_ready())
+    def test_dormant_stopped_sidecar_does_not_reject_native(self):
+        with mock.patch.object(m,"unit_active",side_effect=lambda u:u!=m.XRAY),mock.patch.object(m,"cmd"),mock.patch.object(m,"controller",return_value={"now":"Native"}):
+            self.assertTrue(m.tun_runtime_ready())

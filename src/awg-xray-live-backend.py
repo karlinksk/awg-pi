@@ -70,7 +70,9 @@ def tun_runtime_ready():
     if not active(MIHOMO):return False
     try:
         run("ip","link","show","dev","mihomo0",timeout=4)
-        return bool(controller().get("now"))
+        selected=controller().get("now")
+        return (isinstance(selected,str) and bool(selected) and
+                (selected!=LOCAL or active(XRAY)))
     except (OSError,RuntimeError,ValueError,subprocess.TimeoutExpired):return False
 
 

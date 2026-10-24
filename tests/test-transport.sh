@@ -27,6 +27,7 @@ MOCK
 cat >"$TMP/bin/curl" <<'MOCK'
 #!/usr/bin/env bash
 case "$*" in
+  *127.0.0.1:9090/proxies/AWG-MIHOMO*) echo '{"now":"Native"}' ;;
   *127.0.0.1:9090/version*) echo '{}' ;;
   *api.ipify.org*) echo '45.86.66.170' ;;
   *api.openai.com*) [[ "${MOCK_TUN_STATE:-up}" == up ]] || exit 35; echo 401 ;;
