@@ -243,6 +243,50 @@ class LinuxBackendTests(unittest.TestCase):
                 self.assertEqual(persisted.read_bytes(),runtime.read_bytes())
             self.assertIn(("systemctl","enable",m.XRAY),events)
 
+    def test_transient_stop_error_after_commit_requires_inactive_timer_and_service(self):
+        with tempfile.TemporaryDirectory() as dirname:
+            snapshot=Path(dirname)
+            (snapshot/"state.json").write_text(json.dumps({"state":"committed"}))
+            backend=m.LinuxBackend("native","xray")
+            backend.snapshot=snapshot
+            backend.watchdog_unit="awg-xray-failover-test"
+            def stop_failed(*args,**kwargs):
+                raise RuntimeError("PROCESS_FAILED_systemctl")
+            def inactive(args,**kwargs):
+                self.assertEqual(args[:2],["systemctl","show"])
+                return __import__("subprocess").CompletedProcess(args,0,"inactive\\n","")
+            with (mock.patch.object(m,"run",side_effect=stop_failed),
+                  mock.patch.object(m.subprocess,"run",side_effect=inactive) as show,
+                  mock.patch.object(m,"auto_fault") as fault):
+                backend.disarm_watchdog()
+            self.assertEqual(show.call_count,2)
+            fault.assert_called_once_with("WATCHDOG","TIMER_ALREADY_INACTIVE")
+
+    def test_transient_stop_error_still_active_is_not_silently_accepted(self):
+        with tempfile.TemporaryDirectory() as dirname:
+            snap=Path(dirname)
+            (snap/"state.json").write_text(json.dumps({"state":"committed"}))
+            backend=m.LinuxBackend("native","xray")
+            backend.snapshot=snap
+            backend.watchdog_unit="awg-xray-failover-test"
+            def active_timer(args,**kwargs):
+                return __import__("subprocess").CompletedProcess(args,0,"active\\n","")
+            with (mock.patch.object(m,"run",side_effect=RuntimeError("PROCESS_FAILED_systemctl")),
+                  mock.patch.object(m.subprocess,"run",side_effect=active_timer)):
+                with self.assertRaisesRegex(RuntimeError,"WATCHDOG_CANCEL_NOT_CONFIRMED"):
+                    backend.disarm_watchdog()
+
+    def test_transient_stop_error_before_commit_must_remain_failure(self):
+        with tempfile.TemporaryDirectory() as dirname:
+            snap=Path(dirname)
+            (snap/"state.json").write_text(json.dumps({"state":"armed"}))
+            backend=m.LinuxBackend("native","xray")
+            backend.snapshot=snap
+            backend.watchdog_unit="awg-xray-failover-test"
+            with mock.patch.object(m,"run",side_effect=RuntimeError("PROCESS_FAILED_systemctl")):
+                with self.assertRaisesRegex(RuntimeError,"PROCESS_FAILED_systemctl"):
+                    backend.disarm_watchdog()
+
     def test_cancelled_watchdog_never_quiesces_a_healthy_gateway(self):
         with tempfile.TemporaryDirectory() as d:
             base=Path(d);path=base/"xray-failover-1-2";path.mkdir()
