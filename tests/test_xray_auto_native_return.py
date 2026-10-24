@@ -91,6 +91,7 @@ class AutoBridgeNativeReturn(unittest.TestCase):
             mock.patch.object(m,"native_env"),
             mock.patch.object(m,"wait_native_controller"),
             mock.patch.object(m,"choose"),
+            mock.patch.object(m,"prove_local_xray"),
             mock.patch.object(m,"native_runtime_proof",side_effect=self.local_proof),
             mock.patch.object(m,"invariant",side_effect=self.local_proof),
             mock.patch.object(m,"controller",return_value={"now":"NativeNew"}),
@@ -117,6 +118,8 @@ class AutoBridgeNativeReturn(unittest.TestCase):
 
     def fake_cmd(self,*args,**kwargs):
         self.calls.append(args)
+        if args==("/usr/local/sbin/awg-transport","get"):
+            return "mihomo"
         if args[:2]==("systemctl","show"):
             return m.XRAY if self.graph else ""
         if args==("systemctl","daemon-reload"):
