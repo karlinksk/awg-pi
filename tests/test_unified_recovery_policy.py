@@ -110,6 +110,15 @@ echo "NATIVE:$3" >> "$MOCK_LOG";exit 0
         r=self.run_case(success="Node11")
         self.assertEqual(r.returncode,0,r.stderr)
         self.assertEqual(self.log.read_text().splitlines()[0],"dead-xray-native:Node1")
+    def test_xray_dispatcher_owns_the_only_success_stdout(self):
+        # The inner executor must not print an additional success verdict.
+        # A duplicate line invalidates the strict monitor result contract.
+        inner = extract("auto_xray_candidate")
+        outer = extract("failover_unified")
+        marker = "MIHOMO_NODE_FAILOVER=%s->%s"
+        self.assertNotIn(marker, inner)
+        self.assertIn(marker, outer)
+
     def test_native_failure_can_choose_xray(self):
         r=self.run_case(bridge=False,success="Node3")
         self.assertEqual(r.returncode,0,r.stderr)
