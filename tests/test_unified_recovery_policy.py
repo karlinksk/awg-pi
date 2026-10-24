@@ -101,6 +101,36 @@ echo "NATIVE:$3" >> "$MOCK_LOG";exit 0
         self.assertNotIn("UNIFIED_EXHAUSTED_NO_VERIFIED_CANDIDATE",r.stderr)
         self.assertIn("XRAY:Node3",self.log.read_text())
 
+    def test_native_tun_failure_retries_next_native_candidate(self):
+        # The first activation fails TUN proof; a later candidate must be
+        # attempted rather than immediately handing control to AWG.
+        self.log.write_text("")
+        self.mode.write_text("auto\n")
+        self.write("configure", '''
+[ "$1" = node ] || exit 3
+echo "NATIVE:$3" >> "$MOCK_LOG"
+exit 0
+''')
+        data="".join("printf '%s\\t%s\\t%s\\t%s\\n' MIHOMO '"+str(i)+"' '"+self.sha+"' Node"+str(i)+"\\n" for i in (1,2))
+        script="".join((
+            "set -Eeuo pipefail\n",extract("failover_unified"),
+            'validate_node_name(){ [[ -n "$1" ]]; }\n',
+            'mode_get(){ echo auto; }\n',
+            'xray_bridge_present(){ return 1; }\n',
+            'unified_recovery_candidates(){\n'+data+'}\n',
+            'service_candidate_allowed(){ return 0; }\n',
+            'unified_native_tun_postcheck(){ [[ "$(tail -n 1 "$MOCK_LOG")" == NATIVE:Node2 ]]; }\n',
+            'unified_native_quiesce(){ echo QUIESCE >> "$MOCK_LOG"; return 0; }\n',
+            'failover_unified FailedNode\n'
+        ))
+        env={**os.environ,"MOCK_SHA":self.sha,"MOCK_LOG":str(self.log),
+             "MIHOMO_UNIFIED_NODE_CLI":str(self.bin/"resolver"),
+             "MIHOMO_XRAY_NATIVE_RECOVERY_CLI":str(self.bin/"executor"),
+             "MIHOMO_CONFIGURE":str(self.bin/"configure")}
+        result=subprocess.run(["bash","-c",script],env=env,capture_output=True,text=True,timeout=10)
+        self.assertEqual(result.returncode,0,result.stderr)
+        self.assertEqual(self.log.read_text().splitlines(),["NATIVE:Node1","QUIESCE","NATIVE:Node2"])
+
     def test_no_numeric_caps(self):
         fn=extract("failover_unified")
         self.assertNotIn("max_xray_visits",fn)
