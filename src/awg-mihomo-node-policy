@@ -1295,11 +1295,10 @@ failover(){
   mode="$(mode_get 2>/dev/null || echo invalid)"
   current="$(cat "$MIHOMO_NODE_NAME_FILE" 2>/dev/null || true)"
   [[ -n "$current" ]] || return 1
-  # Keep opt-in READY media gate and older installations without the
-  # unified inventory on their previously-tested path. The unified ordered
-  # pool is the normal route for paid providers with READY disabled.
+  # Unified AUTO is independent of legacy READY/Hot Pool settings.
+  # Legacy fallback is retained only when the unified selector is absent.
   local unified_cli="${MIHOMO_UNIFIED_NODE_CLI:-/usr/local/sbin/awg-mihomo-unified-nodes}"
-  if [[ "$MIHOMO_READY_AUTO_CANARY" == 1 || ! -x "$unified_cli" ]]; then
+  if [[ ! -x "$unified_cli" ]]; then
     case "$mode" in
       fixed) is_fixed && failover_fixed "$current" ;;
       auto) is_enabled && failover_auto "$current" ;;
@@ -1325,7 +1324,7 @@ case "${1:-status}" in
       status) printf 'MIHOMO_XRAY_AUTO=%s\n' "$([[ "$_xray_auto_mode" == 1 ]] && echo enabled || echo disabled)" ;;
       enable)
         [[ "$(mode_get)" == auto ]] || { echo XRAY_AUTO_REQUIRES_NODE_AUTO >&2; exit 1; }
-        [[ "$MIHOMO_READY_AUTO_CANARY" == 0 ]] || { echo XRAY_AUTO_REQUIRES_READY_OFF >&2; exit 1; }
+        true # Xray AUTO no longer depends on the retired READY policy.
         for f in /usr/local/sbin/awg-xray-live-backend /usr/local/sbin/awg-xray-activation-transaction /usr/local/sbin/awg-mihomo-unified-nodes /usr/local/sbin/awg-xray-vless;do
           [[ -x "$f" ]] || { echo XRAY_AUTO_MISSING_ENGINE_COMPONENT >&2;exit 1; }
         done
