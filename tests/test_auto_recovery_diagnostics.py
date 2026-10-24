@@ -43,7 +43,7 @@ class AutoRecoveryDiagnostics(unittest.TestCase):
 esac
 """)
         self.script("node", """case "$1" in
- enabled) [ "$ENABLED" = 1 ];;
+ enabled) if [ "$ENABLED" = 1 ]; then exit 0; else exit 1; fi;;
  failover)
    case "$NODE_CASE" in
      fail)
