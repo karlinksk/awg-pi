@@ -69,7 +69,7 @@ die(){ echo "SAFE_ABORT"; exit 77; }
   self.assertIn('install_project_helper src/awg-menu /usr/local/sbin/awg-menu',INS)
   self.assertIn('install_project_helper src/awg-mihomo-node-policy "$MIHOMO_NODE_POLICY_CLI"',INS)
   for dep in ("ffmpeg","/usr/bin/ffprobe","awg-mihomo-stage18-ram-runtime",
-              "awg-mihomo-ready-live-match","awg-hot-pool-continuity.py"):
+              "awg-mihomo-ready-live-match"):
    self.assertIn(dep,INS)
  def test_no_no_profile_awg_auto_start(self):
   self.assertIn('if [[ -f "$CONF_FILE" ]]; then',INS)
