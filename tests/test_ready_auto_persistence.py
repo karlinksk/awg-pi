@@ -17,9 +17,10 @@ MONITOR = ROOT / "src/awg-selection-monitor"
 class ReadyAutoPersistence(unittest.TestCase):
     def test_fresh_installer_defaults_ready_priority_off(self):
         s = INSTALL.read_text()
-        self.assertIn('"$MIHOMO_NODE_POLICY_CLI" ready-auto disable >/dev/null', s)
-        self.assertLess(s.index('install_project_helper src/awg-mihomo-ready-postcheck-tun'),
-                        s.index('"$MIHOMO_NODE_POLICY_CLI" ready-auto disable'))
+        self.assertNotIn('"$MIHOMO_NODE_POLICY_CLI" ready-auto disable >/dev/null', s)
+        self.assertNotIn('install_project_unit extras/mihomo-hot-pool-shadow/', s)
+        self.assertIn('"$SELECTION_CLI" mode auto mihomo awg', s)
+        self.assertIn('install_project_helper src/awg-mihomo-node-policy', s)
         self.assertIn('if (( UPGRADE_EXISTING == 0 )); then', s)
 
     def test_bounded_service_check_is_only_on_candidate_failover(self):

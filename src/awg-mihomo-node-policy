@@ -874,33 +874,45 @@ for line in sys.stdin:
 }
 
 unified_native_tun_postcheck(){
-  local code route current mode
+  local code route current mode ready=0 attempt
   current="$("$MIHOMO_AUTO_TRANSPORT_CLI" get 2>/dev/null || true)"
-  [[ "$current" == mihomo ]] || return 1
-  [[ "$("$MIHOMO_AUTO_SYSTEMCTL" is-active "$MIHOMO_AUTO_SERVICE" 2>/dev/null || true)" == active ]] || return 1
-  route="$(ip -4 route show table 100)"
-  [[ "$route" =~ ^default[[:space:]]+dev[[:space:]]+mihomo0([[:space:]].*)?$ ]] || return 1
-  route="$(ip -4 route show table 101)"
-  [[ "$route" =~ ^default[[:space:]]+dev[[:space:]]+mihomo0([[:space:]].*)?$ ]] || return 1
+  [[ "$current" == mihomo ]] || return 2
+  [[ "$("$MIHOMO_AUTO_SYSTEMCTL" is-active "$MIHOMO_AUTO_SERVICE" 2>/dev/null || true)" == active ]] || return 2
+  mode="$(cat "$MIHOMO_AUTO_MODE_FILE" 2>/dev/null || true)"
+  # A previous failed attempt disabled Transit routing. Re-arm under its
+  # existing guard BEFORE waiting for routes, including after quiesce/retry.
+  case "$mode" in
+    transit) "$MIHOMO_AUTO_TRANSIT_ROUTING" apply >/dev/null || return 2 ;;
+    selective) "$MIHOMO_AUTO_SYSTEMCTL" is-active --quiet awg-pbr-health.service || return 2 ;;
+    *) return 2 ;;
+  esac
+  for attempt in {1..20}; do
+    ready=1
+    for current in 100 101; do
+      route="$(ip -4 route show table "$current")" || return 2
+      grep -Eq '^default[[:space:]]+dev[[:space:]]+mihomo0([[:space:]].*)?$' <<<"$route" || ready=0
+    done
+    (( ready == 1 )) && break
+    sleep 1
+  done
+  (( ready == 1 )) || return 2
   code="$(curl -q -4 -sS --noproxy '*' --interface mihomo0 --connect-timeout 5 --max-time 12 \
      -o /dev/null -w '%{http_code}' https://api.openai.com/v1/models 2>/dev/null)" || return 1
   [[ "$code" == 401 ]] || return 1
-  mode="$(cat "$MIHOMO_AUTO_MODE_FILE" 2>/dev/null || true)"
   if [[ "$mode" == transit ]]; then
-    "$MIHOMO_AUTO_TRANSIT_ROUTING" apply >/dev/null || return 1
     local report
-    report="$("$MIHOMO_AUTO_TRANSIT_ROUTING" status 2>/dev/null)" || return 1
-    grep -Fxq 'Transit guard: SAFE' <<<"$report" || return 1
-    grep -Fxq 'Transit policy rule: ACTIVE' <<<"$report" || return 1
-    grep -Fxq 'Transit VPN table: READY' <<<"$report" || return 1
+    report="$("$MIHOMO_AUTO_TRANSIT_ROUTING" status 2>/dev/null)" || return 2
+    grep -Fxq 'Transit guard: SAFE' <<<"$report" || return 2
+    grep -Fxq 'Transit policy rule: ACTIVE' <<<"$report" || return 2
+    grep -Fxq 'Transit VPN table: READY' <<<"$report" || return 2
   elif [[ "$mode" == selective ]]; then
     # The existing PBR health service alone may re-arm selective rules.
-    "$MIHOMO_AUTO_SYSTEMCTL" is-active --quiet awg-pbr-health.service || return 1
+    "$MIHOMO_AUTO_SYSTEMCTL" is-active --quiet awg-pbr-health.service || return 2
   else
-    return 1
+    return 2
   fi
   "$MIHOMO_AUTO_SYSTEMCTL" is-active --quiet ssh.service &&
-    "$MIHOMO_AUTO_SYSTEMCTL" is-active --quiet dnsmasq.service
+    "$MIHOMO_AUTO_SYSTEMCTL" is-active --quiet dnsmasq.service || return 2
 }
 
 unified_native_quiesce(){
@@ -919,7 +931,7 @@ unified_native_quiesce(){
 failover_unified(){
   local current="$1" mode engine idx provider_sha candidate resolved resolved_sha
   local active_bridge=0 rc=0 attempts=0 start_epoch now line item selected=0
-  local xray_guard_rejected=0
+  local xray_guard_rejected=0 infrastructure_failed=0
   local native_cli="${MIHOMO_XRAY_NATIVE_RECOVERY_CLI:-/usr/local/sbin/awg-xray-manual-switch}"
   local -a rows=() prioritized=() normalized=() order=()
   # The caller is the node-policy monitor, not manual node selection.
@@ -932,12 +944,15 @@ failover_unified(){
     return 1
   }
   # AUTO visits every current-provider candidate without FIXED ordering.
-  for line in "${rows[@]}"; do
+  for engine in MIHOMO XRAY; do
+   for line in "${rows[@]}"; do
+    [[ "$line" == "$engine"$'\t'* ]] || continue
     candidate="${line#*$'\t'}"
     candidate="${candidate#*$'\t'}"
     candidate="${candidate#*$'\t'}"
     [[ "$candidate" == "$current" ]] && continue
     prioritized+=("$line")
+   done
   done
 
   start_epoch="$(date +%s)"
@@ -986,13 +1001,19 @@ failover_unified(){
       service_candidate_allowed "$candidate" || continue
       rc=0
       MIHOMO_NODE_FAILOVER_RECOVERY=1 "$MIHOMO_CONFIGURE" node select-auto "$candidate" >/dev/null || rc=$?
-      if (( rc == 0 )) && unified_native_tun_postcheck; then
+      if (( rc == 0 )); then
+        unified_native_tun_postcheck || rc=$?
+      else
+        infrastructure_failed=1
+      fi
+      if (( rc == 0 )); then
         printf 'MIHOMO_NODE_FAILOVER=%s->%s\n' "$current" "$candidate"
         printf 'MIHOMO_UNIFIED_RECOVERY_ATTEMPTS=%s ENGINE=%s\n' "$attempts" "$engine" >&2
         return 0
       fi
-      # Keep existing cross-engine recovery semantics until a verified
-      # transaction-safe native retry is available. Regression gate required.
+      (( rc != 2 )) || infrastructure_failed=1
+      # Close the failed dataplane before the next fresh candidate. The
+      # next postcheck explicitly re-arms Transit and waits for routes.
       unified_native_quiesce || {
         echo 'MIHOMO_NODE_FAILOVER=UNIFIED_NATIVE_CLEANUP_FAILED_AWG_FALLBACK' >&2
         return 1
@@ -1035,7 +1056,9 @@ failover_unified(){
       return 1
     }
   fi
-  if (( xray_guard_rejected == 1 )); then
+  if (( infrastructure_failed == 1 )); then
+    echo 'MIHOMO_NODE_FAILOVER=UNIFIED_INFRASTRUCTURE_FAILURE_AWG_FALLBACK' >&2
+  elif (( xray_guard_rejected == 1 )); then
     echo 'MIHOMO_NODE_FAILOVER=UNIFIED_XRAY_GUARD_UNAVAILABLE_AWG_FALLBACK' >&2
   else
     echo 'MIHOMO_NODE_FAILOVER=UNIFIED_EXHAUSTED_NO_VERIFIED_CANDIDATE_AWG_FALLBACK' >&2
@@ -1394,4 +1417,3 @@ case "${1:-status}" in
     exit 2
     ;;
 esac
-

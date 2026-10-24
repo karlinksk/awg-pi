@@ -1,5 +1,27 @@
 # AWG Pi Gateway v1.3.0 — release validation
 
+## Current candidate contract — 2026-10-24, PR #165
+
+This section supersedes historical READY/Hot Pool/FIXED acceptance criteria
+below for the simplified candidate. Retain fresh per-candidate qualification,
+actual native TUN OpenAI HTTPS 401 and bounded route recovery. AUTO tries native
+Mihomo candidates before Xray; AWG is the final sticky fallback. Retired READY
+priority must not redirect this path. Legacy state remains in upgrade backups.
+
+The native postcheck re-arms guarded Transit routing before waiting up to 20
+seconds for both route tables. Exit 2 denotes infrastructure/management/guard
+failure; HTTPS proof failure is exit 1. Neither is evidence that every provider
+node is dead. A failed attempt must quiesce successfully before another attempt.
+Synthetic shell tests cover these boundaries; they never establish hardware PASS.
+
+Before marking #165 ready, attach exact-commit results for full Python discovery,
+CI shell suites, ShellCheck, pinned AWG build/preflight, clean test-media install,
+preserving upgrade/rollback, real native and cross-engine candidate retry,
+pool exhaustion and healthy AWG fallback, forwarded LAN packet FAIL-CLOSED,
+Selective FAIL-OPEN, DNS/SSH/SSTP, Telegram/Matrix and reboot recovery. Do not
+modify MikroTik or working media for these tests without separate authorization.
+Absent evidence remains OPEN even when source tests pass.
+
 This document is the hardware/release gate for v1.3.0.
 
 **Full 150-case execution matrix (all modes, transports, selectors and negative cases):** [RELEASE-ACCEPTANCE-MATRIX-v1.3.0.md](RELEASE-ACCEPTANCE-MATRIX-v1.3.0.md). Items in that checklist remain unaccepted until scoped evidence is attached to the current candidate.

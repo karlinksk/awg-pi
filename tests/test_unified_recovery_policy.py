@@ -36,7 +36,7 @@ echo "NATIVE:$3" >> "$MOCK_LOG";exit 0
 ''')
     def write(self,name,body):
         path=self.bin/name;path.write_text("#!/usr/bin/env bash\n"+body);path.chmod(0o755)
-    def run_case(self,bridge=True,success="Node13",fixed=False,decline=False,xray_guard=False):
+    def run_case(self,bridge=True,success="Node13",fixed=False,decline=False,xray_guard=False,infra=False,cleanup=True):
         self.log.write_text("")
         self.mode.write_text("fixed\n" if fixed else "auto\n")
         self.order.write_text("Node11\nNode2\n")
@@ -49,8 +49,8 @@ echo "NATIVE:$3" >> "$MOCK_LOG";exit 0
             'xray_bridge_present(){ return '+("0" if bridge else "1")+'; }\n',
             'unified_recovery_candidates(){\n'+data+'}\n',
             'service_candidate_allowed(){ return 0; }\n',
-            'unified_native_tun_postcheck(){ return 1; }\n',
-            'unified_native_quiesce(){ echo QUIESCE >> "$MOCK_LOG"; return 0; }\n',
+            'unified_native_tun_postcheck(){ return '+('2' if infra else '1')+'; }\n',
+            'unified_native_quiesce(){ echo QUIESCE >> "$MOCK_LOG"; return '+('0' if cleanup else '1')+'; }\n',
             'auto_xray_candidate(){ echo "XRAY:$2" >> "$MOCK_LOG"; if [ "$XRAY_GUARD" = 1 ]; then return 2; fi; [ "$UNIFIED_SUCCESS" = "$2" ]; }\n',
             'failover_unified FailedNode\n'
         ))
@@ -67,12 +67,29 @@ echo "NATIVE:$3" >> "$MOCK_LOG";exit 0
         r=self.run_case()
         self.assertEqual(r.returncode,0,r.stderr)
         actions=self.log.read_text().splitlines()
-        self.assertEqual(len(actions),13)
+        self.assertEqual(len(actions),9)
+        self.assertTrue(all(action.startswith('dead-xray-native:') for action in actions))
         self.assertEqual(actions[-1],"dead-xray-native:Node13")
     def test_late_xray_candidate_is_not_skipped(self):
         r=self.run_case(success="Node9")
         self.assertEqual(r.returncode,0,r.stderr)
         self.assertEqual(self.log.read_text().splitlines()[-1],"dead-xray-xray:9")
+        actions=self.log.read_text().splitlines()
+        self.assertEqual(sum(a.startswith('dead-xray-native:') for a in actions),9)
+        self.assertLess(actions.index('dead-xray-native:Node13'),actions.index('dead-xray-xray:3'))
+
+    def test_infrastructure_is_not_pool_exhaustion(self):
+        r=self.run_case(bridge=False,success='None',xray_guard=True,infra=True)
+        self.assertEqual(r.returncode,1)
+        self.assertIn('UNIFIED_INFRASTRUCTURE_FAILURE_AWG_FALLBACK',r.stderr)
+        self.assertNotIn('UNIFIED_EXHAUSTED_NO_VERIFIED_CANDIDATE',r.stderr)
+        self.assertIn('NATIVE:Node13',self.log.read_text())
+
+    def test_unconfirmed_quiesce_stops_retry(self):
+        r=self.run_case(bridge=False,cleanup=False)
+        self.assertEqual(r.returncode,1)
+        self.assertIn('UNIFIED_NATIVE_CLEANUP_FAILED',r.stderr)
+        self.assertEqual(self.log.read_text().splitlines(),['NATIVE:Node1','QUIESCE'])
     def test_all_unsuccessful_fall_back_to_awg(self):
         r=self.run_case(success="None")
         self.assertEqual(r.returncode,1)
