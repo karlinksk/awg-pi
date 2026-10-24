@@ -123,6 +123,11 @@ echo "NATIVE:$3" >> "$MOCK_LOG";exit 0
         r=self.run_case(bridge=False,success="Node3")
         self.assertEqual(r.returncode,0,r.stderr)
         self.assertIn("XRAY:Node3",self.log.read_text().splitlines())
+        # The strict monitor accepts ONLY one stdout verdict after Xray
+        # committed; zero lines and duplicate lines both trigger AWG.
+        self.assertEqual(r.stdout.splitlines(),
+                         ["MIHOMO_NODE_FAILOVER=FailedNode->Node3"])
+        self.assertIn("ENGINE=XRAY",r.stderr)
     def test_later_xray_wins_after_certified_candidate_failures(self):
         r=self.run_case(bridge=False,success="Node9",xray_retry=True)
         self.assertEqual(r.returncode,0,r.stderr)
