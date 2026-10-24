@@ -696,6 +696,9 @@ def watchdog(path):
         state["state"]="quiesced"
         write_atomic(path/"state.json",json.dumps(state).encode())
 
+def root_owned_regular(path):
+    return not path.is_symlink() and path.is_file() and path.stat().st_uid==0
+
 def cleanup_stale_xray_while_awg():
     """Test-Pi-only cleanup of an abandoned AUTO bridge under healthy AWG.
 
@@ -718,15 +721,18 @@ def cleanup_stale_xray_while_awg():
             raise RuntimeError("STALE_CLEANUP_MANUAL_BRIDGE_PRESENT")
         owned={}
         for p in (BRIDGE,BRIDGE_RUNTIME):
-            if (p.is_symlink() or not p.is_file() or p.stat().st_uid!=0 or
+            if (not root_owned_regular(p) or
                 b"MIHOMO_XRAY_VLESS_BRIDGE=1" not in p.read_bytes() or
                 b"Requires=awg-xray-vless.service" not in p.read_bytes()):
                 raise RuntimeError("STALE_CLEANUP_FOREIGN_BRIDGE")
             owned[p]=p.read_bytes()
-        if (SELECTED.is_symlink() or not SELECTED.is_file() or
-            SELECTED.stat().st_uid!=0):
+        if owned[BRIDGE]!=owned[BRIDGE_RUNTIME]:
+            raise RuntimeError("STALE_CLEANUP_BRIDGE_MISMATCH")
+        if not root_owned_regular(SELECTED):
             raise RuntimeError("STALE_CLEANUP_SELECTED_UNOWNED")
         owned[SELECTED]=SELECTED.read_bytes()
+        if run("systemctl","is-enabled",XRAY,timeout=8)!="enabled":
+            raise RuntimeError("STALE_CLEANUP_UNEXPECTED_ENABLEMENT")
         def dependency_present():
             for prop in ("Requires","After"):
                 output=run("systemctl","show",MIHOMO,"-p",prop,
