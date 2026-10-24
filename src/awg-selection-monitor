@@ -229,23 +229,63 @@ selection_cycle(){
   # Exact-node recovery has priority over changing the transport. The node
   # policy can only choose names the user explicitly placed in its allow-list.
   if (( node_policy_enabled == 1 )); then
-    # Preserve the *reason* node/engine recovery failed. Never log raw
-    # executor output: stderr can contain names, URLs or credentials.
-    # A successful recovery may also emit a stderr attempts summary.
-    local node_out_rc=0 node_line node_success=""
-    node_out="$("$MIHOMO_NODE_POLICY_CLI" failover 2>&1)" || node_out_rc=$?
-    while IFS= read -r node_line; do
-      if (( node_out_rc == 0 )) && [[ "$node_line" == MIHOMO_NODE_FAILOVER=* && "$node_line" == *'->'* ]]; then
-        node_success="$node_line"
-      elif [[ "$node_line" =~ ^MIHOMO_NODE_FAILOVER=([A-Z][A-Z0-9_]{2,95})$ ]]; then
-        log_event "AUTO_NODE_RECOVERY_CODE=${BASH_REMATCH[1]}"
-      fi
-    done <<< "$node_out"
+    # Retain only validated failure codes; never publish raw stderr,
+    # which can contain node names, subscription URLs or credentials.
+    # Keep stdout separate: extra output must NOT certify a node switch.
+    local node_out_rc=0 node_line node_diag_file=""
+    node_diag_file="$(mktemp "$AWG_SELECTION_STATE_DIR/node-recovery.XXXXXXXX" 2>/dev/null || true)"
+    if [[ -n "$node_diag_file" ]]; then
+      node_out="$("$MIHOMO_NODE_POLICY_CLI" failover 2>"$node_diag_file")" || node_out_rc=$?
+      while IFS= read -r node_line; do
+        if [[ "$node_line" =~ ^MIHOMO_NODE_FAILOVER=([A-Z][A-Z0-9_]{2,95})$ ]]; then
+          log_event "AUTO_NODE_RECOVERY_CODE=${BASH_REMATCH[1]}"
+        fi
+      done < "$node_diag_file"
+      rm -f -- "$node_diag_file"
+    else
+      # Diagnostics must never make a healthy fallback inaccessible.
+      node_out="$("$MIHOMO_NODE_POLICY_CLI" failover 2>/dev/null)" || node_out_rc=$?
+      log_event 'AUTO_NODE_RECOVERY_CODE=DIAGNOSTICS_UNAVAILABLE'
+    fi
     if (( node_out_rc != 0 )); then
       log_event "AUTO_NODE_RECOVERY_EXIT=$node_out_rc"
     fi
-    if [[ "$node_success" == MIHOMO_NODE_FAILOVER=* ]]; then
-      log_event "Automatic Mihomo node failover: ${node_success#MIHOMO_NODE_FAILOVER=}"
+    if (( node_out_rc == 0 )) && [[ "$node_out" == MIHOMO_NODE_FAILOVER=* && "$node_out" != *
+      log_event "Automatic Mihomo node failover: ${node_out#MIHOMO_NODE_FAILOVER=}"
+      # Passive notification after the node-policy confirmed the switch.
+      # Never hold recovery for a Telegram network request.
+      if [[ -s /etc/awg-pbr/notify/telegram.json &&
+            -x /usr/local/sbin/awg-notify ]] &&
+         systemctl is-enabled --quiet awg-notify-flush.timer 2>/dev/null; then
+        printf 'Automatic Mihomo node switch: %s' "${node_out#MIHOMO_NODE_FAILOVER=}" |
+          timeout 2s /usr/local/sbin/awg-notify emit --kind NODE_SWITCH \
+            --severity info >/dev/null 2>&1 || true
+      fi
+      reset_failures
+      printf '%s\n' "$node_out"
+      return 0
+    fi
+  elif [[ "$current" == mihomo ]]; then
+    log_event 'AUTO_NODE_RECOVERY_CODE=NODE_POLICY_DISABLED'
+  fi
+
+  if (( transport_policy_enabled == 1 )) && try_failover "$current"; then
+    return 0
+  fi
+
+  # Keep the counter saturated so a recovered explicitly allowed node/transport
+  # can be retried on the next cycle without extra persistent state.
+  write_failures "$AWG_SELECTION_FAILURE_THRESHOLD"
+  return 0
+}
+
+while true; do
+  selection_cycle
+  [[ "${AWG_SELECTION_ONCE:-0}" == 1 ]] && break
+  "$SLEEP_BIN" "$AWG_SELECTION_INTERVAL"
+done
+\n'* ]]; then
+      log_event "Automatic Mihomo node failover: ${node_out#MIHOMO_NODE_FAILOVER=}"
       # Passive notification after the node-policy confirmed the switch.
       # Never hold recovery for a Telegram network request.
       if [[ -s /etc/awg-pbr/notify/telegram.json &&
