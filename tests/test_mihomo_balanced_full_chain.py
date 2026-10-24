@@ -254,7 +254,7 @@ exec /usr/bin/systemctl "$@"
         self.assertEqual(self.selected.read_text().strip(),"awg")
         self.assertEqual(self.node.read_text().strip(),"current-node")
         self.assertIn("transport:awg",self.trace.read_text())
-        self.assertEqual(self.node_trace.read_text(),"")
+        self.assertEqual(self.node_trace.read_text(),"quiesce\n")
         self.assertEqual((self.run/"failures").read_text().strip(),"0")
 
     def test_unconfigured_awg_is_not_retried_after_node_exhaustion(self):
