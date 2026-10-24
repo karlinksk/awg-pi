@@ -285,37 +285,3 @@ while true; do
   [[ "${AWG_SELECTION_ONCE:-0}" == 1 ]] && break
   "$SLEEP_BIN" "$AWG_SELECTION_INTERVAL"
 done
-\n'* ]]; then
-      log_event "Automatic Mihomo node failover: ${node_out#MIHOMO_NODE_FAILOVER=}"
-      # Passive notification after the node-policy confirmed the switch.
-      # Never hold recovery for a Telegram network request.
-      if [[ -s /etc/awg-pbr/notify/telegram.json &&
-            -x /usr/local/sbin/awg-notify ]] &&
-         systemctl is-enabled --quiet awg-notify-flush.timer 2>/dev/null; then
-        printf 'Automatic Mihomo node switch: %s' "${node_out#MIHOMO_NODE_FAILOVER=}" |
-          timeout 2s /usr/local/sbin/awg-notify emit --kind NODE_SWITCH \
-            --severity info >/dev/null 2>&1 || true
-      fi
-      reset_failures
-      printf '%s\n' "$node_success"
-      return 0
-    fi
-  elif [[ "$current" == mihomo ]]; then
-    log_event 'AUTO_NODE_RECOVERY_CODE=NODE_POLICY_DISABLED'
-  fi
-
-  if (( transport_policy_enabled == 1 )) && try_failover "$current"; then
-    return 0
-  fi
-
-  # Keep the counter saturated so a recovered explicitly allowed node/transport
-  # can be retried on the next cycle without extra persistent state.
-  write_failures "$AWG_SELECTION_FAILURE_THRESHOLD"
-  return 0
-}
-
-while true; do
-  selection_cycle
-  [[ "${AWG_SELECTION_ONCE:-0}" == 1 ]] && break
-  "$SLEEP_BIN" "$AWG_SELECTION_INTERVAL"
-done
