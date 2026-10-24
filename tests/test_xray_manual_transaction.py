@@ -484,7 +484,7 @@ class ManualSwitchContract(unittest.TestCase):
                  mock.patch.object(mod,"native_env"), \
                  mock.patch.object(mod,"wait_native_controller"), \
                  mock.patch.object(mod,"native_runtime_proof"), \
-                 mock.patch.object(mod,"unit_active",side_effect=lambda name:name.endswith(".timer")), \
+                 mock.patch.object(mod,"unit_active",side_effect=lambda name:name.endswith(".timer") or name==mod.MIHOMO), \
                  mock.patch.object(mod,"invariant"), \
                  mock.patch.object(mod,"controller",return_value={
                      "now":"NewNative","all":["NewNative"]}), \
