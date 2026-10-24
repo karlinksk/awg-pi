@@ -79,7 +79,7 @@ class XrayAutoDispatch(unittest.TestCase):
     def test_explicit_transit_network_ok_can_call_guarded_executor(self):
         result = self.run_helper(optin="1")
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn("MIHOMO_NODE_FAILOVER=FAILED-CURRENT->VLESS-CANDIDATE", result.stdout)
+        # The inner executor returns RC0 only; the outer dispatcher emits\n        # the one accepted MIHOMO_NODE_FAILOVER stdout line.\n        self.assertEqual(result.stdout, "")
         self.assertEqual(self.log.read_text().strip(),
                          "TEST_PI_AUTHORIZED:FAILED-CURRENT:VLESS-CANDIDATE")
 
