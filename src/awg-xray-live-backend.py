@@ -696,7 +696,92 @@ def watchdog(path):
         state["state"]="quiesced"
         write_atomic(path/"state.json",json.dumps(state).encode())
 
+def cleanup_stale_xray_while_awg():
+    """Test-Pi-only cleanup of an abandoned AUTO bridge under healthy AWG.
+
+    Do NOT call this while Mihomo owns transit: dropping a required Xray
+    service can stop Mihomo and close forwarded traffic. The independent AWG
+    must already own both tables before any systemd mutation.
+    """
+    if (os.geteuid()!=0 or socket.gethostname()!="awg-upgrade" or
+        os.environ.get("AWG_XRAY_STALE_CLEANUP")!="TEST_PI_AUTHORIZED"):
+        raise RuntimeError("STALE_CLEANUP_NOT_AUTHORIZED")
+    with MAINTENANCE_LOCK.open("a") as lock:
+        fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
+        if (MODE.read_text().strip()!="transit" or
+            not verified_awg_backup_safe() or
+            active(MIHOMO) or not active(XRAY) or
+            not all(active(x) for x in ("ssh.service","dnsmasq.service"))):
+            raise RuntimeError("STALE_CLEANUP_BASELINE_UNSAFE")
+        manual=BRIDGE.parent/"62-awg-xray-manual.conf"
+        if manual.exists() or manual.is_symlink():
+            raise RuntimeError("STALE_CLEANUP_MANUAL_BRIDGE_PRESENT")
+        owned={}
+        for p in (BRIDGE,BRIDGE_RUNTIME):
+            if (p.is_symlink() or not p.is_file() or p.stat().st_uid!=0 or
+                b"MIHOMO_XRAY_VLESS_BRIDGE=1" not in p.read_bytes() or
+                b"Requires=awg-xray-vless.service" not in p.read_bytes()):
+                raise RuntimeError("STALE_CLEANUP_FOREIGN_BRIDGE")
+            owned[p]=p.read_bytes()
+        if (SELECTED.is_symlink() or not SELECTED.is_file() or
+            SELECTED.stat().st_uid!=0):
+            raise RuntimeError("STALE_CLEANUP_SELECTED_UNOWNED")
+        owned[SELECTED]=SELECTED.read_bytes()
+        def dependency_present():
+            for prop in ("Requires","After"):
+                output=run("systemctl","show",MIHOMO,"-p",prop,
+                           "--value",timeout=8)
+                if XRAY in output.split():
+                    return True
+            return False
+        if not dependency_present():
+            raise RuntimeError("STALE_CLEANUP_NO_LOADED_DEPENDENCY")
+        # A committed snapshot is advisory; only this fresh AWG proof permits
+        # removal. Keep root-only original bytes for manual recovery/forensics.
+        import tempfile
+        snapshot=Path(tempfile.mkdtemp(prefix="xray-stale-awg-",dir=BASE))
+        os.chmod(snapshot,0o700)
+        for index,(p,data) in enumerate(owned.items()):
+            write_atomic(snapshot/("original-"+str(index)),data)
+        write_atomic(snapshot/"paths.private",
+                     "\n".join(str(p) for p in owned).encode())
+        try:
+            # Reload the manager's graph BEFORE stopping the old sidecar.
+            BRIDGE_RUNTIME.unlink()
+            BRIDGE.unlink()
+            run("systemctl","daemon-reload",timeout=22)
+            if dependency_present() or active(MIHOMO):
+                raise RuntimeError("STALE_CLEANUP_DEPENDENCY_NOT_DETACHED")
+            if not verified_awg_backup_safe():
+                raise RuntimeError("STALE_CLEANUP_AWG_CHANGED")
+            run("systemctl","stop",XRAY,timeout=30)
+            run("systemctl","disable",XRAY,timeout=18)
+            if active(XRAY):
+                raise RuntimeError("STALE_CLEANUP_XRAY_STILL_ACTIVE")
+            SELECTED.unlink()
+            if (not verified_awg_backup_safe() or active(MIHOMO) or
+                not all(active(x) for x in ("ssh.service","dnsmasq.service"))):
+                raise RuntimeError("STALE_CLEANUP_FINAL_GUARD_UNSAFE")
+            write_atomic(snapshot/"committed",b"yes\n")
+        except Exception:
+            # Restore only files this guarded operation owned. Never switch
+            # the active AWG, route forwarded clients DIRECT or restart Mihomo.
+            for p,data in owned.items():
+                write_atomic(p,data)
+            run("systemctl","daemon-reload",timeout=22)
+            run("systemctl","enable",XRAY,timeout=18)
+            if not active(XRAY):
+                run("systemctl","start",XRAY,timeout=30)
+            raise
+        print("STALE_XRAY_CLEANUP=PASS")
+        print("ACTIVE_AWG=UNCHANGED")
+        print("MIHOMO_SERVICE=INACTIVE_NOT_STARTED")
+        print("SSH_DNS_TRANSIT=GUARDED")
+
+
 def cli():
+    if len(sys.argv)==2 and sys.argv[1]=="cleanup-stale-awg":
+        cleanup_stale_xray_while_awg();return
     if len(sys.argv)==3 and sys.argv[1]=="watchdog":
         watchdog(Path(sys.argv[2]));return
     if len(sys.argv)!=4 or sys.argv[1]!="apply":
