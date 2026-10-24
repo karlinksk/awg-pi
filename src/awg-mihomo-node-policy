@@ -962,7 +962,9 @@ failover_unified(){
       # The certified executor handles the cross-core watchdog and guard.
       # This is not the legacy native selector for Reality VLESS profiles.
       if auto_xray_candidate "$recovery_current" "$candidate" "$resolved"; then
-        printf 'MIHOMO_NODE_FAILOVER=%s->%s\n' "$current" "$candidate"
+        # auto_xray_candidate already emits the single success record.
+        # Duplicating it makes the strict selection-monitor reject a
+        # successfully committed Xray transaction and fall through to AWG.
         printf 'MIHOMO_UNIFIED_RECOVERY_ATTEMPTS=%s ENGINE=%s\n' "$attempts" "$engine" >&2
         return 0
       else
