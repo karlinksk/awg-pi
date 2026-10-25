@@ -21,7 +21,7 @@ class MenuStrategyTests(unittest.TestCase):
   self.assertNotIn('mihomo_node_menu',top)
   self.assertNotIn('standby-repair',top)
   advanced=extract("mihomo_advanced_menu")
-  self.assertIn('5) mihomo_standby_repair_menu',advanced)
+  self.assertNotIn('5) mihomo_standby_repair_menu',advanced)
   self.assertIn('capture "$MIHOMO_NODE_POLICY" standby-repair',extract("mihomo_standby_repair_menu"))
  def test_dialog_choices_call_exact_policy(self):
   for choice,expected in (("1","status"),("2","ready"),("3","classic"),("0","")):
