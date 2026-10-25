@@ -1403,10 +1403,9 @@ mihomo_pool_pick(){
       "Mihomo: проверка узла. Xray VLESS: локальная проверка Xray/SOCKS5, НЕ READY/TUN/LAN. Xray проверяется в фоне; переключение требует ручного подтверждения." 26 114 12 \
       1 "Выбрать узел Mihomo / Xray [$region_label]" "Показать Mihomo и все Xray из подписки, включая ещё не проверенные. Ручное переключение Xray требует подтверждения и проверки TUN." \
       2 "Фильтр: Только Европа [$region_label]" "Для Xray страна без независимого GeoIP не подтверждена — такие ноды скрыты этим фильтром." \
-      # Протокол настраивается единожды в «Подписка / источник».
-      4 "Обновить проверку сейчас" "Проверить Mihomo; на live дополнительно локальный Xray/SOCKS5 в RAM. Рабочий VPN не переключается." \
-      5 "Статистика пула Mihomo" "Счётчики относятся к Mihomo; работающие через Xray ноды отмечены отдельно в результатах." \
-      6 "Показать все результаты" "Михомо и Xray раздельно: HTTPS Xray не означает READY/TUN/LAN; просмотр ничего не меняет." \
+      3 "Обновить проверку сейчас" "Проверить Mihomo; на live дополнительно локальный Xray/SOCKS5 в RAM. Рабочий VPN не переключается." \
+      4 "Статистика пула Mihomo" "Счётчики относятся к Mihomo; работающие через Xray ноды отмечены отдельно в результатах." \
+      5 "Показать все результаты" "Михомо и Xray раздельно: HTTPS Xray не означает READY/TUN/LAN; просмотр ничего не меняет." \
       0 "Назад" "Вернуться без выбора узла." 3>&1 1>&2 2>&3)" || return 1
     fi
     case "$choice" in
@@ -1464,7 +1463,7 @@ mihomo_pool_pick(){
           fi
         fi
         ;;
-      4)
+      3)
         title="Проверка узлов Mihomo"
         capture "$MIHOMO_POOL" scan "$target" --geo-if-policy || true
         # Do not depend on Mihomo scan success: Reality VLESS may be unusable
@@ -1473,10 +1472,10 @@ mihomo_pool_pick(){
           capture "$MIHOMO_UNIFIED" probe-vless-all || true
         fi
         ;;
-      5)
+      4)
         mihomo_pool_status_dialog "$target" || true
         ;;
-      6)
+      5)
         mihomo_pool_results_dialog "$target" || true
         ;;
       0) return 1 ;;
