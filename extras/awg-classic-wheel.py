@@ -3,10 +3,9 @@
 
 The SSH terminal reports SGR/X10 mouse events only while explicitly enabled.
 Native dialog does not move the list selection for wheel events on this
-platform, so we run dialog with --no-mouse on a private input PTY. Its result
-FDs are inherited unchanged (important for Bash's 3>&1 1>&2 2>&3 idiom).
-Only the mouse-wheel events are translated; other keyboard input is passed
-through unmodified. No gateway or system settings are touched.
+platform. On a private input PTY, translate wheel to Up/Down and forward
+native clicks and keyboard input unchanged. Dialog's result FDs are inherited
+unchanged (important for Bash's 3>&1 1>&2 2>&3 idiom). No gateway or system settings are touched.
 """
 import fcntl
 import os
@@ -55,7 +54,8 @@ def translate(data, pending=b""):
                 button = int(match.group(1)) & 0xC3
                 if match.group(4) == b"M" and button in (64, 65):
                     output.extend(UP if button == 64 else DOWN)
-                # Drop other mouse events, which --no-mouse cannot consume.
+                else:
+                    output.extend(match.group())  # Retain native mouse clicks.
                 i += match.end()
                 continue
             if len(remaining) < 40 and b"M" not in remaining and b"m" not in remaining:
@@ -69,6 +69,8 @@ def translate(data, pending=b""):
             button = (remaining[3] - 32) & 0xC3
             if button in (64, 65):
                 output.extend(UP if button == 64 else DOWN)
+            else:
+                output.extend(remaining[:6])
             i += 6
             continue
         # Not a mouse packet: preserve arrows and other escape sequences.
