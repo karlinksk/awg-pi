@@ -53,6 +53,13 @@ class Breadcrumbs(unittest.TestCase):
         self.assertNotIn("Каталог", full)
         self.assertEqual(full.count("Точка выхода"), 1)
 
+    def test_mihomo_additional_settings_do_not_repeat_title(self):
+        title = execute_breadcrumb("Дополнительные настройки", 110, [
+            "mihomo_advanced_menu", "mihomo_menu", "vpn_menu"])
+        self.assertEqual(
+            title, "Главная › VPN › Mihomo › Дополнительные настройки")
+        self.assertNotIn("Восстановление", title)
+
     def test_compact_titles_preserve_current_section(self):
         s=execute_breadcrumb("Длинная проверка безопасного подключения",43,[
             "mihomo_xray_auto_menu","mihomo_node_auto_menu",
