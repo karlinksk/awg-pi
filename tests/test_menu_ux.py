@@ -332,8 +332,8 @@ printf '\\n'
                 ("5", "ss", 0), ("6", "vmess", 0),
                 ("0", "", 1))),
             ("mihomo_provider_format_dialog", "",
-             'MIHOMO_CONFIGURE=mock_status\\n'
-             'mock_status(){ echo "Provider format requested: auto"; }\\n', (
+             'MIHOMO_CONFIGURE=mock_status\n'
+             'mock_status(){ echo "Provider format requested: auto"; }\n', (
                 ("1", "auto", 0), ("2", "mihomo", 0),
                 ("3", "vless", 0), ("4", "base64", 0),
                 ("0", "0", 0))),
@@ -342,11 +342,11 @@ printf '\\n'
             for choice, expected, rc in choices:
                 with self.subTest(function=fn, selection=choice):
                     shell = (
-                        body("awg_option_label") + "\\n" + body(fn) + "\\n" +
-                        setup + "BACKTITLE=Test\\n" +
-                        'CHOICE="' + choice + '"\\n' +
-                        'dialog(){ printf "%s\\\\n" "$CHOICE" >&2; }\\n' +
-                        fn + params + "\\n"
+                        body("awg_option_label") + "\n" + body(fn) + "\n" +
+                        setup + "BACKTITLE=Test\n" +
+                        'CHOICE="' + choice + '"\n' +
+                        'dialog(){ printf "%s\\\n" "$CHOICE" >&2; }\n' +
+                        fn + params + "\n"
                     )
                     result = subprocess.run(
                         ["bash", "-c", shell], capture_output=True,
