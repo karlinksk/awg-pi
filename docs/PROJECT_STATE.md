@@ -1,3 +1,8 @@
+### 2026-10-25 — owner confirmed classic menu recovery after rollback
+
+- Owner replied **«Все работает»** to the explicit post-rollback request to verify restored classic menu rendering, keyboard arrows and Enter. Record **owner-observed recovery PASS**, *not* mouse-wheel support PASS.
+- Runtime remains on previous restored `awg-menu` blob `3ac117df9a8cf2e24a08c122fa6034480fcd4769`, with failed PTY wheel helper absent as independently checked after rollback. No new install performed in response to the owner confirmation. Numeric choice labels remain candidate source-only until a separate safe UI installation and acceptance. Preserve stable runtime and prioritize finishing v1.3.0 instead of another wheel implementation.
+
 ### 2026-10-25 — critical UI wheel adapter failure: immediate runtime rollback and source quarantine
 
 - **Owner observed FAIL, not PASS:** real classic-mode screenshot after installing experimental `awg-classic-wheel.py` showed raw xterm mouse escape packets rendered into the bottom button row, corrupted selection colors and terminal drawing. Earlier rootless PTY tests had passed but were insufficient to verify actual mixed curses/SSH output. The mouse-wheel requirement is **not fulfilled**; do not claim otherwise or install this experiment again.
