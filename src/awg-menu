@@ -196,19 +196,23 @@ dialog(){
   local -a args=("$@")
   local rows cols i hi wi li prompt_lines available
   local line line_width line_rows item_fields item_count remaining desired visible has_help
-  # Native dialog captures mouse wheel packets but does not scroll the
-  # selected row.  Disable its mouse tracking only for lists so xterm-style
-  # terminals can map the wheel to Up/Down in the alternate screen, as Matrix
-  # already does. Other dialogs retain normal mouse support.
-  local widget
-  for widget in "${args[@]}"; do
-    case "$widget" in
-      --menu|--checklist|--radiolist)
-        args=(--no-mouse "${args[@]}")
-        break
-        ;;
-    esac
-  done
+  # Classic dialog 1.3 does not move the highlighted row on mouse-wheel
+  # events. Use a small input-only PTY adapter that translates wheel packets
+  # into Up/Down; never nest it inside the Matrix compositor's tmux menu.
+  # When unavailable, fall back to native dialog with its original mouse input.
+  local wheel_adapter=0 widget
+  if [[ "${AWG_MENU_MATRIX_INNER:-0}" != 1 &&
+        -x /usr/local/lib/awg-pi/awg-classic-wheel.py && -t 0 ]]; then
+    for widget in "${args[@]}"; do
+      case "$widget" in
+        --menu|--checklist|--radiolist)
+          wheel_adapter=1
+          args=(--no-mouse "${args[@]}")
+          break
+          ;;
+      esac
+    done
+  fi
   # Use Russian button labels in every widget, including --stdout forms.
   args=(--ok-label "ОК" --cancel-label "Отмена" --yes-label "Да" --no-label "Нет" --exit-label "Закрыть" "${args[@]}")
   # A dialog --stdout form returns values via fd1 pipe, painting on fd2.
@@ -294,7 +298,11 @@ dialog(){
     ((max_title>12)) || max_title=12
     args[title_index]="$(awg_dialog_breadcrumb_title "${args[title_index]}" "$max_title" "${FUNCNAME[@]:1}")"
   fi
-  command dialog "${args[@]}"
+  if ((wheel_adapter)); then
+    /usr/bin/python3 -B /usr/local/lib/awg-pi/awg-classic-wheel.py "${args[@]}"
+  else
+    command dialog "${args[@]}"
+  fi
 }
 
 AWG_ROUTE=/usr/local/sbin/awg-route
@@ -2884,12 +2892,13 @@ appearance_menu(){
     if [[ "$current" == matrix ]]; then current_label="Matrix Gradient"; else current_label="Классическое"; fi
     choice="$(dialog --backtitle "$BACKTITLE" --title "Оформление интерфейса" --item-help --menu \
       "Выберите оформление. Оно переключится сразу." 17 88 3 \
-      classic "$(awg_option_label "Классическое" classic "$current")" "Обычное меню без анимации." \
-      matrix "$(awg_option_label "Matrix Gradient" matrix "$current")" "Зелёные символы на фоне меню." \
-      back "Назад" "Без изменений." 3>&1 1>&2 2>&3)" || return 0
+      1 "$(awg_option_label "Классическое" classic "$current")" "Обычное меню без анимации." \
+      2 "$(awg_option_label "Matrix Gradient" matrix "$current")" "Зелёные символы на фоне меню." \
+      0 "Назад" "Без изменений." 3>&1 1>&2 2>&3)" || return 0
     case "$choice" in
-      back) return 0 ;;
-      classic|matrix)
+      0) return 0 ;;
+      1|2)
+        if [[ "$choice" == 1 ]]; then choice=classic; else choice=matrix; fi
         [[ "$choice" != "$current" ]] || return 0
         if [[ "$choice" == matrix ]] &&
            { ! command -v tmux >/dev/null 2>&1 || [[ ! -r /usr/local/lib/awg-pi/awg-matrix-compositor.py ]]; }; then
