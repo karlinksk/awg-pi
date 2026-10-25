@@ -1,3 +1,11 @@
+### 2026-10-25 — Matrix glyph flicker rate halved after owner feedback (installed, visual acceptance pending)
+
+- Owner requested **halve the speed at which symbols change inside falling Matrix streams**, without altering rain falling speed, density, gradients, glyph size, length or window/menu design.
+- Exact one-line code change in `extras/awg-matrix-compositor.py`: independent visible-glyph redraw chance changed from `rng.random()<min(1.0,dt*12.0)` to `rng.random()<min(1.0,dt*6.0)`. At the unchanged 20 FPS this halves the attempted character-refresh frequency from ~12 to ~6 per visible glyph per second; no changes to coordinates, velocities, palette, spawn density, trail length or FPS.
+- Updated deterministic `tests/test_matrix_rain_flicker.py` for slower glyph changes. Python AST, Matrix rendering simulation, menu UX, dialog theme and breadcrumb regression suites PASS. Owner visual acceptance of the exact new effect is still **pending**.
+- **Test Pi only:** root-only `/var/backups/awg-gateway/matrix-half-flicker-20261025/matrix.before` verified previous installed blob `4e18c65faff47f6b791554744d4f7f66f88ea8d6`. Installed `/usr/local/lib/awg-pi/awg-matrix-compositor.py` exact source blob `a7891ce23759433a80051f3ecea716bbb3fc85a6`; installed menu remains `7a0ae3baec6d0b7b2e6188d44c16111334b01585`. Postinstall Transit/Mihomo healthy, guard SAFE/policy ACTIVE/table READY, SSH/DNS active, failed units 0. No MikroTik or production microSD changes.
+- Next: owner fully closes and reopens Matrix menu once so the running Python process loads updated source, then visually confirms half-rate symbol changes. PR #165 stays draft/unmerged/unreleased; release gate remains open.
+
 ### 2026-10-25 — numeric menu visually accepted; faster changing glyphs within falling Matrix streams (installed, visual acceptance pending)
 
 - Owner explicitly confirmed the **numeric option-label UI** was correct: «Да. Все норм. Принято.» Thus the already-installed numeric-only menu `/usr/local/sbin/awg-menu` Git blob `7a0ae3baec6d0b7b2e6188d44c16111334b01585` has **owner visual acceptance PASS**. Classic mouse-wheel input remains **NOT implemented** and was not revisited.
