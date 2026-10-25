@@ -76,6 +76,14 @@ backup_gateway(){
     etc/systemd/system/awg-mihomo-stage18-ram-runtime.timer \
     etc/systemd/system/awg-mihomo-stage18-ram-runtime.path \
     etc/systemd/system/awg-dc-remote@.service \
+    etc/systemd/system/awg-notify-flush.service \
+    etc/systemd/system/awg-notify-flush.timer \
+    etc/systemd/system/awg-notify-daily.service \
+    etc/systemd/system/awg-notify-daily.timer \
+    etc/systemd/system/awg-notify-boot.service \
+    etc/systemd/system/awg-notify-watch.service \
+    etc/systemd/system/awg-notify-watch.timer \
+    var/lib/awg-pbr/notify \
     var/lib/awg-pbr/mihomo \
     var/lib/awg-pbr/xray-vless \
     var/lib/awg-pbr/hot-pool \
@@ -120,6 +128,8 @@ backup_gateway(){
     usr/local/sbin/awg-hot-pool-continuity.py \
     usr/local/sbin/awg-mihomo-hot-continuity-run \
     usr/local/sbin/awg-menu \
+    usr/local/sbin/awg-notify \
+    usr/local/sbin/awg-notify-pair-repair \
     usr/local/sbin/awg-opencck-update \
     usr/local/sbin/awg-core-update \
     usr/local/sbin/awg-update \
@@ -159,6 +169,13 @@ backup_gateway(){
   # legitimately be absent; a present but unreadable file must FAIL the backup.
   systemctl is-enabled awg-mihomo-hot-pool.timer 2>/dev/null >"$dir/hot-pool-timer-state" || true
   chmod 600 "$dir/hot-pool-timer-state"
+  # Preserve explicitly opted-in notifier activation through rollback.
+  # Secrets are already included under etc/awg-pbr; queue is under var/lib.
+  local unit
+  for unit in awg-notify-flush.timer awg-notify-watch.timer awg-notify-daily.timer awg-notify-boot.service; do
+    systemctl is-enabled "$unit" 2>/dev/null >"$dir/notify-activation-$unit" || true
+    chmod 600 "$dir/notify-activation-$unit"
+  done
   archive_tmp="$(mktemp "$dir/.gateway-state.XXXXXXXX")" || return 1
   if ! tar -C / -czf "$archive_tmp" "${selected[@]}" 2>/dev/null; then
     rm -f -- "$archive_tmp"
@@ -193,6 +210,13 @@ restore_gateway(){
     awg-selection-monitor.service \
     awg-traffic.service \
     awg-opencck-update.timer \
+    awg-notify-flush.timer \
+    awg-notify-watch.timer \
+    awg-notify-daily.timer \
+    awg-notify-flush.service \
+    awg-notify-watch.service \
+    awg-notify-daily.service \
+    awg-notify-boot.service \
     awg-pbr-health.service \
     2>/dev/null || true
 
@@ -205,7 +229,9 @@ restore_gateway(){
     fi
   fi
   rm -rf /etc/awg-pbr /var/lib/awg-pbr/xray-vless /var/lib/awg-pbr/mihomo /var/lib/awg-pbr/hot-pool /var/lib/awg-pbr/traffic /usr/local/lib/awg-pi /usr/share/awg-pbr
-  rm -rf /var/lib/awg-pbr/stage18-runtime
+  rm -rf /var/lib/awg-pbr/stage18-runtime /var/lib/awg-pbr/notify
+  # A failed restore must not leave notifier timers or the boot hook enabled.
+  systemctl disable --now awg-notify-flush.timer awg-notify-watch.timer awg-notify-daily.timer awg-notify-boot.service 2>/dev/null || true
   rm -f \
     /usr/local/bin/mihomo \
     /usr/local/bin/awg-xray-vless-core \
@@ -243,6 +269,8 @@ restore_gateway(){
     /usr/local/sbin/awg-hot-pool-continuity.py \
     /usr/local/sbin/awg-mihomo-hot-continuity-run \
     /usr/local/sbin/awg-menu \
+    /usr/local/sbin/awg-notify \
+    /usr/local/sbin/awg-notify-pair-repair \
     /usr/local/sbin/awg-opencck-update \
     /usr/local/sbin/awg-core-update \
     /usr/local/sbin/awg-update \
@@ -284,6 +312,13 @@ restore_gateway(){
     /etc/systemd/system/awg-mihomo-stage18-ram-runtime.timer \
     /etc/systemd/system/awg-mihomo-stage18-ram-runtime.path \
     /etc/systemd/system/awg-dc-remote@.service \
+    /etc/systemd/system/awg-notify-flush.service \
+    /etc/systemd/system/awg-notify-flush.timer \
+    /etc/systemd/system/awg-notify-daily.service \
+    /etc/systemd/system/awg-notify-daily.timer \
+    /etc/systemd/system/awg-notify-boot.service \
+    /etc/systemd/system/awg-notify-watch.service \
+    /etc/systemd/system/awg-notify-watch.timer \
     /etc/systemd/system.conf.d/99-awg-gateway-watchdog.conf \
     /etc/profile.d/awg-menu.sh
 
@@ -311,6 +346,20 @@ restore_gateway(){
   else
     systemctl disable --now awg-mihomo-hot-pool.timer 2>/dev/null || true
   fi
+  # Restore notifier opt-in status, never auto-enable on old/passive setups.
+  local notify_unit notify_enabled
+  for notify_unit in awg-notify-flush.timer awg-notify-watch.timer awg-notify-daily.timer awg-notify-boot.service; do
+    notify_enabled="$(cat "$dir/notify-activation-$notify_unit" 2>/dev/null || true)"
+    if [[ -f "/etc/systemd/system/$notify_unit" && "$notify_enabled" == enabled ]]; then
+      if [[ "$notify_unit" == *.timer ]]; then
+        systemctl enable --now "$notify_unit" 2>/dev/null || true
+      else
+        systemctl enable "$notify_unit" 2>/dev/null || true
+      fi
+    else
+      systemctl disable --now "$notify_unit" 2>/dev/null || true
+    fi
+  done
   echo "Rollback завершён." >&2
 }
 

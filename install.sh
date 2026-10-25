@@ -147,6 +147,31 @@ except Exception:
     print("no")
 PY
 }
+# Progress heartbeat for long installer-only downloads/preparation.
+# Preserves command exit status and never prints private command arguments.
+install_stage_with_heartbeat(){
+  local label="$1" pid elapsed=0 rc
+  shift
+  log "$label: начато; при долгой загрузке статус обновляется каждые 10 с."
+  "$@" &
+  pid=$!
+  while kill -0 "$pid" 2>/dev/null; do
+    sleep 1
+    elapsed=$((elapsed + 1))
+    if (( elapsed % 10 == 0 )) && kill -0 "$pid" 2>/dev/null; then
+      log "$label: выполняется ($elapsed с); установка продолжается."
+    fi
+  done
+  if wait "$pid"; then
+    ok "$label: завершено."
+    return 0
+  else
+    rc=$?
+    err "$label: ошибка подготовки (код $rc)."
+    return "$rc"
+  fi
+}
+
 first_working_url(){
   local u
   for u in "$@"; do
@@ -340,7 +365,7 @@ apt-get update
 apt-get install -y --no-install-recommends \
   ca-certificates curl git jq build-essential make pkg-config \
   iproute2 iputils-ping iputils-arping dnsutils nftables dnsmasq procps \
-  python3-minimal python3-yaml openssl dialog ffmpeg xz-utils tzdata
+  python3-minimal python3-yaml openssl dialog tmux ffmpeg xz-utils tzdata
 
 command -v nft >/dev/null || die "nft не установлен"
 command -v dnsmasq >/dev/null || die "dnsmasq не установлен"
@@ -421,8 +446,19 @@ STAGE="установка AmneziaWG"
 log "[4/12] AmneziaWG"
 GO_REPO="https://github.com/amnezia-vpn/amneziawg-go.git"
 TOOLS_REPO="https://github.com/amnezia-vpn/amneziawg-tools.git"
-latest_tag(){
-  git ls-remote --tags --refs "$1" 'refs/tags/v*' | awk -F/ '{print $3}' | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -1
+# Release-pinned AWG v3.1 source revisions. Dynamic "latest tag" makes a
+# clean install non-reproducible and can silently change the tested engine.
+# Keep these exactly aligned with .github/workflows/ci.yml.
+GO_TAG="v3.1.20260828"
+TOOLS_TAG="v3.1.20260812"
+GO_REVISION="b5928efb6ca19f0153958460c3d141f04abc5c2e"
+TOOLS_REVISION="ee0f0a9aa34ff0a0da4b3433b9512781cfe02843"
+verify_release_tag(){
+  local repo="$1" tag="$2" expected="$3" actual
+  actual="$(git ls-remote --tags --refs "$repo" "refs/tags/$tag" |
+    awk -v wanted="refs/tags/$tag" '$2==wanted {print $1}')"
+  [[ "$actual" == "$expected" ]] ||
+    die "AmneziaWG upstream ref не совпадает с проверенным CI commit ($tag)"
 }
 sync_repo(){
   local repo="$1" dir="$2" tag="$3"
@@ -437,20 +473,23 @@ sync_repo(){
   fi
 }
 
-GO_TAG="$(latest_tag "$GO_REPO")"
-TOOLS_TAG="$(latest_tag "$TOOLS_REPO")"
-[[ -n "$GO_TAG" && -n "$TOOLS_TAG" ]] || die "Не удалось получить стабильные теги AmneziaWG"
-printf "Найдены стабильные теги: amneziawg-go=%s, tools=%s\n" "$GO_TAG" "$TOOLS_TAG"
+verify_release_tag "$GO_REPO" "$GO_TAG" "$GO_REVISION"
+verify_release_tag "$TOOLS_REPO" "$TOOLS_TAG" "$TOOLS_REVISION"
+printf "Проверенные версии AmneziaWG: go=%s, tools=%s\n" "$GO_TAG" "$TOOLS_TAG"
 if [[ "$AUTO_UPGRADE" != 1 ]]; then
   confirm "Установить эти стабильные версии?" "Y" || die "Установка отменена пользователем"
 fi
 
 sync_repo "$GO_REPO" "$SRC_ROOT/amneziawg-go" "$GO_TAG"
+[[ "$(git -C "$SRC_ROOT/amneziawg-go" rev-parse HEAD)" == "$GO_REVISION" ]] ||
+  die "AmneziaWG go revision не совпадает с проверенным CI commit"
 make -C "$SRC_ROOT/amneziawg-go" clean >/dev/null 2>&1 || true
 make -C "$SRC_ROOT/amneziawg-go"
 make -C "$SRC_ROOT/amneziawg-go" PREFIX=/usr install
 
 sync_repo "$TOOLS_REPO" "$SRC_ROOT/amneziawg-tools" "$TOOLS_TAG"
+[[ "$(git -C "$SRC_ROOT/amneziawg-tools" rev-parse HEAD)" == "$TOOLS_REVISION" ]] ||
+  die "AmneziaWG tools revision не совпадает с проверенным CI commit"
 make -C "$SRC_ROOT/amneziawg-tools/src" clean >/dev/null 2>&1 || true
 make -C "$SRC_ROOT/amneziawg-tools/src"
 make -C "$SRC_ROOT/amneziawg-tools/src" install PREFIX=/usr WITH_WGQUICK=yes WITH_SYSTEMDUNITS=yes
@@ -841,6 +880,16 @@ install_project_helper src/awg-mihomo-configure "$MIHOMO_CONFIGURE_SCRIPT"
 install_project_helper src/awg-first-run "$FIRST_RUN_CLI"
 install_project_helper src/awg-selection "$SELECTION_CLI"
 install_project_helper src/awg-selection-monitor "$SELECTION_MONITOR"
+# Passive AWG Notify: no token, no active timer, no routing changes at install.
+# AWG Notify event checkboxes are stored in root-only
+# /etc/awg-pbr/notify/events-policy.json by awg-notify preferences-set.
+# Do not create or overwrite this policy during install/upgrade: absent
+# policy preserves legacy BOOT/DAILY/VPN alert defaults, while Telegram
+# delivery stays OFF until user configures their bot.
+install_project_python_helper src/awg-notify.py /usr/local/sbin/awg-notify
+# Safe interactive repair for an incorrect chat ID; never invoked by installer.
+install_project_python_helper scripts/awg-notify-pair-repair.py /usr/local/sbin/awg-notify-pair-repair
+install -d -o root -g root -m 0700 /etc/awg-pbr/notify /var/lib/awg-pbr/notify
 # Service eligibility helpers are installed passive: the opt-in balanced
 # mode is NEVER enabled by installation. The Stage18 RAM runtime timer is
 # also passive until separately enabled after acceptance and rollback tests.
@@ -858,7 +907,7 @@ install_project_helper scripts/awg-system-node.sh "$SYSTEM_NODE_SCRIPT"
 # This is provisioning only: no proxy, routes or active transport are changed.
 if (( UPGRADE_EXISTING == 0 )); then
   STAGE="установка видеодекодера Stage18"
-  /usr/local/sbin/awg-mihomo-stage18-ram-runtime prefetch || die "Не удалось подготовить обязательные Node.js/yt-dlp для проверки YouTube"
+  install_stage_with_heartbeat "Stage18: Node.js и yt-dlp" /usr/local/sbin/awg-mihomo-stage18-ram-runtime prefetch || die "Не удалось подготовить обязательные Node.js/yt-dlp для проверки YouTube"
 fi
 # Fresh Debian 13 ships Node.js 20 (no global WebSocket); DC needs Node 22+.
 # Reuse the exact independently SHA256-verified Stage18 Node.js 22.16 binary.
@@ -953,107 +1002,7 @@ elif ! /usr/local/sbin/awg-xray-install status >/dev/null 2>&1; then
     warn "Xray adapter ожидает отдельной установки; активный шлюз не затронут"
 fi
 
-# Hot Pool is SHADOW_ONLY. Fetch verified components from PROJECT_REF on both
-# clean installation and upgrade, even if its timer was previously enabled.
-# Never replace files while an isolated service check is running; stage all
-# candidates first, then temporarily pause only the Hot Pool timer.
-_hot_stage="$(mktemp -d /run/awg-hot-pool-install.XXXXXXXX)"
-install_project_python_helper extras/mihomo-hot-pool-shadow/awg-mihomo-hot-pool.py "$_hot_stage/pool"
-install_project_python_helper extras/mihomo-hot-pool-shadow/awg-mihomo-hot-service-scan.py "$_hot_stage/scan"
-install_project_python_helper extras/mihomo-hot-pool-shadow/awg-hot-pool-continuity.py "$_hot_stage/continuity"
-install_project_helper extras/mihomo-hot-pool-shadow/awg-mihomo-hot-continuity-run "$_hot_stage/runner"
-install_project_unit extras/mihomo-hot-pool-shadow/awg-mihomo-hot-pool.service "$_hot_stage/service"
-install_project_unit extras/mihomo-hot-pool-shadow/awg-mihomo-hot-pool.timer "$_hot_stage/timer"
-
-# Do not overwrite a custom or independently managed Hot Pool service.
-if [[ -f /etc/systemd/system/awg-mihomo-hot-pool.service ]] &&
-   ! grep -Fqx 'ExecStart=/usr/local/sbin/awg-mihomo-hot-continuity-run' \
-      /etc/systemd/system/awg-mihomo-hot-pool.service; then
-  rm -rf -- "$_hot_stage"
-  die "Hot Pool: неизвестная версия службы; автоматическая замена запрещена"
-fi
-_hot_targets=(
-  /usr/local/sbin/awg-mihomo-hot-pool
-  /usr/local/sbin/awg-mihomo-hot-service-scan
-  /usr/local/sbin/awg-hot-pool-continuity.py
-  /usr/local/sbin/awg-mihomo-hot-continuity-run
-  /etc/systemd/system/awg-mihomo-hot-pool.service
-  /etc/systemd/system/awg-mihomo-hot-pool.timer
-)
-_hot_names=(pool scan continuity runner service timer)
-_hot_timer_running=0
-if systemctl is-active --quiet awg-mihomo-hot-pool.service; then
-  rm -rf -- "$_hot_stage"
-  die "Hot Pool: служба сейчас проверяет ноды; повторите upgrade после завершения"
-fi
-if systemctl is-active --quiet awg-mihomo-hot-pool.timer; then
-  _hot_timer_running=1
-  systemctl stop awg-mihomo-hot-pool.timer \
-    || { rm -rf -- "$_hot_stage"; die "Hot Pool: не удалось приостановить таймер"; }
-fi
-# Stopping a timer does not terminate a service that began a moment earlier.
-if systemctl is-active --quiet awg-mihomo-hot-pool.service; then
-  if (( _hot_timer_running )); then systemctl start awg-mihomo-hot-pool.timer || true; fi
-  rm -rf -- "$_hot_stage"
-  die "Hot Pool: проверка началась одновременно с остановкой таймера"
-fi
-_hot_failed=0
-for _hot_i in "${!_hot_targets[@]}"; do
-  _hot_target="${_hot_targets[_hot_i]}"
-  if [[ -e "$_hot_target" ]]; then
-    cp -p -- "$_hot_target" "$_hot_stage/old-$_hot_i" || _hot_failed=1
-  else
-    : >"$_hot_stage/absent-$_hot_i"
-  fi
-done
-# Atomic per-file replacement; never restart Mihomo, AWG or the Hot Pool
-# service. The next timer cycle runs the verified new version.
-if (( !_hot_failed )); then
-  for _hot_i in "${!_hot_targets[@]}"; do
-    _hot_target="${_hot_targets[_hot_i]}"
-    _hot_tmp="${_hot_target}.hot-pool-staged-$$"
-    _hot_mode=755
-    (( _hot_i >= 4 )) && _hot_mode=644
-    if ! install -m "$_hot_mode" "$_hot_stage/${_hot_names[_hot_i]}" "$_hot_tmp" ||
-       ! mv -f -- "$_hot_tmp" "$_hot_target"; then
-      rm -f -- "$_hot_tmp" || true
-      _hot_failed=1
-      break
-    fi
-  done
-fi
-if (( !_hot_failed )); then
-  systemctl daemon-reload || _hot_failed=1
-fi
-if (( !_hot_failed && _hot_timer_running )); then
-  systemctl start awg-mihomo-hot-pool.timer || _hot_failed=1
-fi
-if (( _hot_failed )); then
-  _hot_rollback_failed=0
-  for _hot_i in "${!_hot_targets[@]}"; do
-    if [[ -f "$_hot_stage/old-$_hot_i" ]]; then
-      cp -p -- "$_hot_stage/old-$_hot_i" "${_hot_targets[_hot_i]}" || _hot_rollback_failed=1
-      cmp -s -- "$_hot_stage/old-$_hot_i" "${_hot_targets[_hot_i]}" || _hot_rollback_failed=1
-    elif [[ -f "$_hot_stage/absent-$_hot_i" ]]; then
-      rm -f -- "${_hot_targets[_hot_i]}" || _hot_rollback_failed=1
-      [[ ! -e "${_hot_targets[_hot_i]}" ]] || _hot_rollback_failed=1
-    fi
-  done
-  systemctl daemon-reload || _hot_rollback_failed=1
-  if (( _hot_timer_running )); then
-    systemctl start awg-mihomo-hot-pool.timer || _hot_rollback_failed=1
-  fi
-  if (( _hot_rollback_failed )); then
-    die "Hot Pool: откат требует ручной проверки; копии сохранены в $_hot_stage"
-  fi
-  rm -rf -- "$_hot_stage"
-  die "Hot Pool: обновление не выполнено, прежняя версия восстановлена"
-fi
-install -d -o root -g root -m 0700 /var/lib/awg-pbr/hot-pool/continuity /run/awg-pbr/hot-pool/continuity
-rm -rf -- "$_hot_stage"
-unset _hot_stage _hot_targets _hot_names _hot_timer_running _hot_failed \
-  _hot_i _hot_target _hot_tmp _hot_mode
-ok "Hot Pool continuity SHADOW_ONLY: установлена текущая версия, состояние таймера сохранено"
+# v1.3 simplified: Hot Pool/READY shadow services are not installed.
 install_project_helper src/awg-pbr-setup "$SETUP_SCRIPT"
 install_project_helper src/awg-transit-nft /usr/local/sbin/awg-transit-nft
 install_project_helper src/awg-transit-preflight /usr/local/sbin/awg-transit-preflight
@@ -1065,7 +1014,21 @@ install_project_helper src/awg-opencck-update /usr/local/sbin/awg-opencck-update
 install_project_helper src/awg-core-update /usr/local/sbin/awg-core-update
 install_project_helper src/awg-update "$UPDATE_SCRIPT"
 install_project_helper src/awg-traffic "$TRAFFIC_CLI"
+# Matrix is the user-accepted optional visual skin over the existing TUI.
+# The compositor never changes routing, transport, DNS or RouterOS. On a fresh
+# install it is the initial theme; on upgrade preserve the operator's choice.
+# A recovery path always remains: sudo awg-menu --classic.
+install_project_python_helper extras/awg-matrix-compositor.py /usr/local/lib/awg-pi/awg-matrix-compositor.py
 install_project_helper src/awg-menu /usr/local/sbin/awg-menu
+if [[ ! -e /etc/awg-pbr/menu-appearance ]]; then
+  install -d -o root -g root -m 0700 /etc/awg-pbr
+  if (( UPGRADE_EXISTING == 0 )); then
+    echo matrix > /etc/awg-pbr/menu-appearance
+  else
+    echo classic > /etc/awg-pbr/menu-appearance
+  fi
+  chmod 0600 /etc/awg-pbr/menu-appearance
+fi
 
 mkdir -p /etc/awg-pbr/sources/opencck/metadata
 mkdir -p /etc/awg-pbr/transports/mihomo /var/lib/awg-pbr/mihomo/providers /var/lib/awg-pbr/traffic
@@ -1103,6 +1066,13 @@ install_project_unit units/awg-mihomo-update.timer /etc/systemd/system/awg-mihom
 install_project_unit units/awg-mihomo-pool-refresh.service /etc/systemd/system/awg-mihomo-pool-refresh.service
 install_project_unit units/awg-mihomo-pool-refresh.timer /etc/systemd/system/awg-mihomo-pool-refresh.timer
 install_project_unit units/awg-selection-monitor.service /etc/systemd/system/awg-selection-monitor.service
+install_project_unit units/awg-notify-flush.service /etc/systemd/system/awg-notify-flush.service
+install_project_unit units/awg-notify-flush.timer /etc/systemd/system/awg-notify-flush.timer
+install_project_unit units/awg-notify-daily.service /etc/systemd/system/awg-notify-daily.service
+install_project_unit units/awg-notify-daily.timer /etc/systemd/system/awg-notify-daily.timer
+install_project_unit units/awg-notify-boot.service /etc/systemd/system/awg-notify-boot.service
+install_project_unit units/awg-notify-watch.service /etc/systemd/system/awg-notify-watch.service
+install_project_unit units/awg-notify-watch.timer /etc/systemd/system/awg-notify-watch.timer
 # Stage18 is provider-guarded: automatic boot and provider-change recovery,
 # without running an isolated media test during bare installation.
 install_project_unit units/awg-mihomo-stage18-ram-runtime.service /etc/systemd/system/awg-mihomo-stage18-ram-runtime.service
@@ -1252,9 +1222,7 @@ fi
 # profiles are present; upgrades MUST retain the operator's existing state.
 if (( UPGRADE_EXISTING == 0 )); then
   "$SELECTION_CLI" mode auto mihomo awg >/dev/null || die "Не удалось настроить безопасное автоматическое резервирование"
-  "$MIHOMO_NODE_POLICY_CLI" ready-auto disable >/dev/null ||
-    die "Не удалось выставить READY OFF по умолчанию"
-  ok "Mihomo READY=OFF; Hot Pool установлен, но не запускается до включения через меню"
+  ok "AUTO подготовлен без READY и Hot Pool"
   ok "Резервирование транспортов: AUTO Mihomo → AWG (без автоматического возврата ради скорости)"
 fi
 
@@ -1333,14 +1301,6 @@ if (( UPGRADE_EXISTING == 0 )); then
     systemctl enable --now "$unit" >/dev/null || die "Не удалось включить $unit"
     systemctl is-active --quiet "$unit" || die "Не запущен обязательный таймер $unit"
   done
-  systemctl disable --now awg-mihomo-hot-pool.timer >/dev/null ||
-    die "Не удалось выключить Hot Pool timer после чистой установки"
-  if systemctl is-enabled --quiet awg-mihomo-hot-pool.timer ||
-     systemctl is-active --quiet awg-mihomo-hot-pool.timer ||
-     systemctl is-active --quiet awg-mihomo-hot-pool.service; then
-    die "Hot Pool должен остаться выключенным после чистой установки"
-  fi
-  ok "Hot Pool SHADOW_ONLY установлен, timer DISABLED/INACTIVE; READY OFF до включения через меню"
   ok "Mihomo health pool и Stage18 установлены и готовы к подписке"
 else
   ok "Существующая политика Mihomo-таймеров сохранена при обновлении"
@@ -1428,7 +1388,7 @@ if (( UPGRADE_EXISTING == 1 )); then
     [[ "$_policy_sha" == "${UPGRADE_POLICY_HASHES[_policy_index]}" ]] ||
       die "Upgrade изменил сохранённую политику AUTO/FIXED/READY; требуется rollback"
   done
-  # Installer stages Hot Pool atomically; a disabled timer must remain
+  # Legacy Hot Pool state is not managed by the simplified installer;
   # disabled (and a previously stopped timer must not start after upgrade).
   # Only compare units which existed before upgrade: older releases may lack it.
   if [[ "$UPGRADE_HOT_TIMER_ENABLEMENT" != absent ]]; then

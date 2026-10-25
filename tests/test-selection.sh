@@ -23,6 +23,9 @@ case "${1:-}" in
       *) exit 2 ;;
     esac
     ;;
+  network-check)
+    [[ "${MOCK_MIHOMO_HEALTH:-up}" == up ]]
+    ;;
   select)
     printf 'select:%s\n' "$2" >>"$log"
     case "$2" in

@@ -2,9 +2,10 @@
 """Read-only unified Mihomo/Xray node inventory and isolated BASIC network probes.
 
 No Hot Pool / READY, no live TUN, no active node changes and no systemd writes.
-Results are basic HTTPS reachability only; they are not app/YouTube readiness.
+New results describe local engine readiness only, never website reachability.
 """
 import argparse
+import concurrent.futures
 import hashlib
 import importlib.util
 from importlib.machinery import SourceFileLoader
@@ -23,9 +24,11 @@ MIHOMO_POOL=Path(os.environ.get("AWG_UNIFIED_POOL","/run/awg-pbr/mihomo-pool/liv
 CACHE=Path(os.environ.get("AWG_UNIFIED_CACHE","/var/lib/awg-pbr/xray-vless/network-health.json"))
 XRAY=Path(os.environ.get("AWG_UNIFIED_CORE","/usr/local/bin/awg-xray-vless-core"))
 ADAPTER=Path(os.environ.get("AWG_UNIFIED_ADAPTER","/usr/local/sbin/awg-xray-vless"))
-TTL=600
+# Five-minute requalification, keep the last proof separately from its freshness.
+TTL=86400
+PROBE_INTERVAL=300
 MAX_PROBE=10
-PROBE_URL="https://api.openai.com/v1/models"
+XRAY_WORKERS=2
 
 def die(s):
     print("UNIFIED_ERROR="+s,file=sys.stderr)
@@ -53,6 +56,14 @@ def snapshots(adapter):
     if not 1<=len(nodes)<=10000:die("INVALID_PROVIDER_COUNT")
     sha=hashlib.sha256(raw).hexdigest()
     pool=read_json(MIHOMO_POOL)
+    # Last known good stays available for recovery; UI should show the latest
+    # actual scan even if every node failed and the LKG was intentionally kept.
+    lastscan=read_json(MIHOMO_POOL.with_name("live-lastscan.json"))
+    if (lastscan.get("provider_sha256")==sha and lastscan.get("target")=="live"
+        and isinstance(lastscan.get("scanned_at"),(int,float))
+        and 0<=time.time()-lastscan["scanned_at"]<=3600
+        and lastscan["scanned_at"]>=pool.get("scanned_at",0)):
+        pool=lastscan
     if pool.get("provider_sha256")!=sha or pool.get("target")!="live" or time.time()-pool.get("scanned_at",0)>3600:
         pool={}
     # Cache is separate from Hot Pool; it is never authoritative for ready.
@@ -65,8 +76,11 @@ def snapshots(adapter):
     if not isinstance(previous,dict):previous={}
     now=time.time()
     previous={k:v for k,v in previous.items()
-              if k in valid and isinstance(v,dict) and isinstance(v.get("at"),(int,float))
-              and 0<=now-v["at"]<=TTL and v.get("status") in ("NETWORK_OK","NETWORK_FAIL","UNKNOWN_HTTP","UNKNOWN_ERROR","UNAVAILABLE")}
+              if k in valid and isinstance(v,dict)
+              and isinstance(v.get("verified_at",v.get("at")),(int,float))
+              and 0<=now-v.get("verified_at",v["at"])<=TTL
+              and isinstance(v.get("at"),(int,float))
+              and v.get("status") in ("NETWORK_OK","NETWORK_FAIL","UNKNOWN_HTTP","UNKNOWN_ERROR","UNAVAILABLE","LOCAL_READY","LOCAL_NOT_READY")}
     cache={"version":1,"provider_sha256":sha,"results":previous}
     return nodes,sha,pool,cache
 
@@ -144,32 +158,55 @@ def isolated_probe(adapter,node):
         adapter.atomic_json(cfg,build_xray(adapter,node,port))
         verify=subprocess.run([str(XRAY),"run","-test","-c",str(cfg)],
                               stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,timeout=8)
-        if verify.returncode:return "NETWORK_FAIL"
+        if verify.returncode:return "LOCAL_NOT_READY"
         with (root/"xray.log").open("wb") as log:
             process=subprocess.Popen([str(XRAY),"run","-c",str(cfg)],
                 stdout=log,stderr=subprocess.STDOUT,stdin=subprocess.DEVNULL)
             try:
                 for _ in range(35):
-                    if process.poll() is not None:return "NETWORK_FAIL"
+                    if process.poll() is not None:return "LOCAL_NOT_READY"
                     try:
                         with socket.create_connection(("127.0.0.1",port),timeout=.15):break
                     except OSError:time.sleep(.12)
-                else:return "NETWORK_FAIL"
-                probe=subprocess.run(["curl","-4","-sS","--socks5-hostname",
-                    f"127.0.0.1:{port}","--noproxy","","--connect-timeout","7",
-                    "--max-time","21","-o","/dev/null","-w","%{http_code}",
-                    PROBE_URL],stdout=subprocess.PIPE,stderr=subprocess.DEVNULL,text=True,timeout=24)
-                if probe.returncode==0 and probe.stdout=="401":
-                    return "NETWORK_OK"
-                if probe.returncode==0 and re.fullmatch(r"4[0-9]{2}|5[0-9]{2}",probe.stdout or ""):
-                    return "UNKNOWN_HTTP"
-                return "NETWORK_FAIL"
+                else:return "LOCAL_NOT_READY"
+                with socket.create_connection(("127.0.0.1",port),timeout=.5) as sock:
+                    sock.settimeout(.5);sock.sendall(b"\x05\x01\x00")
+                    return "LOCAL_READY" if sock.recv(2)==b"\x05\x00" else "LOCAL_NOT_READY"
             finally:
                 if process.poll() is None:
                     process.terminate()
                     try:process.wait(timeout=3)
                     except subprocess.TimeoutExpired:process.kill();process.wait(timeout=3)
         # TempDirectory removes Reality credentials and daemon logs.
+
+def confirmed_probe(adapter,node,previous):
+    """Two attempts on failure, isolated by profile fingerprint."""
+    previous=previous if isinstance(previous,dict) else {}
+    try:result=isolated_probe(adapter,node)
+    except (OSError,ValueError,subprocess.TimeoutExpired,SystemExit):
+        result="UNKNOWN_ERROR"
+    if result=="NETWORK_FAIL":
+        time.sleep(15)
+        try:second=isolated_probe(adapter,node)
+        except (OSError,ValueError,subprocess.TimeoutExpired,SystemExit):
+            second="UNKNOWN_ERROR"
+        result=second
+    if result in ("LOCAL_READY","LOCAL_NOT_READY"):
+        status=result
+    elif result=="NETWORK_OK":
+        status="NETWORK_OK"
+    elif result=="NETWORK_FAIL":
+        status="NETWORK_FAIL"
+    else:
+        # A 403 or probe-infrastructure error is NOT a proven server failure.
+        # Retain a previous good last-proven result, not a prior negative one.
+        status=("NETWORK_OK" if previous.get("status")=="NETWORK_OK"
+                else "UNKNOWN_HTTP" if result=="UNKNOWN_HTTP" else "UNKNOWN_ERROR")
+    verified_at=(time.time() if result in ("NETWORK_OK","NETWORK_FAIL","LOCAL_READY","LOCAL_NOT_READY")
+                 else previous.get("verified_at",previous.get("at",0)))
+    return {"at":time.time(),"verified_at":verified_at,
+            "status":status,"last_probe":result}
+
 
 def persist_cache(adapter,provider_sha,results):
     # Reconcile against the *current* provider identity set; never preserve
@@ -180,7 +217,8 @@ def persist_cache(adapter,provider_sha,results):
     previous=current.get("results",{}) if isinstance(current.get("results"),dict) else {}
     merged={k:v for k,v in {**previous,**results}.items()
             if k in allowed and isinstance(v,dict) and
-            isinstance(v.get("at"),(int,float)) and 0<=time.time()-v["at"]<=TTL}
+            isinstance(v.get("at"),(int,float)) and
+            0<=time.time()-v.get("verified_at",v["at"])<=TTL}
     adapter.atomic_json(CACHE,{"version":1,"provider_sha256":provider_sha,"results":merged})
 
 def command():
@@ -191,9 +229,15 @@ def command():
     sub.add_parser("probe-vless-all")
     resolve=sub.add_parser("resolve")
     resolve.add_argument("name")
+    # Full current-provider walk for failover. Unlike "best", do not hide
+    # FALL/unknown entries: each one gets a fresh isolated preflight, and
+    # neither historical cache expiry nor health-pool caps may truncate it.
+    sub.add_parser("candidates")
     best=sub.add_parser("best")
     best.add_argument("--exclude",action="append",default=[])
     best.add_argument("--engine",choices=("ANY","MIHOMO","XRAY"),default="ANY")
+    best.add_argument("--rotate",action="store_true",
+                      help="rotate through current provider candidates by time bucket")
     x=a.parse_args()
     if os.geteuid()!=0:die("ROOT_REQUIRED")
     adapter=load_adapter()
@@ -208,29 +252,63 @@ def command():
             # Scan only untested/stale exact nodes; never loop over 1500
             # profiles or spin on already checked failures.
             row_list=inventory(nodes,pool,cache,adapter)
-            eligible=[r["index"] for r in row_list
-                      if r["engine"]=="XRAY" and r["basic_network"]=="UNTESTED"]
+            history=cache.get("results",{})
+            now=time.time()
+            due=[]
+            for row in row_list:
+                if row["engine"]!="XRAY":continue
+                node=nodes[row["index"]-1]
+                fingerprint=adapter.sha_profile(node)
+                previous=history.get(fingerprint,{})
+                at=previous.get("at",0) if isinstance(previous,dict) else 0
+                if now-at>=PROBE_INTERVAL:
+                    due.append((at,row["index"]))
+            # Oldest proof first: a changing 2000-node subscription cannot
+            # starve later profiles behind the first MAX_PROBE entries.
+            due.sort()
+            eligible=[index for _,index in due]
             print("UNIFIED_XRAY_SCAN_ELIGIBLE="+str(len(eligible)),flush=True)
             indices=eligible[:MAX_PROBE]
             print("UNIFIED_XRAY_SCAN_BATCH="+str(len(indices)),flush=True)
             print("UNIFIED_XRAY_SCAN_REMAINING="+str(max(0,len(eligible)-len(indices))),flush=True)
             if not indices:return
         updated={}
-        for i in indices:
-            if not 1<=i<=len(nodes):die("INDEX_OUT_OF_RANGE")
-            node=nodes[i-1]
-            if transport(node)!="XRAY":die("XRAY_ONLY_PROBE")
-            try:result=isolated_probe(adapter,node)
-            except (OSError,ValueError,subprocess.TimeoutExpired,SystemExit) as e:
-                result="UNKNOWN_ERROR"
-            updated[adapter.sha_profile(node)]={"at":time.time(),"status":result}
-            print(f"UNIFIED_PROBE_INDEX={i} ENGINE=XRAY BASIC_NETWORK={result}",flush=True)
+        with concurrent.futures.ThreadPoolExecutor(max_workers=XRAY_WORKERS) as executor:
+            futures={}
+            for i in indices:
+                if not 1<=i<=len(nodes):die("INDEX_OUT_OF_RANGE")
+                node=nodes[i-1]
+                if transport(node)!="XRAY":die("XRAY_ONLY_PROBE")
+                ident=adapter.sha_profile(node)
+                previous=cache.get("results",{}).get(ident,{})
+                future=executor.submit(confirmed_probe,adapter,node,previous)
+                futures[future]=(i,ident)
+            for future in concurrent.futures.as_completed(futures):
+                i,ident=futures[future]
+                updated[ident]=future.result()
+                print(f"UNIFIED_PROBE_INDEX={i} ENGINE=XRAY BASIC_NETWORK={updated[ident]['status']}",flush=True)
         # Subscription may change while probing; do not persist stale identity.
         if hashlib.sha256(adapter.secure_read(PROVIDER)).hexdigest()!=sha:
             die("PROVIDER_CHANGED_DURING_PROBE")
         persist_cache(adapter,sha,updated)
         return
     rows=inventory(nodes,pool,cache,adapter)
+    if x.cmd=="candidates":
+        # No credentials, endpoints, URLs or subscription keys in output.
+        # Name is JSON-escaped; caller must parse rather than shell-eval.
+        # Names are unique and bound to the same provider SHA as the list.
+        print("UNIFIED_PROVIDER_SHA256="+sha)
+        print("UNIFIED_CANDIDATE_COUNT="+str(len(rows)))
+        for row in rows:
+            if row["engine"] not in ("MIHOMO","XRAY"):
+                continue
+            if row["basic_network"]=="UNUSABLE_DUPLICATE_OR_MISSING_NAME":
+                continue
+            print("CANDIDATE="+json.dumps({
+                "index":row["index"],"name":row["name"],
+                "engine":row["engine"],"provider_sha256":sha},
+                ensure_ascii=False,separators=(",",":")))
+        return
     if x.cmd=="resolve":
         matches=[r for r in rows if r["name"]==x.name]
         if len(matches)!=1 or matches[0]["engine"]=="UNSUPPORTED" or matches[0]["basic_network"]=="UNUSABLE_DUPLICATE_OR_MISSING_NAME":
@@ -252,8 +330,11 @@ def command():
                  row["name"] not in x.exclude and
                  (x.engine=="ANY" or row["engine"]==x.engine)]
         if not options:raise SystemExit(1)
-        # Existing subscription order, not guessed latency/country.
-        print(options[0]["name"])
+        # Keep manual/default deterministic. AUTO may rotate its start across
+        # 5-minute periods so bounded recovery attempts can eventually
+        # consider every compatible current profile, not the same first two.
+        offset=(int(time.time()//300)%len(options)) if x.rotate else 0
+        print(options[offset]["name"])
         return
     print("UNIFIED_READY_GATE=OFF")
     print("UNIFIED_PROVIDER_COUNT="+str(len(rows)))

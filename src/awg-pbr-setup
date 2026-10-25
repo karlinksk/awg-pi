@@ -74,13 +74,15 @@ clear_policy(){
 }
 
 render_selective(){
-  local candidate="$1" client_filter="" transport_forward_rule="" transport_nat_rule=""
+  local candidate="$1" client_filter="" transport_forward_rule="" transport_nat_rule="" transport_mss_rule=""
   if grep -Ev '^\s*(#|$)' "$CLIENTS" 2>/dev/null | grep -q .; then
     client_filter='ip saddr @clients4 '
   fi
   if [[ -n "$TRANSPORT_IF" ]]; then
     transport_forward_rule="    iifname \"$LAN_IF\" ip saddr $LAN_CIDR oifname \"$TRANSPORT_IF\" accept"
     transport_nat_rule="    ip saddr $LAN_CIDR oifname \"$TRANSPORT_IF\" masquerade"
+    # Only VPN-forwarded IPv4 SYNs: DIRECT forwarding and management are unchanged.
+    transport_mss_rule="    iifname \"$LAN_IF\" ip saddr $LAN_CIDR oifname \"$TRANSPORT_IF\" meta nfproto ipv4 tcp flags & (syn | rst) == syn tcp option maxseg size set rt mtu"
   fi
 
   {
@@ -121,6 +123,7 @@ table inet awg_pbr {
     type filter hook forward priority filter; policy drop;
     ct state established,related accept
     iifname "$LAN_IF" ip saddr $LAN_CIDR oifname "$LAN_IF" accept
+$transport_mss_rule
 $transport_forward_rule
   }
 

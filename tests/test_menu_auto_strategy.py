@@ -15,13 +15,13 @@ class MenuStrategyTests(unittest.TestCase):
   self.assertIn('"$MIHOMO_NODE_POLICY" auto-strategy classic',sub)
   self.assertIn('confirm "Обычный AUTO"',sub)
   top=extract("mihomo_node_policy_menu")
-  self.assertIn('5 "Способ AUTO: Hot Pool / обычный"',top)
-  self.assertIn('5) mihomo_auto_strategy_menu',top)
+  self.assertNotIn('5 "Способ AUTO: Hot Pool / обычный"',top)
+  self.assertNotIn('5) mihomo_auto_strategy_menu',top)
   self.assertIn('4) mihomo_node_auto_menu',top)
   self.assertNotIn('mihomo_node_menu',top)
   self.assertNotIn('standby-repair',top)
   advanced=extract("mihomo_advanced_menu")
-  self.assertIn('5) mihomo_standby_repair_menu',advanced)
+  self.assertNotIn('5) mihomo_standby_repair_menu',advanced)
   self.assertIn('capture "$MIHOMO_NODE_POLICY" standby-repair',extract("mihomo_standby_repair_menu"))
  def test_dialog_choices_call_exact_policy(self):
   for choice,expected in (("1","status"),("2","ready"),("3","classic"),("0","")):

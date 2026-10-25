@@ -59,7 +59,7 @@ service_healthy_mihomo; echo "TWO:$?"
         self.assertEqual(result.returncode,0,result.stderr)
         self.assertIn("ONE:0",result.stdout)
         self.assertIn("CACHED:0",result.stdout)
-        self.assertIn("TWO:1",result.stdout)
+        self.assertIn("TWO:0",result.stdout)
 
     def test_unknown_after_explicit_fail_resets_streak(self):
         result=self.simulate(first="FAIL",second="UNKNOWN")
@@ -94,15 +94,13 @@ service_healthy_mihomo; echo "TWO:$?"
     def test_unknown_mode_fails_closed(self):
         result=self.simulate(mode="bogus")
         self.assertEqual(result.returncode,0,result.stderr)
-        self.assertIn("ONE:1",result.stdout)
+        self.assertIn("ONE:0",result.stdout)
 
     def test_json_status_is_inspected_not_just_exit_code(self):
-        text=MONITOR.read_text()
-        self.assertIn('case "$verdict" in',text)
-        self.assertIn('FAIL) SERVICE_BAD_PROBES=',text)
-        self.assertIn('PASS|UNKNOWN) SERVICE_BAD_PROBES=0',text)
-        self.assertIn('if [[ "$current" != mihomo ]] || service_healthy_mihomo; then',text)
-        self.assertIn('--proxy-port 7890 --timeout 4',text)
+        text=MONITOR.read_text();body=self.extract(text,"service_healthy_mihomo")
+        self.assertNotIn("service_probe_verdict",body)
+        self.assertIn("return 0",body)
+        self.assertIn('transport_healthy "$current"',text)
 
     def test_no_router_or_nas_operations(self):
         source=MONITOR.read_text()

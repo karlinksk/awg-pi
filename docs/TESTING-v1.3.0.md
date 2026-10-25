@@ -1,10 +1,67 @@
 # AWG Pi Gateway v1.3.0 — release validation
 
+## Final owner acceptance exception — 2026-10-26
+
+The owner decided to complete the v1.3.0 release without another full-media
+write/restore. The approved card **was restored and booted** from the private
+image, with only two Windows FAT last-access-date bytes differing in its full
+readback; the Linux root partition matched. Its **first +90-second acceptance
+FAILED** after an early AWG -> Mihomo AUTO switch. Source fix `f00c93e`
+passed CI and a **separate real test-Pi reboot** retaining AWG beyond 200
+seconds and maintaining Transit `SAFE/ACTIVE/READY`. This is a documented,
+owner-accepted release *exception*, not an as-captured image acceptance PASS,
+a corrected-source reimaged restoration or a full raw-disk SHA match.
+
+The later AWG -> Mihomo selection and Xray AUTO enable were both explicitly
+performed by the owner, not spontaneous failures. Do not restore old operator
+settings. Other previously accepted bounded hardware cases stay credited in
+their original scope; service/website/media and old 150-item matrix checkboxes
+must not be resurrected as mandatory gates. PR merge, main promotion, tag and
+GitHub Release are separate actions, not implied by accepting this exception.
+
+## Current candidate contract — 2026-10-24, PR #165
+
+Owner-directed revision: manual selection must not require external HTTPS,
+OpenAI HTTP401, ipify, ChatGPT or YouTube eligibility. AUTO uses fresh engine
+network assessment through Mihomo's native fixed-Selector delay API (the existing
+pool health URL, default generate_204); it never tests service eligibility.
+The local `check`/manual activation contract stays independent of network tests.
+
+AUTO observes both its incumbent and every activated candidate. A negative
+engine URL-test is network evidence, not proof of provider fault; controller
+failure, missing proxy, malformed result and concurrent selection are separate
+infrastructure/unknown outcomes. Never turn these into “all provider nodes dead”.
+Preserve threshold, full current-provider native-before-Xray traversal, safe
+quiesce/retry, watchdog retirement, sticky AWG, exact identity, route ownership,
+Transit guard and SSH/DNS. Xray uses the same selected bridge engine assessment.
+Background Xray inventory local readiness is only advisory.
+
+Regression must prove remote-endpoint failure triggers AUTO despite a live core,
+a working later candidate prevents premature AWG, infrastructure unknown is not
+counted as node failure, and MANUAL never calls network assessment. OpenAI
+unavailability alone must not prevent selection. Keep guard/route/identity and
+rollback failures fatal. Hardware release evidence still needs real independent
+TUN traffic, cross-engine recovery, exhaustion/AWG, forwarded LAN, Selective
+FAIL-OPEN, Transit FAIL-CLOSED, install/upgrade/reboot/restore. Engine delay is not
+Pi-bound TUN or LAN evidence. No MikroTik/working-media changes without permission.
+
 This document is the hardware/release gate for v1.3.0.
 
-**Full 150-case execution matrix (all modes, transports, selectors and negative cases):** [RELEASE-ACCEPTANCE-MATRIX-v1.3.0.md](RELEASE-ACCEPTANCE-MATRIX-v1.3.0.md). Items in that checklist remain unaccepted until scoped evidence is attached to the current candidate.
+**Current release ledger:** [RELEASE-ACCEPTANCE-MATRIX-v1.3.0.md](RELEASE-ACCEPTANCE-MATRIX-v1.3.0.md).
+Its current ledger supersedes the historical 150-case checklist where inconsistent
+with the owner contract. Credit existing bounded hardware evidence with its
+revision/provider scope; repeat only for a concrete gap or material code change.
+Final HEAD CI, frozen-source lifecycle reconciliation and full-media restore/boot
+remain distinct from network acceptance. ChatGPT/OpenAI availability, YouTube
+and 24-frame decoding are not mandatory release gates.
 
-**Clean-install defaults agreed 2026-10-20:** install AmneziaWG, Mihomo, optional pinned Xray adapter, Stage18 Node.js/yt-dlp and FFmpeg/FFprobe before any VPN profile/subscription exists. Finish in `Selective + unconfigured`, with transport availability-AUTO prepared but **Hot Pool SHADOW timer disabled/inactive and READY priority disabled (`ready-auto.mode=0`)**. Neither is silently enabled by subscription import or reboot; the operator can opt in via the menu after configuration. Xray remains disabled and its guarded live failover is experimental, not an accepted v1.3.0 release feature. Preserve pre-existing Hot Pool/READY choices on upgrades. This is a source contract, not hardware installation proof.
+**Current clean-install contract:** install AmneziaWG, Mihomo, the pinned passive
+Xray adapter and existing Stage18 dependencies before any profile/subscription.
+Finish in `Selective + unconfigured`. Hot Pool/READY/FIXED have no menu or
+MANUAL/AUTO admission role. Legacy upgrade-state preservation is not permission
+to activate them. Native-before-Xray recovery and sticky AWG follow the current
+contract above. Earlier dated Hot Pool/media experiments below remain history.
+This source contract alone is not hardware installation proof.
 
 v1.3.0 adds a transport abstraction and an optional Mihomo backend while
 preserving the v1.2 routing semantics:
@@ -860,3 +917,15 @@ On test Pi the operator's git checkout now matches candidate `c17e7b619c4b31b2e7
 Operator on test Pi `awg-upgrade` installed root-owned versioned manual-switch + menu from pinned checkout `800762dba6534f80eed2c16d2e81e0fb4682f57a` (implementation code `c17e7b6`, later docs-only). Rollback copies saved in root-only `/var/backups/awg-gateway/manual-unified-v2.NvExf9Y6`. Operator then verified exact saved Netherlands 1 Hysteria2 with `native-preview` output `NATIVE_RETURN_PREFLIGHT=PASS`, `NATIVE_MANUAL_ALREADY_SELECTED=YES`, `NATIVE_RETURN_TUN=EXISTING_HEALTHY_NOT_SWITCHED`, plus live Mihomo healthy and Transit guard SAFE/rule ACTIVE/table READY. Through connected read-only Desktop Commander after install: `awg-mihomo.service` active, Xray inactive, rules 0x100 and 0x101, tables 100 and 101 both `default dev mihomo0`, Pi-bound OpenAI API HTTPS **401** curl exit 0; no armed manual watchdog timer. This validates **installation, current-node no-op, current TUN and Transit**, not a different-node transition.
 
 Desktop Commander `sudo` command block was briefly removed with user's explicit permission, then restored after it became clear Debian still required a password: `sudo -n true` returned `sudo: a password is required`. No sudoers changes or credentials were supplied. Live privileged native apply cannot be executed through DC without the user's authorized sudo session. Next minimal operator action: `sudo /usr/local/sbin/awg-menu` in SSH (71x33 supported) then choose another native Mihomo profile and confirm; assistant can independently observe ongoing Pi routing/HTTP/controller where unprivileged. Record actual switch or rollback before claiming cross-engine PASS. No MikroTik/production microSD changes.
+
+## Forwarded IPv4 TCP MSS regression — 2026-10-25
+
+Real Transit/AWG LAN TLS sometimes needed about5s to recover an initial1460-byte server segment gap, while Pi-bound AWG HTTPS completed in about0.5s. Do not mistake a4s test deadline for proof that AWG forwarding never worked. A guarded site-specific MSS1380 canary removed the delay (22/22 HTTP200); retain its distinct hardware scope and the original timeout receipts.
+
+Candidate0cdcf0a uses live route MSS (`tcp option maxseg size set rt mtu`) for LAN→selected-VPN IPv4 SYNs in both renderers. Transit MAC/source/egress guards, Selective DIRECT behavior and lockdown remain unchanged. The setter preserves smaller existing MSS. See [Netfilter MSS documentation](https://wiki.iptables.org/wiki-nftables/index.php/Mangling_packet_headers#Mangling_TCP_options). Installer and upgrade already deliver the corrected renderers.
+
+Mandatory tests: ordinary rootless discovery covers both renderers and unconfigured/lockdown; explicit-root `AWG_MSS_NETNS_TEST=1` runs `tests/test_tcp_mss_forward.py` in disposable Linux namespaces, proving1460→1380 over a1420-byte VPN route and preservation of536. CI includes that privileged isolated check. Do not execute the entire ordinary discovery as root. Namespace passing is not an actual LAN-client or router test.
+
+Still require final dynamic-source LAN recheck, real Selective recovery and relevant mode/failure cases; don't infer complete upload, IPv6, no-network reboot or full release acceptance from this single-site canary. Latest detailed scope is in PROJECT_STATE.md.
+
+Final dynamic-source hardware follow-up: installed0cdcf0a, ordinary Windows DNS, owner-disabled SSTP and real Transit/AWG forwarding:22/22 phase-correlated HTTP200/curl0, TLS0.209–0.594s, observed outgoing SYN MSS1380,0 target-bound direct Pi egress. No temporary MSS table. Original native Mihomo and13 scoped private-state digests restored,158 external SSH observations/0 failures, recovery retired; SSTP confirmed running afterward. This closes the targeted final-source AWG LAN/TLS delay case. Actual Selective recovery, remaining fault/mode cases and frozen-candidate installation/upgrade/reboot/media gates remain separate and open.

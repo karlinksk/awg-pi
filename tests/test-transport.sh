@@ -27,12 +27,18 @@ MOCK
 cat >"$TMP/bin/curl" <<'MOCK'
 #!/usr/bin/env bash
 case "$*" in
+  *127.0.0.1:9090/proxies/AWG-MIHOMO*) echo '{"now":"Native"}' ;;
   *127.0.0.1:9090/version*) echo '{}' ;;
   *api.ipify.org*) echo '45.86.66.170' ;;
   *api.openai.com*) [[ "${MOCK_TUN_STATE:-up}" == up ]] || exit 35; echo 401 ;;
   *) exit 1 ;;
 esac
 MOCK
+cat >"$TMP/bin/systemctl" <<'MOCK'
+#!/usr/bin/env bash
+[[ "${MOCK_CORE_STATE:-up}" == up ]]
+MOCK
+export SYSTEMCTL_BIN="$TMP/bin/systemctl"
 chmod +x "$TMP/bin/"*
 echo '45.86.66.170' >"$TMP/expected"
 export AWG_ENV_FILE="$TMP/env"
@@ -64,8 +70,10 @@ OUT="$($CLI status)"
 grep -Fq 'Transport ID: mihomo' <<<"$OUT"
 OUT="$($CLI check mihomo)"
 [[ "$OUT" == healthy ]]
-if MOCK_TUN_STATE=bad "$CLI" check mihomo >/dev/null 2>&1; then
-  echo 'broken Pi-bound TUN was accepted as a healthy Mihomo transport' >&2
+# External HTTPS failure must not veto a locally ready core.
+MOCK_TUN_STATE=bad "$CLI" check mihomo | grep -Fxq healthy
+if MOCK_CORE_STATE=down "$CLI" check mihomo >/dev/null 2>&1; then
+  echo 'stopped core was accepted' >&2
   exit 1
 fi
 printf '%s\n' broken >"$TMP/transport"

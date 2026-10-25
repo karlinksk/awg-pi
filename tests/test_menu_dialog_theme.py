@@ -34,15 +34,15 @@ class MenuVisualTheme(unittest.TestCase):
         ):
             self.assertIn(option + ' "' + label + '"', MENU)
 
-    def test_palette_matches_light_panel_with_high_contrast(self):
+    def test_palette_matches_approved_dark_high_contrast(self):
         for field in (
-            "use_colors = ON", "use_shadow = ON",
-            "dialog_color = (BLACK,CYAN,OFF)",
+            "use_colors = ON", "use_shadow = OFF",
+            "dialog_color = (WHITE,BLUE,OFF)",
             "item_color = dialog_color",
-            "item_selected_color = (WHITE,BLUE,ON)",
-            "title_color = (BLUE,CYAN,ON)",
-            "itemhelp_color = (BLACK,CYAN,OFF)",
-            "button_active_color = (WHITE,BLUE,ON)",
+            "item_selected_color = (WHITE,BLACK,ON)",
+            "title_color = (WHITE,BLUE,ON)",
+            "itemhelp_color = (WHITE,BLUE,OFF)",
+            "button_active_color = (WHITE,BLACK,ON)",
             "inputbox_color = dialog_color",
             "searchbox_color = dialog_color",
         ):

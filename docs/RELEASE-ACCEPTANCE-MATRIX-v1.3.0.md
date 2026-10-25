@@ -1,7 +1,115 @@
 # AWG Pi Gateway v1.3.0 — complete release acceptance matrix
 
-**Status: GATE OPEN / NOT RELEASE-READY** (audit 2026-10-17, draft PR #115).
-This checklist supplements `docs/TESTING-v1.3.0.md`. Checkboxes below are deliberately **unmarked** until evidence on the *current* candidate commit and current test installation exists. Historic pass reports, tests of an isolated candidate, mocked failures and service-active observations are not automatically acceptance of the new installer.
+**Status: RELEASE REVIEW ACCEPTED WITH DOCUMENTED EXCEPTION** (owner decision 2026-10-26; publication remains separate from PR merge/tag; #115 closed/superseded).
+
+## Current release ledger — supersedes the historical checklist below
+
+Apply the owner-directed 2026-10-24 contract in `TESTING-v1.3.0.md` and the
+latest entries in `PROJECT_STATE.md`. The old 150-case list is retained as
+historical audit detail, not 150 new mandatory experiments. Hot Pool, READY,
+editable FIXED chains, ChatGPT/OpenAI availability, YouTube and 24-frame decode
+are excluded release gates. MANUAL uses local eligibility; AUTO uses native
+engine network assessment, never individual service eligibility.
+
+| Required area | Evidence and exact scope | Current disposition |
+| --- | --- | --- |
+| Current HEAD CI | Installed runtime base `443bfa5` remains historically tested. Repair source `f00c93e` has complete runs 40221601725 / 40221605679 SUCCESS (shell + awg-v31), plus 7/7 boot regression, 31/31 AUTO, 5/5 policy and original selector suite. Subsequent documentation HEAD requires its own CI. | Runtime and repair-source CI PASS in stated scope; recheck docs HEAD |
+| Installed source / delivery | Fresh read-only privileged audit of all 75 literal installer helper/unit deliveries against `5466a73`: 75 byte matches, all root-owned; helpers 0755, common library/units 0644. Eight network helpers and accepted numeric menu also match exact Git blobs. Test-only repair changes none of these files. | PASS for audited delivery set; not an installer execution |
+| Transit IPv4 LAN | Windows Mihomo correlated ingress/TUN/return; installed dynamic-MSS AWG 22/22 HTTP200, outgoing MSS1380, zero target-bound direct egress. | Existing bounded hardware PASS credited |
+| Transit FAIL-CLOSED | Both backends stopped under recovery: 26 target ingress, zero matching direct egress/VPN traffic; six contained client attempts timed out; baseline recovered. | Existing target-scoped IPv4 negative PASS credited; no all-path/IPv6 claim |
+| Selective FAIL-OPEN/re-arm | Real iPhone Mihomo and AWG forwarding, backend-down DIRECT, restored VPN forwarding, independent recovery. | Existing bounded hardware PASS credited |
+| Manual/AUTO recovery | Guarded Mihomo/AWG switching; endpoint failure to later native; native/Xray/native; old-card 13-profile exhaustion to sticky AWG. Preserve dated revision/provider scope in PROJECT_STATE. | Existing scoped PASS credited; no repeated pool/outage trials |
+| Clean install / onboarding | Actual fresh Debian13.7 ARM64 installation pinned to `443bfa5`, 75/75 delivered bytes/owners/modes match. Owner subsequently imported AWG and Mihomo profiles; both validate, both independent Pi-bound HTTPS requests HTTP200/curl0, Selective/AWG healthy, DNS/SSH active, failed units0. | Exact-candidate clean install and new-card Pi-TUN onboarding PASS; not a new forwarded LAN proof |
+| Upgrade / gateway restore / reboot | Earlier actual `07d8e0d` preserving upgrade/snapshot restore remains scoped evidence (installer/updater unchanged). Exact `443bfa5` empty-state reboot15/15 and configured reboot18/18 private entries,75/75 deliveries. Configured boot independently checked by root timer: HEALTHY_NO_RESTORE, controls/routes/DNS healthy; both Pi TUN HTTPS200 after boot, AWG remains selected, temporary units removed. | Exact-candidate empty and configured reboot PASS; earlier upgrade/actual snapshot-restore scope remains explicit |
+| Full-media recovery | Owner-approved same test card restored from private cold image and booted. Full read-back differed by two Windows FAT access-date bytes only; Linux partition exact. First as-captured acceptance failed (AUTO AWG->Mihomo); fixed monitor `f00c93e` survived a separate actual reboot with AWG stable. | OWNER-ACCEPTED EXCEPTION: hardware boot and repaired monitor reboot proven; as-captured checker remains FAIL, corrected-source image restore not repeated |
+| Promotion | PR targets integration branch, not main. Inspect integration/release path and final checks before any merge/tag/release. | Draft, unmerged, unreleased |
+
+### 2026-10-26 — actual full-media card restore and subsequent boot repair (scope-separated)
+
+1. **Card integrity and boot:** image restored to the owner-approved same test card. Full read-only comparison of 31,927,042,048 bytes differed at precisely two FAT directory *last-access date* bytes (Windows metadata); root filesystem and all other bytes matched. Imager exit 0 is not whole-card bitwise SHA equality. Restored Debian 13 and DC remote execution actually booted; image remains private. **Physical restore/boot observed; bit-exact digest gate false.**
+2. **Unmodified as-captured restored runtime:** first boot's root acceptance checker ran and **failed** (`19/20` state entries; `75/75` delivered files; `11/11` enabled states). AUTO switched AWG to Mihomo at boot +61 seconds, before the +90 second acceptance. Transit stayed `SAFE/ACTIVE/READY`; do not upgrade failed image acceptance to PASS. NTP jumped wall-clock at +37 seconds; handshake-age misclassification is plausible but not proven from a cycle-level trace.
+3. **Corrected candidate and narrowly scoped actual reboot:** `f00c93e` protects at most the first 120 monotonic seconds against AWG handshake false negatives while service and interface are present; real service/link failures retain AUTO fallback. Installed exactly on the approved test Pi with guarded rollback and independent management/routing checks. Regression 7/7, AUTO 31/31, installer-policy 5/5 and original selector shell test PASS. Both GitHub runs `40221601725` / `40221605679` are complete success (`shell`, `awg-v31`). Second boot ID `0a85e146...` retained healthy AWG beyond 200 seconds and later, zero automatic switches and failed units, Transit `SAFE/ACTIVE/READY`, SSH/DC/DNS healthy. This tests **post-fix boot**, not a newly flashed `f00c93e` image.
+4. **Operator change and handback:** `xray-auto.mode` was **manually enabled by the owner** after image capture and preserved as `MIHOMO_XRAY_AUTO=enabled`. The one original delivery difference after patch was the deliberately replaced selection monitor. Old root acceptance failed; exact temporary units were retired, receipts retained. Telegram sender reported first boot 2 and second boot 1 notifications, pending 0, without owner-side receipt attestation; no external SSTP/eth0 delivery claim.
+5. **Gate:** `Full-media recovery = PARTIAL / NOT ACCEPTED for unmodified candidate`. Credit physical boot and repaired-AUTO reboot separately. Other previously accepted scope-limited LAN/Selective/Transit/failover and configured clean-install gates remain credited; do not retest simply to close historical boxes. New docs HEAD requires **its own CI** and final release review. PR #165 is draft/unmerged/unreleased; no release tag or production installation.
+
+Pre-swap receipt reconciliation also confirmed actual reboot boot-ID change,
+`BOOT_RESCUE=HEALTHY_NO_RESTORE`, 13 policy matches and removed temporary units;
+the restore receipt records 13 policies, bound HTTP200 and guard SAFE. These
+are historical results. Today's comparison to that archived private baseline
+is **12/13**, with `provider.env` changed (both versions present); cause not
+established. Do not restore old provider state or claim current 13/13 equality.
+Owner explicitly waived repeating the cold-image restore for the release; this does not transform the failed first acceptance receipt into PASS. The later selected Mihomo transport was a manual owner action, and Xray AUTO was enabled manually. Keep both operator choices unchanged.
+
+At that pre-swap checkpoint native Mihomo and standby AWG were healthy, DNS resolved, controls were
+active, Transit SAFE/ACTIVE/READY, failed units0 and no rescue/recovery timer
+listed. Read-only storage inventory shows only the boot microSD, loop and
+zram; no spare restore target is attached. No live gateway or media changes
+were made during that audit.
+
+After the owner swapped media, the hardware CID and root UUID matched the
+original-card guard recorded on24 Oct. Installation was paused; owner explicitly
+confirmed this card may be used and working media is retained separately.
+Do not describe it as a newly identified third physical card or an image restore.
+Owner executed the verified pinned installer; independent postflight confirmed
+Debian13.7 ARM64, empty profiles and75/75 delivery. A standard gateway backup
+of124028899 bytes was created, copied off Pi to a private workstation directory
+and SHA256 matched (`caa6138ac6c0c6763404b5f16591dab73b55176e7bb9461ed166f76c22f5701a`).
+This is an archive-integrity/copy PASS, not actual snapshot or full-media restore.
+Actual reboot at22:55 +07 succeeded; privileged postboot comparison confirmed
+15/15 baseline entries and75/75 deliveries. Node22/WebSocket recovered, pinned
+Stage18 disk-cache hashes matched. Stage18 RAM runtime is absent as expected
+before subscription import (provider ConditionPathExists); no media test ran.
+No network failure injection, MikroTik or working-media change was performed.
+
+Configured follow-up: owner imported profiles through normal onboarding. AWG
+was selected, both transports locally healthy, tables100/101 viaawg0, both
+bound example.com HTTPS requests returned200/curl0. A configured standard
+backup124037544 bytes was verified, safe archive member paths checked and
+privately copied off-device with matching SHA256
+`6e4575a1dd3c6af3c471ff6a91d6306ee60efccefba919a6913ce5c5b3e42b86`.
+Root-only baseline18 entries and75 delivery hashes protected the next boot;
+independent5-second timer rehearsal returned success on unchanged healthy
+state. A fixed root-owned120-second boot recovery used the exact tracked
+updater restore function as fallback; it actually ran after reboot and reported
+HEALTHY_NO_RESTORE,18/18 settings,75/75 deliveries, active controls, AWG routes,
+DNS and no failed units. Boot changeda3f377af→c31862ed at23:16:34 +07.
+Both bound HTTPS checks again returned200/curl0. Temporary recovery service
+and timer were removed only after success; independent SSH confirmed absence.
+No actual restore occurred in this new trial, no profile values were printed,
+and no broad outage, forced switch or new client/media acceptance was claimed.
+
+Owner then requested DC, Telegram and Transit before the whole-media image.
+Pinned DC0.2.52 cache was prepared with offline startup resolution; owner
+completed OAuth as ordinary user. Pairing foreground job was identified exactly
+and ended with SIGINT, then the persistent nonroot karlinks service was enabled.
+Separate connected-DC command execution succeeded after service handover.
+Owner configured Telegram privately; test delivery returned sent1/pending0 via
+awg0 before and after Transit. Flush/watch/daily timers and boot notification
+enabled according to existing preferences; next daily09:00 Asia/Novosibirsk.
+Router/SSTP fallback attestation remains absent; no eth0 fallback was enabled.
+
+Transit preflight passed. Standard pre-transition backup124033091 bytes was
+privately copied off-device with matching SHA256
+`5566db4ea57f80e1f2fa9e0ebf39d285b4fa22115f6a6347d033fcfe3a48e6aa`.
+Independent5s timer exercised the fixed standard return to already-selected
+Selective harmlessly;19/19 protected settings and all controls remained healthy.
+Then300s rescue armed and standard mode transition ran in an independent unit,
+exit0. Postcheck: Transit SAFE/ACTIVE/READY,19/19 non-mode invariants unchanged,
+activeAWG, both bound HTTPS200/curl0, SSH/DNS/DC healthy, actual DC execution
+and Telegram test succeeded, failed units0. Rescue was stopped only afterward;
+no test timer remained. MikroTik unchanged. This is configured Transit activation,
+not a repeated outage, new LAN-client proof or full-media restore acceptance.
+
+Reopen hardware only for a concrete uncovered required behavior or a material
+network-code change. A stale unchecked box is not a reason to repeat a fault
+trial. Safe read-only reconciliation does not authorize a new reboot, installer
+run or media write without verified independent recovery and protected controls.
+
+## Historical 2026-10-17 checklist (superseded where inconsistent)
+
+The unmarked boxes preserve their original evidence status; they do not erase
+the later scoped acceptance above. Older blockers and plans below are dated
+history, not the current release queue.
 
 ## Acceptance rules and evidence
 

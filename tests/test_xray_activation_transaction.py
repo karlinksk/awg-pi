@@ -19,7 +19,7 @@ class FakeBackend:
     def arm_watchdog(self):self.record("arm")
     def stage_xray(self, candidate):self.record("stage")
     def start_xray(self):self.record("xray")
-    def check_local_https(self):
+    def check_local_ready(self):
         self.record("local")
         return self.reject!="local_false"
     def check_provider_unchanged(self):
@@ -29,7 +29,7 @@ class FakeBackend:
     def restart_mihomo(self):self.record("restart")
     def restore_kernel_routes(self):self.record("routes")
     def select_xray_bridge(self):self.record("select")
-    def check_tun_https(self):
+    def check_tun_ready(self):
         self.record("tun")
         return self.reject!="tun_false"
     def check_policy_routes(self):
@@ -52,7 +52,7 @@ class ActivationTests(unittest.TestCase):
     def test_success_requires_all_stages(self):
         b=FakeBackend()
         rec=tx.activate("dead","new",b)
-        self.assertTrue(rec.tun_verified and rec.boot_wiring_verified)
+        self.assertTrue(rec.runtime_ready and rec.boot_wiring_verified)
         self.assertEqual(rec.candidate,"new")
         self.assertEqual(b.events[0:3],["preflight","arm","stage"])
         self.assertLess(b.events.index("tun"),b.events.index("boot_verify"))
@@ -83,7 +83,7 @@ class ActivationTests(unittest.TestCase):
                 self.assertNotIn("disarm",b.events)
     def test_quiesce_failure_is_explicit_and_not_pass(self):
         b=FakeBackend("failclosed_false")
-        b.check_tun_https=lambda:False
+        b.check_tun_ready=lambda:False
         with self.assertRaisesRegex(tx.ActivationFailure,"FAIL_CLOSED_UNCONFIRMED"):
             tx.activate("dead","new",b)
         self.assertIn("failclosed",b.events)

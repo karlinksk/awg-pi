@@ -27,6 +27,15 @@ VPN_ENABLED=Path("/etc/awg-pbr/vpn-enabled")
 CURRENT=Path("/etc/awg-pbr/transports/mihomo/node-name")
 NODE_POLICY_MODE=Path("/etc/awg-pbr/transports/mihomo/node-policy.mode")
 XRAY_AUTO_MODE=Path("/etc/awg-pbr/transports/mihomo/xray-auto.mode")
+def auto_fault(stage, code):
+    """Write only fixed-token diagnostics; never log node names or providers."""
+    safe = code if isinstance(code, str) and re.fullmatch(r"[A-Z][A-Z0-9_]{2,120}", code) else "UNCLASSIFIED"
+    try:
+        subprocess.run(["logger", "-t", "awg-xray-auto", "AUTO_XRAY_"+stage+"="+safe],
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=2)
+    except (OSError, subprocess.TimeoutExpired):
+        pass
+
 def xray_auto_authorized():
     try:
         return ((XRAY_AUTO_MODE.is_file() and not XRAY_AUTO_MODE.is_symlink() and XRAY_AUTO_MODE.read_text().strip()=="1") or
@@ -66,21 +75,29 @@ def routes_ok():
             return False
     return True
 
-def http_code(args):
-    env={k:v for k,v in os.environ.items() if k.lower() not in
-         ("http_proxy","https_proxy","all_proxy","no_proxy")}
+def tun_runtime_ready():
+    if not active(MIHOMO):return False
     try:
-        return run("curl","-q","-4","-sS","--connect-timeout","7","--max-time","20",
-          "-o","/dev/null","-w","%{http_code}",*args,
-          "https://api.openai.com/v1/models",timeout=25,env=env)=="401"
-    except (OSError,RuntimeError,subprocess.TimeoutExpired):
-        return False
+        run("ip","link","show","dev","mihomo0",timeout=4)
+        selected=controller().get("now")
+        return (isinstance(selected,str) and bool(selected) and
+                (selected!=LOCAL or active(XRAY)))
+    except (OSError,RuntimeError,ValueError,subprocess.TimeoutExpired):return False
 
-def original_tun_unreachable_twice():
-    # This emergency executor is NOT a manual healthy-node selector.
-    # Never disrupt a proven reachable incumbent just to try VLESS.
-    return (not http_code(["--interface","mihomo0","--noproxy","*"]) and
-            not http_code(["--interface","mihomo0","--noproxy","*"]))
+
+def original_tun_unready_twice():
+    # Only the AUTO executor uses engine reachability; MANUAL remains local.
+    def unready():
+        return not tun_runtime_ready() or not engine_network_ready()
+    return unready() and unready()
+
+def engine_network_ready():
+    result=subprocess.run(['/usr/local/sbin/awg-transport','network-check'],
+        stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,timeout=15)
+    if result.returncode not in (0,1):
+        raise RuntimeError('ENGINE_NETWORK_INFRASTRUCTURE_UNCONFIRMED')
+    return result.returncode==0
+
 
 def controller():
     opener=urllib.request.build_opener(urllib.request.ProxyHandler({}))
@@ -112,10 +129,10 @@ def verified_awg_backup_safe():
         else:
             # A healthy Selective AWG backup has the same ownership
             # priority as a healthy Transit AWG backup. Keep SSH/DNS and
-            # prove an actual AWG HTTPS response before protecting it.
+            # require the AWG handshake and route ownership before protecting it.
             if not active("ssh.service") or not active("dnsmasq.service") or \
                run("/usr/local/sbin/awg-transport","check","awg",timeout=12)!="healthy" or \
-               not http_code(["--interface","awg0","--noproxy","*"]):
+               run("/usr/local/sbin/awg-transport","check","awg",timeout=12)!="healthy":
                 return False
         for table in ("100","101"):
             lines=run("ip","-4","route","show","table",table,timeout=6).splitlines()
@@ -183,7 +200,7 @@ def verified_degraded_fixed_baseline():
 
     Only Transit FAIL-CLOSED with an inactive Mihomo, absent Transit rule,
     and no foreign policy routes is eligible. Direct/Selective is forbidden.
-    The external dispatcher still must prove TWO failed incumbent HTTPS tests.
+    The external dispatcher still must prove two locally unready incumbent observations.
     """
     if (socket.gethostname()!="awg-upgrade" or
         os.environ.get("AWG_XRAY_DEGRADED_FIXED")!="1" or
@@ -311,6 +328,10 @@ def write_atomic(path, data,mode=0o600):
         os.replace(tmp,path)
     finally:tmp.unlink(missing_ok=True)
 
+
+
+
+
 class LinuxBackend:
     def __init__(self,failed,candidate):
         self.failed,self.candidate=failed,candidate
@@ -379,9 +400,10 @@ class LinuxBackend:
         fields=dict(line.split("=",1) for line in resolution.splitlines() if "=" in line)
         if (fields.get("NODE_ENGINE")!="XRAY" or
             fields.get("NODE_INDEX")!=str(self.index) or
-            fields.get("NODE_PROVIDER_SHA256")!=self.provider_hash or
-            fields.get("NODE_BASIC_NETWORK")!="NETWORK_OK"):
-            raise RuntimeError("XRAY_CANDIDATE_NOT_FRESHLY_NETWORK_QUALIFIED")
+            fields.get("NODE_PROVIDER_SHA256")!=self.provider_hash):
+            raise RuntimeError("XRAY_CANDIDATE_IDENTITY_CHANGED")
+        # Historical pool status is never a freshness guarantee or a veto.
+        # Exact profile validation above is sufficient; no external HTTPS gate.
         # Do not call awg-route while holding the maintenance lock: that CLI
         # acquires the same flock. The transit-routing helper is lock-free.
         if operating_mode=="transit":
@@ -426,30 +448,16 @@ class LinuxBackend:
     def start_xray(self):
         run("systemctl","start",XRAY,timeout=25)
         if not active(XRAY):raise RuntimeError("XRAY_SERVICE_NOT_ACTIVE")
-    def check_local_https(self):
-        """Bounded Xray SOCKS5 warmup followed by exact OpenAI HTTPS 401 proof.
-
-        systemd Type=simple returns "active" before the Xray TCP listener
-        necessarily binds. A single immediate curl used to abort within 1 ms
-        of core startup. Wait for localhost listen (not a PASS), then allow
-        up to three real outbound TLS checks. Never accept a bare socket
-        connection, HTTP 403/5xx, or a stopped/restarted Xray as ready.
-        """
+    def check_local_ready(self):
         deadline=time.monotonic()+12
         while time.monotonic()<deadline:
             if not active(XRAY):return False
             try:
-                with socket.create_connection(("127.0.0.1",17892),timeout=.5):
-                    break
-            except OSError:
-                time.sleep(.25)
-        else:
-            return False
-        for attempt in range(3):
-            if not active(XRAY):return False
-            if http_code(["--socks5-hostname","127.0.0.1:17892","--noproxy",""]):
-                return True
-            if attempt<2:time.sleep(1)
+                with socket.create_connection(("127.0.0.1",17892),timeout=.5) as sock:
+                    sock.settimeout(.5);sock.sendall(b"\x05\x01\x00")
+                    if sock.recv(2)==b"\x05\x00":return True
+            except OSError:pass
+            time.sleep(.25)
         return False
     def stage_mihomo_bridge(self):
         if not self.check_provider_unchanged():raise RuntimeError("PROVIDER_ROTATED")
@@ -499,8 +507,8 @@ class LinuxBackend:
             except Exception:pass
             time.sleep(.3)
         raise RuntimeError("BRIDGE_NOT_SELECTABLE")
-    def check_tun_https(self):
-        return http_code(["--interface","mihomo0","--noproxy","*"])
+    def check_tun_ready(self):
+        return tun_runtime_ready() and engine_network_ready()
     def check_policy_routes(self):
         if MODE.read_text().strip()=="selective":
             if not routes_ok() or self.degraded_fixed:
@@ -518,8 +526,8 @@ class LinuxBackend:
                     # this same check again after the first pass re-arms 0x100.
                     # Reject a PRE-EXISTING rule on the first check, but accept
                     # our own re-armed rule only while ownership, live TUN
-                    # HTTPS and all safety prerequisites still pass.
-                    if (not self.check_tun_https() or
+                    # local readiness and all safety prerequisites still pass.
+                    if (not self.check_tun_ready() or
                         VPN_ENABLED.read_text().strip()!="1" or
                         not verified_selective_route_ownership()):
                         return False
@@ -541,9 +549,9 @@ class LinuxBackend:
                 return False
         # For an exhausted FIXED chain, the previous failed Mihomo attempt
         # intentionally disabled Transit. Re-enable the rule ONLY after the
-        # newly selected Xray-backed Mihomo TUN actually passed HTTPS 401.
+        # newly selected Xray-backed Mihomo TUN is locally ready.
         if self.degraded_fixed:
-            if not routes_ok() or not self.check_tun_https():
+            if not routes_ok() or not self.check_tun_ready():
                 return False
             try:
                 run("/usr/local/sbin/awg-transit-routing","apply",timeout=16)
@@ -554,7 +562,7 @@ class LinuxBackend:
                 "Transit policy rule: ACTIVE" in status and
                 "Transit VPN table: READY" in status)
     def install_boot_dependencies(self):
-        # Called strictly AFTER live TUN HTTPS + policy route postcheck.
+        # Called strictly after local TUN and policy-route checks.
         # Up to this point an interrupted reboot discards /run overrides.
         if not BRIDGE_RUNTIME.is_file() or BRIDGE_RUNTIME.is_symlink():
             raise RuntimeError("EPHEMERAL_BRIDGE_NOT_READY")
@@ -594,9 +602,54 @@ class LinuxBackend:
         state["boot_tested"]=False
         write_atomic(self.snapshot/"state.json",json.dumps(state).encode())
     def disarm_watchdog(self):
-        run("systemctl","stop",self.watchdog_unit+".timer",timeout=9)
+        timer=self.watchdog_unit+".timer"
+        try:
+            run("systemctl","stop",timer,timeout=9)
+        except (OSError,RuntimeError,subprocess.TimeoutExpired):
+            # systemd may unload an ephemeral systemd-run timer while stopping
+            # it and report failure despite successful removal. Never treat
+            # that as a failed VPN activation if cancellation is proven.
+            # A missing/active/unknown verification or pre-commit snapshot
+            # still raises, preserving the fail-closed transaction contract.
+            if not self.snapshot:
+                raise
+            state=json.loads((self.snapshot/"state.json").read_text()).get("state")
+            if state not in ("committed","quiesced"):
+                raise
+            for unit in (timer,self.watchdog_unit+".service"):
+                result=subprocess.run(
+                    ["systemctl","show",unit,"-p","ActiveState","--value"],
+                    stdout=subprocess.PIPE,stderr=subprocess.DEVNULL,
+                    text=True,timeout=6)
+                if result.returncode or result.stdout.strip()!="inactive":
+                    raise RuntimeError("WATCHDOG_CANCEL_NOT_CONFIRMED")
+            auto_fault("WATCHDOG","TIMER_ALREADY_INACTIVE")
     def fail_closed(self):
         return failclosed()
+
+    def finalize_retryable_abort(self):
+        """Permit another AUTO candidate only from a proven quiesced state."""
+        if not self.snapshot or not self.watchdog_unit:
+            return False
+        if (NODE_POLICY_MODE.read_text().strip()!="auto" or
+            CURRENT.read_text().strip()!=self.failed or
+            run("/usr/local/sbin/awg-transport","get",timeout=10)!="mihomo" or
+            not self.check_provider_unchanged() or
+            any(p.exists() or p.is_symlink() for p in (BRIDGE,BRIDGE_RUNTIME,SELECTED))):
+            return False
+        operating_mode=MODE.read_text().strip()
+        if operating_mode=="transit":
+            safe=verified_degraded_auto_transit_baseline()
+        elif operating_mode=="selective":
+            safe=verified_degraded_selective_baseline()
+        else:
+            return False
+        if not safe or not snapshot_transition(self.snapshot,"armed","quiesced"):
+            return False
+        # Persist quiesced BEFORE cancelling the timer: an already queued
+        # watchdog will read this state and leave the next candidate alone.
+        self.disarm_watchdog()
+        return True
 
 def watchdog(path):
     if path.parent!=BASE or not re.fullmatch(r"xray-failover-[0-9]+-[0-9]+",path.name):
@@ -637,13 +690,104 @@ def watchdog(path):
                                  for l in rules.splitlines())
                 else:good=False
             except Exception:good=False
-            if good and routes_ok() and http_code(["--interface","mihomo0","--noproxy","*"]):
+            if good and routes_ok() and tun_runtime_ready():
                 return
         if not failclosed():raise RuntimeError("FAIL_CLOSED_NOT_CONFIRMED")
         state["state"]="quiesced"
         write_atomic(path/"state.json",json.dumps(state).encode())
 
+def root_owned_regular(path):
+    return not path.is_symlink() and path.is_file() and path.stat().st_uid==0
+
+def cleanup_stale_xray_while_awg():
+    """Test-Pi-only cleanup of an abandoned AUTO bridge under healthy AWG.
+
+    Do NOT call this while Mihomo owns transit: dropping a required Xray
+    service can stop Mihomo and close forwarded traffic. The independent AWG
+    must already own both tables before any systemd mutation.
+    """
+    if (os.geteuid()!=0 or socket.gethostname()!="awg-upgrade" or
+        os.environ.get("AWG_XRAY_STALE_CLEANUP")!="TEST_PI_AUTHORIZED"):
+        raise RuntimeError("STALE_CLEANUP_NOT_AUTHORIZED")
+    with MAINTENANCE_LOCK.open("a") as lock:
+        fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
+        if (MODE.read_text().strip()!="transit" or
+            not verified_awg_backup_safe() or
+            active(MIHOMO) or not active(XRAY) or
+            not all(active(x) for x in ("ssh.service","dnsmasq.service"))):
+            raise RuntimeError("STALE_CLEANUP_BASELINE_UNSAFE")
+        manual=BRIDGE.parent/"62-awg-xray-manual.conf"
+        if manual.exists() or manual.is_symlink():
+            raise RuntimeError("STALE_CLEANUP_MANUAL_BRIDGE_PRESENT")
+        owned={}
+        for p in (BRIDGE,BRIDGE_RUNTIME):
+            if (not root_owned_regular(p) or
+                b"MIHOMO_XRAY_VLESS_BRIDGE=1" not in p.read_bytes() or
+                b"Requires=awg-xray-vless.service" not in p.read_bytes()):
+                raise RuntimeError("STALE_CLEANUP_FOREIGN_BRIDGE")
+            owned[p]=p.read_bytes()
+        if owned[BRIDGE]!=owned[BRIDGE_RUNTIME]:
+            raise RuntimeError("STALE_CLEANUP_BRIDGE_MISMATCH")
+        if not root_owned_regular(SELECTED):
+            raise RuntimeError("STALE_CLEANUP_SELECTED_UNOWNED")
+        owned[SELECTED]=SELECTED.read_bytes()
+        if run("systemctl","is-enabled",XRAY,timeout=8)!="enabled":
+            raise RuntimeError("STALE_CLEANUP_UNEXPECTED_ENABLEMENT")
+        def dependency_present():
+            for prop in ("Requires","After"):
+                output=run("systemctl","show",MIHOMO,"-p",prop,
+                           "--value",timeout=8)
+                if XRAY in output.split():
+                    return True
+            return False
+        if not dependency_present():
+            raise RuntimeError("STALE_CLEANUP_NO_LOADED_DEPENDENCY")
+        # A committed snapshot is advisory; only this fresh AWG proof permits
+        # removal. Keep root-only original bytes for manual recovery/forensics.
+        import tempfile
+        snapshot=Path(tempfile.mkdtemp(prefix="xray-stale-awg-",dir=BASE))
+        os.chmod(snapshot,0o700)
+        for index,(p,data) in enumerate(owned.items()):
+            write_atomic(snapshot/("original-"+str(index)),data)
+        write_atomic(snapshot/"paths.private",
+                     "\n".join(str(p) for p in owned).encode())
+        try:
+            # Reload the manager's graph BEFORE stopping the old sidecar.
+            BRIDGE_RUNTIME.unlink()
+            BRIDGE.unlink()
+            run("systemctl","daemon-reload",timeout=22)
+            if dependency_present() or active(MIHOMO):
+                raise RuntimeError("STALE_CLEANUP_DEPENDENCY_NOT_DETACHED")
+            if not verified_awg_backup_safe():
+                raise RuntimeError("STALE_CLEANUP_AWG_CHANGED")
+            run("systemctl","stop",XRAY,timeout=30)
+            run("systemctl","disable",XRAY,timeout=18)
+            if active(XRAY):
+                raise RuntimeError("STALE_CLEANUP_XRAY_STILL_ACTIVE")
+            SELECTED.unlink()
+            if (not verified_awg_backup_safe() or active(MIHOMO) or
+                not all(active(x) for x in ("ssh.service","dnsmasq.service"))):
+                raise RuntimeError("STALE_CLEANUP_FINAL_GUARD_UNSAFE")
+            write_atomic(snapshot/"committed",b"yes\n")
+        except Exception:
+            # Restore only files this guarded operation owned. Never switch
+            # the active AWG, route forwarded clients DIRECT or restart Mihomo.
+            for p,data in owned.items():
+                write_atomic(p,data)
+            run("systemctl","daemon-reload",timeout=22)
+            run("systemctl","enable",XRAY,timeout=18)
+            if not active(XRAY):
+                run("systemctl","start",XRAY,timeout=30)
+            raise
+        print("STALE_XRAY_CLEANUP=PASS")
+        print("ACTIVE_AWG=UNCHANGED")
+        print("MIHOMO_SERVICE=INACTIVE_NOT_STARTED")
+        print("SSH_DNS_TRANSIT=GUARDED")
+
+
 def cli():
+    if len(sys.argv)==2 and sys.argv[1]=="cleanup-stale-awg":
+        cleanup_stale_xray_while_awg();return
     if len(sys.argv)==3 and sys.argv[1]=="watchdog":
         watchdog(Path(sys.argv[2]));return
     if len(sys.argv)!=4 or sys.argv[1]!="apply":
@@ -659,11 +803,29 @@ def cli():
     sys.modules[loader.name]=module
     loader.exec_module(module)
     with Path("/run/awg-maintenance.lock").open("a") as lock:
-        fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
-        if not original_tun_unreachable_twice():
+        try:
+            fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
+        except BlockingIOError:
+            auto_fault("GATE", "MAINTENANCE_LOCK_BUSY")
+            raise
+        auto_fault("GATE", "EXECUTOR_ENTERED")
+        try:
+            incumbent_unready = original_tun_unready_twice()
+        except Exception as exc:
+            auto_fault("GATE", str(exc))
+            raise
+        if not incumbent_unready:
+            auto_fault("GATE", "ORIGINAL_TUN_STILL_REACHABLE")
             raise SystemExit("XRAY_TRANSACTION_ABORT=ORIGINAL_TUN_STILL_REACHABLE")
-        receipt=module.activate(sys.argv[2],sys.argv[3],LinuxBackend(sys.argv[2],sys.argv[3]))
-    print("XRAY_TRANSACTION_RUNTIME_TUN_VERIFIED="+str(receipt.tun_verified).upper())
+        try:
+            receipt=module.activate(sys.argv[2],sys.argv[3],LinuxBackend(sys.argv[2],sys.argv[3]))
+        except module.ActivationFailure as exc:
+            auto_fault("TRANSACTION", str(exc))
+            if getattr(exc,"retryable",False):
+                print("XRAY_TRANSACTION_CANDIDATE_FAILED_RETRY_SAFE=YES")
+                raise SystemExit(3)
+            raise
+    print("XRAY_TRANSACTION_LOCAL_RUNTIME_READY="+str(receipt.runtime_ready).upper())
     print("XRAY_TRANSACTION_REBOOT_TESTED=NO")
 
 if __name__=="__main__":

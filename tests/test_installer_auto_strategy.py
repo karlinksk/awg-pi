@@ -65,8 +65,8 @@ systemctl(){
    with self.subTest(mode=mode):
     r,ready,calls,enabled=self.run_case(mode)
     self.assertEqual(r.returncode,0,r.stderr)
-    self.assertEqual((ready,enabled),("disable","0"))
-    self.assertIn("disable --now awg-mihomo-hot-pool.timer",calls)
+    self.assertEqual((ready,enabled),("UNTOUCHED","UNTOUCHED"))
+    self.assertNotIn("enable --now awg-mihomo-hot-pool.timer",calls)
     self.assertIn("enable --now awg-mihomo-pool-refresh.timer",calls)
  def test_clean_install_does_not_choose_fixed_until_postinstall(self):
   self.assertNotIn('"$FIRST_RUN_CLI" wizard',INS)
@@ -75,7 +75,7 @@ systemctl(){
   self.assertIn('Deferred VPN and Operating Mode configuration',INS)
   r,ready,calls,enabled=self.run_case("auto")
   self.assertEqual(r.returncode,0,r.stderr)
-  self.assertEqual((ready,enabled),("disable","0"))
+  self.assertEqual((ready,enabled),("UNTOUCHED","UNTOUCHED"))
  def test_upgrade_never_overwrites_active_settings(self):
   for mode in ("fixed","auto",None):
    r,ready,calls,enabled=self.run_case(mode,upgrade=True)
