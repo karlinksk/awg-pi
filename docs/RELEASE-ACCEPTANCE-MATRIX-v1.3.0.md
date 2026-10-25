@@ -19,8 +19,8 @@ engine network assessment, never individual service eligibility.
 | Transit FAIL-CLOSED | Both backends stopped under recovery: 26 target ingress, zero matching direct egress/VPN traffic; six contained client attempts timed out; baseline recovered. | Existing target-scoped IPv4 negative PASS credited; no all-path/IPv6 claim |
 | Selective FAIL-OPEN/re-arm | Real iPhone Mihomo and AWG forwarding, backend-down DIRECT, restored VPN forwarding, independent recovery. | Existing bounded hardware PASS credited |
 | Manual/AUTO recovery | Guarded Mihomo/AWG switching; endpoint failure to later native; native/Xray/native; old-card 13-profile exhaustion to sticky AWG. Preserve dated revision/provider scope in PROJECT_STATE. | Existing scoped PASS credited; no repeated pool/outage trials |
-| Clean install / onboarding | Actual fresh Debian13.7 ARM64 installation pinned to `443bfa5`, installer SHA256 verified, 75/75 delivered bytes/owners/modes match; Selective/unconfigured, no AWG/provider/Xray profiles, DNS/SSH/control services active, failed units0. | Exact-candidate clean-install PASS; new-card profile onboarding not yet performed |
-| Upgrade / gateway restore / reboot | Earlier actual `07d8e0d` preserving upgrade/snapshot restore/configured reboot remains scoped evidence. New `443bfa5` clean-card real reboot changed boot-ID; 15/15 private digests/absences and75/75 deliveries match afterward, DNS/SSH/control services active, all VPN engines remain inactive. | Exact-candidate empty-state reboot PASS; configured lifecycle scope remains distinct |
+| Clean install / onboarding | Actual fresh Debian13.7 ARM64 installation pinned to `443bfa5`, 75/75 delivered bytes/owners/modes match. Owner subsequently imported AWG and Mihomo profiles; both validate, both independent Pi-bound HTTPS requests HTTP200/curl0, Selective/AWG healthy, DNS/SSH active, failed units0. | Exact-candidate clean install and new-card Pi-TUN onboarding PASS; not a new forwarded LAN proof |
+| Upgrade / gateway restore / reboot | Earlier actual `07d8e0d` preserving upgrade/snapshot restore remains scoped evidence (installer/updater unchanged). Exact `443bfa5` empty-state reboot15/15 and configured reboot18/18 private entries,75/75 deliveries. Configured boot independently checked by root timer: HEALTHY_NO_RESTORE, controls/routes/DNS healthy; both Pi TUN HTTPS200 after boot, AWG remains selected, temporary units removed. | Exact-candidate empty and configured reboot PASS; earlier upgrade/actual snapshot-restore scope remains explicit |
 | Full-media recovery | A gateway tar snapshot and its successful restore do not prove booting restored spare media. No verified full-media restore/boot receipt established. | OPEN; do not write working microSD or unidentified media |
 | Promotion | PR targets integration branch, not main. Inspect integration/release path and final checks before any merge/tag/release. | Draft, unmerged, unreleased |
 
@@ -50,6 +50,23 @@ Actual reboot at22:55 +07 succeeded; privileged postboot comparison confirmed
 Stage18 disk-cache hashes matched. Stage18 RAM runtime is absent as expected
 before subscription import (provider ConditionPathExists); no media test ran.
 No network failure injection, MikroTik or working-media change was performed.
+
+Configured follow-up: owner imported profiles through normal onboarding. AWG
+was selected, both transports locally healthy, tables100/101 viaawg0, both
+bound example.com HTTPS requests returned200/curl0. A configured standard
+backup124037544 bytes was verified, safe archive member paths checked and
+privately copied off-device with matching SHA256
+`6e4575a1dd3c6af3c471ff6a91d6306ee60efccefba919a6913ce5c5b3e42b86`.
+Root-only baseline18 entries and75 delivery hashes protected the next boot;
+independent5-second timer rehearsal returned success on unchanged healthy
+state. A fixed root-owned120-second boot recovery used the exact tracked
+updater restore function as fallback; it actually ran after reboot and reported
+HEALTHY_NO_RESTORE,18/18 settings,75/75 deliveries, active controls, AWG routes,
+DNS and no failed units. Boot changeda3f377af→c31862ed at23:16:34 +07.
+Both bound HTTPS checks again returned200/curl0. Temporary recovery service
+and timer were removed only after success; independent SSH confirmed absence.
+No actual restore occurred in this new trial, no profile values were printed,
+and no broad outage, forced switch or new client/media acceptance was claimed.
 
 Reopen hardware only for a concrete uncovered required behavior or a material
 network-code change. A stale unchecked box is not a reason to repeat a fault
