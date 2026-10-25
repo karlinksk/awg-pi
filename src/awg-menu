@@ -739,7 +739,7 @@ hot_pool_summary(){
 
 quick_summary(){
   local health policy dns awg_state mihomo_state hs oc pi router mode mode_label mode_badge transport
-  local now tz temp uptime load mem disk traffic hotpool
+  local now tz temp uptime load mem disk traffic
   health="$(cat /run/awg-pbr/health.state 2>/dev/null || echo unknown)"
   mode="$(operating_mode_id)"
   mode_label="$(operating_mode_label "$mode")"
@@ -804,11 +804,10 @@ quick_summary(){
   mem="$(memory_summary)"
   disk="$(disk_summary)"
   traffic="$("$AWG_TRAFFIC" status compact 2>/dev/null || echo 'Сегодня: н/д | Месяц: н/д')"
-  hotpool="$(hot_pool_summary)"
-  printf 'ВРЕМЯ: %s | ПОЯС: %s\nСИСТЕМА: %s | CPU %s | Нагрузка %s\nПАМЯТЬ: %s | Диск /: %s\nРЕЖИМ: [%s] %s\nVPN: %s | Транспорт: %s\nПолитика: %s | DNS: %s\nAWG: %s | Рукопожатие: %s\nMihomo: %s | OpenCCK: %s\nГОРЯЧИЙ РЕЗЕРВ: %s\nТРАФИК: %s\nPi: %s | Роутер: %s' \
+  printf 'ВРЕМЯ: %s | ПОЯС: %s\nСИСТЕМА: %s | CPU %s | Нагрузка %s\nПАМЯТЬ: %s | Диск /: %s\nРЕЖИМ: [%s] %s\nVPN: %s | Транспорт: %s\nПолитика: %s | DNS: %s\nAWG: %s | Рукопожатие: %s\nMihomo: %s | OpenCCK: %s\nТРАФИК: %s\nPi: %s | Роутер: %s' \
     "$now" "$tz" "$uptime" "$temp" "$load" "$mem" "$disk" \
     "$mode_badge" "$mode_label" "$health" "$transport" "$policy" "$dns" \
-    "$awg_state" "$hs" "$mihomo_state" "$oc" "$hotpool" "$traffic" "$pi" "$router"
+    "$awg_state" "$hs" $mihomo_state" "$oc" "$traffic" "$pi" "$router"
 }
 
 status_screen(){
