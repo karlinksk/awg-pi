@@ -29,10 +29,9 @@ required = [
     '"Вставить текстом"',
     '"Обновить через выбранный канал"',
     '"Подготовленный профиль [',
-    '"Локальное восстановление Mihomo (.gz)"',
     '"Точка выхода Mihomo / Xray"',
     '"Активный транспорт"',
-    '"Расширенные / восстановление"',
+    '"Дополнительные настройки"',
     '"Конфигурация AmneziaWG"',
     '"Политика выбора транспорта"',
     '"Citadel / Remnawave"',
@@ -372,7 +371,7 @@ for label in (
     '2 "Подписка / источник"',
     '3 "Точка выхода Mihomo / Xray"',
     '4 "Политика узлов Mihomo (FIXED/AUTO)"',
-    '5 "Расширенные / восстановление"',
+    '5 "Дополнительные настройки"',
 ):
     assert label in mihomo_block, f"missing compact Mihomo item: {label}"
 assert '"Активный транспорт"' not in mihomo_block
@@ -385,6 +384,22 @@ for legacy in (
     '"Offline engine recovery (.gz)"',
 ):
     assert legacy not in mihomo_block
+
+# Obsolete Mihomo actions must not reappear in this compact submenu.
+additional=menu.split('mihomo_advanced_menu(){',1)[1].split('\n}\n',1)[0]
+for old in (
+    '3 "$candidate_label"', '4 "Локальное восстановление',
+    '5 "Восстановить резерв Mihomo при AWG"',
+    '6 "Xray VLESS: диагностика"',
+    'mihomo_standby_repair_menu ;;', 'mihomo_xray_vless_menu ;;',
+):
+    assert old not in additional, f"retired Mihomo menu action restored: {old}"
+for label in ('1 "Обновить через выбранный канал"', '2 "Формат подписки"', '0 "Назад"'):
+    assert label in additional, f"missing retained setting: {label}"
+# The supporting recovery / diagnostics functions remain installed as before.
+for func in ('mihomo_candidate_menu(){', 'mihomo_standby_repair_menu(){',
+             'mihomo_xray_vless_menu(){'):
+    assert func in menu
 
 # Active transport lives at VPN-routing level in both modes.
 vpn_start = menu.index('vpn_menu(){')
