@@ -219,12 +219,12 @@ assert '"$MIHOMO_POOL" protocol get' in menu
 assert '"$MIHOMO_POOL" protocol set "$selected"' in menu
 assert 'mihomo_protocol_select(){' in menu
 assert 'mihomo_protocol_settings(){' in menu
-for tag, label in (
+for index, (tag, label) in enumerate((
     ("all", "Все протоколы"), ("vless", "VLESS"), ("trojan", "Trojan"),
     ("hysteria2", "Hysteria2"), ("ss", "Shadowsocks (SS)"),
     ("vmess", "VMess"),
-):
-    assert f'{tag} "$(awg_option_label "{label}" {tag} "$current")"' in menu
+), start=1):
+    assert f'{index} "$(awg_option_label "{label}" {tag} "$current")"' in menu
 picker=menu.split('mihomo_pool_pick(){',1)[1].split('\n}\n',1)[0]
 assert '"$MIHOMO_POOL" protocol set' not in picker
 assert 'Протокол [$protocol_label]' not in picker
