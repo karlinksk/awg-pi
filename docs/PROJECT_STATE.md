@@ -1,3 +1,9 @@
+### 2026-10-25 — existing Windows LAN path probe does not establish Pi forwarding
+
+- Owner selected a separate Windows LAN client; verified that its IPv4 belongs to the current workstation. No Windows route/DNS/interface settings changed. One real curl request bound to the client IPv4 with proxy bypass and fixed `one.one.one.one:443 -> 1.1.1.1` returned HTTP200/exit0.
+- Concurrent 40-second Pi AF_PACKET observation filtered strictly to destination1.1.1.1 TCP443 counted eth0=0, mihomo0=0, awg0=0. A separate positive instrument control using the same destination/parser and a Pi-originated mihomo0-bound request returned HTTP200/exit0 and counted mihomo0=29, eth0=0, awg0=0. Thus the observed Windows request did not demonstrate forwarding through this Pi. Do not generalize this one destination to every existing RouterOS policy/site, and do not label it a product failure or LAN PASS.
+- No packet payloads captured or retained; no router, active transport, production media, client routing or DNS changes. Further LAN acceptance needs an already routed test destination, or a separately guarded temporary Selective client path with automatic restoration. Current Transit requires router MAC; bypassing it is outside scope. Full LAN/failover/reboot remains OPEN.
+
 ### 2026-10-25 — PR #115 closed as superseded; fresh release-gate baseline rechecked
 
 - **PR closure, not merge/release:** verified `455ed78f386d17250d3470d13ff5f652db6638a9` (PR #115 head) is an ancestor of both integration base `e65df34e513b412f8c3b6951405228d36f873df6` and current PR #165 head `c75b2056e5c959258bd6b7c0e4df4ca2a590b864` using `git merge-base --is-ancestor` (both exit0). Closed #115 without merging into its obsolete experimental base; rationale recorded in its description. No branch deleted. #165 remains draft/open/unmerged/unreleased. Exact-head CI run40156273740 completed success; this is not hardware acceptance.
