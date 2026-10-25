@@ -1,7 +1,39 @@
 # AWG Pi Gateway v1.3.0 — complete release acceptance matrix
 
-**Status: GATE OPEN / NOT RELEASE-READY** (audit 2026-10-17, draft PR #115).
-This checklist supplements `docs/TESTING-v1.3.0.md`. Checkboxes below are deliberately **unmarked** until evidence on the *current* candidate commit and current test installation exists. Historic pass reports, tests of an isolated candidate, mocked failures and service-active observations are not automatically acceptance of the new installer.
+**Status: GATE OPEN / NOT RELEASE-READY** (reconciliation 2026-10-25, draft PR #165; #115 closed/superseded).
+
+## Current release ledger — supersedes the historical checklist below
+
+Apply the owner-directed 2026-10-24 contract in `TESTING-v1.3.0.md` and the
+latest entries in `PROJECT_STATE.md`. The old 150-case list is retained as
+historical audit detail, not 150 new mandatory experiments. Hot Pool, READY,
+editable FIXED chains, ChatGPT/OpenAI availability, YouTube and 24-frame decode
+are excluded release gates. MANUAL uses local eligibility; AUTO uses native
+engine network assessment, never individual service eligibility.
+
+| Required area | Evidence and exact scope | Current disposition |
+| --- | --- | --- |
+| Current HEAD CI | Baseline `5466a73`: awg-v31 success, shell failed on five obsolete assertions and one historical UI-anchor error. Test-only repair `69ec2e5`; current-head results must be checked independently. | Pending final HEAD CI |
+| Installed source / delivery | Fresh read-only privileged audit of all 75 literal installer helper/unit deliveries against `5466a73`: 75 byte matches, all root-owned; helpers 0755, common library/units 0644. Eight network helpers and accepted numeric menu also match exact Git blobs. Test-only repair changes none of these files. | PASS for audited delivery set; not an installer execution |
+| Transit IPv4 LAN | Windows Mihomo correlated ingress/TUN/return; installed dynamic-MSS AWG 22/22 HTTP200, outgoing MSS1380, zero target-bound direct egress. | Existing bounded hardware PASS credited |
+| Transit FAIL-CLOSED | Both backends stopped under recovery: 26 target ingress, zero matching direct egress/VPN traffic; six contained client attempts timed out; baseline recovered. | Existing target-scoped IPv4 negative PASS credited; no all-path/IPv6 claim |
+| Selective FAIL-OPEN/re-arm | Real iPhone Mihomo and AWG forwarding, backend-down DIRECT, restored VPN forwarding, independent recovery. | Existing bounded hardware PASS credited |
+| Manual/AUTO recovery | Guarded Mihomo/AWG switching; endpoint failure to later native; native/Xray/native; old-card 13-profile exhaustion to sticky AWG. Preserve dated revision/provider scope in PROJECT_STATE. | Existing scoped PASS credited; no repeated pool/outage trials |
+| Clean install / onboarding | Separate Debian13 ARM64 card, initially no profiles, later real onboarding; earlier installer-source scope recorded. | Existing scoped PASS; not exact final-source clean install |
+| Upgrade / gateway restore / reboot | Actual `07d8e0d` upgrade, 75/75 delivery, 13/13 preserved-state digests, actual snapshot restore and reboot; later MSS/UI changes separately installed and tested. Current 75/75 byte audit reconciles installed artifacts. | Scoped PASS; final frozen-source lifecycle remains OPEN |
+| Full-media recovery | A gateway tar snapshot and its successful restore do not prove booting restored spare media. No verified full-media restore/boot receipt established. | OPEN; do not write working microSD or unidentified media |
+| Promotion | PR targets integration branch, not main. Inspect integration/release path and final checks before any merge/tag/release. | Draft, unmerged, unreleased |
+
+Reopen hardware only for a concrete uncovered required behavior or a material
+network-code change. A stale unchecked box is not a reason to repeat a fault
+trial. Safe read-only reconciliation does not authorize a new reboot, installer
+run or media write without verified independent recovery and protected controls.
+
+## Historical 2026-10-17 checklist (superseded where inconsistent)
+
+The unmarked boxes preserve their original evidence status; they do not erase
+the later scoped acceptance above. Older blockers and plans below are dated
+history, not the current release queue.
 
 ## Acceptance rules and evidence
 

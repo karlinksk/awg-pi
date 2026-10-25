@@ -28,9 +28,21 @@ Pi-bound TUN or LAN evidence. No MikroTik/working-media changes without permissi
 
 This document is the hardware/release gate for v1.3.0.
 
-**Full 150-case execution matrix (all modes, transports, selectors and negative cases):** [RELEASE-ACCEPTANCE-MATRIX-v1.3.0.md](RELEASE-ACCEPTANCE-MATRIX-v1.3.0.md). Items in that checklist remain unaccepted until scoped evidence is attached to the current candidate.
+**Current release ledger:** [RELEASE-ACCEPTANCE-MATRIX-v1.3.0.md](RELEASE-ACCEPTANCE-MATRIX-v1.3.0.md).
+Its current ledger supersedes the historical 150-case checklist where inconsistent
+with the owner contract. Credit existing bounded hardware evidence with its
+revision/provider scope; repeat only for a concrete gap or material code change.
+Final HEAD CI, frozen-source lifecycle reconciliation and full-media restore/boot
+remain distinct from network acceptance. ChatGPT/OpenAI availability, YouTube
+and 24-frame decoding are not mandatory release gates.
 
-**Clean-install defaults agreed 2026-10-20:** install AmneziaWG, Mihomo, optional pinned Xray adapter, Stage18 Node.js/yt-dlp and FFmpeg/FFprobe before any VPN profile/subscription exists. Finish in `Selective + unconfigured`, with transport availability-AUTO prepared but **Hot Pool SHADOW timer disabled/inactive and READY priority disabled (`ready-auto.mode=0`)**. Neither is silently enabled by subscription import or reboot; the operator can opt in via the menu after configuration. Xray remains disabled and its guarded live failover is experimental, not an accepted v1.3.0 release feature. Preserve pre-existing Hot Pool/READY choices on upgrades. This is a source contract, not hardware installation proof.
+**Current clean-install contract:** install AmneziaWG, Mihomo, the pinned passive
+Xray adapter and existing Stage18 dependencies before any profile/subscription.
+Finish in `Selective + unconfigured`. Hot Pool/READY/FIXED have no menu or
+MANUAL/AUTO admission role. Legacy upgrade-state preservation is not permission
+to activate them. Native-before-Xray recovery and sticky AWG follow the current
+contract above. Earlier dated Hot Pool/media experiments below remain history.
+This source contract alone is not hardware installation proof.
 
 v1.3.0 adds a transport abstraction and an optional Mihomo backend while
 preserving the v1.2 routing semantics:
