@@ -146,12 +146,16 @@ awg_dialog_breadcrumb_title(){
       notify_menu) label="Telegram" ;;
       notify_types_menu) label="Типы уведомлений" ;;
       update_menu) label="Обновления" ;;
-      mihomo_pool_pick) label="Каталог" ;;
+      # The picker is a control widget, not a separate navigation page.
     esac
     if [[ -n "$label" && "${crumbs[-1]}" != "$label" ]]; then
       crumbs+=("$label")
     fi
   done
+  # A chooser can expand its parent section title. Avoid repeating it.
+  if [[ "${crumbs[-1]}" == "Точка выхода" && "$title" == "Точка выхода "* ]]; then
+    crumbs[-1]="$title"
+  fi
   # The menu title often expands its section label, e.g. "AUTO — пул".
   # Avoid repeating the section in a path like AUTO › AUTO — пул узлов.
   if [[ "$title" != "${crumbs[-1]}" &&
@@ -1175,7 +1179,7 @@ mihomo_pool_results_dialog(){
 select_tsv_node_dialog(){
   local dialog_title="$1" prompt="$2" listing="$3" pick provider_idx ui_idx name display_name type endpoint duplicate health country delay description tab
   local query="" filtered count total search_prompt advanced=no scope="${5:-manual}"
-  local eligible=0 xray_count=0 fail_count=0 node_health state_label source_total="" shown_total
+  local eligible=0 xray_count=0 fail_count=0 xray_fail_count=0 xray_unknown_count=0 mihomo_unknown_count=0 node_health state_label source_total="" shown_total
   local engine_label shown_endpoint shown_delay line_label item_help cols narrow=no
   if (( $# >= 4 )); then advanced="$4"; fi
   local -a items=()
@@ -1208,18 +1212,25 @@ select_tsv_node_dialog(){
     fi
     choice_name=()
     choice_health=()
-    eligible=0; xray_count=0; fail_count=0
+    eligible=0; xray_count=0; fail_count=0; xray_fail_count=0; xray_unknown_count=0; mihomo_unknown_count=0
     ui_idx=0
     while IFS="$tab" read -r provider_idx name type endpoint duplicate health country delay; do
       [[ "$provider_idx" =~ ^[0-9]+$ && -n "$name" ]] || continue
       ui_idx=$((ui_idx + 1))
       choice_name["$ui_idx"]="$name"
       choice_health["$ui_idx"]="$health"
-      case "$health" in
-        MIHOMO_OK) eligible=$((eligible + 1)) ;;
-        XRAY_HTTPS) xray_count=$((xray_count + 1)) ;;
-        MIHOMO_FAIL) fail_count=$((fail_count + 1)) ;;
-      esac
+      # Missing or inconclusive engine evidence is neither OK nor FALL.
+      # Duplicate names cannot be counted as independently usable nodes.
+      if [[ "$duplicate" != DUPLICATE ]]; then
+        case "$health" in
+          MIHOMO_OK) eligible=$((eligible + 1)) ;;
+          MIHOMO_FAIL) fail_count=$((fail_count + 1)) ;;
+          MIHOMO_UNTESTED) mihomo_unknown_count=$((mihomo_unknown_count + 1)) ;;
+          XRAY_HTTPS) xray_count=$((xray_count + 1)) ;;
+          XRAY_NETWORK_FAIL) xray_fail_count=$((xray_fail_count + 1)) ;;
+          XRAY_*) xray_unknown_count=$((xray_unknown_count + 1)) ;;
+        esac
+      fi
       display_name="$(mihomo_clip_node_label "$(mihomo_display_node_name "$name")" 24)"
       shown_endpoint="$(mihomo_clip_node_label "$endpoint" 25)"
       shown_delay="—"
@@ -1228,29 +1239,29 @@ select_tsv_node_dialog(){
       fi
       case "$health" in
         MIHOMO_OK) engine_label="Mihomo"; state_label="OK" ;;
-        MIHOMO_FAIL) engine_label="Mihomo"; state_label="FAIL" ;;
-        MIHOMO_UNTESTED) engine_label="Mihomo"; state_label="" ;;
+        MIHOMO_FAIL) engine_label="Mihomo"; state_label="FALL" ;;
+        MIHOMO_UNTESTED) engine_label="Mihomo"; state_label="НЕ ПРОВ." ;;
         XRAY_HTTPS) engine_label="Xray"; state_label="OK" ;;
-        XRAY_NETWORK_FAIL) engine_label="Xray"; state_label="FAIL" ;;
-        XRAY_*) engine_label="Xray"; state_label="" ;;
-        *) engine_label="—"; state_label="" ;;
+        XRAY_NETWORK_FAIL) engine_label="Xray"; state_label="FALL" ;;
+        XRAY_*) engine_label="Xray"; state_label="НЕ ПРОВ." ;;
+        *) engine_label="—"; state_label="НЕПОДД." ;;
       esac
-      # An untested/unsupported profile has no fabricated third status.
-      # The isolated manual preflight can still try a previously failed node.
-      [[ "$duplicate" == DUPLICATE ]] && state_label=""
+      # "НЕ ПРОВ." means no trustworthy success/failure verdict, not a
+      # third health status and never a gate on manual switching.
+      [[ "$duplicate" == DUPLICATE ]] && state_label="ДУБЛЬ"
       if [[ "$narrow" == yes ]]; then
         line_label="$display_name | $engine_label/$type | $shown_delay | $state_label"
       else
         line_label="$display_name | $engine_label | $type | $shown_endpoint | $shown_delay | $state_label"
       fi
-      item_help="Полное имя: $name. Сервер подключения: $endpoint (не публичный IP выхода). RTT: $shown_delay. Статус $state_label — результат отдельной проверки, не гарантия TUN/LAN."
+      item_help="Полное имя: $name. Адрес сервера: $endpoint. Задержка: $shown_delay. OK/FALL — результат проверки движка; НЕ ПРОВ. — нет достоверного вердикта. Ручной выбор доступен."
       items+=("$ui_idx" "$line_label" "$item_help")
     done <<<"$filtered"
-    search_prompt="$prompt\n\nПоказано: $count из $shown_total | Mihomo OK: $eligible | Xray OK: $xray_count | Mihomo FAIL: $fail_count"
+    search_prompt="$prompt\n\nПоказано: $count из $shown_total\nMihomo: OK $eligible | FALL $fail_count | без вердикта $mihomo_unknown_count\nXray: OK $xray_count | FALL $xray_fail_count | без вердикта $xray_unknown_count"
     if [[ "$scope" == fixed ]]; then
       search_prompt="$prompt\n\nПоказано: $count из $shown_total | Для FIXED допустимы только исправные Mihomo: $eligible"
     fi
-    search_prompt="$search_prompt\nСервер = адрес подключения, не IP выхода; RTT = задержка теста. Xray HTTPS = прокси, не TUN/LAN."
+    search_prompt="$search_prompt\nАдрес — сервер подключения; задержка — тест. НЕ ПРОВ. не означает отказ."
     [[ -z "$query" ]] || search_prompt="$search_prompt | поиск: $query"
     pick="$(dialog --backtitle "$BACKTITLE" --title "$dialog_title" --item-help --menu "$search_prompt" 28 116 17 "${items[@]}" 3>&1 1>&2 2>&3)" || return 1
     case "$pick" in
