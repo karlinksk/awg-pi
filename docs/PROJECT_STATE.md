@@ -1,3 +1,9 @@
+### 2026-10-25 — subscription format choice marker on test Pi (visual approval pending)
+
+- Screenshot review identified missing `✓` on `Mihomo → Дополнительные настройки → Формат подписки`. Source now reads the **saved requested provider format** (`Provider format requested`) from read-only `awg-mihomo-configure status` and marks exactly that choice. It explicitly does **not** mark the last auto-detected input format; actual test Pi had requested `auto` but detected `base64`, so `AUTO ✓` is correct. An unrecognized/missing status produces no invented check mark. All item help shortened; no provider configuration, candidate or subscription changed.
+- Added rootless mocked-dialog regression for all four persisted values, unknown status, and AUTO-detects-base64 contrast. `bash -n` and the existing **14 menu test groups** PASS using exact source `src/awg-menu` Git blob `caa27bb16d79f12d9d7d40afcc0d9bcd1d2f6e9b`.
+- **Installed menu-only on authorized test Pi**: previous installed blob `71cec56286044758e0562c89fee398dcd917adbd` saved under root-only `/var/backups/awg-gateway/menu-format-marker-20261025/awg-menu.before`, hash verified. New installed blob `caa27bb16d79f12d9d7d40afcc0d9bcd1d2f6e9b`. Transit/Mihomo, guard SAFE/ACTIVE/READY, SSH and DNS unchanged, failed units 0. No router or production-media changes. Owner visual inspection remains pending; PR #165 draft/unmerged/unreleased.
+
 ### 2026-10-25 — final menu audit installed on test Pi; owner visual review pending
 
 - Owner-approved scope: concise user-facing menu labels and help across existing screens; remove duplicated System action `Перезагрузить конфигурацию AWG-шлюза` (the existing dedicated VPN transport/monitor restart action remains), renumber System operations 1–10; main menu entry renamed `Система`. Do not alter any underlying routing, health, DNS, notification, installer or failover operation.
