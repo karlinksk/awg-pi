@@ -328,7 +328,8 @@ assert 'capture_ru "$AWG_UPDATE" status' in menu
 assert '=== Политика выбора транспорта ===' in menu
 assert 'Активный транспорт:' in menu
 assert 'URL подписки:' in menu
-assert '"$MIHOMO_INSTALLER" --file "$path"' in menu
+assert 'MIHOMO_INSTALLER=/usr/local/sbin/awg-mihomo-install' in menu
+# Local archive install remains a backend capability, not a daily menu action.
 
 # Replacing a URL before Mihomo is configured must go through the initial
 # source-profile wizard so Citadel/Remnawave cannot be staged as a generic URL.
