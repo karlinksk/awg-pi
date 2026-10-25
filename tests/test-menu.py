@@ -265,8 +265,7 @@ assert 'Подготовленный профиль отсутствует.' in 
 assert 'Для фильтрации, поиска, статистики и выбора узлов текущего профиля используйте «Точка выхода / узел».' in menu
 assert 'mihomo_open_candidate_after_update' in menu
 assert 'Новых данных в подписке нет: подготовленный профиль не создавался.' in menu
-assert 'candidate_label="Подготовленный профиль [ЕСТЬ]"' in menu
-assert 'candidate_label="Подготовленный профиль [НЕТ]"' in menu
+# Candidate state is processed by the existing update flow, not a direct menu row.
 assert 'Пул: $target_ru' in menu
 assert 'Статистика рабочего пула Mihomo' in menu
 assert 'Статистика подготовленного пула Mihomo' in menu
