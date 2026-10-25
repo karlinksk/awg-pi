@@ -38,7 +38,9 @@ the restore receipt records 13 policies, bound HTTP200 and guard SAFE. These
 are historical results. Today's comparison to that archived private baseline
 is **12/13**, with `provider.env` changed (both versions present); cause not
 established. Do not restore old provider state or claim current 13/13 equality.
-Owner explicitly waived repeating the cold-image restore for the release; this does not transform the failed first acceptance receipt into PASS. The later selected Mihomo transport was a manual owner action, and Xray AUTO was enabled manually. Keep both operator choices unchanged.\n\nAt that pre-swap checkpoint native Mihomo and standby AWG were healthy, DNS resolved, controls were
+Owner explicitly waived repeating the cold-image restore for the release; this does not transform the failed first acceptance receipt into PASS. The later selected Mihomo transport was a manual owner action, and Xray AUTO was enabled manually. Keep both operator choices unchanged.
+
+At that pre-swap checkpoint native Mihomo and standby AWG were healthy, DNS resolved, controls were
 active, Transit SAFE/ACTIVE/READY, failed units0 and no rescue/recovery timer
 listed. Read-only storage inventory shows only the boot microSD, loop and
 zram; no spare restore target is attached. No live gateway or media changes
