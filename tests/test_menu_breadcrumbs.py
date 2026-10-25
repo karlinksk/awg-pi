@@ -45,6 +45,14 @@ class Breadcrumbs(unittest.TestCase):
             execute_breadcrumb("Проверка соединения",76,["unknown_func"]),
             "Главная › Проверка соединения")
 
+    def test_unified_node_picker_has_no_phantom_catalog_or_duplicate_title(self):
+        full = execute_breadcrumb("Точка выхода Mihomo / Xray", 110, [
+            "select_tsv_node_dialog", "mihomo_pool_pick", "mihomo_node_menu",
+            "mihomo_menu", "vpn_menu"])
+        self.assertEqual(full, "Главная › VPN › Mihomo › Точка выхода Mihomo / Xray")
+        self.assertNotIn("Каталог", full)
+        self.assertEqual(full.count("Точка выхода"), 1)
+
     def test_compact_titles_preserve_current_section(self):
         s=execute_breadcrumb("Длинная проверка безопасного подключения",43,[
             "mihomo_xray_auto_menu","mihomo_node_auto_menu",
