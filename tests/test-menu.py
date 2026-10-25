@@ -149,7 +149,7 @@ assert 'не прошёл финальную проверку работоспо
 assert 'provider-url set-file "$url_tmp"' not in menu
 assert '"$MIHOMO_CONFIGURE" provider update auto' in menu
 assert '4 "Протокол пула узлов"' in menu
-assert 'Перед загрузкой большого источника можно ограничить проверку нужным протоколом.' in menu
+assert 'Настройка подписки и обновление списка нод.' in menu
 assert 'direct "DIRECT"' in menu
 assert 'router "Router/default"' not in menu
 assert 'сначала пробует DIRECT' in menu
