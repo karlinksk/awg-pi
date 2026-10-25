@@ -196,22 +196,6 @@ dialog(){
   local -a args=("$@")
   local rows cols i hi wi li prompt_lines available
   local line line_width line_rows item_fields item_count remaining desired visible has_help
-  # Classic dialog does not move the highlighted row on mouse-wheel
-  # events. An input-only PTY adapter translates wheel to Up/Down while
-  # preserving native mouse clicks. Matrix uses its own input handling.
-  # Without the adapter, normal dialog remains available.
-  local wheel_adapter=0 widget
-  if [[ "${AWG_MENU_MATRIX_INNER:-0}" != 1 &&
-        -x /usr/local/lib/awg-pi/awg-classic-wheel.py && -t 0 ]]; then
-    for widget in "${args[@]}"; do
-      case "$widget" in
-        --menu|--checklist|--radiolist)
-          wheel_adapter=1
-          break
-          ;;
-      esac
-    done
-  fi
   # Use Russian button labels in every widget, including --stdout forms.
   args=(--ok-label "ОК" --cancel-label "Отмена" --yes-label "Да" --no-label "Нет" --exit-label "Закрыть" "${args[@]}")
   # A dialog --stdout form returns values via fd1 pipe, painting on fd2.
@@ -297,11 +281,7 @@ dialog(){
     ((max_title>12)) || max_title=12
     args[title_index]="$(awg_dialog_breadcrumb_title "${args[title_index]}" "$max_title" "${FUNCNAME[@]:1}")"
   fi
-  if ((wheel_adapter)); then
-    /usr/bin/python3 -B /usr/local/lib/awg-pi/awg-classic-wheel.py "${args[@]}"
-  else
-    command dialog "${args[@]}"
-  fi
+  command dialog "${args[@]}"
 }
 
 AWG_ROUTE=/usr/local/sbin/awg-route
