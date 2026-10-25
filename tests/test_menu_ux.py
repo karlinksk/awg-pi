@@ -243,6 +243,47 @@ printf '\\n'
         ):
             self.assertIn(statement, SOURCE)
 
+    def test_subscription_format_marks_requested_not_detected(self):
+        # Provider auto may detect base64 content; the saved choice is AUTO.
+        # No backend files are changed by this dialog.
+        with tempfile.TemporaryDirectory(prefix="awg-format-menu-") as td:
+            root = Path(td)
+            fake = root / "configure"
+            capture = root / "args"
+            fake.write_text(
+                "#!/bin/sh\n"
+                "printf 'Provider format requested: %s\\n' \"$REQUESTED\"\n"
+                "printf 'Provider format detected: base64\\n'\n"
+            )
+            fake.chmod(0o700)
+            shell = (
+                body("awg_option_label") + "\n" +
+                body("mihomo_provider_format_dialog") + "\n" +
+                'dialog(){ printf "%s\\n" "$@" > "$CAPTURE"; return 1; }\n' +
+                'BACKTITLE=TEST\n'
+                'MIHOMO_CONFIGURE="$FAKE"\n'
+                'mihomo_provider_format_dialog\n'
+            )
+            labels = {
+                "auto": "AUTO", "mihomo": "Mihomo / Clash YAML",
+                "vless": "VLESS URI", "base64": "Base64 VLESS",
+            }
+            for requested in (*labels, "malformed"):
+                with self.subTest(requested=requested):
+                    result = subprocess.run(
+                        ["bash", "-c", shell], capture_output=True, text=True,
+                        timeout=5, env={**os.environ, "REQUESTED": requested,
+                                        "FAKE": str(fake), "CAPTURE": str(capture)})
+                    self.assertEqual(result.returncode, 1, result.stderr)
+                    args = capture.read_text().splitlines()
+                    for key, name in labels.items():
+                        expected = name + (" ✓" if key == requested else "")
+                        self.assertIn(expected, args)
+                    self.assertEqual(sum("✓" in x for x in args),
+                                     1 if requested in labels else 0)
+                    if requested == "auto":
+                        self.assertNotIn("Base64 VLESS ✓", args)
+
     def test_protocol_setting_has_one_ui_entry_point(self):
         # Extra picker action was a duplicate writer of the same pool protocol.
         self.assertIn("mihomo_protocol_settings", body("mihomo_subscription_menu"))
