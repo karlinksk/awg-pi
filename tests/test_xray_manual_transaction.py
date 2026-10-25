@@ -17,6 +17,15 @@ spec.loader.exec_module(mod)
 
 class ManualSwitchContract(unittest.TestCase):
     def setUp(self):
+        # AUTO bridge ownership checks must inspect an isolated filesystem,
+        # including on a Pi with root-private installed systemd drop-ins.
+        bridge_dir=tempfile.TemporaryDirectory()
+        self.addCleanup(bridge_dir.cleanup)
+        bridge_paths=mock.patch.multiple(mod,
+            AUTO_BOOT=Path(bridge_dir.name)/"persistent-auto.conf",
+            AUTO_RUNTIME=Path(bridge_dir.name)/"runtime-auto.conf")
+        bridge_paths.start()
+        self.addCleanup(bridge_paths.stop)
         # Transaction tests cover watchdog/rollback; the separate preflight
         # is mocked to avoid touching installed providers or starting engines.
         for name in ("preflight_xray", "preflight_mihomo"):
