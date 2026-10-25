@@ -1755,13 +1755,19 @@ paste_mihomo_provider(){
 }
 
 mihomo_provider_format_dialog(){
+  local current status
+  # Mark the persisted requested format, not the format AUTO detected in
+  # the last download. Do not invent a choice if status cannot be read.
+  status="$("$MIHOMO_CONFIGURE" status 2>/dev/null || true)"
+  current="$(sed -n 's/^Provider format requested: //p' <<<"$status" | head -n1)"
+  case "$current" in auto|mihomo|vless|base64) ;; *) current="" ;; esac
   dialog --backtitle "$BACKTITLE" --title "Формат подписки" --item-help --menu \
-    "AUTO рекомендуется по умолчанию. Ручной формат нужен только если автоопределение неоднозначно или формат источника известен заранее." \
+    "AUTO выбирает формат автоматически. Ручной выбор нужен, только если распознавание не работает." \
     21 108 7 \
-    auto "AUTO" "Автоопределение: Mihomo/Clash YAML → список VLESS URI → Base64 VLESS." \
-    mihomo "Mihomo / Clash YAML" "Требует YAML с непустым разделом proxies:. Остальные разделы полной конфигурации будут отброшены при нормализации." \
-    vless "VLESS URI" "Обычный список ссылок vless://. Поддерживаются tcp/ws/grpc и none/tls/reality." \
-    base64 "Base64 VLESS" "Base64/URL-safe Base64, содержащий список vless:// ссылок." \
+    auto "$(awg_option_label "AUTO" auto "$current")" "Определять формат подписки автоматически." \
+    mihomo "$(awg_option_label "Mihomo / Clash YAML" mihomo "$current")" "Подписка в формате Mihomo/Clash YAML." \
+    vless "$(awg_option_label "VLESS URI" vless "$current")" "Список ссылок VLESS." \
+    base64 "$(awg_option_label "Base64 VLESS" base64 "$current")" "Список ссылок VLESS в кодировке Base64." \
     0 "Назад" "Не менять формат." 3>&1 1>&2 2>&3
 }
 
