@@ -807,7 +807,7 @@ quick_summary(){
   printf 'ВРЕМЯ: %s | ПОЯС: %s\nСИСТЕМА: %s | CPU %s | Нагрузка %s\nПАМЯТЬ: %s | Диск /: %s\nРЕЖИМ: [%s] %s\nVPN: %s | Транспорт: %s\nПолитика: %s | DNS: %s\nAWG: %s | Рукопожатие: %s\nMihomo: %s | OpenCCK: %s\nТРАФИК: %s\nPi: %s | Роутер: %s' \
     "$now" "$tz" "$uptime" "$temp" "$load" "$mem" "$disk" \
     "$mode_badge" "$mode_label" "$health" "$transport" "$policy" "$dns" \
-    "$awg_state" "$hs" $mihomo_state" "$oc" "$traffic" "$pi" "$router"
+    "$awg_state" "$hs" "$mihomo_state" "$oc" "$traffic" "$pi" "$router"
 }
 
 status_screen(){
