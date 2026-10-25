@@ -107,7 +107,8 @@ def run(args):
         )
         os.close(slave)
         slave = -1
-        tty.setcbreak(terminal)
+        tty.setraw(terminal)
+        # Raw input prevents stray terminal echo of rewritten arrow sequences.
         write_all(terminal, ENABLE_MOUSE)
         while child.poll() is None:
             try:
