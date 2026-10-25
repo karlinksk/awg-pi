@@ -370,10 +370,19 @@ current_mihomo_provider_profile(){
   esac
 }
 
+awg_option_label(){
+  # Mark only a persisted, known choice; never mark an action or a cursor row.
+  local label="$1" option="$2" selected="${3:-}"
+  if [[ -n "$selected" && "$option" == "$selected" ]]; then
+    printf '%s ✓' "$label"
+  else
+    printf '%s' "$label"
+  fi
+}
 mihomo_source_profile_dialog(){
   local current="${1:-}" standard_label="Обычная подписка Mihomo/Clash" remnawave_label="Citadel / Remnawave"
-  [[ "$current" == standard ]] && standard_label="$standard_label [ТЕКУЩИЙ]"
-  [[ "$current" == remnawave ]] && remnawave_label="$remnawave_label [ТЕКУЩИЙ]"
+  standard_label="$(awg_option_label "$standard_label" standard "$current")"
+  remnawave_label="$(awg_option_label "$remnawave_label" remnawave "$current")"
   dialog --backtitle "$BACKTITLE" --title "Тип подписки" --item-help --menu \
     "Выберите тип нового источника. Это важно при переходе между Citadel/Remnawave и обычной подпиской." 20 108 5 \
     standard "$standard_label" "URL используется как есть; HWID и служебный суффикс /mihomo не добавляются." \
@@ -1286,12 +1295,12 @@ mihomo_protocol_select(){
   local current="${1:-all}" choice
   choice="$(dialog --backtitle "$BACKTITLE" --title "Протокол пула узлов" --default-item "$current" --item-help --menu \
     "Выберите, какие узлы участвуют в проверке, ручном выборе и AUTO. «Все протоколы» использует весь пул, который понимает Mihomo." 23 108 9 \
-    all "Все протоколы" "Проверять все proxy-узлы из источника, которые может загрузить Mihomo." \
-    vless "VLESS" "Проверять и предлагать только VLESS." \
-    trojan "Trojan" "Проверять и предлагать только Trojan." \
-    hysteria2 "Hysteria2" "Проверять и предлагать только Hysteria2." \
-    ss "Shadowsocks (SS)" "Проверять и предлагать только Shadowsocks." \
-    vmess "VMess" "Проверять и предлагать только VMess." \
+    all "$(awg_option_label "Все протоколы" all "$current")" "Проверять все proxy-узлы из источника, которые может загрузить Mihomo." \
+    vless "$(awg_option_label "VLESS" vless "$current")" "Проверять и предлагать только VLESS." \
+    trojan "$(awg_option_label "Trojan" trojan "$current")" "Проверять и предлагать только Trojan." \
+    hysteria2 "$(awg_option_label "Hysteria2" hysteria2 "$current")" "Проверять и предлагать только Hysteria2." \
+    ss "$(awg_option_label "Shadowsocks (SS)" ss "$current")" "Проверять и предлагать только Shadowsocks." \
+    vmess "$(awg_option_label "VMess" vmess "$current")" "Проверять и предлагать только VMess." \
     0 "Назад" "Не менять протокольный фильтр." 3>&1 1>&2 2>&3)" || return 1
   [[ "$choice" != 0 ]] || return 1
   printf '%s\n' "$choice"
@@ -1879,13 +1888,16 @@ mihomo_auto_strategy_menu(){
 }
 
 mihomo_xray_auto_menu(){
-  local choice status
+  local choice status xray_option=""
   while true; do
     status="$("$MIHOMO_NODE_POLICY" xray-auto status 2>/dev/null || echo MIHOMO_XRAY_AUTO=unavailable)"
+    xray_option=""
+    [[ "$status" == "MIHOMO_XRAY_AUTO=enabled" ]] && xray_option=enabled
+    [[ "$status" == "MIHOMO_XRAY_AUTO=disabled" ]] && xray_option=disabled
     choice="$(dialog --backtitle "$BACKTITLE" --title "AUTO Mihomo / Xray" --item-help --menu \
       "Состояние: $status\\n\\nПри отказе Mihomo сначала проверяются его ноды, затем один свежий Xray VLESS/Reality. Далее — настроенный AWG. Selective FAIL-OPEN, Transit FAIL-CLOSED. READY/Hot Pool управляются отдельно." 24 108 6 \
-      1 "Включить Xray в AUTO" "Требует AUTO нод, отключённого READY и настроенного резервного AWG. Без смены активного транспорта." \
-      2 "Выключить Xray в AUTO" "Отключает будущие автоматические переходы Xray. Текущую ноду и каналы не прерывает." \
+      1 "$(awg_option_label "Включить Xray в AUTO" enabled "$xray_option")" "Требует AUTO нод и настроенного резервного AWG. Без смены активного транспорта." \
+      2 "$(awg_option_label "Выключить Xray в AUTO" disabled "$xray_option")" "Отключает будущие автоматические переходы Xray. Текущую ноду и каналы не прерывает." \
       3 "Показать состояние" "Показывает постоянную настройку AUTO Xray." \
       0 "Назад" "Сохранить настройки." 3>&1 1>&2 2>&3)" || return 0
     case "$choice" in
@@ -1908,14 +1920,16 @@ mihomo_xray_auto_menu(){
 }
 
 mihomo_node_policy_menu(){
-  local choice
+  local choice active_policy="" policy_info
   while true; do
+    policy_info="$("$MIHOMO_NODE_POLICY" status 2>/dev/null || true)"
+    active_policy="$(sed -n 's/^Mihomo node policy: //p' <<<"$policy_info" | head -n1)"
     choice="$(dialog --backtitle "$BACKTITLE" --title "Резервирование узлов Mihomo" --item-help --menu \
       "Ручной выбор ноды доступен всегда. AUTO — автоматический поиск работоспособной ноды в объединённом пуле Mihomo/Xray; AWG — последний резерв." \
       24 112 7 \
       1 "Показать политику" "Показывает текущую политику и состояние автоматического выбора." \
-      2 "MANUAL" "Отключает автоматическую смену нод, не запрещая ручное переключение." \
-      4 "AUTO — пул узлов" "Настроить автоматический выбор нод Mihomo; участие Xray VLESS в AUTO разрешается отдельно внутри." \
+      2 "$(awg_option_label "MANUAL" manual "$active_policy")" "Отключает автоматическую смену нод, не запрещая ручное переключение." \
+      4 "$(awg_option_label "AUTO — пул узлов" auto "$active_policy")" "Настроить автоматический выбор нод Mihomo; участие Xray VLESS в AUTO разрешается отдельно внутри." \
       0 "Назад" "Не менять политику узлов." 3>&1 1>&2 2>&3)" || return 0
     case "$choice" in
       1)
@@ -1937,11 +1951,13 @@ mihomo_node_policy_menu(){
 # AUTO setup is independent of installing or manually selecting Xray.
 # No policy changes occur merely by opening this submenu.
 mihomo_node_auto_menu(){
-  local choice
+  local choice active_policy="" policy_info
   while true; do
+    policy_info="$("$MIHOMO_NODE_POLICY" status 2>/dev/null || true)"
+    active_policy="$(sed -n 's/^Mihomo node policy: //p' <<<"$policy_info" | head -n1)"
     choice="$(dialog --backtitle "$BACKTITLE" --title "AUTO — пул узлов" --item-help --menu \
       "Автоматические переходы Mihomo настраиваются отдельно от ручного выбора ноды. Xray доступен вручную всегда; в AUTO только после явного разрешения." 22 108 6 \
-      1 "Включить AUTO Mihomo" "Выбор следующей работоспособной ноды из проверенного пула. AWG fallback только если настроен." \
+      1 "$(awg_option_label "Включить AUTO Mihomo" auto "$active_policy")" "Выбор следующей работоспособной ноды из проверенного пула. AWG fallback только если настроен." \
       2 "Xray VLESS в AUTO" "Разрешить или запретить Xray после отказа нод Mihomo; ручной выбор не отключается." \
       0 "Назад" "Оставить настройки без изменения." 3>&1 1>&2 2>&3)" || return 0
     case "$choice" in
@@ -2153,8 +2169,8 @@ active_transport_menu(){
     esac
     mihomo_label="Mihomo"
     awg_label="AmneziaWG"
-    [[ "$current" == mihomo ]] && mihomo_label="Mihomo [АКТИВЕН]"
-    [[ "$current" == awg ]] && awg_label="AmneziaWG [АКТИВЕН]"
+    mihomo_label="$(awg_option_label "$mihomo_label" mihomo "$current")"
+    awg_label="$(awg_option_label "$awg_label" awg "$current")"
 
     choice="$(dialog --backtitle "$BACKTITLE" --title "Активный транспорт [$current_label]" --item-help --menu \
       "Ручное безопасное переключение маршрутизации трафика. Автоматические правила переключения настраиваются отдельным пунктом «Политика выбора транспорта»." 21 108 6 \
@@ -2316,17 +2332,36 @@ mihomo_menu(){
 }
 
 selection_policy_menu(){
-  local choice
+  local choice status mode primary fallback allowed active_policy=""
   while true; do
+    status="$("$AWG_SELECTION" status 2>/dev/null || true)"
+    mode="$(sed -n 's/^Selection mode: //p' <<<"$status" | head -n1)"
+    primary="$(sed -n 's/^Primary transport: //p' <<<"$status" | head -n1)"
+    fallback="$(sed -n 's/^Fallback transports: //p' <<<"$status" | head -n1)"
+    allowed="$(sed -n 's/^Allowed transport order: //p' <<<"$status" | head -n1)"
+    active_policy=""
+    case "$mode" in
+      manual) active_policy=manual ;;
+      fixed)
+        case "$primary:$fallback" in
+          awg:mihomo) active_policy=fixed_awg ;;
+          mihomo:awg) active_policy=fixed_mihomo ;;
+        esac ;;
+      auto)
+        case "$allowed" in
+          awg,mihomo) active_policy=auto_awg ;;
+          mihomo,awg) active_policy=auto_mihomo ;;
+        esac ;;
+    esac
     choice="$(dialog --backtitle "$BACKTITLE" --title "Политика выбора транспорта" --item-help --menu \
       "MANUAL отключает автоматическую смену транспорта. FIXED и AUTO переключают транспорт после повторного отказа, а не ради скорости. Смена узлов Mihomo управляется отдельной политикой. Страна сама по себе не определяет переключение." \
       24 110 9 \
       1 "Показать политику" "Показывает текущий режим, активный транспорт, основной и резервные транспорты, а также порядок AUTO." \
-      2 "MANUAL" "Полностью отключает автоматическое переключение транспорта. Ручной выбор всегда имеет приоритет." \
-      3 "FIXED: AWG → Mihomo" "AWG — основной транспорт; после нескольких подряд отказов разрешено переключение только на Mihomo." \
-      4 "FIXED: Mihomo → AWG" "Mihomo — основной транспорт; после нескольких подряд отказов разрешено переключение только на AWG." \
-      5 "AUTO: AWG → Mihomo" "Разрешены AWG и Mihomo в этом порядке. Переключение выполняется только при повторном отказе текущего транспорта, не ради скорости." \
-      6 "AUTO: Mihomo → AWG" "Разрешены Mihomo и AWG в этом порядке. Переключение выполняется только при повторном отказе текущего транспорта, не ради скорости." \
+"      2 "$(awg_option_label "MANUAL" manual "$active_policy")" "Полностью отключает автоматическое переключение транспорта. Ручной выбор всегда имеет приоритет." \
+"      3 "$(awg_option_label "FIXED: AWG → Mihomo" fixed_awg "$active_policy")" "AWG — основной транспорт; после нескольких подряд отказов разрешено переключение только на Mihomo." \
+"      4 "$(awg_option_label "FIXED: Mihomo → AWG" fixed_mihomo "$active_policy")" "Mihomo — основной транспорт; после нескольких подряд отказов разрешено переключение только на AWG." \
+"      5 "$(awg_option_label "AUTO: AWG → Mihomo" auto_awg "$active_policy")" "Разрешены AWG и Mihomo в этом порядке. Переключение выполняется только при повторном отказе текущего транспорта, не ради скорости." \
+"      6 "$(awg_option_label "AUTO: Mihomo → AWG" auto_mihomo "$active_policy")" "Разрешены Mihomo и AWG в этом порядке. Переключение выполняется только при повторном отказе текущего транспорта, не ради скорости." \
       0 "Назад" "Не менять политику выбора транспорта." 3>&1 1>&2 2>&3)" || return 0
     case "$choice" in
       1)
@@ -2547,8 +2582,8 @@ operating_mode_menu(){
     current="$(operating_mode_label "$current_id")"
     selective_label="Выборочный шлюз (SELECTIVE)"
     transit_label="Транзит через MikroTik / резервный VPN"
-    [[ "$current_id" == selective ]] && selective_label="$selective_label [ТЕКУЩИЙ]"
-    [[ "$current_id" == transit ]] && transit_label="$transit_label [ТЕКУЩИЙ]"
+    selective_label="$(awg_option_label "$selective_label" selective "$current_id")"
+    transit_label="$(awg_option_label "$transit_label" transit "$current_id")"
     refresh_backtitle
     choice="$(dialog --backtitle "$BACKTITLE" --title "Режим работы [$(operating_mode_badge "$current_id")]" --item-help --menu \
       "Текущий режим: $current\n\nВыберите способ маршрутизации. Сохранённые списки SELECTIVE не удаляются при переходе в TRANSIT." \
@@ -2596,7 +2631,7 @@ select_timezone(){
   done
 
   for region in "${regions[@]}"; do
-    region_items+=("$region" "Часовых поясов: ${counts[$region]}" "Открыть часовые пояса этого региона.")
+    region_items+=("$region" "$(awg_option_label "$region" "$region" "$current_region")" "Часовых поясов: ${counts[$region]}. Открыть список региона.")
   done
   pick="$(dialog --backtitle "$BACKTITLE" --title "Часовой пояс — регион" --default-item "$current_region" --item-help --menu "Сначала выберите регион." 24 92 14 "${region_items[@]}" 3>&1 1>&2 2>&3)" || return 1
   region="$pick"
@@ -2604,10 +2639,10 @@ select_timezone(){
   for zone in "${zones[@]}"; do
     if [[ "$region" == "Прочие" ]]; then
       [[ "$zone" != */* ]] || continue
-      zone_items+=("$zone" "Системный часовой пояс" "Выбрать $zone.")
+      zone_items+=("$zone" "$(awg_option_label "$zone" "$zone" "$current")" "Выбрать $zone.")
     else
       [[ "$zone" == "$region/"* ]] || continue
-      zone_items+=("$zone" "${zone#*/}" "Выбрать $zone.")
+      zone_items+=("$zone" "$(awg_option_label "${zone#*/}" "$zone" "$current")" "Выбрать $zone.")
     fi
   done
   (( ${#zone_items[@]} > 0 )) || return 1
@@ -2815,14 +2850,14 @@ $(grep -E '^NOTIFY_(CONFIGURED|PENDING|LAST_ROUTE)=' <<<"$current" || true)
 }
 
 appearance_menu(){
-  local choice current style_tmp
+  local choice current style_tmp current_label
   while true; do
     current="$(cat /etc/awg-pbr/menu-appearance 2>/dev/null || printf classic)"
-    [[ "$current" == matrix ]] && current="Matrix Gradient" || current="Классическое"
+    if [[ "$current" == matrix ]]; then current_label="Matrix Gradient"; else current_label="Классическое"; fi
     choice="$(dialog --backtitle "$BACKTITLE" --title "Оформление интерфейса" --item-help --menu \
-      "Текущее оформление: $current. Изменение действует после перезапуска меню." 17 88 3 \
-      classic "Классическое" "Без анимации. Резервный интерфейс." \
-      matrix "Matrix Gradient" "Зелёный цифровой дождь за окнами штатного меню." \
+      "Текущее оформление: $current_label. Изменение действует после перезапуска меню." 17 88 3 \
+      classic "$(awg_option_label "Классическое" classic "$current")" "Без анимации. Резервный интерфейс." \
+      matrix "$(awg_option_label "Matrix Gradient" matrix "$current")" "Зелёный цифровой дождь за окнами штатного меню." \
       back "Назад" "Без изменений." 3>&1 1>&2 2>&3)" || return 0
     case "$choice" in
       back) return 0 ;;
