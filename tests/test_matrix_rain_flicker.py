@@ -4,6 +4,7 @@
 Pure rendering-loop tests, no curses screen, SSH session, VPN or config writes.
 """
 from pathlib import Path
+import ast
 import random
 import textwrap
 import unittest
@@ -36,7 +37,8 @@ def draw_once(streams, random_state, dt=0.05, height=40):
     screen = DummyScreen()
     exec(compile(statement, "<Matrix stream-only draw>", "exec"),
          {"streams": streams, "stdscr": screen, "curses": DummyCurses,
-          "rng": random_state, "dt": dt, "h": height})
+          "rng": random_state, "dt": dt, "h": height,
+          "GLYPHS": ast.literal_eval(SOURCE.split("GLYPHS = ", 1)[1].splitlines()[0])})
     return screen.cells
 
 
