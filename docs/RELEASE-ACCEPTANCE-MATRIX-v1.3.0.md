@@ -1,6 +1,6 @@
 # AWG Pi Gateway v1.3.0 — complete release acceptance matrix
 
-**Status: GATE OPEN / NOT RELEASE-READY** (reconciliation 2026-10-26, draft PR #165; #115 closed/superseded).
+**Status: RELEASE REVIEW ACCEPTED WITH DOCUMENTED EXCEPTION** (owner decision 2026-10-26; publication remains separate from PR merge/tag; #115 closed/superseded).
 
 ## Current release ledger — supersedes the historical checklist below
 
@@ -21,7 +21,7 @@ engine network assessment, never individual service eligibility.
 | Manual/AUTO recovery | Guarded Mihomo/AWG switching; endpoint failure to later native; native/Xray/native; old-card 13-profile exhaustion to sticky AWG. Preserve dated revision/provider scope in PROJECT_STATE. | Existing scoped PASS credited; no repeated pool/outage trials |
 | Clean install / onboarding | Actual fresh Debian13.7 ARM64 installation pinned to `443bfa5`, 75/75 delivered bytes/owners/modes match. Owner subsequently imported AWG and Mihomo profiles; both validate, both independent Pi-bound HTTPS requests HTTP200/curl0, Selective/AWG healthy, DNS/SSH active, failed units0. | Exact-candidate clean install and new-card Pi-TUN onboarding PASS; not a new forwarded LAN proof |
 | Upgrade / gateway restore / reboot | Earlier actual `07d8e0d` preserving upgrade/snapshot restore remains scoped evidence (installer/updater unchanged). Exact `443bfa5` empty-state reboot15/15 and configured reboot18/18 private entries,75/75 deliveries. Configured boot independently checked by root timer: HEALTHY_NO_RESTORE, controls/routes/DNS healthy; both Pi TUN HTTPS200 after boot, AWG remains selected, temporary units removed. | Exact-candidate empty and configured reboot PASS; earlier upgrade/actual snapshot-restore scope remains explicit |
-| Full-media recovery | Owner-approved same test card restored from private cold image and booted. Full read-back differed by two Windows FAT access-date bytes only; Linux partition exact. First as-captured acceptance failed (AUTO AWG->Mihomo); fixed monitor `f00c93e` survived a separate actual reboot with AWG stable. | PARTIAL / GATE OPEN: physical boot proven; no as-captured acceptance PASS or reimaged post-fix release snapshot |
+| Full-media recovery | Owner-approved same test card restored from private cold image and booted. Full read-back differed by two Windows FAT access-date bytes only; Linux partition exact. First as-captured acceptance failed (AUTO AWG->Mihomo); fixed monitor `f00c93e` survived a separate actual reboot with AWG stable. | OWNER-ACCEPTED EXCEPTION: hardware boot and repaired monitor reboot proven; as-captured checker remains FAIL, corrected-source image restore not repeated |
 | Promotion | PR targets integration branch, not main. Inspect integration/release path and final checks before any merge/tag/release. | Draft, unmerged, unreleased |
 
 ### 2026-10-26 — actual full-media card restore and subsequent boot repair (scope-separated)
@@ -38,7 +38,7 @@ the restore receipt records 13 policies, bound HTTP200 and guard SAFE. These
 are historical results. Today's comparison to that archived private baseline
 is **12/13**, with `provider.env` changed (both versions present); cause not
 established. Do not restore old provider state or claim current 13/13 equality.
-At that pre-swap checkpoint native Mihomo and standby AWG were healthy, DNS resolved, controls were
+Owner explicitly waived repeating the cold-image restore for the release; this does not transform the failed first acceptance receipt into PASS. The later selected Mihomo transport was a manual owner action, and Xray AUTO was enabled manually. Keep both operator choices unchanged.\n\nAt that pre-swap checkpoint native Mihomo and standby AWG were healthy, DNS resolved, controls were
 active, Transit SAFE/ACTIVE/READY, failed units0 and no rescue/recovery timer
 listed. Read-only storage inventory shows only the boot microSD, loop and
 zram; no spare restore target is attached. No live gateway or media changes

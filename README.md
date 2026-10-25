@@ -15,49 +15,57 @@ unavailable.
 
 ## Stable release
 
-Current stable release: **v1.2.0**
+Current stable release: **v1.2.0** (until the v1.3.0 tag and release are published)
 
-## v1.3.0 development track
+**Permanent maintenance policy:** [Installer-first change policy](docs/INSTALLER-CHANGE-POLICY.md). Every tested correction belongs in the installer/upgrade source, regression tests and documentation; see [AGENTS.md](AGENTS.md).
 
-v1.3.0 is the current multi-transport development line. It keeps the v1.2
-Selective/Transit semantics and adds a transport abstraction with AmneziaWG and
-Mihomo backends, transactional AWG <-> Mihomo switching, provider-cache
-bootstrap/rollback, secure first-run onboarding, ordered exact-node failover,
-conservative availability-only transport AUTO, protocol-scoped health pools
-(VLESS / Trojan / Hysteria2 / Shadowsocks / VMess / all), cross-protocol AUTO
-node failover, safe periodic subscription refresh/promotion, and a provider
-adapter layer for native Mihomo/Clash YAML, plain VLESS URI subscriptions and
-Base64 VLESS subscriptions.
+## v1.3.0 release candidate — verified scope
 
-The fresh-install wizard can choose AWG or Mihomo as the first transport. When
-Mihomo is chosen it interactively selects the first live node and may configure
-an explicit one-way fallback chain (for example Finland -> Estonia -> Latvia ->
-Sweden). Node failover never infers countries or wraps back to an earlier node.
-Transport FIXED/AUTO policy is independent from the Mihomo node policy.
+v1.3.0 is the multi-transport Raspberry Pi 4 / Debian 13 ARM64 release
+candidate. It preserves **Selective FAIL-OPEN**, **MikroTik Transit
+FAIL-CLOSED**, independent DNS and management SSH/SSTP. The two installed
+transport engines are **AmneziaWG** and **Mihomo**, with the supported passive
+Xray adapter for VLESS nodes. **Mihomo is the default primary**, and a
+configured healthy AWG is the ultimate fallback after the allowed
+Mihomo/Xray candidates have been exhausted. The agreed conservative AUTO
+policy does not switch merely for speed; healthy AWG remains selected until
+explicitly changed or proven unhealthy. Manual transport/node selection
+does not require remote ChatGPT/OpenAI/YouTube website eligibility.
 
-Fresh Debian installations set the system timezone to **Asia/Novosibirsk** by default (UTC+7), regardless of the OS installer's prior timezone selection. Pass `AWG_PI_TIMEZONE=Etc/UTC` (or another valid IANA zone) to override it on a clean install. **Upgrades never change the existing system timezone.** The system timezone remains editable from the TUI.
+**Clean installation installs both engines and shipped Stage18/media
+dependencies before any profiles are supplied.** It finishes safely in
+`Selective + unconfigured`; the owner imports AWG and/or Mihomo after
+installation and explicitly selects the gateway mode. No automatic
+first-node wizard, READY/Hot Pool eligibility gate or editable FIXED chain
+is required under the current v1.3.0 release contract. Operator settings
+are preserved on upgrade.
 
-The SSH TUI also includes a system dashboard (clock/timezone, uptime, CPU
-temperature/load, RAM and disk), timezone management, unified VPN
-destination/OpenCCK entry, and low-write today/month transport traffic
-accounting for awg0 + mihomo0. Traffic samples stay in RAM and persistent state
-is checkpointed only periodically. On first activation the counter establishes
-a baseline instead of attributing pre-existing interface bytes to the current
-day; boot identity and interface identity are tracked so restarts/recreates do
-not silently corrupt the deltas.
+Fresh Debian installations default to **Asia/Novosibirsk**, with
+`AWG_PI_TIMEZONE` allowing another valid IANA zone; upgrades preserve
+the previously selected timezone. The SSH menu includes accepted Russian
+numeric/Matrix appearance and standard gateway controls.
 
-The v1.2.0 stable tag remains the updater target until the v1.3 hardware gate is
-complete. Do not treat develop/v1.3.0 as a stable installation source without an
-explicit ref and rollback plan.
+**Release acceptance:** actual pinned Debian 13.7 ARM64 clean installation,
+profile onboarding, both transport TUN HTTPS, configured and empty reboots,
+bounded real client LAN/Selective/Transit failure behavior, Xray AUTO and
+sticky AWG recovery have scoped hardware evidence. A cold full-card image
+was restored to an approved test microSD and booted; the original acceptance
+detected an unwanted AWG-to-Mihomo change. The boot monitor was corrected
+in `f00c93e` with a bounded monotonic grace and re-tested on real hardware,
+including reboot. This does **not** retroactively make the first restored
+state PASS or claim a byte-identical whole-card SHA (two Windows FAT metadata
+bytes changed); the owner accepted the documented exception instead of
+re-imaging the card. The operator's manually enabled Xray AUTO is preserved.
+Historical acceptance is scoped; no arbitrary IPv6 or all-client guarantee.
 
-Release/hardware gate: [TESTING-v1.3.0.md](docs/TESTING-v1.3.0.md)
+Release evidence: [v1.3.0 validation](docs/TESTING-v1.3.0.md) and
+[release acceptance ledger](docs/RELEASE-ACCEPTANCE-MATRIX-v1.3.0.md).
+Maintenance rule: [installer-first change policy](docs/INSTALLER-CHANGE-POLICY.md)
+and [repository agent rules](AGENTS.md).
 
-Maintenance rule: [Installer-first change policy](docs/INSTALLER-CHANGE-POLICY.md) — every confirmed test-stand fix must be included in the installer/upgrade source, regression tests and documentation before it is considered closed.
-
-Real Raspberry Pi validation now includes live VLESS, Trojan, Hysteria2,
-Shadowsocks and VMess transports, plus all-protocol AUTO failover across protocol
-types. Stable v1.3.0 tagging is still intentionally blocked on the remaining
-clean-install, plain-VLESS/Base64 adapter and reboot/persistence release gates.
+Until an actual `v1.3.0` tag and GitHub Release are published,
+**v1.2.0 remains the published stable install target**. Do not install an
+unversioned development branch on the production gateway.
 
 ## Install / upgrade
 

@@ -1,5 +1,24 @@
 # AWG Pi Gateway v1.3.0 — release validation
 
+## Final owner acceptance exception — 2026-10-26
+
+The owner decided to complete the v1.3.0 release without another full-media
+write/restore. The approved card **was restored and booted** from the private
+image, with only two Windows FAT last-access-date bytes differing in its full
+readback; the Linux root partition matched. Its **first +90-second acceptance
+FAILED** after an early AWG -> Mihomo AUTO switch. Source fix `f00c93e`
+passed CI and a **separate real test-Pi reboot** retaining AWG beyond 200
+seconds and maintaining Transit `SAFE/ACTIVE/READY`. This is a documented,
+owner-accepted release *exception*, not an as-captured image acceptance PASS,
+a corrected-source reimaged restoration or a full raw-disk SHA match.
+
+The later AWG -> Mihomo selection and Xray AUTO enable were both explicitly
+performed by the owner, not spontaneous failures. Do not restore old operator
+settings. Other previously accepted bounded hardware cases stay credited in
+their original scope; service/website/media and old 150-item matrix checkboxes
+must not be resurrected as mandatory gates. PR merge, main promotion, tag and
+GitHub Release are separate actions, not implied by accepting this exception.
+
 ## Current candidate contract — 2026-10-24, PR #165
 
 Owner-directed revision: manual selection must not require external HTTPS,
