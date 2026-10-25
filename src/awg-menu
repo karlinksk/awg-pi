@@ -1383,7 +1383,7 @@ MIHOMO_POOL_PICKED_NODE=""
 XRAY_MANUAL_SWITCH="/usr/local/sbin/awg-xray-manual-switch"
 
 mihomo_pool_pick(){
-  local target="$1" dialog_title="$2" prompt="$3" choice region region_label protocol protocol_label selected_protocol listing node node_json pick_rc
+  local target="$1" dialog_title="$2" prompt="$3" choice region region_label protocol listing node node_json pick_rc
   local direct=no
   if (( $# >= 4 )) && [[ "$4" == direct ]]; then direct=yes; fi
   MIHOMO_POOL_PICKED_NODE=""
@@ -1395,7 +1395,6 @@ mihomo_pool_pick(){
       region_label="любая страна"
     fi
     protocol="$("$MIHOMO_POOL" protocol get 2>/dev/null || echo all)"
-    protocol_label="$(mihomo_protocol_label "$protocol")"
     if [[ "$direct" == yes && "$target" == live ]]; then
       # Directly open the unified node list; advanced actions stay opt-in.
       choice=1
@@ -1404,7 +1403,7 @@ mihomo_pool_pick(){
       "Mihomo: проверка узла. Xray VLESS: локальная проверка Xray/SOCKS5, НЕ READY/TUN/LAN. Xray проверяется в фоне; переключение требует ручного подтверждения." 26 114 12 \
       1 "Выбрать узел Mihomo / Xray [$region_label]" "Показать Mihomo и все Xray из подписки, включая ещё не проверенные. Ручное переключение Xray требует подтверждения и проверки TUN." \
       2 "Фильтр: Только Европа [$region_label]" "Для Xray страна без независимого GeoIP не подтверждена — такие ноды скрыты этим фильтром." \
-      3 "Протокол [$protocol_label]" "Фильтр выбора: все, VLESS, Trojan, HY2, SS, VMess. Mihomo pool и локальная Xray-проверка независимы." \
+      # Протокол настраивается единожды в «Подписка / источник».
       4 "Обновить проверку сейчас" "Проверить Mihomo; на live дополнительно локальный Xray/SOCKS5 в RAM. Рабочий VPN не переключается." \
       5 "Статистика пула Mihomo" "Счётчики относятся к Mihomo; работающие через Xray ноды отмечены отдельно в результатах." \
       6 "Показать все результаты" "Михомо и Xray раздельно: HTTPS Xray не означает READY/TUN/LAN; просмотр ничего не меняет." \
@@ -1464,10 +1463,6 @@ mihomo_pool_pick(){
             dialog --backtitle "$BACKTITLE" --title "$title" --textbox "$TMP" 30 110
           fi
         fi
-        ;;
-      3)
-        selected_protocol="$(mihomo_protocol_select "$protocol")" || continue
-        [[ "$selected_protocol" == "$protocol" ]] || "$MIHOMO_POOL" protocol set "$selected_protocol" >/dev/null
         ;;
       4)
         title="Проверка узлов Mihomo"
