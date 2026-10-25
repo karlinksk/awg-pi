@@ -67,8 +67,9 @@ class MatrixRainFlicker(unittest.TestCase):
             # Unchanged gradient distribution along the nine-position trail.
             expected = [1 + min(6, k * 7 // 8) for k in range(9)]
             self.assertEqual([color for _, _, _, color in displayed], expected)
-        self.assertGreater(total_changes, 70)
-        self.assertGreater(frames_with_many_changes, 15)
+        self.assertGreater(total_changes, 40)
+        self.assertLess(total_changes, 85)
+        self.assertGreater(frames_with_many_changes, 7)
 
     def test_spacing_palette_geometry_and_global_render_rate_unchanged(self):
         self.assertIn("for _ in range(0,w,2)", SOURCE)
@@ -76,7 +77,8 @@ class MatrixRainFlicker(unittest.TestCase):
         self.assertIn('"len":rng.randrange(9,17)', SOURCE)
         self.assertIn("time.sleep(max(0,1/20-(time.monotonic()-now)))", SOURCE)
         self.assertIn("PALETTE = [(190,255,190),(90,255,90)", SOURCE)
-        self.assertIn('rng.random()<min(1.0,dt*12.0)', SOURCE)
+        self.assertIn('rng.random()<min(1.0,dt*6.0)', SOURCE)
+        self.assertNotIn('rng.random()<min(1.0,dt*12.0)', SOURCE)
         self.assertNotIn('rng.random()<dt*1.5', SOURCE)
 
 
