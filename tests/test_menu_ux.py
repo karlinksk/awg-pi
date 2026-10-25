@@ -171,18 +171,32 @@ show_operation_result 7 'Проверка подписки'
         self.assertIn('run_with_progress "$title" "$MIHOMO_CONFIGURE" provider candidate prepare',SOURCE)
         self.assertIn("if [[ ! -s \"$previous\" ]]",awg)
 
-    def test_xray_diagnostics_are_advanced_only(self):
+    def test_mihomo_additional_settings_are_ui_only_and_compact(self):
         main=body("mihomo_menu")
-        advanced=body("mihomo_advanced_menu")
-        tools=body("mihomo_xray_vless_menu")
+        additional=body("mihomo_advanced_menu")
         self.assertIn('3 "Точка выхода Mihomo / Xray"',main)
-        self.assertIn('5 "Расширенные / восстановление"',main)
-        self.assertNotIn('6 "Xray VLESS: диагностика"',main)
-        self.assertNotIn('6) mihomo_xray_vless_menu',main)
-        self.assertIn('6 "Xray VLESS: диагностика"',advanced)
-        self.assertIn('6) mihomo_xray_vless_menu ;;',advanced)
-        self.assertIn('awg-xray-vless list',tools)
-        self.assertIn('awg-mihomo-unified-nodes probe',tools)
+        self.assertIn('5 "Дополнительные настройки"',main)
+        self.assertNotIn("Диагностика Xray —",main)
+        self.assertIn('1 "Обновить через выбранный канал"',additional)
+        self.assertIn('2 "Формат подписки"',additional)
+        self.assertIn('0 "Назад"',additional)
+        for retired in (
+            '3 "$candidate_label"', '4 "Локальное восстановление',
+            '5 "Восстановить резерв Mihomo при AWG"',
+            '6 "Xray VLESS: диагностика"',
+            '3) mihomo_candidate_menu',
+            'capture "$MIHOMO_INSTALLER" --file',
+            '5) mihomo_standby_repair_menu',
+            '6) mihomo_xray_vless_menu',
+        ):
+            self.assertNotIn(retired,additional)
+        # Existing recovery / diagnostics engines are unchanged, just not
+        # exposed as duplicate or unsafe day-to-day menu actions.
+        self.assertIn("mihomo_candidate_menu(){",SOURCE)
+        self.assertIn("mihomo_standby_repair_menu(){",SOURCE)
+        self.assertIn("mihomo_xray_vless_menu(){",SOURCE)
+        self.assertIn('awg-xray-vless list',body("mihomo_xray_vless_menu"))
+
 
     def test_utf8_local_menu_without_system_locale_mutation(self):
         self.assertIn('locale charmap', SOURCE)
