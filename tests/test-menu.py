@@ -129,7 +129,7 @@ for label in (
     assert label in main_block, f"missing main-menu item: {label}"
 assert '5 "OpenCCK"' not in main_block
 assert 'OpenCCK — расширенно' in menu
-assert 'поддерживаемой версии Mihomo' in main_block
+assert 'Проверить и установить обновления компонентов.' in main_block
 
 # Provider/subscription staging remains transactional. Setup input is visible
 # by design; secrets remain redacted only after they have been applied.
