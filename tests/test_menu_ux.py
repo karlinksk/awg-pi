@@ -45,7 +45,7 @@ cpu_temperature(){ echo '42°C'; }
 system_uptime(){ echo '1ч'; }
 memory_summary(){ echo '100/400 MiB'; }
 disk_summary(){ echo '1/10 GiB'; }
-hot_pool_summary(){ echo 'ожидает подписку'; }
+hot_pool_summary(){ echo 'EXCLUDED_HOT_POOL_CALLED' >&2; }
 ip(){ return 1; }
 systemctl(){ return 1; }
 command(){ if [[ "$1" == -v && "$2" == awg ]]; then return 0; fi; builtin command "$@"; }
@@ -63,10 +63,11 @@ quick_summary
                 "VPN: ожидает настройки",
                 "AWG: не настроено",
                 "Mihomo: не настроено",
-                "ГОРЯЧИЙ РЕЗЕРВ: ожидает подписку",
                 "DIRECT (FAIL-OPEN)",
             ):
                 self.assertIn(required, r.stdout)
+            self.assertNotIn("ГОРЯЧИЙ РЕЗЕРВ", r.stdout)
+            self.assertNotIn("EXCLUDED_HOT_POOL_CALLED", r.stderr)
             self.assertNotIn("VPN: сбой", r.stdout)
             self.assertNotIn("AWG: неисправен", r.stdout)
 
