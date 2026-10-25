@@ -157,10 +157,13 @@ def main(stdscr):
             for k in range(s["len"]):
                 y=int(s["y"])-k
                 if 0<=y<h:
+                    # Each visible glyph flickers independently as it falls.
+                    # Only its character changes, never the stream geometry.
+                    if rng.random()<min(1.0,dt*12.0):
+                        s["chars"][k]=rng.choice(GLYPHS)
                     try: stdscr.addstr(y,x,s["chars"][k],curses.color_pair(1+min(6,k*7//max(1,s["len"]-1))))
                     except curses.error: pass
             s["y"]+=s["speed"]*dt
-            if rng.random()<dt*8.0: s["chars"][rng.randrange(s["len"])]=rng.choice(GLYPHS)
             if s["y"]-s["len"]>h: s["y"]=rng.uniform(-h,0)
         for y,row in enumerate(captured):
             # Dialog button row contains < ОК > etc. Color *all* button glyphs alike.
