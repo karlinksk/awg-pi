@@ -215,9 +215,52 @@ class NotifyTests(unittest.TestCase):
 
     def test_router_route_is_not_labeled_sstp(self):
         self.assertEqual(mod.route_order("mihomo", router_approved=False), ["mihomo0", "awg0"])
-        self.assertEqual(mod.route_order("mihomo", router_approved=True), ["mihomo0", "awg0", "eth0"])
+        self.assertEqual(mod.route_order("mihomo", router_approved=True), ["eth0", "mihomo0", "awg0"])
         self.assertEqual(mod.route_order("awg", router_approved=False), ["awg0", "mihomo0"])
+        self.assertEqual(mod.route_order("awg", router_approved=True), ["eth0", "awg0", "mihomo0"])
+        self.assertEqual(mod.route_order("", router_approved=True), ["eth0", "mihomo0", "awg0"])
         self.assertNotIn("sstp", mod.ROUTES)
+
+    def test_sstp_first_success_skips_vpn_and_sets_last_route(self):
+        mod.enqueue(self.db, "TEST", "info", "SSTP first")
+        attempted = []
+        def send(token, payload, route):
+            attempted.append(route)
+            return (route == "eth0", 200 if route == "eth0" else 0, 0)
+        with (mock.patch.object(mod, "router_sstp_approved", return_value=True),
+              mock.patch.object(mod, "now", return_value=5000000000)):
+            result = mod.flush(self.db, send, self.secret, active="mihomo",
+                               secret_uid=os.getuid())
+        self.assertEqual((result["sent"], result["pending"]), (1, 0))
+        self.assertEqual(attempted, ["eth0"])
+        self.assertEqual(self.db.execute(
+            "SELECT value FROM meta WHERE key='last_success_route'").fetchone()[0], "eth0")
+
+    def test_sstp_first_network_fail_uses_native_then_other_vpn(self):
+        mod.enqueue(self.db, "VPN_LOST", "critical", "SSTP down")
+        attempted = []
+        def send(token, payload, route):
+            attempted.append(route)
+            return (route == "awg0", 200 if route == "awg0" else 0, 0)
+        with (mock.patch.object(mod, "router_sstp_approved", return_value=True),
+              mock.patch.object(mod, "now", return_value=5000000000)):
+            result = mod.flush(self.db, send, self.secret, active="mihomo",
+                               secret_uid=os.getuid())
+        self.assertEqual((result["sent"], result["pending"]), (1, 0))
+        self.assertEqual(attempted, ["eth0", "mihomo0", "awg0"])
+
+    def test_without_router_approval_never_uses_eth0(self):
+        mod.enqueue(self.db, "TEST", "info", "no approval")
+        attempted = []
+        def failed(token, payload, route):
+            attempted.append(route)
+            return False, 0, 0
+        with (mock.patch.object(mod, "router_sstp_approved", return_value=False),
+              mock.patch.object(mod, "now", return_value=5000000000)):
+            result = mod.flush(self.db, failed, self.secret, active="mihomo",
+                               secret_uid=os.getuid())
+        self.assertEqual(result["pending"], 1)
+        self.assertEqual(attempted, ["mihomo0", "awg0"])
 
     def test_router_approval_requires_root_only_attestation(self):
         marker = self.folder / "router-sstp-approved"
