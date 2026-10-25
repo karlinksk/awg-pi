@@ -69,7 +69,7 @@ class ClassicWheel(unittest.TestCase):
             with self.subTest(name=name):
                 output, rc = self.invoke(seq)
                 self.assertEqual(rc, 0, repr(output[-250:]))
-                self.assertIn(b"\r\n" + result, output)
+                self.assertIn(result + b"\x1b[22;81H", output)
                 self.assertIn(wheel.ENABLE_MOUSE, output)
                 self.assertIn(wheel.DISABLE_MOUSE, output)
 
@@ -86,6 +86,7 @@ class ClassicWheel(unittest.TestCase):
                 "--menu", "Mouse wheel", "15", "70", "8",
                 "one", "One", "two", "Two", "three", "Three"]
         if swapped:
+            args.remove("--stdout")  # dialog reports choice on stderr
             dialog_args = " ".join(
                 ("'" + arg.replace("'", "'\\''") + "'") for arg in args
             )
