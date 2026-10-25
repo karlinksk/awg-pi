@@ -306,6 +306,11 @@ printf '\\n'
         self.assertIn("unset AWG_MENU_REEXEC", restart)
         self.assertIn("exec /usr/local/sbin/awg-menu", restart)
         self.assertIn("exec /usr/local/sbin/awg-menu --classic", SOURCE)
+        self.assertIn("_matrix_rc == 42", SOURCE)
+        compositor = (ROOT / "extras" / "awg-matrix-compositor.py").read_text()
+        self.assertIn("AWG_MENU_MATRIX_INNER=1", compositor)
+        self.assertIn('if status.startswith("1 "):', compositor)
+        self.assertIn("return int(status.split()[1])", compositor)
         self.assertNotIn("Изменение действует при следующем запуске", SOURCE)
         self.assertNotIn("Сохранено: $choice. Изменение действует", SOURCE)
 
