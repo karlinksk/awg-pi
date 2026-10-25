@@ -245,12 +245,12 @@ printf '\\n'
 
     def test_appearance_changes_persist_then_restart_without_modal(self):
         # Fake config under temp directory: never writes the test Pi setting.
-        for initial, chosen, expected_restart in (
-            ("classic", "matrix", True),
-            ("matrix", "classic", True),
-            ("classic", "classic", False),
-            ("matrix", "matrix", False),
-            ("classic", "back", False),
+        for initial, chosen, expected_value, expected_restart in (
+            ("classic", "2", "matrix", True),
+            ("matrix", "1", "classic", True),
+            ("classic", "1", "classic", False),
+            ("matrix", "2", "matrix", False),
+            ("classic", "0", "classic", False),
         ):
             with self.subTest(initial=initial, chosen=chosen):
                 with tempfile.TemporaryDirectory(prefix="awg-theme-switch-") as td:
@@ -286,7 +286,7 @@ printf '\\n'
                     self.assertEqual(proc.returncode, 0, proc.stderr)
                     self.assertEqual(
                         state.read_text().strip(),
-                        initial if chosen == "back" else chosen)
+                        expected_value)
                     self.assertEqual("RESTART_CALLED" in proc.stdout,
                                      expected_restart)
                     self.assertNotIn("UNEXPECTED_DIALOG", proc.stdout)
@@ -314,9 +314,10 @@ printf '\\n'
         self.assertNotIn("Изменение действует при следующем запуске", SOURCE)
         self.assertNotIn("Сохранено: $choice. Изменение действует", SOURCE)
 
-    def test_classic_lists_allow_wheel_to_become_cursor_arrows(self):
-        # dialog's mouse tracking eats scroll-wheel events without moving the
-        # selection. Let the SSH terminal map wheel -> Up/Down instead.
+    def test_classic_lists_use_adapter_only_with_tty_and_helper(self):
+        # Never rely on the SSH client to turn wheel movements into arrows.
+        # Noninteractive calls retain native dialog; real TTY + installed
+        # helper gets --no-mouse only for selection lists.
         with tempfile.TemporaryDirectory(prefix="awg-wheel-menu-") as td:
             root = Path(td)
             mock = root / "dialog"
@@ -325,10 +326,12 @@ printf '\\n'
                 '#!/bin/sh\nprintf "%s\\0" "$@" > "$AWG_MENU_CAPTURE"\n'
             )
             mock.chmod(0o700)
+            shell_body = body("dialog")
+            self.assertIn('AWG_MENU_MATRIX_INNER:-0', shell_body)
+            self.assertIn('awg-classic-wheel.py', shell_body)
+            self.assertIn('if ((wheel_adapter))', shell_body)
             for widget in ("menu", "checklist", "radiolist", "yesno"):
                 with self.subTest(widget=widget):
-                    # Noninteractive path still runs the common argument
-                    # preparation; no real dialog window or VPN calls.
                     opts = (
                         '1 "One" "off" 2 "Two" "off"'
                         if widget in ("checklist", "radiolist")
@@ -340,25 +343,31 @@ printf '\\n'
                         if widget != "yesno"
                         else 'dialog --title "Test" --yesno "Confirm" 10 65\n'
                     )
-                    shell = body("dialog") + "\n" + spec
                     proc = subprocess.run(
-                        ["bash", "-c", shell], capture_output=True,
-                        text=True, timeout=5, env={
-                            **os.environ,
-                            "PATH": str(root) + ":" + os.environ["PATH"],
-                            "AWG_MENU_CAPTURE": str(capture),
-                        })
+                        ["bash", "-c", shell_body + "\n" + spec],
+                        capture_output=True, text=True, timeout=5,
+                        env={**os.environ,
+                             "PATH": str(root) + ":" + os.environ["PATH"],
+                             "AWG_MENU_CAPTURE": str(capture)})
                     self.assertEqual(proc.returncode, 0, proc.stderr)
                     args = [
                         x.decode() for x in capture.read_bytes().split(b"\x00")
                         if x
                     ]
                     self.assertIn("--" + widget, args)
-                    self.assertEqual("--no-mouse" in args,
-                                     widget in ("menu", "checklist", "radiolist"))
-                    self.assertEqual(args.count("--no-mouse"),
-                                     int(widget != "yesno"))
+                    self.assertNotIn("--no-mouse", args)
                     self.assertIn("--ok-label", args)
+
+    def test_appearance_picker_uses_numeric_keys_and_saved_choice(self):
+        appearance = body("appearance_menu")
+        self.assertIn('1 "$(awg_option_label "Классическое"', appearance)
+        self.assertIn('2 "$(awg_option_label "Matrix Gradient"', appearance)
+        self.assertIn('0 "Назад"', appearance)
+        self.assertNotIn('classic "$(awg_option_label', appearance)
+        self.assertNotIn('matrix "$(awg_option_label', appearance)
+        self.assertIn('1|2)', appearance)
+        self.assertIn('if [[ "$choice" == 1 ]]', appearance)
+
 
     def test_subscription_format_marks_requested_not_detected(self):
         # Provider auto may detect base64 content; the saved choice is AUTO.
