@@ -314,6 +314,52 @@ printf '\\n'
         self.assertNotIn("Изменение действует при следующем запуске", SOURCE)
         self.assertNotIn("Сохранено: $choice. Изменение действует", SOURCE)
 
+    def test_classic_lists_allow_wheel_to_become_cursor_arrows(self):
+        # dialog's mouse tracking eats scroll-wheel events without moving the
+        # selection. Let the SSH terminal map wheel -> Up/Down instead.
+        with tempfile.TemporaryDirectory(prefix="awg-wheel-menu-") as td:
+            root = Path(td)
+            mock = root / "dialog"
+            capture = root / "args"
+            mock.write_text(
+                '#!/bin/sh\nprintf "%s\\0" "$@" > "$AWG_MENU_CAPTURE"\n'
+            )
+            mock.chmod(0o700)
+            for widget in ("menu", "checklist", "radiolist", "yesno"):
+                with self.subTest(widget=widget):
+                    # Noninteractive path still runs the common argument
+                    # preparation; no real dialog window or VPN calls.
+                    opts = (
+                        '1 "One" "off" 2 "Two" "off"'
+                        if widget in ("checklist", "radiolist")
+                        else '1 "One" 2 "Two"'
+                    )
+                    spec = (
+                        f'dialog --title "Test" --{widget} '
+                        f'"Choose" 13 72 3 {opts}\n'
+                        if widget != "yesno"
+                        else 'dialog --title "Test" --yesno "Confirm" 10 65\n'
+                    )
+                    shell = body("dialog") + "\n" + spec
+                    proc = subprocess.run(
+                        ["bash", "-c", shell], capture_output=True,
+                        text=True, timeout=5, env={
+                            **os.environ,
+                            "PATH": str(root) + ":" + os.environ["PATH"],
+                            "AWG_MENU_CAPTURE": str(capture),
+                        })
+                    self.assertEqual(proc.returncode, 0, proc.stderr)
+                    args = [
+                        x.decode() for x in capture.read_bytes().split(b"\x00")
+                        if x
+                    ]
+                    self.assertIn("--" + widget, args)
+                    self.assertEqual("--no-mouse" in args,
+                                     widget in ("menu", "checklist", "radiolist"))
+                    self.assertEqual(args.count("--no-mouse"),
+                                     int(widget != "yesno"))
+                    self.assertIn("--ok-label", args)
+
     def test_subscription_format_marks_requested_not_detected(self):
         # Provider auto may detect base64 content; the saved choice is AUTO.
         # No backend files are changed by this dialog.
