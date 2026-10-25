@@ -32,8 +32,8 @@ class ClassicWheel(unittest.TestCase):
             (down, wheel.DOWN),
             (down + up, wheel.DOWN + wheel.UP),
             (b"\x1b[<69;34;9M", wheel.DOWN),
-            (b"\x1b[<0;34;9M", b""),
-            (b"\x1b[<65;34;9m", b""),
+            (b"\x1b[<0;34;9M", b"\x1b[<0;34;9M"),
+            (b"\x1b[<65;34;9m", b"\x1b[<65;34;9m"),
             (b"\x1bOB", b"\x1bOB"),
         ):
             with self.subTest(seq=seq):
@@ -56,7 +56,7 @@ class ClassicWheel(unittest.TestCase):
         )
         self.assertIn('AWG_MENU_MATRIX_INNER:-0', MENU)
         self.assertIn('/usr/bin/python3 -B /usr/local/lib/awg-pi/awg-classic-wheel.py', MENU)
-        self.assertIn('args=(--no-mouse', MENU)
+        self.assertNotIn('args=(--no-mouse', MENU)
 
     @unittest.skipUnless(shutil.which("dialog"), "real dialog unavailable")
     def test_real_dialog_wheel_moves_selection_without_mouse_capture(self):
@@ -82,7 +82,7 @@ class ClassicWheel(unittest.TestCase):
             os.setsid()
             fcntl.ioctl(slave, termios.TIOCSCTTY, 0)
 
-        args = [sys.executable, str(HELPER), "--stdout", "--no-mouse",
+        args = [sys.executable, str(HELPER), "--stdout",
                 "--menu", "Mouse wheel", "15", "70", "8",
                 "one", "One", "two", "Two", "three", "Three"]
         if swapped:
