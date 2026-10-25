@@ -319,6 +319,42 @@ printf '\\n'
         self.assertIn('command dialog "${args[@]}"', wrapper)
 
 
+    def test_numbered_choices_preserve_backend_values(self):
+        # Execute the actual Bash picker functions with an isolated dialog
+        # stub. No live provider file, transport, network or menu is changed.
+        scenarios = (
+            ("mihomo_source_profile_dialog", " standard", "", (
+                ("1", "standard", 0), ("2", "remnawave", 0),
+                ("0", "0", 0))),
+            ("mihomo_protocol_select", " all", "", (
+                ("1", "all", 0), ("2", "vless", 0),
+                ("3", "trojan", 0), ("4", "hysteria2", 0),
+                ("5", "ss", 0), ("6", "vmess", 0),
+                ("0", "", 1))),
+            ("mihomo_provider_format_dialog", "",
+             'MIHOMO_CONFIGURE=mock_status\\n'
+             'mock_status(){ echo "Provider format requested: auto"; }\\n', (
+                ("1", "auto", 0), ("2", "mihomo", 0),
+                ("3", "vless", 0), ("4", "base64", 0),
+                ("0", "0", 0))),
+        )
+        for fn, params, setup, choices in scenarios:
+            for choice, expected, rc in choices:
+                with self.subTest(function=fn, selection=choice):
+                    shell = (
+                        body("awg_option_label") + "\\n" + body(fn) + "\\n" +
+                        setup + "BACKTITLE=Test\\n" +
+                        'CHOICE="' + choice + '"\\n' +
+                        'dialog(){ printf "%s\\\\n" "$CHOICE" >&2; }\\n' +
+                        fn + params + "\\n"
+                    )
+                    result = subprocess.run(
+                        ["bash", "-c", shell], capture_output=True,
+                        text=True, timeout=5)
+                    self.assertEqual(result.returncode, rc, result.stderr)
+                    self.assertEqual(result.stdout.strip(), expected)
+                    self.assertEqual(result.stderr, "")
+
     def test_appearance_picker_uses_numeric_keys_and_saved_choice(self):
         appearance = body("appearance_menu")
         self.assertIn('1 "$(awg_option_label "Классическое"', appearance)
