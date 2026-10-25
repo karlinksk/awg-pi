@@ -118,7 +118,10 @@ def main(stdscr):
     h,w=stdscr.getmaxyx()
     if h<22 or w<70:
         raise RuntimeError("Терминал должен быть не меньше 70x22")
-    tmux("-f","/dev/null","new-session","-d","-x",str(w),"-y",str(h),"-s","menu","sudo /usr/local/sbin/awg-menu --classic")
+    # Mark only the inner tmux menu, never the SSH-side menu process.
+    # Exit 42 from this pane tells the SSH-side launcher to switch to classic.
+    tmux("-f","/dev/null","new-session","-d","-x",str(w),"-y",str(h),"-s","menu",
+         "sudo /usr/bin/env AWG_MENU_MATRIX_INNER=1 /usr/local/sbin/awg-menu --classic")
     tmux("set-option", "-g", "remain-on-exit", "on")
     rng=random.Random()
     streams=[]
