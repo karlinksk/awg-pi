@@ -33,11 +33,11 @@ class Breadcrumbs(unittest.TestCase):
             execute_breadcrumb("AUTO — пул узлов",76,[
                 "mihomo_node_auto_menu","mihomo_node_policy_menu",
                 "mihomo_menu","vpn_menu"]),
-            "Главная › VPN › Mihomo › Резервирование › AUTO")
+            "Главная › VPN › Mihomo › Резервирование узлов Mihomo › AUTO")
         self.assertEqual(
             execute_breadcrumb("Резервирование узлов Mihomo",76,[
                 "mihomo_node_policy_menu","mihomo_menu","vpn_menu"]),
-            "Главная › VPN › Mihomo › Резервирование")
+            "Главная › VPN › Mihomo › Резервирование узлов Mihomo")
         self.assertEqual(
             execute_breadcrumb("Главное меню — [TRANSIT]",76,["vpn_menu"]),
             "Главное меню — [TRANSIT]")
@@ -119,7 +119,7 @@ vpn_menu
                 self.assertIn("--title",args)
                 title=args[args.index("--title")+1]
                 self.assertEqual(title,
-                  "Главная › VPN › Mihomo › Резервирование › Проверка ноды")
+                  "Главная › VPN › Mihomo › Резервирование узлов Mihomo › Проверка ноды")
                 self.assertEqual(args[args.index("--backtitle")+1],"test")
                 self.assertIn("--"+widget,args)
 
