@@ -1,3 +1,9 @@
+### 2026-10-25 — owner-designated nnmclub LAN path still not observed on Pi
+
+- Owner designated `https://nnmclub.to/` as an existing routed destination for the Windows test client. Windows DNS returned two IPv4 addresses; a genuine IPv4 HTTPS request bound to the client address with all curl proxies bypassed completed curl exit0, HTTP403, 5219 response bytes. This confirms a TLS/HTTP response, not successful site access; no cause of HTTP403 established.
+- Concurrent35-second Pi AF_PACKET observer matched TCP443 in both directions for both resolved destination IPv4s on eth0, mihomo0 and awg0. All three interfaces recorded zero matching packets, no matching LAN source. Therefore this specific curl transaction does not establish Pi forwarding. Browser/proxy/IPv6 paths and actual RouterOS rule matches were not inspected; do not infer their behavior or modify the router to force a pass. Previous positive observation control separately validated the same packet parsing method.
+- Baseline remained native Mihomo, Transit SAFE/ACTIVE/READY and SSH/DNS active. No Windows route/DNS, Pi service/transport, MikroTik or media changes. No payload retention. LAN release acceptance remains OPEN; need the existing client routing conditions or a guarded temporary Selective path.
+
 ### 2026-10-25 — existing Windows LAN path probe does not establish Pi forwarding
 
 - Owner selected a separate Windows LAN client; verified that its IPv4 belongs to the current workstation. No Windows route/DNS/interface settings changed. One real curl request bound to the client IPv4 with proxy bypass and fixed `one.one.one.one:443 -> 1.1.1.1` returned HTTP200/exit0.
