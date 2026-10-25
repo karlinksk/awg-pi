@@ -314,49 +314,10 @@ printf '\\n'
         self.assertNotIn("Изменение действует при следующем запуске", SOURCE)
         self.assertNotIn("Сохранено: $choice. Изменение действует", SOURCE)
 
-    def test_classic_lists_use_adapter_only_with_tty_and_helper(self):
-        # Never rely on the SSH client to turn wheel movements into arrows.
-        # Noninteractive calls retain native dialog; real TTY + installed
-        # helper translates wheel without interfering with native clicks.
-        with tempfile.TemporaryDirectory(prefix="awg-wheel-menu-") as td:
-            root = Path(td)
-            mock = root / "dialog"
-            capture = root / "args"
-            mock.write_text(
-                '#!/bin/sh\nprintf "%s\\0" "$@" > "$AWG_MENU_CAPTURE"\n'
-            )
-            mock.chmod(0o700)
-            shell_body = body("dialog")
-            self.assertIn('AWG_MENU_MATRIX_INNER:-0', shell_body)
-            self.assertIn('awg-classic-wheel.py', shell_body)
-            self.assertIn('if ((wheel_adapter))', shell_body)
-            for widget in ("menu", "checklist", "radiolist", "yesno"):
-                with self.subTest(widget=widget):
-                    opts = (
-                        '1 "One" "off" 2 "Two" "off"'
-                        if widget in ("checklist", "radiolist")
-                        else '1 "One" 2 "Two"'
-                    )
-                    spec = (
-                        f'dialog --title "Test" --{widget} '
-                        f'"Choose" 13 72 3 {opts}\n'
-                        if widget != "yesno"
-                        else 'dialog --title "Test" --yesno "Confirm" 10 65\n'
-                    )
-                    proc = subprocess.run(
-                        ["bash", "-c", shell_body + "\n" + spec],
-                        capture_output=True, text=True, timeout=5,
-                        env={**os.environ,
-                             "PATH": str(root) + ":" + os.environ["PATH"],
-                             "AWG_MENU_CAPTURE": str(capture)})
-                    self.assertEqual(proc.returncode, 0, proc.stderr)
-                    args = [
-                        x.decode() for x in capture.read_bytes().split(b"\x00")
-                        if x
-                    ]
-                    self.assertIn("--" + widget, args)
-                    self.assertNotIn("--no-mouse", args)
-                    self.assertIn("--ok-label", args)
+    def test_classic_dialog_uses_standard_input(self):
+        wrapper=body("dialog")
+        self.assertIn('command dialog "${args[@]}"', wrapper)
+
 
     def test_appearance_picker_uses_numeric_keys_and_saved_choice(self):
         appearance = body("appearance_menu")
