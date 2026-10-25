@@ -41,7 +41,7 @@ class XrayAutoMenu(unittest.TestCase):
             shell = (
                 'BACKTITLE=TEST\nMIHOMO_NODE_POLICY=/bin/true\n'
                 'dialog() { printf "%s\\n" "$@" > "$OUT"; return 1; }\n'
-                + self.menu_section() + '\n'
+                + "awg_option_label(){" + MENU.read_text().split("awg_option_label(){", 1)[1].split("\n}\n", 1)[0] + "\n}\n" + self.menu_section() + '\n'
                 'mihomo_xray_auto_menu\n'
             )
             process = subprocess.run(
