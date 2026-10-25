@@ -317,7 +317,7 @@ printf '\\n'
     def test_classic_lists_use_adapter_only_with_tty_and_helper(self):
         # Never rely on the SSH client to turn wheel movements into arrows.
         # Noninteractive calls retain native dialog; real TTY + installed
-        # helper gets --no-mouse only for selection lists.
+        # helper translates wheel without interfering with native clicks.
         with tempfile.TemporaryDirectory(prefix="awg-wheel-menu-") as td:
             root = Path(td)
             mock = root / "dialog"
