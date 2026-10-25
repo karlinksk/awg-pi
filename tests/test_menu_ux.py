@@ -203,5 +203,71 @@ show_operation_result 7 'Проверка подписки'
         self.assertNotIn('узел и страна Mihomo не переключаются автоматически', SOURCE)
 
 
+    def test_persisted_choice_marker_and_unknown_choice(self):
+        shell = body("awg_option_label") + """
+awg_option_label "Все протоколы" all all
+printf '\\n'
+awg_option_label "VLESS" vless all
+printf '\\n'
+awg_option_label "Выборочный шлюз" selective ""
+printf '\\n'
+awg_option_label "Matrix Gradient" matrix matrix
+printf '\\n'
+"""
+        p = subprocess.run(["bash", "-c", shell], capture_output=True,
+                           text=True, timeout=5, check=True)
+        self.assertEqual(p.stdout.splitlines(), [
+            "Все протоколы ✓", "VLESS", "Выборочный шлюз", "Matrix Gradient ✓",
+        ])
+        for statement in (
+            'awg_option_label "Все протоколы" all "$current"',
+            'awg_option_label "$mihomo_label" mihomo "$current"',
+            'awg_option_label "$selective_label" selective "$current_id"',
+            'awg_option_label "Matrix Gradient" matrix "$current"',
+            'awg_option_label "MANUAL" manual "$active_policy"',
+            'awg_option_label "Включить Xray в AUTO" enabled "$xray_option"',
+        ):
+            self.assertIn(statement, SOURCE)
+
+    def test_protocol_setting_has_one_ui_entry_point(self):
+        # Extra picker action was a duplicate writer of the same pool protocol.
+        self.assertIn("mihomo_protocol_settings", body("mihomo_subscription_menu"))
+        extra = body("mihomo_pool_pick")
+        self.assertNotIn("mihomo_protocol_select ", extra)
+        self.assertNotIn('"$MIHOMO_POOL" protocol set', extra)
+        self.assertNotIn('3 "Протокол', extra)
+        self.assertIn('2 "Фильтр региона', extra)
+        self.assertIn('3 "Обновить проверку', extra)
+        self.assertIn('5 "Показать все результаты', extra)
+
+    def test_unified_catalog_never_counts_unverified_xray_as_fail(self):
+        with tempfile.TemporaryDirectory(prefix="awg-node-evidence-") as td:
+            capture = Path(td) / "dialog-args"
+            listing = "\\n".join([
+                "1\\tXray-unknown\\tvless\\tn1.example:443\\t-\\tXRAY_UNTESTED\\t??\\t-",
+                "2\\tXray-good\\tvless\\tn2.example:443\\t-\\tXRAY_HTTPS\\t??\\t-",
+                "3\\tXray-bad\\tvless\\tn3.example:443\\t-\\tXRAY_NETWORK_FAIL\\t??\\t-",
+                "4\\tMihomo-fail\\thysteria2\\tn4.example:2097\\t-\\tMIHOMO_FAIL\\tDE\\t-",
+            ])
+            shell = body("select_tsv_node_dialog") + """
+mihomo_clip_node_label(){ printf '%s' "$1"; }
+mihomo_display_node_name(){ printf '%s' "$1"; }
+dialog(){ printf '%s\\n' "$@" > "$CAPTURE"; return 1; }
+MIHOMO_UNIFIED=/bin/false
+select_tsv_node_dialog "Точка выхода Mihomo / Xray" "Выберите ноду" "$LISTING" yes candidate
+"""
+            result = subprocess.run(["bash", "-c", shell],
+                                    env={**os.environ, "CAPTURE": str(capture),
+                                         "LISTING": listing},
+                                    capture_output=True, text=True, timeout=5)
+            self.assertEqual(result.returncode, 1, result.stderr)
+            output = capture.read_text()
+            self.assertIn("Xray: OK 1 | FALL 1 | без вердикта 1", output)
+            self.assertIn("Mihomo: OK 0 | FALL 1 | без вердикта 0", output)
+            self.assertIn("Xray-unknown | Xray | vless | n1.example:443 | — | НЕ ПРОВ.", output)
+            self.assertIn("Xray-bad | Xray | vless | n3.example:443 | — | FALL", output)
+            self.assertNotIn("Xray OK: 0", output)
+
+
 if __name__ == "__main__":
     unittest.main()
