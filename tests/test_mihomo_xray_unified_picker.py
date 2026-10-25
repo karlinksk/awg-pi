@@ -205,7 +205,7 @@ done""")
 
     def test_menu_distinguishes_server_address_from_egress(self):
         menu=(ROOT/"src/awg-menu").read_text()
-        self.assertIn('Сервер подключения: $endpoint',menu)
+        self.assertIn('Адрес сервера: $endpoint',menu)
         self.assertNotIn('mihomo_live_egress_ip()',menu)
         self.assertIn('Доступность внешних сайтов не проверялась',menu)
         self.assertNotIn('TUN HTTPS подтверждён',menu)
