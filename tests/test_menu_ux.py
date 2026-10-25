@@ -212,7 +212,7 @@ show_operation_result 7 'Проверка подписки'
         self.assertIn('status_args=(--provider', SOURCE)
         self.assertIn('"${status_args[@]}"', SOURCE)
         self.assertIn('if [[ "$transport" == "не настроен" ]]', SOURCE)
-        self.assertIn('Смена узлов Mihomo управляется отдельной политикой', SOURCE)
+        self.assertIn('MANUAL — ручной выбор. AUTO — переход к следующей доступной ноде при отказе.', SOURCE)
         self.assertIn('только если профиль AWG настроен и работоспособен', SOURCE)
         self.assertNotIn('узел и страна Mihomo не переключаются автоматически', SOURCE)
 
