@@ -10,7 +10,17 @@ if [[ "${AWG_MENU_REEXEC:-0}" != 1 && "${1:-}" != "--classic" &&
      command -v tmux >/dev/null 2>&1; then
     _awg_owner="${SUDO_USER:-}"
     if [[ -n "$_awg_owner" && "$_awg_owner" != root ]] && id "$_awg_owner" >/dev/null 2>&1; then
-      exec /usr/sbin/runuser -u "$_awg_owner" -- /usr/bin/python3 /usr/local/lib/awg-pi/awg-matrix-compositor.py
+      # A Matrix inner menu returns 42 to request an in-place switch to
+      # classic.  Keep the original SSH terminal and never spawn nested UI.
+      if /usr/sbin/runuser -u "$_awg_owner" -- /usr/bin/python3 /usr/local/lib/awg-pi/awg-matrix-compositor.py; then
+        exit 0
+      else
+        _matrix_rc=$?
+        if (( _matrix_rc == 42 )); then
+          exec /usr/local/sbin/awg-menu --classic
+        fi
+        exit "$_matrix_rc"
+      fi
     fi
   fi
 fi
@@ -2841,30 +2851,44 @@ $(grep -E '^NOTIFY_(CONFIGURED|PENDING|LAST_ROUTE)=' <<<"$current" || true)
   done
 }
 
+awg_menu_restart_for_appearance(){
+  # The compositor owns the real SSH terminal. Its inner tmux dialog exits
+  # with an explicit hand-off code; the outer menu starts classic directly.
+  if [[ "${AWG_MENU_MATRIX_INNER:-0}" == 1 ]]; then
+    exit 42
+  fi
+  # In classic the menu is a temporary self-copy. Remove temporary files
+  # before replacing that process; no SSH session is terminated.
+  cleanup
+  unset AWG_MENU_REEXEC
+  exec /usr/local/sbin/awg-menu
+}
+
 appearance_menu(){
   local choice current style_tmp current_label
   while true; do
     current="$(cat /etc/awg-pbr/menu-appearance 2>/dev/null || printf classic)"
     if [[ "$current" == matrix ]]; then current_label="Matrix Gradient"; else current_label="Классическое"; fi
     choice="$(dialog --backtitle "$BACKTITLE" --title "Оформление интерфейса" --item-help --menu \
-      "Текущее оформление: $current_label. Изменение действует после перезапуска меню." 17 88 3 \
-      classic "$(awg_option_label "Классическое" classic "$current")" "Без анимации. Резервный интерфейс." \
-      matrix "$(awg_option_label "Matrix Gradient" matrix "$current")" "Зелёный цифровой дождь за окнами штатного меню." \
+      "Выберите оформление. Оно переключится сразу." 17 88 3 \
+      classic "$(awg_option_label "Классическое" classic "$current")" "Обычное меню без анимации." \
+      matrix "$(awg_option_label "Matrix Gradient" matrix "$current")" "Зелёные символы на фоне меню." \
       back "Назад" "Без изменений." 3>&1 1>&2 2>&3)" || return 0
     case "$choice" in
       back) return 0 ;;
       classic|matrix)
+        [[ "$choice" != "$current" ]] || return 0
         if [[ "$choice" == matrix ]] &&
            { ! command -v tmux >/dev/null 2>&1 || [[ ! -r /usr/local/lib/awg-pi/awg-matrix-compositor.py ]]; }; then
-          msg "Оформление интерфейса" "Matrix Gradient не установлен полностью. Классическое меню остаётся доступным."
+          msg "Оформление интерфейса" "Matrix Gradient не установлен. Используйте классическое оформление."
           continue
         fi
         style_tmp="$(mktemp /etc/awg-pbr/.menu-appearance.XXXXXXXX)"
         printf '%s\n' "$choice" > "$style_tmp"
         chmod 0600 "$style_tmp"
         mv -f "$style_tmp" /etc/awg-pbr/menu-appearance
-        msg "Оформление интерфейса" "Сохранено: $choice. Изменение действует при следующем запуске.\n\nРезервный вход: sudo /usr/local/sbin/awg-menu --classic"
-        return 0 ;;
+        awg_menu_restart_for_appearance
+        ;;
     esac
   done
 }
