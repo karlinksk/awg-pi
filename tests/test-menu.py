@@ -150,7 +150,7 @@ assert 'provider-url set-file "$url_tmp"' not in menu
 assert '"$MIHOMO_CONFIGURE" provider update auto' in menu
 assert '4 "Протокол пула узлов"' in menu
 assert 'Настройка подписки и обновление списка нод.' in menu
-assert 'direct "DIRECT"' in menu
+assert '1 "DIRECT"' in menu
 assert 'router "Router/default"' not in menu
 assert 'сначала DIRECT, затем доступные транспорты' in menu
 assert 'Рабочий профиль не меняется до выбора узла и применения.' in menu
