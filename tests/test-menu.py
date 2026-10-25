@@ -122,7 +122,7 @@ for label in (
     '6 "Диагностика"',
     '7 "Обновления"',
     '8 "Журналы"',
-    '9 "Системные функции"',
+    '9 "Система"',
     '10 "Выйти в командную строку"',
     '0 "Завершить SSH-сессию"',
 ):
@@ -400,6 +400,25 @@ for label in ('1 "Обновить через выбранный канал"', '
 for func in ('mihomo_candidate_menu(){', 'mihomo_standby_repair_menu(){',
              'mihomo_xray_vless_menu(){'):
     assert func in menu
+
+# System menu: one entry per action, with no duplicate configuration reload.
+system_menu=menu.split('system_menu(){',1)[1].split('\n}\n',1)[0]
+assert 'Перезагрузить конфигурацию AWG-шлюза' not in system_menu
+assert 'capture "$AWG_ROUTE" reload' not in system_menu
+for tag, label, dispatch in (
+    (1, "Перезагрузить Raspberry Pi", "systemctl reboot"),
+    (2, "Выключить Raspberry Pi", "systemctl poweroff"),
+    (3, "Перенастроить сеть LAN", 'network reconfigure'),
+    (4, "Внешние DNS-серверы", 'dns_menu'),
+    (5, "Режим работы", 'operating_mode_menu'),
+    (6, "Часовой пояс", 'timezone_menu'),
+    (7, "Статистика трафика", 'traffic_screen'),
+    (8, "Desktop Commander — удалённый доступ", 'desktop_commander_menu'),
+    (9, "Telegram — уведомления", 'notify_menu'),
+    (10, "Оформление интерфейса", 'appearance_menu'),
+):
+    assert f'{tag} "{label}' in system_menu
+    assert dispatch in system_menu
 
 # Active transport lives at VPN-routing level in both modes.
 vpn_start = menu.index('vpn_menu(){')
