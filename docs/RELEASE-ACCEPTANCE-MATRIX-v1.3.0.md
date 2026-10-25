@@ -13,28 +13,43 @@ engine network assessment, never individual service eligibility.
 
 | Required area | Evidence and exact scope | Current disposition |
 | --- | --- | --- |
-| Current HEAD CI | `96da642`: complete push CI40206880147 success; Pi rootless discovery1001 OK (3 skips), 68.632s; isolated privileged MSS namespace tests3/3 OK. Subsequent docs-only HEAD still requires its own checks. | Source/test candidate PASS; recheck final documentation HEAD |
+| Current HEAD CI | Installed candidate `443bfa5`: complete CI40207107387 and40207111387 success; unchanged runtime/test tree from `96da642`, Pi discovery1001 OK (3 skips), namespace tests3/3 OK. Later evidence-only documentation HEAD needs its own CI. | Installed candidate PASS; recheck new documentation HEAD |
 | Installed source / delivery | Fresh read-only privileged audit of all 75 literal installer helper/unit deliveries against `5466a73`: 75 byte matches, all root-owned; helpers 0755, common library/units 0644. Eight network helpers and accepted numeric menu also match exact Git blobs. Test-only repair changes none of these files. | PASS for audited delivery set; not an installer execution |
 | Transit IPv4 LAN | Windows Mihomo correlated ingress/TUN/return; installed dynamic-MSS AWG 22/22 HTTP200, outgoing MSS1380, zero target-bound direct egress. | Existing bounded hardware PASS credited |
 | Transit FAIL-CLOSED | Both backends stopped under recovery: 26 target ingress, zero matching direct egress/VPN traffic; six contained client attempts timed out; baseline recovered. | Existing target-scoped IPv4 negative PASS credited; no all-path/IPv6 claim |
 | Selective FAIL-OPEN/re-arm | Real iPhone Mihomo and AWG forwarding, backend-down DIRECT, restored VPN forwarding, independent recovery. | Existing bounded hardware PASS credited |
 | Manual/AUTO recovery | Guarded Mihomo/AWG switching; endpoint failure to later native; native/Xray/native; old-card 13-profile exhaustion to sticky AWG. Preserve dated revision/provider scope in PROJECT_STATE. | Existing scoped PASS credited; no repeated pool/outage trials |
-| Clean install / onboarding | Separate Debian13 ARM64 card, initially no profiles, later real onboarding; earlier installer-source scope recorded. | Existing scoped PASS; not exact final-source clean install |
-| Upgrade / gateway restore / reboot | Actual `07d8e0d` upgrade, 75/75 delivery, 13/13 preserved-state digests, actual snapshot restore and reboot; later MSS/UI changes separately installed and tested. Current 75/75 byte audit reconciles installed artifacts. | Scoped PASS; final frozen-source lifecycle remains OPEN |
+| Clean install / onboarding | Actual fresh Debian13.7 ARM64 installation pinned to `443bfa5`, installer SHA256 verified, 75/75 delivered bytes/owners/modes match; Selective/unconfigured, no AWG/provider/Xray profiles, DNS/SSH/control services active, failed units0. | Exact-candidate clean-install PASS; new-card profile onboarding not yet performed |
+| Upgrade / gateway restore / reboot | Earlier actual `07d8e0d` preserving upgrade/snapshot restore/configured reboot remains scoped evidence. New `443bfa5` clean-card real reboot changed boot-ID; 15/15 private digests/absences and75/75 deliveries match afterward, DNS/SSH/control services active, all VPN engines remain inactive. | Exact-candidate empty-state reboot PASS; configured lifecycle scope remains distinct |
 | Full-media recovery | A gateway tar snapshot and its successful restore do not prove booting restored spare media. No verified full-media restore/boot receipt established. | OPEN; do not write working microSD or unidentified media |
 | Promotion | PR targets integration branch, not main. Inspect integration/release path and final checks before any merge/tag/release. | Draft, unmerged, unreleased |
 
-Fresh receipt reconciliation also confirmed actual reboot boot-ID change,
+Pre-swap receipt reconciliation also confirmed actual reboot boot-ID change,
 `BOOT_RESCUE=HEALTHY_NO_RESTORE`, 13 policy matches and removed temporary units;
 the restore receipt records 13 policies, bound HTTP200 and guard SAFE. These
 are historical results. Today's comparison to that archived private baseline
 is **12/13**, with `provider.env` changed (both versions present); cause not
 established. Do not restore old provider state or claim current 13/13 equality.
-Current native Mihomo and standby AWG are healthy, DNS resolves, controls are
+At that pre-swap checkpoint native Mihomo and standby AWG were healthy, DNS resolved, controls were
 active, Transit SAFE/ACTIVE/READY, failed units0 and no rescue/recovery timer
 listed. Read-only storage inventory shows only the boot microSD, loop and
 zram; no spare restore target is attached. No live gateway or media changes
-were made during this audit.
+were made during that audit.
+
+After the owner swapped media, the hardware CID and root UUID matched the
+original-card guard recorded on24 Oct. Installation was paused; owner explicitly
+confirmed this card may be used and working media is retained separately.
+Do not describe it as a newly identified third physical card or an image restore.
+Owner executed the verified pinned installer; independent postflight confirmed
+Debian13.7 ARM64, empty profiles and75/75 delivery. A standard gateway backup
+of124028899 bytes was created, copied off Pi to a private workstation directory
+and SHA256 matched (`caa6138ac6c0c6763404b5f16591dab73b55176e7bb9461ed166f76c22f5701a`).
+This is an archive-integrity/copy PASS, not actual snapshot or full-media restore.
+Actual reboot at22:55 +07 succeeded; privileged postboot comparison confirmed
+15/15 baseline entries and75/75 deliveries. Node22/WebSocket recovered, pinned
+Stage18 disk-cache hashes matched. Stage18 RAM runtime is absent as expected
+before subscription import (provider ConditionPathExists); no media test ran.
+No network failure injection, MikroTik or working-media change was performed.
 
 Reopen hardware only for a concrete uncovered required behavior or a material
 network-code change. A stale unchecked box is not a reason to repeat a fault
