@@ -425,7 +425,7 @@ for needle in (
     'BACKTITLE="$BASE_BACKTITLE | Режим: $(operating_mode_badge "$mode")"',
     "РЕЖИМ:",
     'Главное меню — [$mode_badge]',
-    '[ТЕКУЩИЙ]',
+    'awg_option_label "$selective_label" selective "$current_id"',
     'Режим работы [$mode_badge]',
     'VPN-маршрутизация [TRANSIT]',
     'VPN-маршрутизация [SELECTIVE]',
