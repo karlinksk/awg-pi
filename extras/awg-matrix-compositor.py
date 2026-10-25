@@ -159,7 +159,7 @@ def main(stdscr):
                 if 0<=y<h:
                     # Each visible glyph flickers independently as it falls.
                     # Only its character changes, never the stream geometry.
-                    if rng.random()<min(1.0,dt*12.0):
+                    if rng.random()<min(1.0,dt*6.0):
                         s["chars"][k]=rng.choice(GLYPHS)
                     try: stdscr.addstr(y,x,s["chars"][k],curses.color_pair(1+min(6,k*7//max(1,s["len"]-1))))
                     except curses.error: pass
