@@ -416,14 +416,20 @@ awg_option_label(){
   fi
 }
 mihomo_source_profile_dialog(){
-  local current="${1:-}" standard_label="Обычная подписка Mihomo/Clash" remnawave_label="Citadel / Remnawave"
+  local choice current="${1:-}" standard_label="Обычная подписка Mihomo/Clash" remnawave_label="Citadel / Remnawave"
   standard_label="$(awg_option_label "$standard_label" standard "$current")"
   remnawave_label="$(awg_option_label "$remnawave_label" remnawave "$current")"
-  dialog --backtitle "$BACKTITLE" --title "Тип подписки" --item-help --menu \
+  choice="$(dialog --backtitle "$BACKTITLE" --title "Тип подписки" --item-help --menu \
     "Выберите тип нового источника. Это важно при переходе между Citadel/Remnawave и обычной подпиской." 20 108 5 \
-    standard "$standard_label" "URL используется как есть; HWID и служебный суффикс /mihomo не добавляются." \
-    remnawave "$remnawave_label" "Используется постоянный HWID; к базовой ссылке при необходимости добавляется /mihomo." \
-    0 "Назад" "Не менять источник." 3>&1 1>&2 2>&3
+    1 "$standard_label" "URL используется как есть; HWID и служебный суффикс /mihomo не добавляются." \
+    2 "$remnawave_label" "Используется постоянный HWID; к базовой ссылке при необходимости добавляется /mihomo." \
+    0 "Назад" "Не менять источник." 3>&1 1>&2 2>&3)" || return 1
+  case "$choice" in
+    1) printf '%s\n' standard ;;
+    2) printf '%s\n' remnawave ;;
+    0) printf '%s\n' 0 ;;
+    *) return 1 ;;
+  esac
 }
 
 run_with_progress(){
@@ -939,10 +945,17 @@ vpn_destination_menu(){
         [[ -n "$target" ]] || continue
         method="$(dialog --backtitle "$BACKTITLE" --title "Источник VPN-направления" --item-help --menu \
           "Значение: $target" 18 100 5 \
-          manual "Ручной VPN-домен" "Добавляет домен в локальный VPN-список; правило действует также на его поддомены." \
-          group "Группа OpenCCK" "Добавляет группу OpenCCK с доменными данными и сразу загружает кэш." \
-          site "Сайт OpenCCK" "Добавляет сайт OpenCCK с доменными данными и сразу загружает кэш." \
+          1 "Ручной VPN-домен" "Добавляет домен в локальный VPN-список; правило действует также на его поддомены." \
+          2 "Группа OpenCCK" "Добавляет группу OpenCCK с доменными данными и сразу загружает кэш." \
+          3 "Сайт OpenCCK" "Добавляет сайт OpenCCK с доменными данными и сразу загружает кэш." \
           0 "Назад" "Ничего не добавлять." 3>&1 1>&2 2>&3)" || continue
+        case "$method" in
+          1) method=manual ;;
+          2) method=group ;;
+          3) method=site ;;
+          0) ;;
+          *) continue ;;
+        esac
         case "$method" in
           manual)
             title="Добавление VPN-домена"
@@ -1335,18 +1348,35 @@ mihomo_protocol_label(){
 }
 
 mihomo_protocol_select(){
-  local current="${1:-all}" choice
-  choice="$(dialog --backtitle "$BACKTITLE" --title "Протокол пула узлов" --default-item "$current" --item-help --menu \
+  local current="${1:-all}" choice default_item
+  case "$current" in
+    all) default_item=1 ;;
+    vless) default_item=2 ;;
+    trojan) default_item=3 ;;
+    hysteria2) default_item=4 ;;
+    ss) default_item=5 ;;
+    vmess) default_item=6 ;;
+    *) default_item=1 ;;
+  esac
+  choice="$(dialog --backtitle "$BACKTITLE" --title "Протокол пула узлов" --default-item "$default_item" --item-help --menu \
     "Какие протоколы показывать при выборе и проверке узлов. «Все протоколы» включены по умолчанию." 23 108 9 \
-    all "$(awg_option_label "Все протоколы" all "$current")" "Показывать все поддерживаемые протоколы." \
-    vless "$(awg_option_label "VLESS" vless "$current")" "Проверять и предлагать только VLESS." \
-    trojan "$(awg_option_label "Trojan" trojan "$current")" "Проверять и предлагать только Trojan." \
-    hysteria2 "$(awg_option_label "Hysteria2" hysteria2 "$current")" "Проверять и предлагать только Hysteria2." \
-    ss "$(awg_option_label "Shadowsocks (SS)" ss "$current")" "Проверять и предлагать только Shadowsocks." \
-    vmess "$(awg_option_label "VMess" vmess "$current")" "Проверять и предлагать только VMess." \
+    1 "$(awg_option_label "Все протоколы" all "$current")" "Показывать все поддерживаемые протоколы." \
+    2 "$(awg_option_label "VLESS" vless "$current")" "Проверять и предлагать только VLESS." \
+    3 "$(awg_option_label "Trojan" trojan "$current")" "Проверять и предлагать только Trojan." \
+    4 "$(awg_option_label "Hysteria2" hysteria2 "$current")" "Проверять и предлагать только Hysteria2." \
+    5 "$(awg_option_label "Shadowsocks (SS)" ss "$current")" "Проверять и предлагать только Shadowsocks." \
+    6 "$(awg_option_label "VMess" vmess "$current")" "Проверять и предлагать только VMess." \
     0 "Назад" "Не менять протокольный фильтр." 3>&1 1>&2 2>&3)" || return 1
   [[ "$choice" != 0 ]] || return 1
-  printf '%s\n' "$choice"
+  case "$choice" in
+    1) printf '%s\n' all ;;
+    2) printf '%s\n' vless ;;
+    3) printf '%s\n' trojan ;;
+    4) printf '%s\n' hysteria2 ;;
+    5) printf '%s\n' ss ;;
+    6) printf '%s\n' vmess ;;
+    *) return 1 ;;
+  esac
 }
 
 mihomo_protocol_settings(){
@@ -1786,20 +1816,28 @@ paste_mihomo_provider(){
 }
 
 mihomo_provider_format_dialog(){
-  local current status
+  local current status choice
   # Mark the persisted requested format, not the format AUTO detected in
   # the last download. Do not invent a choice if status cannot be read.
   status="$("$MIHOMO_CONFIGURE" status 2>/dev/null || true)"
   current="$(sed -n 's/^Provider format requested: //p' <<<"$status" | head -n1)"
   case "$current" in auto|mihomo|vless|base64) ;; *) current="" ;; esac
-  dialog --backtitle "$BACKTITLE" --title "Формат подписки" --item-help --menu \
+  choice="$(dialog --backtitle "$BACKTITLE" --title "Формат подписки" --item-help --menu \
     "AUTO выбирает формат автоматически. Ручной выбор нужен, только если распознавание не работает." \
     21 108 7 \
-    auto "$(awg_option_label "AUTO" auto "$current")" "Определять формат подписки автоматически." \
-    mihomo "$(awg_option_label "Mihomo / Clash YAML" mihomo "$current")" "Подписка в формате Mihomo/Clash YAML." \
-    vless "$(awg_option_label "VLESS URI" vless "$current")" "Список ссылок VLESS." \
-    base64 "$(awg_option_label "Base64 VLESS" base64 "$current")" "Список ссылок VLESS в кодировке Base64." \
-    0 "Назад" "Не менять формат." 3>&1 1>&2 2>&3
+    1 "$(awg_option_label "AUTO" auto "$current")" "Определять формат подписки автоматически." \
+    2 "$(awg_option_label "Mihomo / Clash YAML" mihomo "$current")" "Подписка в формате Mihomo/Clash YAML." \
+    3 "$(awg_option_label "VLESS URI" vless "$current")" "Список ссылок VLESS." \
+    4 "$(awg_option_label "Base64 VLESS" base64 "$current")" "Список ссылок VLESS в кодировке Base64." \
+    0 "Назад" "Не менять формат." 3>&1 1>&2 2>&3)" || return 1
+  case "$choice" in
+    1) printf '%s\n' auto ;;
+    2) printf '%s\n' mihomo ;;
+    3) printf '%s\n' vless ;;
+    4) printf '%s\n' base64 ;;
+    0) printf '%s\n' 0 ;;
+    *) return 1 ;;
+  esac
 }
 
 mihomo_node_chain_editor(){
@@ -2135,11 +2173,17 @@ mihomo_update_selected_channel(){
   local fetch_mode fetch_label
   fetch_mode="$(dialog --backtitle "$BACKTITLE" --title "Канал загрузки" --item-help --menu \
     "Выберите канал только для этой загрузки подписки." 20 100 6 \
-    direct "DIRECT" "Запрос выходит через обычный сетевой канал Pi без SSTP и без другого VPN-транспорта." \
-    mihomo "Mihomo" "HTTP-запрос идёт через локальный прокси Mihomo 127.0.0.1; используйте только если Mihomo работоспособен." \
-    awg "AmneziaWG" "Запрос принудительно идёт через awg0; используйте только если AWG работоспособен." \
+    1 "DIRECT" "Запрос выходит через обычный сетевой канал Pi без SSTP и без другого VPN-транспорта." \
+    2 "Mihomo" "HTTP-запрос идёт через локальный прокси Mihomo 127.0.0.1; используйте только если Mihomo работоспособен." \
+    3 "AmneziaWG" "Запрос принудительно идёт через awg0; используйте только если AWG работоспособен." \
     0 "Назад" "Не выполнять обновление." 3>&1 1>&2 2>&3)" || return 0
   [[ "$fetch_mode" != 0 ]] || return 0
+  case "$fetch_mode" in
+    1) fetch_mode=direct ;;
+    2) fetch_mode=mihomo ;;
+    3) fetch_mode=awg ;;
+    *) return 0 ;;
+  esac
   case "$fetch_mode" in
     direct) fetch_label="DIRECT" ;;
     mihomo) fetch_label="Mihomo" ;;
