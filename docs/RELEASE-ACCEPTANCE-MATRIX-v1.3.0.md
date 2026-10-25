@@ -68,6 +68,28 @@ and timer were removed only after success; independent SSH confirmed absence.
 No actual restore occurred in this new trial, no profile values were printed,
 and no broad outage, forced switch or new client/media acceptance was claimed.
 
+Owner then requested DC, Telegram and Transit before the whole-media image.
+Pinned DC0.2.52 cache was prepared with offline startup resolution; owner
+completed OAuth as ordinary user. Pairing foreground job was identified exactly
+and ended with SIGINT, then the persistent nonroot karlinks service was enabled.
+Separate connected-DC command execution succeeded after service handover.
+Owner configured Telegram privately; test delivery returned sent1/pending0 via
+awg0 before and after Transit. Flush/watch/daily timers and boot notification
+enabled according to existing preferences; next daily09:00 Asia/Novosibirsk.
+Router/SSTP fallback attestation remains absent; no eth0 fallback was enabled.
+
+Transit preflight passed. Standard pre-transition backup124033091 bytes was
+privately copied off-device with matching SHA256
+`5566db4ea57f80e1f2fa9e0ebf39d285b4fa22115f6a6347d033fcfe3a48e6aa`.
+Independent5s timer exercised the fixed standard return to already-selected
+Selective harmlessly;19/19 protected settings and all controls remained healthy.
+Then300s rescue armed and standard mode transition ran in an independent unit,
+exit0. Postcheck: Transit SAFE/ACTIVE/READY,19/19 non-mode invariants unchanged,
+activeAWG, both bound HTTPS200/curl0, SSH/DNS/DC healthy, actual DC execution
+and Telegram test succeeded, failed units0. Rescue was stopped only afterward;
+no test timer remained. MikroTik unchanged. This is configured Transit activation,
+not a repeated outage, new LAN-client proof or full-media restore acceptance.
+
 Reopen hardware only for a concrete uncovered required behavior or a material
 network-code change. A stale unchecked box is not a reason to repeat a fault
 trial. Safe read-only reconciliation does not authorize a new reboot, installer
