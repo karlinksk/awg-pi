@@ -160,7 +160,7 @@ def main(stdscr):
                     try: stdscr.addstr(y,x,s["chars"][k],curses.color_pair(1+min(6,k*7//max(1,s["len"]-1))))
                     except curses.error: pass
             s["y"]+=s["speed"]*dt
-            if rng.random()<dt*1.5: s["chars"][rng.randrange(s["len"])]=rng.choice(GLYPHS)
+            if rng.random()<dt*8.0: s["chars"][rng.randrange(s["len"])]=rng.choice(GLYPHS)
             if s["y"]-s["len"]>h: s["y"]=rng.uniform(-h,0)
         for y,row in enumerate(captured):
             # Dialog button row contains < ОК > etc. Color *all* button glyphs alike.
