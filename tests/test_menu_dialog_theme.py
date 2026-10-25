@@ -36,7 +36,7 @@ class MenuVisualTheme(unittest.TestCase):
 
     def test_palette_matches_approved_dark_high_contrast(self):
         for field in (
-            "use_colors = ON", "use_shadow = ON",
+            "use_colors = ON", "use_shadow = OFF",
             "dialog_color = (WHITE,BLUE,OFF)",
             "item_color = dialog_color",
             "item_selected_color = (WHITE,BLACK,ON)",

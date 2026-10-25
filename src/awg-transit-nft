@@ -27,6 +27,7 @@ fi
 forward_rule=""
 mark_rule=""
 nat_rule=""
+transport_mss_rule=""
 
 case "$LOCKDOWN" in
   0)
@@ -38,6 +39,9 @@ case "$LOCKDOWN" in
     forward_rule="    iifname \"$LAN_IF\" ether saddr $ROUTER_MAC ip saddr @transit4 oifname \"$TRANSPORT_IF\" accept"
     mark_rule="    iifname \"$LAN_IF\" ether saddr $ROUTER_MAC ip saddr @transit4 ip daddr != $LAN_CIDR meta mark set $VPN_MARK"
     nat_rule="    ip saddr @transit4 oifname \"$TRANSPORT_IF\" masquerade"
+    # Forwarded LAN sockets do not inherit the VPN link's smaller MTU.
+    # nft's MSS setter only lowers an existing option; route lookup is live.
+    transport_mss_rule="    iifname \"$LAN_IF\" ether saddr $ROUTER_MAC ip saddr @transit4 oifname \"$TRANSPORT_IF\" meta nfproto ipv4 tcp flags & (syn | rst) == syn tcp option maxseg size set rt mtu"
     ;;
   1)
     # Emergency/boot-safe state: no new forwarded flow is accepted or marked.
@@ -96,6 +100,7 @@ $transport_return_rule
 
     # Normal Transit accepts only MikroTik-MAC ingress with actual active-transport egress.
     # Lockdown emits no new-flow accept rule.
+$transport_mss_rule
 $forward_rule
   }
 

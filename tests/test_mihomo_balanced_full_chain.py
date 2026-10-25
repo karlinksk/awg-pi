@@ -45,6 +45,7 @@ class SafeChain(unittest.TestCase):
              "vmess-fifth|PASS|UNKNOWN|PASS|chatgpt_web_http_403\n")
         (self.root/"selection.env").write_text("SELECTION_MODE=auto\nSELECTION_ORDER=mihomo,awg\n")
         (self.root/"node-policy.mode").write_text("auto\n")
+        (self.root/"mode").write_text("transit\n")
         (self.root/"common.sh").write_text("""
 awg_transport_get(){ cat "$MOCK_TRANSPORT_STATE"; }
 awg_transport_backend_valid(){ [[ "$1" == mihomo || "$1" == awg ]]; }
@@ -112,6 +113,36 @@ printf 'node:%s\\n' "$3" >>"$MOCK_NODE_TRACE"
 if [[ -e "$MOCK_NODE_DENY" ]] && grep -Fxq -- "$3" "$MOCK_NODE_DENY"; then exit 1; fi
 printf '%s\\n' "$3" >"$MOCK_NODE_NAME_FILE"
 """)
+        self.put("unified", """#!/bin/bash
+case "$1" in
+ candidates)
+   index=0
+   while IFS= read -r name; do
+     [[ -n "$name" ]] || continue
+     index=$((index+1))
+     printf 'CANDIDATE={"name":"%s","engine":"MIHOMO","index":%s,"provider_sha256":"%s"}\\n' "$name" "$index" "$MOCK_PROVIDER_SHA"
+   done < "$MOCK_POOL_NAMES"
+   ;;
+ resolve)
+   printf 'NODE_ENGINE=MIHOMO\\nNODE_PROVIDER_SHA256=%s\\n' "$MOCK_PROVIDER_SHA"
+   ;;
+ *) exit 2 ;;
+esac
+""")
+        self.put("native", """#!/bin/bash
+case "$1" in
+ probe-native) exit 0 ;;
+ *) exit 2 ;;
+esac
+""")
+        self.put("postcheck", "#!/bin/sh\\nexit 0\\n")
+        self.put("systemctl", """#!/bin/bash
+case "$1" in
+ is-active) exit 1 ;;
+ stop) exit 0 ;;
+esac
+exit 1
+""")
         self.put("logger","#!/bin/sh\nexit 0\n")
         self.put("service-active", "#!/bin/sh\nprintf '{\"status\":\"UNKNOWN\"}\n'\nexit 1\n")
         script=POLICY.read_text()
@@ -123,6 +154,23 @@ printf '%s\\n' "$3" >"$MOCK_NODE_NAME_FILE"
                       "/run/systemd/system/awg-mihomo.service.d/61-awg-xray-bridge.conf",
                       "/var/lib/awg-pbr/xray-vless/selected.json"):
             script=script.replace(fixed,str(self.root/"absent-xray-fixture"/Path(fixed).name))
+        # Integration fixture: the actual postcheck uses live TUN, routes,
+        # HTTPS and systemd. Replace only its external evidence with a
+        # deterministic mock; never claim a real dataplane PASS here.
+        begin=script.index("unified_native_tun_postcheck(){")
+        end=script.index("\n}\n",begin)+3
+        script=script[:begin]+"""unified_native_tun_postcheck(){
+  [[ "$(cat "$MOCK_NODE_NAME_FILE")" != current-node ]] &&
+    [[ "$(cat "$MOCK_NODE_NAME_FILE")" != ss-first ]]
+}
+"""+script[end:]
+        begin=script.index("unified_native_quiesce(){")
+        end=script.index("\n}\n",begin)+3
+        script=script[:begin]+"""unified_native_quiesce(){
+  printf 'quiesce\\n' >> "$MOCK_NODE_TRACE"
+  return 0
+}
+"""+script[end:]
         self.put("node-policy",script)
         self.put("systemctl",'''#!/bin/bash
 if [[ "$1" == is-active && "$2" == --quiet &&
@@ -152,7 +200,13 @@ exec /usr/bin/systemctl "$@"
           MIHOMO_NODE_NAME_FILE=str(self.node),
           MIHOMO_POOL_CLI=str(self.bin/"pool"),
           MIHOMO_CONFIGURE_BIN=str(self.bin/"configure"),
-          MIHOMO_UNIFIED_NODE_CLI=str(self.bin/"missing-unified-cli"),
+          MIHOMO_UNIFIED_NODE_CLI=str(self.bin/"unified"),
+          MIHOMO_XRAY_NATIVE_RECOVERY_CLI=str(self.bin/"native"),
+          MIHOMO_AUTO_MODE_FILE=str(self.root/"mode"),
+          MIHOMO_AUTO_TRANSPORT_CLI=str(self.bin/"transport"),
+          MIHOMO_AUTO_TRANSIT_ROUTING=str(self.bin/"postcheck"),
+          MIHOMO_AUTO_SYSTEMCTL=str(self.bin/"systemctl"),
+          MOCK_PROVIDER_SHA="a"*64,
           MIHOMO_SERVICE_QUICKCHECK_BIN=str(self.bin/"scan"),
           MIHOMO_NETWORK_GATE_BIN=str(GATE),
           MOCK_TRANSPORT_STATE=str(self.selected),
@@ -192,19 +246,18 @@ exec /usr/bin/systemctl "$@"
         self.assertEqual((self.run/"failures").read_text().strip(),"0")
 
     def test_three_rejected_candidates_then_awg_fallback(self):
-        self.fixtures.write_text("ss-first|FAIL|UNKNOWN|PASS|chatgpt_web_http_403\n"
-            "vless-second|PASS|UNKNOWN|UNKNOWN|chatgpt_web_http_403\n"
-            "trojan-third|PASS|UNKNOWN|PASS|chatgpt_web_TimeoutError\n")
+        self.nodes.write_text("one\ntwo\nthree\n")
+        (self.root/"deny").write_text("one\ntwo\nthree\n")
         out=self.cycles()
         self.assertEqual(out[-1],"FAILOVER=mihomo->awg")
         self.assertEqual(self.selected.read_text().strip(),"awg")
         self.assertEqual(self.node.read_text().strip(),"current-node")
         self.assertIn("transport:awg",self.trace.read_text())
-        self.assertEqual(self.node_trace.read_text(),"")
+        self.assertIn("node:three",self.node_trace.read_text())
         self.assertEqual((self.run/"failures").read_text().strip(),"0")
 
     def test_unconfigured_awg_is_not_retried_after_node_exhaustion(self):
-        self.fixtures.write_text("")
+        self.nodes.write_text("")
         self.awg_profile.unlink()
         self.cycles(5)
         self.assertEqual(self.selected.read_text().strip(),"mihomo")
@@ -212,7 +265,7 @@ exec /usr/bin/systemctl "$@"
         self.assertEqual((self.run/"failures").read_text().strip(),"3")
 
     def test_failed_awg_rollback_keeps_mihomo_and_saturates(self):
-        self.fixtures.write_text("")
+        self.nodes.write_text("")
         self.awg.write_text("down\n")
         self.cycles()
         self.assertEqual(self.selected.read_text().strip(),"mihomo")
@@ -220,7 +273,7 @@ exec /usr/bin/systemctl "$@"
         self.assertEqual(self.trace.read_text().count("transport:awg"),1)
 
     def test_awg_after_recovery_is_sticky_and_no_switch_back(self):
-        self.fixtures.write_text("")
+        self.nodes.write_text("")
         self.cycles()
         self.assertEqual(self.selected.read_text().strip(),"awg")
         self.health.write_text("up\n")

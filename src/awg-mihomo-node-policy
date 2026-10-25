@@ -466,50 +466,8 @@ is_enabled(){
 }
 
 service_candidate_allowed(){
-  local candidate="$1" response
-  case "$MIHOMO_SERVICE_GATE_MODE" in
-    off) return 0 ;;
-    balanced)
-      # Medium NETWORK confidence, explicitly not authenticated chat.
-      # HTTPS challenge or login page is sufficient only alongside API PASS
-      # and a NEW actual 24-frame Stage18 video decode for this exact node.
-      [[ -x "$MIHOMO_SERVICE_QUICKCHECK_BIN" && -x "$MIHOMO_NETWORK_GATE_BIN" ]] || return 1
-      response="$("$MIHOMO_SERVICE_QUICKCHECK_BIN" service-scan --node "$candidate" 2>/dev/null)" || true
-      # service-scan also emits safe diagnostic metadata such as
-      # SERVICE_IP_CONNECT_STATE / SERVICE_REASON_YOUTUBE_VIDEO. The strict
-      # network gate accepts EXACTLY five service-evidence fields and rejects
-      # unknown fields. Feed ONLY those five, preserving their original
-      # values and duplicate lines so the gate still rejects malformed input.
-      # Hot Pool scan_one() already follows this same verified contract.
-      local gate_output gate_reason
-      if gate_output="$(printf '%s\n' "$response" | awk -F= '
-        $1 == "SERVICE_ELIGIBILITY" ||
-        $1 == "SERVICE_CHECK_OPENAI_API" ||
-        $1 == "SERVICE_CHECK_CHATGPT_WEB" ||
-        $1 == "SERVICE_CHECK_YOUTUBE_VIDEO" ||
-        $1 == "SERVICE_REASON_CHATGPT_WEB" { print }
-      ' | "$MIHOMO_NETWORK_GATE_BIN" 2>/dev/null)"; then
-        return 0
-      fi
-      gate_reason="$(sed -nE 's/^NETWORK_REASON=([A-Z0-9_]{1,64})$/\1/p' <<<"$gate_output" | head -1)"
-      [[ -n "$gate_reason" ]] || gate_reason=UNKNOWN
-      printf 'READY_AUTO=CANDIDATE_SERVICE_REJECTED REASON=%s\n' "$gate_reason" >&2
-      return 1
-      ;;
-    require)
-      [[ -x "$MIHOMO_SERVICE_GATE_BIN" ]] || return 1
-      if response="$("$MIHOMO_SERVICE_GATE_BIN" --node "$candidate" 2>/dev/null)" &&
-         grep -Fxq 'SERVICE_ELIGIBILITY=PASS' <<<"$response"; then
-        return 0
-      fi
-      # A stale cache is not a denial of the node itself: recheck only this
-      # candidate through a separate, RAM-only TUN-disabled Mihomo instance.
-      [[ -x "$MIHOMO_SERVICE_QUICKCHECK_BIN" ]] || return 1
-      response="$("$MIHOMO_SERVICE_QUICKCHECK_BIN" service-scan --node "$candidate" 2>/dev/null)" || return 1
-      grep -Fxq 'SERVICE_ELIGIBILITY=PASS' <<<"$response"
-      ;;
-    *) return 1 ;;
-  esac
+  # Website/service eligibility is no longer a selection requirement.
+  return 0
 }
 
 failover_fixed(){
@@ -632,25 +590,6 @@ standby_postcheck(){
   ip link show dev "$MIHOMO_STANDBY_TUN_IF" >/dev/null 2>&1 || {
     echo 'READY_TUN_CHECK=IF_DOWN'; return 1
   }
-  # No HTTP_PROXY inheritance and no global routing change. This validates
-  # the actual Pi-bound TUN, independently of the localhost proxy preflight.
-  code="$("$MIHOMO_STANDBY_CURL_BIN" -q -4 -sS --noproxy '*' \
-    --interface "$MIHOMO_STANDBY_TUN_IF" --connect-timeout 5 --max-time 12 \
-    -o /dev/null -w '%{http_code}' https://api.openai.com/v1/models 2>/dev/null)" || {
-      echo 'READY_TUN_CHECK=OPENAI_NETWORK_FAILED'; return 1
-    }
-  [[ "$code" == 401 ]] || { echo 'READY_TUN_CHECK=OPENAI_NOT_QUALIFIED'; return 1; }
-  addr="$("$MIHOMO_STANDBY_CURL_BIN" -q -4 -fsS --noproxy '*' \
-    --interface "$MIHOMO_STANDBY_TUN_IF" --connect-timeout 5 --max-time 12 \
-    https://api.ipify.org 2>/dev/null)" || {
-      echo 'READY_TUN_CHECK=EGRESS_FAILED'; return 1
-    }
-  python3 -c 'import ipaddress,sys
-try:
- a=ipaddress.IPv4Address(sys.stdin.read().strip())
- sys.exit(0 if a.is_global else 1)
-except ValueError:
- sys.exit(1)' <<<"$addr" || { echo 'READY_TUN_CHECK=EGRESS_INVALID'; return 1; }
   standby_routes_safe || { echo 'READY_TUN_CHECK=MARK_MISMATCH'; return 1; }
   echo READY_TUN_CHECK=PASS
 }
@@ -714,25 +653,15 @@ quiesce_failed_mihomo(){
 # guarded TUN activation, and fail-closed abort. This dispatcher never retries
 # the known failed node or routes VLESS through the legacy Mihomo selector.
 auto_xray_candidate(){
-  local current="$1" candidate="$2" resolved="$3" executor
+  local current="$1" candidate="$2" resolved="$3" executor transaction_rc
   if [[ "${MIHOMO_XRAY_AUTO_FAILOVER_CANARY:-0}" != 1 ]]; then
     echo "MIHOMO_NODE_FAILOVER=XRAY_TRANSACTION_NOT_CERTIFIED" >&2
     return 2
   fi
-  # Cache status is historical evidence, never a veto or proof of this
-  # exact current provider profile. ALWAYS fresh-probe the selected Xray
-  # index in an isolated sidecar before arming any live transaction. This
-  # also applies to callers of the older bounded AUTO dispatcher.
-  local engine index probe
+  local engine index
   engine="$(sed -n 's/^NODE_ENGINE=//p' <<<"$resolved")"
   index="$(sed -n 's/^NODE_INDEX=//p' <<<"$resolved")"
-  probe="${MIHOMO_XRAY_NATIVE_RECOVERY_CLI:-/usr/local/sbin/awg-xray-manual-switch}"
-  if [[ "$engine" != XRAY || ! "$index" =~ ^[1-9][0-9]{0,4}$ ||
-        ! -x "$probe" ]] ||
-     ! "$probe" probe-xray "$index" >/dev/null 2>&1; then
-    echo "MIHOMO_NODE_FAILOVER=XRAY_EXACT_FRESH_HTTPS_UNVERIFIED" >&2
-    return 2
-  fi
+  [[ "$engine" == XRAY && "$index" =~ ^[1-9][0-9]{0,4}$ ]] || return 2
   # A standby repair while AWG is active MUST NOT mutate its routes.
   # READY has a distinct evidence contract and is not covered by this canary.
   local operating_mode
@@ -779,8 +708,16 @@ auto_xray_candidate(){
     logger -t awg-xray-auto 'SELECTIVE_FAILOPEN=PREPARED_BEFORE_XRAY'
   fi
   if AWG_XRAY_EXPERIMENTAL_APPLY=TEST_PI_AUTHORIZED "$executor" apply "$current" "$candidate" >/dev/null; then
-    printf 'MIHOMO_NODE_FAILOVER=%s->%s\n' "$current" "$candidate"
+    # Internal status only: the enclosing dispatcher is the sole owner of
+    # MIHOMO_NODE_FAILOVER stdout. Duplicating it makes the strict monitor
+    # reject a successfully committed Xray bridge and select standby AWG.
     return 0
+  else
+    transaction_rc=$?
+    if (( transaction_rc == 3 )); then
+      echo 'MIHOMO_NODE_FAILOVER=XRAY_CANDIDATE_FAILED_QUIESCED_RETRY_SAFE' >&2
+      return 3
+    fi
   fi
   # An aborted transaction may have quiesced the old, known-dead transport.
   # Stop node recovery here; allow the normal selection monitor to try AWG.
@@ -874,33 +811,43 @@ for line in sys.stdin:
 }
 
 unified_native_tun_postcheck(){
-  local code route current mode
+  local code route current mode ready=0 attempt
   current="$("$MIHOMO_AUTO_TRANSPORT_CLI" get 2>/dev/null || true)"
-  [[ "$current" == mihomo ]] || return 1
-  [[ "$("$MIHOMO_AUTO_SYSTEMCTL" is-active "$MIHOMO_AUTO_SERVICE" 2>/dev/null || true)" == active ]] || return 1
-  route="$(ip -4 route show table 100)"
-  [[ "$route" =~ ^default[[:space:]]+dev[[:space:]]+mihomo0([[:space:]].*)?$ ]] || return 1
-  route="$(ip -4 route show table 101)"
-  [[ "$route" =~ ^default[[:space:]]+dev[[:space:]]+mihomo0([[:space:]].*)?$ ]] || return 1
-  code="$(curl -q -4 -sS --noproxy '*' --interface mihomo0 --connect-timeout 5 --max-time 12 \
-     -o /dev/null -w '%{http_code}' https://api.openai.com/v1/models 2>/dev/null)" || return 1
-  [[ "$code" == 401 ]] || return 1
+  [[ "$current" == mihomo ]] || return 2
+  [[ "$("$MIHOMO_AUTO_SYSTEMCTL" is-active "$MIHOMO_AUTO_SERVICE" 2>/dev/null || true)" == active ]] || return 2
   mode="$(cat "$MIHOMO_AUTO_MODE_FILE" 2>/dev/null || true)"
+  # A previous failed attempt disabled Transit routing. Re-arm under its
+  # existing guard BEFORE waiting for routes, including after quiesce/retry.
+  case "$mode" in
+    transit) "$MIHOMO_AUTO_TRANSIT_ROUTING" apply >/dev/null || return 2 ;;
+    selective) "$MIHOMO_AUTO_SYSTEMCTL" is-active --quiet awg-pbr-health.service || return 2 ;;
+    *) return 2 ;;
+  esac
+  for attempt in {1..20}; do
+    ready=1
+    for current in 100 101; do
+      route="$(ip -4 route show table "$current")" || return 2
+      grep -Eq '^default[[:space:]]+dev[[:space:]]+mihomo0([[:space:]].*)?$' <<<"$route" || ready=0
+    done
+    (( ready == 1 )) && break
+    sleep 1
+  done
+  (( ready == 1 )) || return 2
   if [[ "$mode" == transit ]]; then
-    "$MIHOMO_AUTO_TRANSIT_ROUTING" apply >/dev/null || return 1
     local report
-    report="$("$MIHOMO_AUTO_TRANSIT_ROUTING" status 2>/dev/null)" || return 1
-    grep -Fxq 'Transit guard: SAFE' <<<"$report" || return 1
-    grep -Fxq 'Transit policy rule: ACTIVE' <<<"$report" || return 1
-    grep -Fxq 'Transit VPN table: READY' <<<"$report" || return 1
+    report="$("$MIHOMO_AUTO_TRANSIT_ROUTING" status 2>/dev/null)" || return 2
+    grep -Fxq 'Transit guard: SAFE' <<<"$report" || return 2
+    grep -Fxq 'Transit policy rule: ACTIVE' <<<"$report" || return 2
+    grep -Fxq 'Transit VPN table: READY' <<<"$report" || return 2
   elif [[ "$mode" == selective ]]; then
     # The existing PBR health service alone may re-arm selective rules.
-    "$MIHOMO_AUTO_SYSTEMCTL" is-active --quiet awg-pbr-health.service || return 1
+    "$MIHOMO_AUTO_SYSTEMCTL" is-active --quiet awg-pbr-health.service || return 2
   else
-    return 1
+    return 2
   fi
   "$MIHOMO_AUTO_SYSTEMCTL" is-active --quiet ssh.service &&
-    "$MIHOMO_AUTO_SYSTEMCTL" is-active --quiet dnsmasq.service
+    "$MIHOMO_AUTO_SYSTEMCTL" is-active --quiet dnsmasq.service || return 2
+  "$MIHOMO_AUTO_TRANSPORT_CLI" network-check >/dev/null 2>&1
 }
 
 unified_native_quiesce(){
@@ -918,43 +865,30 @@ unified_native_quiesce(){
 
 failover_unified(){
   local current="$1" mode engine idx provider_sha candidate resolved resolved_sha
+  local recovery_current="$current"
   local active_bridge=0 rc=0 attempts=0 start_epoch now line item selected=0
-  local xray_guard_rejected=0
+  local xray_guard_rejected=0 infrastructure_failed=0
   local native_cli="${MIHOMO_XRAY_NATIVE_RECOVERY_CLI:-/usr/local/sbin/awg-xray-manual-switch}"
   local -a rows=() prioritized=() normalized=() order=()
   # The caller is the node-policy monitor, not manual node selection.
   mode="$(mode_get 2>/dev/null || echo invalid)"
-  [[ "$mode" == auto || "$mode" == fixed ]] || return 1
+  [[ "$mode" == auto ]] || return 1
   xray_bridge_present && active_bridge=1
   mapfile -t rows < <(unified_recovery_candidates)
   [[ "${#rows[@]}" -gt 0 ]] || {
     echo 'MIHOMO_NODE_FAILOVER=UNIFIED_EMPTY_OR_STALE_AWG_FALLBACK' >&2
     return 1
   }
-  # Respect the configured FIXED chain first, but then try every other
-  # current subscription node; no artificial per-engine candidate caps.
-  if [[ "$mode" == fixed && -f "$MIHOMO_NODE_POLICY_ORDER_FILE" ]]; then
-    while IFS= read -r item; do
-      for line in "${rows[@]}"; do
-        candidate="${line#*$'\t'}"
-        candidate="${candidate#*$'\t'}"
-        candidate="${candidate#*$'\t'}"
-        if [[ "$item" == "$candidate" && "$candidate" != "$current" ]]; then
-          prioritized+=("$line")
-        fi
-      done
-    done < "$MIHOMO_NODE_POLICY_ORDER_FILE"
-  fi
-  for line in "${rows[@]}"; do
+  # AUTO visits every current-provider candidate without FIXED ordering.
+  for engine in MIHOMO XRAY; do
+   for line in "${rows[@]}"; do
+    [[ "$line" == "$engine"$'\t'* ]] || continue
     candidate="${line#*$'\t'}"
     candidate="${candidate#*$'\t'}"
     candidate="${candidate#*$'\t'}"
     [[ "$candidate" == "$current" ]] && continue
-    selected=0
-    for item in "${prioritized[@]}"; do
-      [[ "$line" != "$item" ]] || selected=1
-    done
-    (( selected == 1 )) || prioritized+=("$line")
+    prioritized+=("$line")
+   done
   done
 
   start_epoch="$(date +%s)"
@@ -997,19 +931,29 @@ failover_unified(){
     fi
 
     if [[ "$engine" == MIHOMO ]]; then
-      # Every candidate needs a fresh HTTPS proof. Historical pool "OK" and
-      # UI status alone never qualify a current provider profile for a switch.
-      "$native_cli" probe-native "$candidate" >/dev/null 2>&1 || continue
+      # AUTO assesses the newly selected candidate through the engine delay
+      # API. Cached status and website eligibility never qualify a switch.
       service_candidate_allowed "$candidate" || continue
       rc=0
       MIHOMO_NODE_FAILOVER_RECOVERY=1 "$MIHOMO_CONFIGURE" node select-auto "$candidate" >/dev/null || rc=$?
-      if (( rc == 0 )) && unified_native_tun_postcheck; then
+      if (( rc == 0 )); then
+        # Configure committed this exact profile before its network postcheck.
+        # A later Xray transaction must validate that most recent failed
+        # native identity, not the original incumbent from before the loop.
+        # The backend still checks this identity under its maintenance lock.
+        recovery_current="$candidate"
+        unified_native_tun_postcheck || rc=$?
+      else
+        infrastructure_failed=1
+      fi
+      if (( rc == 0 )); then
         printf 'MIHOMO_NODE_FAILOVER=%s->%s\n' "$current" "$candidate"
         printf 'MIHOMO_UNIFIED_RECOVERY_ATTEMPTS=%s ENGINE=%s\n' "$attempts" "$engine" >&2
         return 0
       fi
-      # The current native candidate did not verify. Quiesce before trying
-      # the next candidate; on failure, let AWG take over immediately.
+      (( rc != 2 )) || infrastructure_failed=1
+      # Close the failed dataplane before the next fresh candidate. The
+      # next postcheck explicitly re-arms Transit and waits for routes.
       unified_native_quiesce || {
         echo 'MIHOMO_NODE_FAILOVER=UNIFIED_NATIVE_CLEANUP_FAILED_AWG_FALLBACK' >&2
         return 1
@@ -1019,12 +963,20 @@ failover_unified(){
       # for the exact index even when cached health is expired/UNKNOWN/FAIL.
       # The certified executor handles the cross-core watchdog and guard.
       # This is not the legacy native selector for Reality VLESS profiles.
-      if auto_xray_candidate "$current" "$candidate" "$resolved"; then
+      if auto_xray_candidate "$recovery_current" "$candidate" "$resolved"; then
+        # Exactly one success verdict, emitted ONLY after a successful
+        # backend transaction. The inner executor itself emits none.
+        # The selection monitor requires one and only one stdout line.
         printf 'MIHOMO_NODE_FAILOVER=%s->%s\n' "$current" "$candidate"
         printf 'MIHOMO_UNIFIED_RECOVERY_ATTEMPTS=%s ENGINE=%s\n' "$attempts" "$engine" >&2
         return 0
       else
         rc=$?
+        # The backend alone may certify a candidate-only failure after
+        # verified quiesce and durable retirement of its own watchdog.
+        if (( rc == 3 )); then
+          continue
+        fi
         # rc=2 means candidate untouched; rc=1 means guarded abort to AWG.
         if (( rc == 2 )); then
           # The Xray auto executor can reject a candidate because its
@@ -1052,7 +1004,9 @@ failover_unified(){
       return 1
     }
   fi
-  if (( xray_guard_rejected == 1 )); then
+  if (( infrastructure_failed == 1 )); then
+    echo 'MIHOMO_NODE_FAILOVER=UNIFIED_INFRASTRUCTURE_FAILURE_AWG_FALLBACK' >&2
+  elif (( xray_guard_rejected == 1 )); then
     echo 'MIHOMO_NODE_FAILOVER=UNIFIED_XRAY_GUARD_UNAVAILABLE_AWG_FALLBACK' >&2
   else
     echo 'MIHOMO_NODE_FAILOVER=UNIFIED_EXHAUSTED_NO_VERIFIED_CANDIDATE_AWG_FALLBACK' >&2
@@ -1223,7 +1177,7 @@ failover_auto(){
         if [[ "${MIHOMO_STANDBY_REPAIR:-0}" == 1 ]]; then
           post_summary="$(standby_postcheck "$candidate" 2>&1)" && post_rc=0 || post_rc=$?
         else
-          post_summary="$("$MIHOMO_READY_POSTCHECK_BIN" "$candidate" 2>&1)" && post_rc=0 || post_rc=$?
+          post_summary="$(unified_native_tun_postcheck 2>&1)" && post_rc=0 || post_rc=$?
         fi
         if (( post_rc == 0 )); then
           printf 'READY_AUTO_POSTCHECK=PASS\n' >&2
@@ -1291,27 +1245,18 @@ failover_auto(){
 }
 
 failover(){
-  local current mode
+  local current mode unified_cli
   mode="$(mode_get 2>/dev/null || echo invalid)"
+  [[ "$mode" == auto ]] || return 1
+  is_enabled || return 1
   current="$(cat "$MIHOMO_NODE_NAME_FILE" 2>/dev/null || true)"
   [[ -n "$current" ]] || return 1
-  # Keep opt-in READY media gate and older installations without the
-  # unified inventory on their previously-tested path. The unified ordered
-  # pool is the normal route for paid providers with READY disabled.
-  local unified_cli="${MIHOMO_UNIFIED_NODE_CLI:-/usr/local/sbin/awg-mihomo-unified-nodes}"
-  if [[ "$MIHOMO_READY_AUTO_CANARY" == 1 || ! -x "$unified_cli" ]]; then
-    case "$mode" in
-      fixed) is_fixed && failover_fixed "$current" ;;
-      auto) is_enabled && failover_auto "$current" ;;
-      *) return 1 ;;
-    esac
-  else
-    case "$mode" in
-      fixed) is_fixed && failover_unified "$current" ;;
-      auto) is_enabled && failover_unified "$current" ;;
-      *) return 1 ;;
-    esac
-  fi
+  unified_cli="${MIHOMO_UNIFIED_NODE_CLI:-/usr/local/sbin/awg-mihomo-unified-nodes}"
+  [[ -x "$unified_cli" ]] || {
+    echo 'MIHOMO_NODE_FAILOVER=UNIFIED_INVENTORY_MISSING' >&2
+    return 1
+  }
+  failover_unified "$current"
 }
 
 case "${1:-status}" in
@@ -1325,7 +1270,7 @@ case "${1:-status}" in
       status) printf 'MIHOMO_XRAY_AUTO=%s\n' "$([[ "$_xray_auto_mode" == 1 ]] && echo enabled || echo disabled)" ;;
       enable)
         [[ "$(mode_get)" == auto ]] || { echo XRAY_AUTO_REQUIRES_NODE_AUTO >&2; exit 1; }
-        [[ "$MIHOMO_READY_AUTO_CANARY" == 0 ]] || { echo XRAY_AUTO_REQUIRES_READY_OFF >&2; exit 1; }
+        # Xray AUTO is independent of the retired READY policy.
         for f in /usr/local/sbin/awg-xray-live-backend /usr/local/sbin/awg-xray-activation-transaction /usr/local/sbin/awg-mihomo-unified-nodes /usr/local/sbin/awg-xray-vless;do
           [[ -x "$f" ]] || { echo XRAY_AUTO_MISSING_ENGINE_COMPONENT >&2;exit 1; }
         done
@@ -1420,4 +1365,3 @@ case "${1:-status}" in
     exit 2
     ;;
 esac
-

@@ -50,7 +50,7 @@ class SelectiveCommitRecheck(unittest.TestCase):
                            ("verified_selective_route_ownership",True)):
             p=mock.patch.object(m,attr,return_value=value)
             p.start();self.addCleanup(p.stop)
-        p=mock.patch.object(self.backend,"check_tun_https",return_value=True)
+        p=mock.patch.object(self.backend,"check_tun_ready",return_value=True)
         p.start();self.addCleanup(p.stop)
         p=mock.patch.object(self.backend,"verify_committed_node",return_value=True)
         p.start();self.addCleanup(p.stop)
@@ -98,7 +98,7 @@ class SelectiveCommitRecheck(unittest.TestCase):
 
     def test_failed_tun_https_after_first_postcheck_fails_commit(self):
         self.assertTrue(self.backend.check_policy_routes())
-        with mock.patch.object(self.backend,"check_tun_https",return_value=False):
+        with mock.patch.object(self.backend,"check_tun_ready",return_value=False):
             with self.assertRaisesRegex(RuntimeError,"NOT_VERIFIED"):
                 self.backend.commit()
         self.assertEqual(self.state["add"],1)

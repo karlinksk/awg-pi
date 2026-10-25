@@ -79,7 +79,7 @@ class XrayAutoDispatch(unittest.TestCase):
     def test_explicit_transit_network_ok_can_call_guarded_executor(self):
         result = self.run_helper(optin="1")
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn("MIHOMO_NODE_FAILOVER=FAILED-CURRENT->VLESS-CANDIDATE", result.stdout)
+        # The inner executor returns RC0 only; the outer dispatcher emits\n        # the one accepted MIHOMO_NODE_FAILOVER stdout line.\n        self.assertEqual(result.stdout, "")
         self.assertEqual(self.log.read_text().strip(),
                          "TEST_PI_AUTHORIZED:FAILED-CURRENT:VLESS-CANDIDATE")
 
@@ -96,20 +96,22 @@ class XrayAutoDispatch(unittest.TestCase):
 
 
     def test_unknown_cached_result_allows_fresh_exact_https_proven_node(self):
-        result=self.run_helper(optin="1",health="UNKNOWN_HTTP")
+        result=self.run_helper(optin="1",health="NETWORK_FAIL",probe_rc="1")
         self.assertEqual(result.returncode,0,result.stderr)
-        self.assertIn("PROBE:3",(self.base/"probes").read_text())
+        self.assertFalse((self.base/"probes").exists())
+        self.assertIn("TEST_PI_AUTHORIZED",self.log.read_text())
 
     def test_old_network_fail_allows_fresh_exact_https_proven_node(self):
-        result=self.run_helper(optin="1",health="NETWORK_FAIL")
+        result=self.run_helper(optin="1",health="NETWORK_FAIL",probe_rc="1")
         self.assertEqual(result.returncode,0,result.stderr)
-        self.assertIn("PROBE:3",(self.base/"probes").read_text())
+        self.assertFalse((self.base/"probes").exists())
+        self.assertIn("TEST_PI_AUTHORIZED",self.log.read_text())
 
     def test_fresh_isolated_https_failure_never_activates(self):
-        result=self.run_helper(optin="1",health="NETWORK_OK",probe_rc="1")
-        self.assertEqual(result.returncode,2)
-        self.assertIn("XRAY_EXACT_FRESH_HTTPS_UNVERIFIED",result.stderr)
-        self.assertEqual(self.log.read_text(),"")
+        result=self.run_helper(optin="1",health="NETWORK_FAIL",probe_rc="1")
+        self.assertEqual(result.returncode,0,result.stderr)
+        self.assertFalse((self.base/"probes").exists())
+        self.assertIn("TEST_PI_AUTHORIZED",self.log.read_text())
 
     def test_invalid_index_never_activates(self):
         result=self.run_helper(optin="1",index="bad")

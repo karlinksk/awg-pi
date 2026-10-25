@@ -37,11 +37,10 @@ class NotifyWiringTests(unittest.TestCase):
         self.assertIn('AWG_NOTIFY_AUTOMATIC=1 "$AWG_TRANSPORT_CLI" select', selection)
 
     def test_source_notifies_after_transport_postcheck(self):
-        code = (ROOT / "src/awg-transport").read_text()
-        self.assertLess(code.index('if [[ "$target" == mihomo ]]; then mihomo_tun_https_ok; fi'),
-                        code.index('--kind "$notify_kind"'))
-        self.assertIn("timeout 2s /usr/local/sbin/awg-notify", code)
-        self.assertIn("/etc/awg-pbr/notify/telegram.json", code)
+        code=(ROOT/"src/awg-transport").read_text()
+        self.assertLess(code.rindex('wait_transport_healthy "$target"'),code.index('--kind "$notify_kind"'))
+        self.assertIn("timeout 2s /usr/local/sbin/awg-notify",code)
+        self.assertIn("/etc/awg-pbr/notify/telegram.json",code)
 
     def test_monitor_does_not_send_network_messages(self):
         code = (ROOT / "src/awg-selection-monitor").read_text()
@@ -129,18 +128,18 @@ class NotifyWiringTests(unittest.TestCase):
 
     def test_telegram_menu_is_in_system_area(self):
         menu = (ROOT / "src/awg-menu").read_text()
-        self.assertIn('10 "Telegram — уведомления"', menu)
-        self.assertIn('10) notify_menu ;;', menu)
+        self.assertIn('9 "Telegram — уведомления"', menu)
+        self.assertIn('9) notify_menu ;;', menu)
         self.assertIn('run_interactive "Настройка Telegram-бота"', menu)
         self.assertIn("systemctl enable --now awg-notify-flush.timer", menu)
         self.assertIn('NOTIFY_CONFIGURED=yes', menu)
 
     def test_live_ui_and_initial_onboarding_survive_telegram_merge(self):
         menu = (ROOT / "src/awg-menu").read_text()
-        self.assertIn('9 "Desktop Commander — удалённый доступ"', menu)
-        self.assertIn('9) desktop_commander_menu ;;', menu)
-        self.assertIn('10 "Telegram — уведомления"', menu)
-        self.assertIn('10) notify_menu ;;', menu)
+        self.assertIn('8 "Desktop Commander — удалённый доступ"', menu)
+        self.assertIn('8) desktop_commander_menu ;;', menu)
+        self.assertIn('9 "Telegram — уведомления"', menu)
+        self.assertIn('9) notify_menu ;;', menu)
         self.assertIn('notify_menu) label="Telegram" ;;', menu)
         self.assertIn("use_scrollbar = OFF", menu)
         self.assertIn("screen_color = (BLACK,CYAN,OFF)", menu)
@@ -151,7 +150,7 @@ class NotifyWiringTests(unittest.TestCase):
         self.assertNotIn('8 "Добавить / настроить транспорт"', menu)
         self.assertIn('3 "Конфигурация AmneziaWG"', menu)
         self.assertIn('4 "Mihomo"', menu)
-        self.assertEqual(menu.count('10 "Telegram — уведомления"'), 1)
+        self.assertEqual(menu.count('9 "Telegram — уведомления"'), 1)
 
     def test_test_pi_menu_upgrade_preserves_live_and_secrets(self):
         installer = (ROOT / "install.sh").read_text()
@@ -190,8 +189,8 @@ class NotifyWiringTests(unittest.TestCase):
         self.assertIn('4 "Типы уведомлений [галочки]"', menu)
         self.assertIn("appearance_menu(){", menu)
         self.assertIn("awg-matrix-compositor.py", menu)
-        self.assertIn('10 "Telegram — уведомления"', menu)
-        self.assertIn('9 "Desktop Commander — удалённый доступ"', menu)
+        self.assertIn('9 "Telegram — уведомления"', menu)
+        self.assertIn('8 "Desktop Commander — удалённый доступ"', menu)
         self.assertNotIn("first_transport_setup(){", menu)
         self.assertNotIn("secondary_transport_setup(){", menu)
         self.assertIn('sub.add_parser("preferences-set")', sender)

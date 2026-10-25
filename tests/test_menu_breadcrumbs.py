@@ -33,17 +33,32 @@ class Breadcrumbs(unittest.TestCase):
             execute_breadcrumb("AUTO — пул узлов",76,[
                 "mihomo_node_auto_menu","mihomo_node_policy_menu",
                 "mihomo_menu","vpn_menu"]),
-            "Главная › VPN › Mihomo › Резервирование › AUTO")
+            "Главная › VPN › Mihomo › Резервирование узлов Mihomo › AUTO")
         self.assertEqual(
             execute_breadcrumb("Резервирование узлов Mihomo",76,[
                 "mihomo_node_policy_menu","mihomo_menu","vpn_menu"]),
-            "Главная › VPN › Mihomo › Резервирование")
+            "Главная › VPN › Mihomo › Резервирование узлов Mihomo")
         self.assertEqual(
             execute_breadcrumb("Главное меню — [TRANSIT]",76,["vpn_menu"]),
             "Главное меню — [TRANSIT]")
         self.assertEqual(
             execute_breadcrumb("Проверка соединения",76,["unknown_func"]),
             "Главная › Проверка соединения")
+
+    def test_unified_node_picker_has_no_phantom_catalog_or_duplicate_title(self):
+        full = execute_breadcrumb("Точка выхода Mihomo / Xray", 110, [
+            "select_tsv_node_dialog", "mihomo_pool_pick", "mihomo_node_menu",
+            "mihomo_menu", "vpn_menu"])
+        self.assertEqual(full, "Главная › VPN › Mihomo › Точка выхода Mihomo / Xray")
+        self.assertNotIn("Каталог", full)
+        self.assertEqual(full.count("Точка выхода"), 1)
+
+    def test_mihomo_additional_settings_do_not_repeat_title(self):
+        title = execute_breadcrumb("Дополнительные настройки", 110, [
+            "mihomo_advanced_menu", "mihomo_menu", "vpn_menu"])
+        self.assertEqual(
+            title, "Главная › VPN › Mihomo › Дополнительные настройки")
+        self.assertNotIn("Восстановление", title)
 
     def test_compact_titles_preserve_current_section(self):
         s=execute_breadcrumb("Длинная проверка безопасного подключения",43,[
@@ -104,7 +119,7 @@ vpn_menu
                 self.assertIn("--title",args)
                 title=args[args.index("--title")+1]
                 self.assertEqual(title,
-                  "Главная › VPN › Mihomo › Резервирование › Проверка ноды")
+                  "Главная › VPN › Mihomo › Резервирование узлов Mihomo › Проверка ноды")
                 self.assertEqual(args[args.index("--backtitle")+1],"test")
                 self.assertIn("--"+widget,args)
 

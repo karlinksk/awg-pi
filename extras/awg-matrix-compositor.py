@@ -118,7 +118,10 @@ def main(stdscr):
     h,w=stdscr.getmaxyx()
     if h<22 or w<70:
         raise RuntimeError("Терминал должен быть не меньше 70x22")
-    tmux("-f","/dev/null","new-session","-d","-x",str(w),"-y",str(h),"-s","menu","sudo /usr/local/sbin/awg-menu --classic")
+    # Mark only the inner tmux menu, never the SSH-side menu process.
+    # Exit 42 from this pane tells the SSH-side launcher to switch to classic.
+    tmux("-f","/dev/null","new-session","-d","-x",str(w),"-y",str(h),"-s","menu",
+         "sudo /usr/bin/env AWG_MENU_MATRIX_INNER=1 /usr/local/sbin/awg-menu --classic")
     tmux("set-option", "-g", "remain-on-exit", "on")
     rng=random.Random()
     streams=[]
@@ -154,10 +157,13 @@ def main(stdscr):
             for k in range(s["len"]):
                 y=int(s["y"])-k
                 if 0<=y<h:
+                    # Each visible glyph flickers independently as it falls.
+                    # Only its character changes, never the stream geometry.
+                    if rng.random()<min(1.0,dt*6.0):
+                        s["chars"][k]=rng.choice(GLYPHS)
                     try: stdscr.addstr(y,x,s["chars"][k],curses.color_pair(1+min(6,k*7//max(1,s["len"]-1))))
                     except curses.error: pass
             s["y"]+=s["speed"]*dt
-            if rng.random()<dt*1.5: s["chars"][rng.randrange(s["len"])]=rng.choice(GLYPHS)
             if s["y"]-s["len"]>h: s["y"]=rng.uniform(-h,0)
         for y,row in enumerate(captured):
             # Dialog button row contains < ОК > etc. Color *all* button glyphs alike.

@@ -2,7 +2,7 @@
 """Read-only unified Mihomo/Xray node inventory and isolated BASIC network probes.
 
 No Hot Pool / READY, no live TUN, no active node changes and no systemd writes.
-Results are basic HTTPS reachability only; they are not app/YouTube readiness.
+New results describe local engine readiness only, never website reachability.
 """
 import argparse
 import concurrent.futures
@@ -29,7 +29,6 @@ TTL=86400
 PROBE_INTERVAL=300
 MAX_PROBE=10
 XRAY_WORKERS=2
-PROBE_URL="https://api.openai.com/v1/models"
 
 def die(s):
     print("UNIFIED_ERROR="+s,file=sys.stderr)
@@ -81,7 +80,7 @@ def snapshots(adapter):
               and isinstance(v.get("verified_at",v.get("at")),(int,float))
               and 0<=now-v.get("verified_at",v["at"])<=TTL
               and isinstance(v.get("at"),(int,float))
-              and v.get("status") in ("NETWORK_OK","NETWORK_FAIL","UNKNOWN_HTTP","UNKNOWN_ERROR","UNAVAILABLE")}
+              and v.get("status") in ("NETWORK_OK","NETWORK_FAIL","UNKNOWN_HTTP","UNKNOWN_ERROR","UNAVAILABLE","LOCAL_READY","LOCAL_NOT_READY")}
     cache={"version":1,"provider_sha256":sha,"results":previous}
     return nodes,sha,pool,cache
 
@@ -159,26 +158,20 @@ def isolated_probe(adapter,node):
         adapter.atomic_json(cfg,build_xray(adapter,node,port))
         verify=subprocess.run([str(XRAY),"run","-test","-c",str(cfg)],
                               stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,timeout=8)
-        if verify.returncode:return "NETWORK_FAIL"
+        if verify.returncode:return "LOCAL_NOT_READY"
         with (root/"xray.log").open("wb") as log:
             process=subprocess.Popen([str(XRAY),"run","-c",str(cfg)],
                 stdout=log,stderr=subprocess.STDOUT,stdin=subprocess.DEVNULL)
             try:
                 for _ in range(35):
-                    if process.poll() is not None:return "NETWORK_FAIL"
+                    if process.poll() is not None:return "LOCAL_NOT_READY"
                     try:
                         with socket.create_connection(("127.0.0.1",port),timeout=.15):break
                     except OSError:time.sleep(.12)
-                else:return "NETWORK_FAIL"
-                probe=subprocess.run(["curl","-q","-4","-sS","--socks5-hostname",
-                    f"127.0.0.1:{port}","--noproxy","","--connect-timeout","7",
-                    "--max-time","21","-o","/dev/null","-w","%{http_code}",
-                    PROBE_URL],stdout=subprocess.PIPE,stderr=subprocess.DEVNULL,text=True,timeout=24)
-                if probe.returncode==0 and probe.stdout=="401":
-                    return "NETWORK_OK"
-                if probe.returncode==0 and re.fullmatch(r"4[0-9]{2}|5[0-9]{2}",probe.stdout or ""):
-                    return "UNKNOWN_HTTP"
-                return "NETWORK_FAIL"
+                else:return "LOCAL_NOT_READY"
+                with socket.create_connection(("127.0.0.1",port),timeout=.5) as sock:
+                    sock.settimeout(.5);sock.sendall(b"\x05\x01\x00")
+                    return "LOCAL_READY" if sock.recv(2)==b"\x05\x00" else "LOCAL_NOT_READY"
             finally:
                 if process.poll() is None:
                     process.terminate()
@@ -198,7 +191,9 @@ def confirmed_probe(adapter,node,previous):
         except (OSError,ValueError,subprocess.TimeoutExpired,SystemExit):
             second="UNKNOWN_ERROR"
         result=second
-    if result=="NETWORK_OK":
+    if result in ("LOCAL_READY","LOCAL_NOT_READY"):
+        status=result
+    elif result=="NETWORK_OK":
         status="NETWORK_OK"
     elif result=="NETWORK_FAIL":
         status="NETWORK_FAIL"
@@ -207,7 +202,7 @@ def confirmed_probe(adapter,node,previous):
         # Retain a previous good last-proven result, not a prior negative one.
         status=("NETWORK_OK" if previous.get("status")=="NETWORK_OK"
                 else "UNKNOWN_HTTP" if result=="UNKNOWN_HTTP" else "UNKNOWN_ERROR")
-    verified_at=(time.time() if result in ("NETWORK_OK","NETWORK_FAIL")
+    verified_at=(time.time() if result in ("NETWORK_OK","NETWORK_FAIL","LOCAL_READY","LOCAL_NOT_READY")
                  else previous.get("verified_at",previous.get("at",0)))
     return {"at":time.time(),"verified_at":verified_at,
             "status":status,"last_probe":result}

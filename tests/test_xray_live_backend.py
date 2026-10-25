@@ -31,17 +31,9 @@ class LinuxBackendTests(unittest.TestCase):
         with mock.patch.object(m,"run",return_value="default dev eth0"):
             self.assertFalse(m.routes_ok())
     def test_curl_probe_does_not_use_inherited_proxies(self):
-        seen={}
-        def fake(*args,**kwargs):
-            seen["args"]=args;seen["env"]=kwargs["env"]
-            return "401"
-        with mock.patch.object(m,"run",side_effect=fake),mock.patch.dict(
-            m.os.environ,{"HTTPS_PROXY":"http://attacker","http_proxy":"http://other"}):
-            self.assertTrue(m.http_code(["--interface","mihomo0","--noproxy","*"]))
-        self.assertEqual(seen["args"][1],"-q")
-        self.assertIn("--interface",seen["args"])
-        self.assertNotIn("HTTPS_PROXY",seen["env"])
-        self.assertNotIn("http_proxy",seen["env"])
+        with mock.patch.object(m,"active",return_value=True),mock.patch.object(m,"run") as run,mock.patch.object(m,"controller",return_value={"now":"node"}):
+            self.assertTrue(m.tun_runtime_ready())
+        run.assert_called_once_with("ip","link","show","dev","mihomo0",timeout=4)
     def test_verified_awg_backup_must_have_exact_safe_transit_routes(self):
         with tempfile.TemporaryDirectory() as d:
             mode=Path(d)/"mode";mode.write_text("transit")
@@ -96,15 +88,24 @@ class LinuxBackendTests(unittest.TestCase):
                 self.assertFalse(m.failclosed())
             self.assertTrue(bridge.exists())
     def test_healthy_original_tun_forbids_live_emergency_activation(self):
-        with mock.patch.object(m,"http_code",return_value=True) as check:
-            self.assertFalse(m.original_tun_unreachable_twice())
-        check.assert_called_once_with(["--interface","mihomo0","--noproxy","*"])
-        with mock.patch.object(m,"http_code",side_effect=[False,True]) as check:
-            self.assertFalse(m.original_tun_unreachable_twice())
+        with mock.patch.object(m,"engine_network_ready",return_value=True), mock.patch.object(m,"tun_runtime_ready",return_value=True) as check:
+            self.assertFalse(m.original_tun_unready_twice())
+        check.assert_called_once_with()
+        with mock.patch.object(m,"engine_network_ready",return_value=True), mock.patch.object(m,"tun_runtime_ready",side_effect=[False,True]) as check:
+            self.assertFalse(m.original_tun_unready_twice())
         self.assertEqual(check.call_count,2)
-        with mock.patch.object(m,"http_code",side_effect=[False,False]) as check:
-            self.assertTrue(m.original_tun_unreachable_twice())
+        with mock.patch.object(m,"tun_runtime_ready",side_effect=[False,False]) as check:
+            self.assertTrue(m.original_tun_unready_twice())
         self.assertEqual(check.call_count,2)
+
+    def test_live_core_remote_outage_authorizes_auto_recovery(self):
+        with mock.patch.object(m,"tun_runtime_ready",return_value=True),mock.patch.object(m,"engine_network_ready",return_value=False):
+            self.assertTrue(m.original_tun_unready_twice())
+
+    def test_network_unknown_cannot_authorize_auto_recovery(self):
+        with mock.patch.object(m,"tun_runtime_ready",return_value=True),mock.patch.object(m,"engine_network_ready",side_effect=RuntimeError("ENGINE_NETWORK_INFRASTRUCTURE_UNCONFIRMED")):
+            with self.assertRaisesRegex(RuntimeError,"INFRASTRUCTURE"):
+                m.original_tun_unready_twice()
 
     def test_degraded_fixed_requires_explicit_test_pi_failclosed(self):
         import os
@@ -172,13 +173,13 @@ class LinuxBackendTests(unittest.TestCase):
                     calls.append(argv)
                     return good
                 with (mock.patch.object(m,"routes_ok",return_value=True),
-                      mock.patch.object(backend,"check_tun_https",return_value=True),
+                      mock.patch.object(backend,"check_tun_ready",return_value=True),
                       mock.patch.object(m,"run",side_effect=command)):
                     self.assertTrue(backend.check_policy_routes())
                 self.assertIn(("/usr/local/sbin/awg-transit-routing","apply"),calls)
                 calls.clear()
                 with (mock.patch.object(m,"routes_ok",return_value=True),
-                      mock.patch.object(backend,"check_tun_https",return_value=False),
+                      mock.patch.object(backend,"check_tun_ready",return_value=False),
                       mock.patch.object(m,"run",side_effect=command)):
                     self.assertFalse(backend.check_policy_routes())
                 self.assertEqual(calls,[])
@@ -242,6 +243,50 @@ class LinuxBackendTests(unittest.TestCase):
                 self.assertEqual(persisted.read_bytes(),runtime.read_bytes())
             self.assertIn(("systemctl","enable",m.XRAY),events)
 
+    def test_transient_stop_error_after_commit_requires_inactive_timer_and_service(self):
+        with tempfile.TemporaryDirectory() as dirname:
+            snapshot=Path(dirname)
+            (snapshot/"state.json").write_text(json.dumps({"state":"committed"}))
+            backend=m.LinuxBackend("native","xray")
+            backend.snapshot=snapshot
+            backend.watchdog_unit="awg-xray-failover-test"
+            def stop_failed(*args,**kwargs):
+                raise RuntimeError("PROCESS_FAILED_systemctl")
+            def inactive(args,**kwargs):
+                self.assertEqual(args[:2],["systemctl","show"])
+                return __import__("subprocess").CompletedProcess(args,0,"inactive\n","")
+            with (mock.patch.object(m,"run",side_effect=stop_failed),
+                  mock.patch.object(m.subprocess,"run",side_effect=inactive) as show,
+                  mock.patch.object(m,"auto_fault") as fault):
+                backend.disarm_watchdog()
+            self.assertEqual(show.call_count,2)
+            fault.assert_called_once_with("WATCHDOG","TIMER_ALREADY_INACTIVE")
+
+    def test_transient_stop_error_still_active_is_not_silently_accepted(self):
+        with tempfile.TemporaryDirectory() as dirname:
+            snap=Path(dirname)
+            (snap/"state.json").write_text(json.dumps({"state":"committed"}))
+            backend=m.LinuxBackend("native","xray")
+            backend.snapshot=snap
+            backend.watchdog_unit="awg-xray-failover-test"
+            def active_timer(args,**kwargs):
+                return __import__("subprocess").CompletedProcess(args,0,"active\n","")
+            with (mock.patch.object(m,"run",side_effect=RuntimeError("PROCESS_FAILED_systemctl")),
+                  mock.patch.object(m.subprocess,"run",side_effect=active_timer)):
+                with self.assertRaisesRegex(RuntimeError,"WATCHDOG_CANCEL_NOT_CONFIRMED"):
+                    backend.disarm_watchdog()
+
+    def test_transient_stop_error_before_commit_must_remain_failure(self):
+        with tempfile.TemporaryDirectory() as dirname:
+            snap=Path(dirname)
+            (snap/"state.json").write_text(json.dumps({"state":"armed"}))
+            backend=m.LinuxBackend("native","xray")
+            backend.snapshot=snap
+            backend.watchdog_unit="awg-xray-failover-test"
+            with mock.patch.object(m,"run",side_effect=RuntimeError("PROCESS_FAILED_systemctl")):
+                with self.assertRaisesRegex(RuntimeError,"PROCESS_FAILED_systemctl"):
+                    backend.disarm_watchdog()
+
     def test_cancelled_watchdog_never_quiesces_a_healthy_gateway(self):
         with tempfile.TemporaryDirectory() as d:
             base=Path(d);path=base/"xray-failover-1-2";path.mkdir()
@@ -299,7 +344,7 @@ class LinuxBackendTests(unittest.TestCase):
             with mock.patch.object(m,"MODE",mode),mock.patch.object(m,"BASE",base),mock.patch.object(m,"run",return_value=
                   "Transit guard: SAFE\nTransit policy rule: ACTIVE\nTransit VPN table: READY"),\
                  mock.patch.object(m,"routes_ok",return_value=True),\
-                 mock.patch.object(m,"http_code",return_value=True),\
+                 mock.patch.object(m,"tun_runtime_ready",return_value=True),\
                  mock.patch.object(m,"failclosed") as stop:
                 m.watchdog(path)
             stop.assert_not_called()

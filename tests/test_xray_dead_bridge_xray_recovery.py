@@ -47,7 +47,7 @@ class DeadXrayToXray(unittest.TestCase):
             mock.patch.object(module,"cmd",side_effect=cmd),
             mock.patch.object(module,"dead_xray_owned_bridge"),
             mock.patch.object(module,"controller",return_value={"now":module.ALIAS,"all":[module.ALIAS]}),
-            mock.patch.object(module,"https_ok",return_value=False),
+            mock.patch.object(module,"tun_runtime_ready",return_value=False),
             mock.patch.object(module,"source_node",return_value=self.profile),
             mock.patch.object(module,"preflight_xray"),
             mock.patch.object(module,"unit_active",side_effect=lambda u:u in
@@ -63,14 +63,16 @@ class DeadXrayToXray(unittest.TestCase):
             mock.patch.object(module,"atomic",side_effect=atomic),
             mock.patch.object(module,"wait_native_controller"),
             mock.patch.object(module,"choose"),
-            mock.patch.object(module,"native_tun_proof"),
+            mock.patch.object(module,"native_runtime_proof"),
+            mock.patch.object(module,"auto_candidate_network_proof"),
+            mock.patch.object(module.subprocess,"run",return_value=mock.Mock(returncode=0)),
             mock.patch.object(module,"invariant")
         ]
         for patch in self.patches:
             patch.start();self.addCleanup(patch.stop)
 
     def test_old_xray_must_be_dead(self):
-        with mock.patch.object(module,"https_ok",return_value=True),\
+        with mock.patch.object(module,"tun_runtime_ready",return_value=True),\
              self.assertRaisesRegex(module.DeadXrayPreflight,"PREVIOUS_TUN_STILL_HEALTHY"):
             module.dead_xray_xray(3)
         module.dead_xray_quiesce.assert_not_called()
@@ -104,7 +106,7 @@ class DeadXrayToXray(unittest.TestCase):
         output=io.StringIO()
         with contextlib.redirect_stdout(output):
             module.dead_xray_xray(3)
-        self.assertIn("DEAD_XRAY_XRAY_TUN=VERIFIED",output.getvalue())
+        self.assertIn("DEAD_XRAY_XRAY_LOCAL_RUNTIME=READY",output.getvalue())
         module.native_env.assert_any_call("MIHOMO_XRAY_VLESS_BRIDGE","auto")
         boot=self.writes[str(self.boot)][0]
         self.assertIn(b"AWG_XRAY_MANUAL=1",boot)
@@ -112,10 +114,10 @@ class DeadXrayToXray(unittest.TestCase):
         self.assertFalse(any(c[0].endswith("awg-mihomo-prepare") for c in self.commands))
         self.assertIn(("systemctl","start",module.MIHOMO),[c[:3] for c in self.commands])
         self.assertIn(("systemctl","enable",module.XRAY),self.commands)
-        self.assertEqual(module.native_tun_proof.call_count,2)
+        self.assertEqual(module.native_runtime_proof.call_count,2)
 
     def test_new_xray_failure_quiesces_before_awg(self):
-        with mock.patch.object(module,"native_tun_proof",
+        with mock.patch.object(module,"native_runtime_proof",
              side_effect=RuntimeError("XRAY_TUN_FAILED")),\
              self.assertRaisesRegex(module.DeadXrayAbort,"XRAY_TUN_FAILED"):
             module.dead_xray_xray(3)

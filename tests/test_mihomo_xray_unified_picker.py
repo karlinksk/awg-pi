@@ -184,15 +184,15 @@ done""")
         self.assertIn('[[ "$engine" == MIHOMO ]] ||',menu)
         self.assertIn('confirm "Переключение на Xray"',menu)
         self.assertIn('MIHOMO_POOL_PICKED_NODE',menu)
-        self.assertIn('independent Xray OpenAI network gate remains valid',menu)
+        self.assertIn('Xray catalog readiness does not gate manual selection',menu)
         self.assertIn('Reality VLESS may be unusable',menu)
 
     def test_stale_xray_proof_auto_refresh_is_bounded(self):
-        code=(ROOT/"src/awg-menu").read_text()
-        self.assertIn('XRAY_MANUAL_ERROR=XRAY_FRESH_NETWORK_PROOF_REQUIRED',code)
-        self.assertIn('"$MIHOMO_UNIFIED" probe "$index"',code)
-        self.assertIn('title="Обновление доказательства Xray HTTPS"',code)
-        self.assertIn('Подписка изменилась; активная нода не переключалась.',code)
+        code=(ROOT/"src/awg-menu").read_text().split("mihomo_node_menu(){",1)[1].split("\n}\n",1)[0]
+        self.assertNotIn('"$MIHOMO_UNIFIED" probe',code)
+        self.assertNotIn('NETWORK_OK',code)
+        self.assertIn('"$XRAY_MANUAL_SWITCH" preview "$index"',code)
+        self.assertIn('"$XRAY_MANUAL_SWITCH" apply "$index"',code)
 
     def test_direct_live_picker_and_optional_advanced_menu(self):
         code=(ROOT/"src/awg-menu").read_text()
@@ -205,13 +205,10 @@ done""")
 
     def test_menu_distinguishes_server_address_from_egress(self):
         menu=(ROOT/"src/awg-menu").read_text()
-        self.assertIn('line_label="$display_name | $engine_label | $type | $shown_endpoint | $shown_delay | $state_label"',menu)
-        self.assertIn('Сервер подключения: $endpoint', menu)
-        self.assertIn('"$MIHOMO_UNIFIED" probe "$index"',menu)
-        self.assertNotIn('confirm "Проверить Xray VLESS"',menu)
-        self.assertIn("mihomo_live_egress_ip()",menu)
-        self.assertIn("--interface mihomo0",menu)
-        self.assertIn("Публичный IP выхода через mihomo0",menu)
+        self.assertIn('Адрес сервера: $endpoint',menu)
+        self.assertNotIn('mihomo_live_egress_ip()',menu)
+        self.assertIn('Доступность внешних сайтов не проверялась',menu)
+        self.assertNotIn('TUN HTTPS подтверждён',menu)
 
     def test_not_installed_into_auto_selection(self):
         source=PICKER.read_text()

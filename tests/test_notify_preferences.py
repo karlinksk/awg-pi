@@ -80,7 +80,7 @@ class NotificationPreferenceTests(unittest.TestCase):
         self.assertIn('4 "Типы уведомлений [галочки]"', menu)
         self.assertIn('4) notify_types_menu ;;', menu)
         self.assertIn("awg-matrix-compositor.py", menu)
-        self.assertIn('10 "Telegram — уведомления"', menu)
+        self.assertIn('9 "Telegram — уведомления"', menu)
 
 
 if __name__ == "__main__":

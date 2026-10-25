@@ -292,14 +292,14 @@ def route_order(active="", router_approved=None):
         except (FileNotFoundError, PermissionError):
             active = ""
     preferred = {"mihomo": "mihomo0", "awg": "awg0"}.get(active)
-    # eth0 may be DIRECT when SSTP drops: never use it without a reviewed
-    # RouterOS fail-closed policy that was tested with the SSTP tunnel down.
-    candidates = ["mihomo0", "awg0"]
+    # eth0 is the SSTP-first path ONLY after root-owned RouterOS fail-closed
+    # approval. Without that marker, retain the existing VPN-only order.
+    vpn = ([preferred] if preferred else []) + [
+        x for x in ("mihomo0", "awg0") if x != preferred
+    ]
     if router_approved is None:
         router_approved = router_sstp_approved()
-    if router_approved:
-        candidates.append("eth0")
-    return ([preferred] if preferred else []) + [x for x in candidates if x != preferred]
+    return (["eth0"] + vpn) if router_approved else vpn
 
 
 def curl_api(token, payload, route, method="sendMessage", timeout=8):

@@ -57,10 +57,10 @@ class SelectiveXraySafety(unittest.TestCase):
             with (mock.patch.object(m, "MODE", mode),
                   mock.patch.object(m, "run", side_effect=command),
                   mock.patch.object(m, "active", return_value=True),
-                  mock.patch.object(m, "http_code", return_value=True)):
+                  mock.patch.object(m, "tun_runtime_ready", return_value=True)):
                 self.assertTrue(m.verified_awg_backup_safe())
-                with mock.patch.object(m, "http_code", return_value=False):
-                    self.assertFalse(m.verified_awg_backup_safe())
+                with mock.patch.object(m, "tun_runtime_ready", side_effect=AssertionError("AWG must not depend on Mihomo/HTTPS")):
+                    self.assertTrue(m.verified_awg_backup_safe())
                 with mock.patch.object(m, "run", side_effect=lambda *a, **kw:
                        "default dev mihomo0" if a[0]=="ip" else command(*a, **kw)):
                     self.assertFalse(m.verified_awg_backup_safe())
@@ -163,7 +163,7 @@ class SelectiveXraySafety(unittest.TestCase):
                   mock.patch.object(m,"run",side_effect=command),
                   mock.patch.object(m,"active",return_value=True),
                   mock.patch.object(m,"routes_ok",return_value=True),
-                  mock.patch.object(m,"http_code",return_value=True),
+                  mock.patch.object(m,"tun_runtime_ready",return_value=True),
                   mock.patch.object(m,"failclosed") as restore):
                 m.watchdog(snap)
                 restore.assert_not_called()
@@ -226,12 +226,12 @@ class SelectiveXraySafety(unittest.TestCase):
                   mock.patch.object(m,"verified_selective_route_ownership",return_value=True),
                   mock.patch.object(m,"active",return_value=True),
                   mock.patch.object(m,"run",side_effect=run),
-                  mock.patch.object(backend,"check_tun_https",return_value=True)):
+                  mock.patch.object(backend,"check_tun_ready",return_value=True)):
                 self.assertTrue(backend.check_policy_routes())
                 self.assertTrue(state["enabled"])
                 self.assertEqual(sum(1 for a in calls if a[:4]==("ip","-4","rule","add")),1)
                 state["enabled"]=False;calls.clear()
-                with mock.patch.object(backend,"check_tun_https",return_value=False):
+                with mock.patch.object(backend,"check_tun_ready",return_value=False):
                     self.assertFalse(backend.check_policy_routes())
                 self.assertFalse(state["enabled"])
                 self.assertFalse(any(a[:4]==("ip","-4","rule","add") for a in calls))

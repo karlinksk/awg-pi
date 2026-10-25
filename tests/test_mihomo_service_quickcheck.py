@@ -75,7 +75,7 @@ class QuickServiceTests(unittest.TestCase):
             self.assertEqual(result.returncode,0,result.stderr)
             quick.write_text("#!/bin/sh\necho SERVICE_ELIGIBILITY=UNKNOWN\nexit 0\n")
             result=subprocess.run(["bash","-c",command],capture_output=True,timeout=8)
-            self.assertNotEqual(result.returncode,0)
+            self.assertEqual(result.returncode,0)
 
     def test_try_limit_is_bounded_in_both_policies(self):
         source=NODE.read_text()
