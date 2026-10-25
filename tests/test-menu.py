@@ -217,16 +217,18 @@ assert '"$MIHOMO_POOL" ensure "$target" --geo-if-policy' in menu
 assert '"$MIHOMO_POOL" policy set europe' in menu
 assert '"$MIHOMO_POOL" policy set all' in menu
 assert '"$MIHOMO_POOL" protocol get' in menu
-assert '"$MIHOMO_POOL" protocol set "$selected_protocol"' in menu
+assert '"$MIHOMO_POOL" protocol set "$selected"' in menu
 assert 'mihomo_protocol_select(){' in menu
 assert 'mihomo_protocol_settings(){' in menu
-assert 'all "Все протоколы"' in menu
-assert 'vless "VLESS"' in menu
-assert 'trojan "Trojan"' in menu
-assert 'hysteria2 "Hysteria2"' in menu
-assert 'ss "Shadowsocks (SS)"' in menu
-assert 'vmess "VMess"' in menu
-assert 'Протокол [$protocol_label]' in menu
+for tag, label in (
+    ("all", "Все протоколы"), ("vless", "VLESS"), ("trojan", "Trojan"),
+    ("hysteria2", "Hysteria2"), ("ss", "Shadowsocks (SS)"),
+    ("vmess", "VMess"),
+):
+    assert f'{tag} "$(awg_option_label "{label}" {tag} "$current")"' in menu
+picker=menu.split('mihomo_pool_pick(){',1)[1].split('\n}\n',1)[0]
+assert '"$MIHOMO_POOL" protocol set' not in picker
+assert 'Протокол [$protocol_label]' not in picker
 assert 'Узлов в выбранном протоколе: $total' in menu
 assert 'Узлов в источнике: $source_total' in menu
 # FIXED uses the exact same read-only full-provider picker as manual nodes;
