@@ -129,7 +129,7 @@ awg_dialog_breadcrumb_title(){
       mihomo_xray_auto_menu) label="Xray AUTO" ;;
       mihomo_auto_strategy_menu) label="Hot Pool" ;;
       mihomo_node_chain_editor) label="FIXED" ;;
-      mihomo_advanced_menu) label="Восстановление" ;;
+      mihomo_advanced_menu) label="Дополнительные настройки" ;;
       mihomo_xray_vless_menu) label="Xray" ;;
       awg_config_menu) label="AWG" ;;
       active_transport_menu) label="Транспорт" ;;
@@ -2208,23 +2208,12 @@ active_transport_menu(){
 }
 
 mihomo_advanced_menu(){
-  local choice provider_format path candidate_label candidate_help
+  local choice provider_format
   while true; do
-    if mihomo_candidate_is_staged; then
-      candidate_label="Подготовленный профиль [ЕСТЬ]"
-      candidate_help="Вернуться к уже загруженному и проверенному профилю, выбрать узел и применить его."
-    else
-      candidate_label="Подготовленный профиль [НЕТ]"
-      candidate_help="Сейчас подготовленного профиля нет. После применения candidate становится рабочим профилем и удаляется."
-    fi
-    choice="$(dialog --backtitle "$BACKTITLE" --title "Mihomo — Расширенные / восстановление" --item-help --menu \
-      "Технические и восстановительные функции. Для обычной работы используйте «Подписка / источник», «Точка выхода / узел» и «Резервирование узлов Mihomo»." 24 112 8 \
+    choice="$(dialog --backtitle "$BACKTITLE" --title "Дополнительные настройки" --item-help --menu \
+      "Ручные настройки загрузки подписки, когда автоматический выбор не подходит. Действующий VPN не меняется до успешного применения подготовленного профиля." 19 104 4 \
       1 "Обновить через выбранный канал" "Принудительно выбрать DIRECT / Mihomo / AWG только для одной загрузки подписки, без автоматического перехода на резервный канал." \
       2 "Формат подписки" "Вручную выбрать AUTO / Mihomo YAML / VLESS URI / Base64 VLESS, если автоопределение работает неоднозначно." \
-      3 "$candidate_label" "$candidate_help" \
-      4 "Локальное восстановление Mihomo (.gz)" "Установить локальный архив только для поддерживаемой версии Mihomo после проверки версии и SHA256." \
-      5 "Восстановить резерв Mihomo при AWG" "Однократная проверка и подготовка резервной ноды без переключения работающего AWG." \
-      6 "Xray VLESS: диагностика" "Состояние Xray, VLESS-профили и изолированная проверка HTTPS. Не является ручным выбором точки выхода." \
       0 "Назад" "Вернуться в меню Mihomo." 3>&1 1>&2 2>&3)" || return 0
 
     case "$choice" in
@@ -2238,15 +2227,6 @@ mihomo_advanced_menu(){
           mihomo_open_candidate_after_update
         fi
         ;;
-      3) mihomo_candidate_menu ;;
-      4)
-        path="$(input "Локальное восстановление Mihomo" "Полный путь к локальному архиву Mihomo .gz для поддерживаемой версии и текущей архитектуры:")" || continue
-        [[ -n "$path" ]] || continue
-        title="Установка Mihomo из локального архива"
-        capture "$MIHOMO_INSTALLER" --file "$path" || true
-        ;;
-      5) mihomo_standby_repair_menu ;;
-      6) mihomo_xray_vless_menu ;;
       0) return 0 ;;
     esac
   done
@@ -2314,12 +2294,12 @@ mihomo_menu(){
   local choice
   while true; do
     choice="$(dialog --backtitle "$BACKTITLE" --title "Mihomo" --item-help --menu \
-      "Повседневное управление Mihomo: подписка, выбор Mihomo/Xray, резервирование. Диагностика Xray — в «Расширенные / восстановление»; активный транспорт выбирается уровнем выше." 24 110 7 \
+      "Повседневное управление Mihomo: подписка, выбор Mihomo/Xray, резервирование. Дополнительные настройки — выбор канала обновления и формата подписки; активный транспорт выбирается уровнем выше." 24 110 7 \
       1 "Состояние Mihomo" "Показывает текущий профиль, выбранный узел, адрес сервера, состояние службы и последний канал загрузки без вывода секретов." \
       2 "Подписка / источник" "Заменить URL, обновить через AUTO или импортировать профиль/подписку из файла либо текста." \
       3 "Точка выхода Mihomo / Xray" "Единый ручной выбор обеих нод с защищённой проверкой TUN и откатом при ошибке." \
       4 "Политика узлов Mihomo (FIXED/AUTO)" "Mihomo резервирует исправные ноды и AWG; Xray AUTO включается отдельно; применяются TUN-проверка и безопасный откат." \
-      5 "Расширенные / восстановление" "Восстановление Mihomo, технические настройки и диагностика Xray VLESS." \
+      5 "Дополнительные настройки" "Ручной канал обновления и формат подписки, если автоопределение не подходит." \
       0 "Назад" "Вернуться в меню VPN без изменений." 3>&1 1>&2 2>&3)" || return 0
 
     case "$choice" in
