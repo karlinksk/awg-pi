@@ -13,7 +13,7 @@ engine network assessment, never individual service eligibility.
 
 | Required area | Evidence and exact scope | Current disposition |
 | --- | --- | --- |
-| Current HEAD CI | Baseline `5466a73`: awg-v31 success, shell failed on five obsolete assertions and one historical UI-anchor error. Test-only repair `69ec2e5`; current-head results must be checked independently. | Pending final HEAD CI |
+| Current HEAD CI | `96da642`: complete push CI40206880147 success; Pi rootless discovery1001 OK (3 skips), 68.632s; isolated privileged MSS namespace tests3/3 OK. Subsequent docs-only HEAD still requires its own checks. | Source/test candidate PASS; recheck final documentation HEAD |
 | Installed source / delivery | Fresh read-only privileged audit of all 75 literal installer helper/unit deliveries against `5466a73`: 75 byte matches, all root-owned; helpers 0755, common library/units 0644. Eight network helpers and accepted numeric menu also match exact Git blobs. Test-only repair changes none of these files. | PASS for audited delivery set; not an installer execution |
 | Transit IPv4 LAN | Windows Mihomo correlated ingress/TUN/return; installed dynamic-MSS AWG 22/22 HTTP200, outgoing MSS1380, zero target-bound direct egress. | Existing bounded hardware PASS credited |
 | Transit FAIL-CLOSED | Both backends stopped under recovery: 26 target ingress, zero matching direct egress/VPN traffic; six contained client attempts timed out; baseline recovered. | Existing target-scoped IPv4 negative PASS credited; no all-path/IPv6 claim |
@@ -23,6 +23,18 @@ engine network assessment, never individual service eligibility.
 | Upgrade / gateway restore / reboot | Actual `07d8e0d` upgrade, 75/75 delivery, 13/13 preserved-state digests, actual snapshot restore and reboot; later MSS/UI changes separately installed and tested. Current 75/75 byte audit reconciles installed artifacts. | Scoped PASS; final frozen-source lifecycle remains OPEN |
 | Full-media recovery | A gateway tar snapshot and its successful restore do not prove booting restored spare media. No verified full-media restore/boot receipt established. | OPEN; do not write working microSD or unidentified media |
 | Promotion | PR targets integration branch, not main. Inspect integration/release path and final checks before any merge/tag/release. | Draft, unmerged, unreleased |
+
+Fresh receipt reconciliation also confirmed actual reboot boot-ID change,
+`BOOT_RESCUE=HEALTHY_NO_RESTORE`, 13 policy matches and removed temporary units;
+the restore receipt records 13 policies, bound HTTP200 and guard SAFE. These
+are historical results. Today's comparison to that archived private baseline
+is **12/13**, with `provider.env` changed (both versions present); cause not
+established. Do not restore old provider state or claim current 13/13 equality.
+Current native Mihomo and standby AWG are healthy, DNS resolves, controls are
+active, Transit SAFE/ACTIVE/READY, failed units0 and no rescue/recovery timer
+listed. Read-only storage inventory shows only the boot microSD, loop and
+zram; no spare restore target is attached. No live gateway or media changes
+were made during this audit.
 
 Reopen hardware only for a concrete uncovered required behavior or a material
 network-code change. A stale unchecked box is not a reason to repeat a fault
