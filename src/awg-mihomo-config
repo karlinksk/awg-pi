@@ -1,0 +1,203 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+MIHOMO_ENV_FILE="${MIHOMO_ENV_FILE:-/etc/awg-pbr/transports/mihomo/provider.env}"
+MIHOMO_PROVIDER_FILE="${MIHOMO_PROVIDER_FILE:-/var/lib/awg-pbr/mihomo/providers/subscription.yaml}"
+
+[[ -r "$MIHOMO_ENV_FILE" ]] && source "$MIHOMO_ENV_FILE"
+
+MIHOMO_MIXED_PORT="${MIHOMO_MIXED_PORT:-7890}"
+MIHOMO_CONTROLLER="${MIHOMO_CONTROLLER:-127.0.0.1:9090}"
+MIHOMO_TUN_IF="${MIHOMO_TUN_IF:-mihomo0}"
+MIHOMO_PROVIDER_NAME="${MIHOMO_PROVIDER_NAME:-subscription}"
+MIHOMO_GROUP_NAME="${MIHOMO_GROUP_NAME:-AWG-MIHOMO}"
+MIHOMO_PROVIDER_HEALTH_URL="${MIHOMO_PROVIDER_HEALTH_URL:-https://www.gstatic.com/generate_204}"
+MIHOMO_PROVIDER_HEALTH_INTERVAL="${MIHOMO_PROVIDER_HEALTH_INTERVAL:-300}"
+MIHOMO_NODE_FILTER="${MIHOMO_NODE_FILTER:-}"
+MIHOMO_ENDPOINT_IP="${MIHOMO_ENDPOINT_IP:-}"
+# Disabled by default. Optional manually selected local SOCKS5 route.
+MIHOMO_XRAY_VLESS_BRIDGE="${MIHOMO_XRAY_VLESS_BRIDGE:-auto}"
+MIHOMO_XRAY_SELECTED="${MIHOMO_XRAY_SELECTED:-/var/lib/awg-pbr/xray-vless/selected.json}"
+MIHOMO_XRAY_CORE="${MIHOMO_XRAY_CORE:-/usr/local/bin/awg-xray-vless-core}"
+MIHOMO_XRAY_CURRENT="${MIHOMO_XRAY_CURRENT:-/etc/awg-pbr/transports/mihomo/node-name}"
+
+
+yaml_sq(){
+  local value="$1"
+  value="${value//\'/\'\'}"
+  printf "'%s'" "$value"
+}
+
+[[ "$MIHOMO_MIXED_PORT" =~ ^[0-9]+$ ]] || {
+  echo "Invalid MIHOMO_MIXED_PORT: $MIHOMO_MIXED_PORT" >&2
+  exit 2
+}
+(( MIHOMO_MIXED_PORT >= 1 && MIHOMO_MIXED_PORT <= 65535 )) || {
+  echo "MIHOMO_MIXED_PORT out of range" >&2
+  exit 2
+}
+[[ "$MIHOMO_CONTROLLER" =~ ^127\.0\.0\.1:[0-9]+$ ]] || {
+  echo "MIHOMO_CONTROLLER must bind to 127.0.0.1" >&2
+  exit 2
+}
+_controller_port="${MIHOMO_CONTROLLER##*:}"
+(( _controller_port >= 1 && _controller_port <= 65535 )) || {
+  echo "MIHOMO_CONTROLLER port out of range" >&2
+  exit 2
+}
+[[ "$MIHOMO_PROVIDER_HEALTH_INTERVAL" =~ ^[0-9]+$ ]] || {
+  echo "Invalid MIHOMO_PROVIDER_HEALTH_INTERVAL: $MIHOMO_PROVIDER_HEALTH_INTERVAL" >&2
+  exit 2
+}
+[[ "$MIHOMO_TUN_IF" =~ ^[A-Za-z0-9_.-]{1,15}$ ]] || {
+  echo "Invalid MIHOMO_TUN_IF: $MIHOMO_TUN_IF" >&2
+  exit 2
+}
+[[ "$MIHOMO_PROVIDER_NAME" =~ ^[A-Za-z0-9_.-]+$ ]] || {
+  echo "Invalid MIHOMO_PROVIDER_NAME" >&2
+  exit 2
+}
+[[ "$MIHOMO_GROUP_NAME" =~ ^[A-Za-z0-9_.-]+$ ]] || {
+  echo "Invalid MIHOMO_GROUP_NAME" >&2
+  exit 2
+}
+[[ -n "$MIHOMO_NODE_FILTER" && "$MIHOMO_NODE_FILTER" != *$'\n'* ]] || {
+  echo "MIHOMO_NODE_FILTER is required and must be one line" >&2
+  exit 2
+}
+[[ "$MIHOMO_ENDPOINT_IP" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]] || {
+  echo "MIHOMO_ENDPOINT_IP must be an IPv4 address" >&2
+  exit 2
+}
+IFS=. read -r _a _b _c _d <<<"$MIHOMO_ENDPOINT_IP"
+for _octet in "$_a" "$_b" "$_c" "$_d"; do
+  (( 10#$_octet >= 0 && 10#$_octet <= 255 )) || {
+    echo "MIHOMO_ENDPOINT_IP has an invalid octet" >&2
+    exit 2
+  }
+done
+[[ -r "$MIHOMO_PROVIDER_FILE" ]] || {
+  echo "Mihomo provider cache is missing: $MIHOMO_PROVIDER_FILE" >&2
+  exit 1
+}
+
+_provider_path_yaml="$(yaml_sq "$MIHOMO_PROVIDER_FILE")"
+_node_filter_yaml="$(yaml_sq "$MIHOMO_NODE_FILTER")"
+_health_url_yaml="$(yaml_sq "$MIHOMO_PROVIDER_HEALTH_URL")"
+_xray_current=""
+case "$MIHOMO_XRAY_VLESS_BRIDGE" in
+  0) _bridge_ready=0 ;;
+  auto)
+    # A SOCKS alias with no running Xray must not become the default node
+    # before the current native profile is selected on subscription import.
+    if [[ -x "$MIHOMO_XRAY_CORE" && -r "$MIHOMO_XRAY_CURRENT" ]]; then
+      _xray_current="$(cat "$MIHOMO_XRAY_CURRENT")"
+      if [[ -n "$_xray_current" && "$_xray_current" != *$'\n'* &&
+            "$_xray_current" != *$'\r'* ]] &&
+         python3 -B - "$MIHOMO_PROVIDER_FILE" "$_xray_current" <<'PY' >/dev/null 2>&1
+import sys,yaml
+try:
+    obj=yaml.safe_load(open(sys.argv[1],encoding="utf-8"))
+    rows=obj.get("proxies",[]) if isinstance(obj,dict) else []
+    assert sum(isinstance(r,dict) and r.get("name")==sys.argv[2]
+               for r in rows)==1
+except Exception:sys.exit(1)
+PY
+      then
+        _bridge_ready=1
+      else _bridge_ready=0; fi
+    else _bridge_ready=0; fi
+    ;;
+  1)
+    [[ -r "$MIHOMO_XRAY_SELECTED" && -x "$MIHOMO_XRAY_CORE" ]] || {
+      echo "Xray bridge selected but helper/core not installed" >&2
+      exit 2
+    }
+    _bridge_ready=1
+    _xray_current="AWG-XRAY-VLESS-LOCAL"
+    ;;
+  *) echo "MIHOMO_XRAY_VLESS_BRIDGE must be 0, 1 or auto" >&2; exit 2 ;;
+esac
+_xray_proxy_yaml=""
+_xray_group_yaml=""
+_xray_default_yaml=""
+if (( _bridge_ready )); then
+  _xray_proxy_yaml=$'proxies:\n  - name: AWG-XRAY-VLESS-LOCAL\n    type: socks5\n    server: 127.0.0.1\n    port: 17892\n    udp: false'
+  _xray_group_yaml=$'    proxies:\n      - AWG-XRAY-VLESS-LOCAL'
+  # After a successful manual Xray selection, CURRENT names the provider
+  # profile, while Mihomo's real selectable outbound is the local SOCKS alias.
+  # Only match it by the exact selected transport fingerprint; merely finding
+  # selected.json or recognizing a name must never activate stale credentials.
+  if [[ "$MIHOMO_XRAY_VLESS_BRIDGE" == auto && -r "$MIHOMO_XRAY_SELECTED" ]]; then
+    if python3 -B - "$MIHOMO_PROVIDER_FILE" "$MIHOMO_XRAY_SELECTED" "$_xray_current" <<'PY' >/dev/null 2>&1
+import hashlib,json,sys,yaml
+try:
+    d=yaml.safe_load(open(sys.argv[1],encoding="utf-8"))
+    chosen=json.load(open(sys.argv[2],encoding="utf-8"))
+    nodes=d.get("proxies",[]) if isinstance(d,dict) else []
+    matches=[n for n in nodes if isinstance(n,dict) and n.get("name")==sys.argv[3]]
+    assert len(matches)==1
+    n=matches[0]
+    assert n.get("type")=="vless" and n.get("network") in ("xhttp","grpc")
+    encoded=json.dumps({k:v for k,v in n.items() if k!="name"},
+      sort_keys=True,ensure_ascii=False,separators=(",",":")).encode()
+    assert chosen.get("sha256")==hashlib.sha256(encoded).hexdigest()
+except Exception:
+    sys.exit(1)
+PY
+    then
+      _xray_current="AWG-XRAY-VLESS-LOCAL"
+    fi
+  fi
+  if [[ -n "$_xray_current" ]]; then
+    _xray_default_yaml="    default-selected: $(yaml_sq "$_xray_current")"
+  fi
+fi
+
+cat <<YAML
+mixed-port: $MIHOMO_MIXED_PORT
+allow-lan: false
+bind-address: 127.0.0.1
+mode: rule
+log-level: warning
+ipv6: false
+external-controller: $MIHOMO_CONTROLLER
+
+profile:
+  store-selected: true
+  store-fake-ip: false
+
+proxy-providers:
+  $MIHOMO_PROVIDER_NAME:
+    type: file
+    path: $_provider_path_yaml
+    filter: $_node_filter_yaml
+    override:
+      override-expr:
+        - '.server = "$MIHOMO_ENDPOINT_IP"'
+    health-check:
+      enable: true
+      url: $_health_url_yaml
+      interval: $MIHOMO_PROVIDER_HEALTH_INTERVAL
+      lazy: true
+
+$_xray_proxy_yaml
+proxy-groups:
+  - name: $MIHOMO_GROUP_NAME
+    type: select
+    use:
+      - $MIHOMO_PROVIDER_NAME
+$_xray_group_yaml
+$_xray_default_yaml
+
+rules:
+  - MATCH,$MIHOMO_GROUP_NAME
+
+tun:
+  enable: true
+  device: $MIHOMO_TUN_IF
+  stack: mips
+  auto-route: false
+  auto-redirect: false
+  auto-detect-interface: true
+YAML

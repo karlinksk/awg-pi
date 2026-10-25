@@ -1,0 +1,318 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+RUNTIME_DIR="${AWG_TRAFFIC_RUNTIME_DIR:-/run/awg-pbr/traffic}"
+PERSIST_DIR="${AWG_TRAFFIC_PERSIST_DIR:-/var/lib/awg-pbr/traffic}"
+RUNTIME_STATE="${AWG_TRAFFIC_RUNTIME_STATE:-$RUNTIME_DIR/state.env}"
+PERSIST_STATE="${AWG_TRAFFIC_PERSIST_STATE:-$PERSIST_DIR/state.env}"
+LOCK_FILE="${AWG_TRAFFIC_LOCK_FILE:-$RUNTIME_DIR/lock}"
+SYSFS_ROOT="${AWG_TRAFFIC_SYSFS_ROOT:-/sys/class/net}"
+INTERVAL="${AWG_TRAFFIC_INTERVAL:-60}"
+PERSIST_INTERVAL="${AWG_TRAFFIC_PERSIST_INTERVAL:-21600}"
+AWG_IF="${AWG_TRAFFIC_AWG_IF:-awg0}"
+MIHOMO_IF="${AWG_TRAFFIC_MIHOMO_IF:-mihomo0}"
+BOOT_ID_FILE="${AWG_TRAFFIC_BOOT_ID_FILE:-/proc/sys/kernel/random/boot_id}"
+PUBLIC_STATE="${AWG_TRAFFIC_PUBLIC_STATE:-/run/awg-traffic-status.env}"
+
+prepare_state_dirs(){
+  mkdir -p "$RUNTIME_DIR" "$PERSIST_DIR"
+  chmod 700 "$RUNTIME_DIR" "$PERSIST_DIR"
+}
+
+zero_state(){
+  INITIALIZED=0
+  LAST_BOOT_ID=""
+  DAY_KEY=""
+  MONTH_KEY=""
+  DAY_AWG_RX=0 DAY_AWG_TX=0 DAY_MIHOMO_RX=0 DAY_MIHOMO_TX=0
+  MONTH_AWG_RX=0 MONTH_AWG_TX=0 MONTH_MIHOMO_RX=0 MONTH_MIHOMO_TX=0
+  LAST_AWG_RX=0 LAST_AWG_TX=0 LAST_MIHOMO_RX=0 LAST_MIHOMO_TX=0
+  LAST_AWG_IFINDEX=0 LAST_MIHOMO_IFINDEX=0
+  LAST_PERSIST_EPOCH=0
+}
+
+load_state(){
+  zero_state
+  local source=""
+  if [[ -r "$RUNTIME_STATE" ]]; then
+    source="$RUNTIME_STATE"
+  elif [[ -r "$PERSIST_STATE" ]]; then
+    source="$PERSIST_STATE"
+  fi
+  if [[ -n "$source" ]]; then
+    # shellcheck disable=SC1090
+    . "$source"
+    : "${INITIALIZED:=1}"
+  fi
+  : "${INITIALIZED:=0}" "${LAST_BOOT_ID:=}"
+  : "${DAY_AWG_RX:=0}" "${DAY_AWG_TX:=0}" "${DAY_MIHOMO_RX:=0}" "${DAY_MIHOMO_TX:=0}"
+  : "${MONTH_AWG_RX:=0}" "${MONTH_AWG_TX:=0}" "${MONTH_MIHOMO_RX:=0}" "${MONTH_MIHOMO_TX:=0}"
+  : "${LAST_AWG_RX:=0}" "${LAST_AWG_TX:=0}" "${LAST_MIHOMO_RX:=0}" "${LAST_MIHOMO_TX:=0}"
+  : "${LAST_AWG_IFINDEX:=0}" "${LAST_MIHOMO_IFINDEX:=0}"
+  : "${LAST_PERSIST_EPOCH:=0}"
+}
+
+state_write(){
+  local path="$1" dir tmp
+  dir="$(dirname "$path")"
+  mkdir -p "$dir"
+  tmp="$(mktemp "$dir/.traffic-state.XXXXXX")"
+  cat >"$tmp" <<EOF
+INITIALIZED=1
+LAST_BOOT_ID=$(printf %q "$LAST_BOOT_ID")
+DAY_KEY=$(printf %q "$DAY_KEY")
+MONTH_KEY=$(printf %q "$MONTH_KEY")
+DAY_AWG_RX=$DAY_AWG_RX
+DAY_AWG_TX=$DAY_AWG_TX
+DAY_MIHOMO_RX=$DAY_MIHOMO_RX
+DAY_MIHOMO_TX=$DAY_MIHOMO_TX
+MONTH_AWG_RX=$MONTH_AWG_RX
+MONTH_AWG_TX=$MONTH_AWG_TX
+MONTH_MIHOMO_RX=$MONTH_MIHOMO_RX
+MONTH_MIHOMO_TX=$MONTH_MIHOMO_TX
+LAST_AWG_RX=$LAST_AWG_RX
+LAST_AWG_TX=$LAST_AWG_TX
+LAST_MIHOMO_RX=$LAST_MIHOMO_RX
+LAST_MIHOMO_TX=$LAST_MIHOMO_TX
+LAST_AWG_IFINDEX=$LAST_AWG_IFINDEX
+LAST_MIHOMO_IFINDEX=$LAST_MIHOMO_IFINDEX
+LAST_PERSIST_EPOCH=$LAST_PERSIST_EPOCH
+EOF
+  chmod 600 "$tmp"
+  mv -f "$tmp" "$path"
+}
+
+public_state_write(){
+  local dir tmp
+  dir="$(dirname "$PUBLIC_STATE")"
+  mkdir -p "$dir"
+  tmp="$(mktemp "$dir/.awg-traffic-public.XXXXXX")"
+  cat >"$tmp" <<EOF
+INITIALIZED=1
+DAY_KEY=$(printf %q "$DAY_KEY")
+MONTH_KEY=$(printf %q "$MONTH_KEY")
+DAY_AWG_RX=$DAY_AWG_RX
+DAY_AWG_TX=$DAY_AWG_TX
+DAY_MIHOMO_RX=$DAY_MIHOMO_RX
+DAY_MIHOMO_TX=$DAY_MIHOMO_TX
+MONTH_AWG_RX=$MONTH_AWG_RX
+MONTH_AWG_TX=$MONTH_AWG_TX
+MONTH_MIHOMO_RX=$MONTH_MIHOMO_RX
+MONTH_MIHOMO_TX=$MONTH_MIHOMO_TX
+EOF
+  chmod 644 "$tmp"
+  mv -f "$tmp" "$PUBLIC_STATE"
+}
+
+load_status_state(){
+  zero_state
+  local source=""
+  if [[ -r "$PUBLIC_STATE" ]]; then
+    source="$PUBLIC_STATE"
+  elif [[ -r "$RUNTIME_STATE" ]]; then
+    source="$RUNTIME_STATE"
+  elif [[ -r "$PERSIST_STATE" ]]; then
+    source="$PERSIST_STATE"
+  fi
+  if [[ -n "$source" ]]; then
+    # shellcheck disable=SC1090
+    . "$source"
+    : "${INITIALIZED:=1}"
+  fi
+  : "${INITIALIZED:=0}"
+  : "${DAY_KEY:=}" "${MONTH_KEY:=}"
+  : "${DAY_AWG_RX:=0}" "${DAY_AWG_TX:=0}" "${DAY_MIHOMO_RX:=0}" "${DAY_MIHOMO_TX:=0}"
+  : "${MONTH_AWG_RX:=0}" "${MONTH_AWG_TX:=0}" "${MONTH_MIHOMO_RX:=0}" "${MONTH_MIHOMO_TX:=0}"
+}
+
+counter(){
+  local iface="$1" dir="$2" path
+  path="$SYSFS_ROOT/$iface/statistics/${dir}_bytes"
+  if [[ -r "$path" ]]; then
+    cat "$path" 2>/dev/null || printf '0\n'
+  else
+    printf '0\n'
+  fi
+}
+
+ifindex(){
+  local iface="$1" path
+  path="$SYSFS_ROOT/$iface/ifindex"
+  if [[ -r "$path" ]]; then
+    cat "$path" 2>/dev/null || printf '0\n'
+  else
+    printf '0\n'
+  fi
+}
+
+boot_id(){
+  if [[ -r "$BOOT_ID_FILE" ]]; then
+    cat "$BOOT_ID_FILE" 2>/dev/null || printf 'unknown\n'
+  else
+    printf 'unknown\n'
+  fi
+}
+
+delta(){
+  local current="$1" previous="$2" current_ifindex="$3" previous_ifindex="$4" current_boot="$5" previous_boot="$6"
+  if [[ -n "$previous_boot" && "$current_boot" != "$previous_boot" ]]; then
+    printf '%s\n' "$current"
+  elif [[ "$current_ifindex" != "$previous_ifindex" ]]; then
+    # Interface instance changed (restart/recreate). The whole new counter belongs
+    # to the current accounting period, regardless of whether it is numerically
+    # above or below the previous instance's last value.
+    printf '%s\n' "$current"
+  elif (( current >= previous )); then
+    printf '%s\n' "$((current-previous))"
+  else
+    # Defensive fallback for an in-place counter reset.
+    printf '%s\n' "$current"
+  fi
+}
+
+now_epoch(){ printf '%s\n' "${AWG_TRAFFIC_NOW_EPOCH:-$(date +%s)}"; }
+day_key(){ date -d "@$(now_epoch)" +%F; }
+month_key(){ date -d "@$(now_epoch)" +%Y-%m; }
+
+sample_locked(){
+  local now day month awg_rx awg_tx mihomo_rx mihomo_tx awg_ifindex mihomo_ifindex current_boot d period_changed=0
+  now="$(now_epoch)"
+  day="$(day_key)"
+  month="$(month_key)"
+  load_state
+
+  current_boot="$(boot_id)"
+  awg_ifindex="$(ifindex "$AWG_IF")"
+  mihomo_ifindex="$(ifindex "$MIHOMO_IF")"
+  awg_rx="$(counter "$AWG_IF" rx)"; awg_tx="$(counter "$AWG_IF" tx)"
+  mihomo_rx="$(counter "$MIHOMO_IF" rx)"; mihomo_tx="$(counter "$MIHOMO_IF" tx)"
+
+  if (( INITIALIZED != 1 )); then
+    DAY_KEY="$day"
+    MONTH_KEY="$month"
+    LAST_BOOT_ID="$current_boot"
+    LAST_AWG_RX="$awg_rx"; LAST_AWG_TX="$awg_tx"; LAST_AWG_IFINDEX="$awg_ifindex"
+    LAST_MIHOMO_RX="$mihomo_rx"; LAST_MIHOMO_TX="$mihomo_tx"; LAST_MIHOMO_IFINDEX="$mihomo_ifindex"
+    LAST_PERSIST_EPOCH="$now"
+    state_write "$RUNTIME_STATE"
+    state_write "$PERSIST_STATE"
+    public_state_write
+    return 0
+  fi
+
+  if [[ -n "$MONTH_KEY" && "$MONTH_KEY" != "$month" ]]; then period_changed=1; fi
+  if [[ -n "$DAY_KEY" && "$DAY_KEY" != "$day" ]]; then period_changed=1; fi
+
+  if [[ "$MONTH_KEY" != "$month" ]]; then
+    MONTH_KEY="$month"
+    MONTH_AWG_RX=0 MONTH_AWG_TX=0 MONTH_MIHOMO_RX=0 MONTH_MIHOMO_TX=0
+  fi
+  if [[ "$DAY_KEY" != "$day" ]]; then
+    DAY_KEY="$day"
+    DAY_AWG_RX=0 DAY_AWG_TX=0 DAY_MIHOMO_RX=0 DAY_MIHOMO_TX=0
+  fi
+
+  d="$(delta "$awg_rx" "$LAST_AWG_RX" "$awg_ifindex" "$LAST_AWG_IFINDEX" "$current_boot" "$LAST_BOOT_ID")"; DAY_AWG_RX=$((DAY_AWG_RX+d)); MONTH_AWG_RX=$((MONTH_AWG_RX+d))
+  d="$(delta "$awg_tx" "$LAST_AWG_TX" "$awg_ifindex" "$LAST_AWG_IFINDEX" "$current_boot" "$LAST_BOOT_ID")"; DAY_AWG_TX=$((DAY_AWG_TX+d)); MONTH_AWG_TX=$((MONTH_AWG_TX+d))
+  d="$(delta "$mihomo_rx" "$LAST_MIHOMO_RX" "$mihomo_ifindex" "$LAST_MIHOMO_IFINDEX" "$current_boot" "$LAST_BOOT_ID")"; DAY_MIHOMO_RX=$((DAY_MIHOMO_RX+d)); MONTH_MIHOMO_RX=$((MONTH_MIHOMO_RX+d))
+  d="$(delta "$mihomo_tx" "$LAST_MIHOMO_TX" "$mihomo_ifindex" "$LAST_MIHOMO_IFINDEX" "$current_boot" "$LAST_BOOT_ID")"; DAY_MIHOMO_TX=$((DAY_MIHOMO_TX+d)); MONTH_MIHOMO_TX=$((MONTH_MIHOMO_TX+d))
+
+  LAST_BOOT_ID="$current_boot"
+  LAST_AWG_RX="$awg_rx"; LAST_AWG_TX="$awg_tx"; LAST_AWG_IFINDEX="$awg_ifindex"
+  LAST_MIHOMO_RX="$mihomo_rx"; LAST_MIHOMO_TX="$mihomo_tx"; LAST_MIHOMO_IFINDEX="$mihomo_ifindex"
+
+  state_write "$RUNTIME_STATE"
+  if (( period_changed == 1 || now - LAST_PERSIST_EPOCH >= PERSIST_INTERVAL )); then
+    LAST_PERSIST_EPOCH="$now"
+    state_write "$RUNTIME_STATE"
+    state_write "$PERSIST_STATE"
+  fi
+  public_state_write
+}
+
+sample(){
+  prepare_state_dirs
+  exec 9>"$LOCK_FILE"
+  flock -x 9
+  sample_locked
+  flock -u 9
+  exec 9>&-
+}
+
+persist(){
+  prepare_state_dirs
+  exec 9>"$LOCK_FILE"
+  flock -x 9
+  load_state
+  LAST_PERSIST_EPOCH="$(now_epoch)"
+  state_write "$RUNTIME_STATE"
+  state_write "$PERSIST_STATE"
+  public_state_write
+  flock -u 9
+  exec 9>&-
+}
+
+human_bytes(){
+  awk -v b="$1" 'BEGIN {
+    split("B KiB MiB GiB TiB", u, " ");
+    i=1; v=b+0;
+    while (v>=1024 && i<5) {v/=1024; i++}
+    if (i==1) printf "%.0f %s", v, u[i]; else printf "%.2f %s", v, u[i]
+  }'
+}
+
+status(){
+  load_status_state
+  local d_awg d_mihomo m_awg m_mihomo d_total m_total
+  d_awg=$((DAY_AWG_RX+DAY_AWG_TX))
+  d_mihomo=$((DAY_MIHOMO_RX+DAY_MIHOMO_TX))
+  m_awg=$((MONTH_AWG_RX+MONTH_AWG_TX))
+  m_mihomo=$((MONTH_MIHOMO_RX+MONTH_MIHOMO_TX))
+  d_total=$((d_awg+d_mihomo))
+  m_total=$((m_awg+m_mihomo))
+  case "${1:-full}" in
+    compact)
+      printf 'Сегодня: %s | Месяц: %s\n' "$(human_bytes "$d_total")" "$(human_bytes "$m_total")"
+      ;;
+    full)
+      printf 'Учитывается только трафик транспортных интерфейсов Pi (%s + %s)\n' "$AWG_IF" "$MIHOMO_IF"
+      printf 'Сегодня (%s): всего %s\n' "${DAY_KEY:-неизвестно}" "$(human_bytes "$d_total")"
+      printf '  AWG:    приём %s  передача %s  всего %s\n' "$(human_bytes "$DAY_AWG_RX")" "$(human_bytes "$DAY_AWG_TX")" "$(human_bytes "$d_awg")"
+      printf '  Mihomo: приём %s  передача %s  всего %s\n' "$(human_bytes "$DAY_MIHOMO_RX")" "$(human_bytes "$DAY_MIHOMO_TX")" "$(human_bytes "$d_mihomo")"
+      printf 'Месяц (%s): всего %s\n' "${MONTH_KEY:-неизвестно}" "$(human_bytes "$m_total")"
+      printf '  AWG:    приём %s  передача %s  всего %s\n' "$(human_bytes "$MONTH_AWG_RX")" "$(human_bytes "$MONTH_AWG_TX")" "$(human_bytes "$m_awg")"
+      printf '  Mihomo: приём %s  передача %s  всего %s\n' "$(human_bytes "$MONTH_MIHOMO_RX")" "$(human_bytes "$MONTH_MIHOMO_TX")" "$(human_bytes "$m_mihomo")"
+      printf 'Интервал записи состояния на диск: %s с (промежуточные отсчёты хранятся в RAM)\n' "$PERSIST_INTERVAL"
+      ;;
+    *) return 2 ;;
+  esac
+}
+
+daemon(){
+  local sleeper=0
+  shutdown_daemon(){
+    if (( sleeper > 0 )); then
+      kill "$sleeper" 2>/dev/null || true
+      wait "$sleeper" 2>/dev/null || true
+    fi
+    persist
+    exit 0
+  }
+  trap shutdown_daemon INT TERM
+  while true; do
+    sample
+    [[ "${AWG_TRAFFIC_ONCE:-0}" == 1 ]] && break
+    sleep "$INTERVAL" &
+    sleeper=$!
+    wait "$sleeper" || true
+    sleeper=0
+  done
+}
+
+case "${1:-status}" in
+  status) status "${2:-full}" ;;
+  sample) sample ;;
+  persist) persist ;;
+  daemon) daemon ;;
+  *) echo "Usage: awg-traffic status [full|compact] | sample | persist | daemon" >&2; exit 2 ;;
+esac

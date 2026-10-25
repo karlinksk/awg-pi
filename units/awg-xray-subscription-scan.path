@@ -1,0 +1,11 @@
+[Unit]
+Description=AWG Pi Gateway scan Xray nodes when subscription changes
+# Watch the directory, including atomic replacement of subscription.yaml.
+ConditionPathIsDirectory=/var/lib/awg-pbr/mihomo/providers
+
+[Path]
+PathChanged=/var/lib/awg-pbr/mihomo/providers
+Unit=awg-xray-subscription-scan.service
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,380 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+AWG_ENV_FILE="${AWG_ENV_FILE:-/etc/awg-pbr/env}"
+AWG_COMMON_FILE="${AWG_COMMON_FILE:-/usr/local/lib/awg-pi/common.sh}"
+MIHOMO_API="${MIHOMO_API:-http://127.0.0.1:9090}"
+MIHOMO_PROXY="${MIHOMO_PROXY:-http://127.0.0.1:7890}"
+MIHOMO_EXPECTED_EGRESS_IP_FILE="${MIHOMO_EXPECTED_EGRESS_IP_FILE:-${MIHOMO_EXPECTED_IP_FILE:-/etc/awg-pbr/transports/mihomo/expected-egress-ip}}"
+MIHOMO_TUN_IF="${MIHOMO_TUN_IF:-mihomo0}"
+
+[[ -r "$AWG_ENV_FILE" ]] && source "$AWG_ENV_FILE"
+# shellcheck disable=SC1090
+source "$AWG_COMMON_FILE"
+
+VPN_IF="${VPN_IF:-awg0}"
+HANDSHAKE_MAX_AGE="${HANDSHAKE_MAX_AGE:-180}"
+IP_BIN="${IP_BIN:-ip}"
+AWG_BIN="${AWG_BIN:-awg}"
+CURL_BIN="${CURL_BIN:-curl}"
+DATE_BIN="${DATE_BIN:-date}"
+SYSTEMCTL_BIN="${SYSTEMCTL_BIN:-systemctl}"
+AWG_ROUTE_BIN="${AWG_ROUTE_BIN:-/usr/local/sbin/awg-route}"
+HEALTH_SERVICE="${AWG_HEALTH_SERVICE:-awg-pbr-health.service}"
+MIHOMO_SERVICE="${MIHOMO_SERVICE:-awg-mihomo.service}"
+TRANSIT_PREFLIGHT="${AWG_TRANSIT_PREFLIGHT:-/usr/local/sbin/awg-transit-preflight}"
+MAINTENANCE_LOCK="${AWG_LOCK_FILE:-/run/awg-maintenance.lock}"
+SLEEP_BIN="${SLEEP_BIN:-sleep}"
+MIHOMO_API_TIMEOUT="${MIHOMO_API_TIMEOUT:-2}"
+MIHOMO_CONNECT_TIMEOUT="${MIHOMO_CONNECT_TIMEOUT:-3}"
+MIHOMO_PROBE_TIMEOUT="${MIHOMO_PROBE_TIMEOUT:-5}"
+MIHOMO_HEALTH_ATTEMPTS="${MIHOMO_HEALTH_ATTEMPTS:-5}"
+MIHOMO_HEALTH_SLEEP="${MIHOMO_HEALTH_SLEEP:-0.5}"
+
+usage(){
+  cat <<'USAGE'
+Usage:
+  awg-transport get
+  awg-transport status
+  awg-transport list
+  awg-transport check [awg|mihomo]
+  awg-transport network-check  # AUTO only: fresh selected-node engine delay
+  awg-transport select awg|mihomo
+USAGE
+}
+
+check_awg(){
+  local raw hs now
+  "$IP_BIN" link show "$VPN_IF" >/dev/null 2>&1 || return 1
+  if ! raw="$("$AWG_BIN" show "$VPN_IF" latest-handshakes 2>/dev/null)"; then
+    (( ${EUID:-$(id -u)} != 0 )) && return 3
+    return 1
+  fi
+  hs="$(awk '$2>m{m=$2}END{print m+0}' <<<"$raw")"
+  [[ "$hs" -gt 0 ]] || return 1
+  now="$("$DATE_BIN" +%s)"
+  (( now - hs <= HANDSHAKE_MAX_AGE ))
+}
+
+check_mihomo(){
+  local selected
+  "$SYSTEMCTL_BIN" is-active --quiet "$MIHOMO_SERVICE" || return 1
+  "$IP_BIN" link show "$MIHOMO_TUN_IF" >/dev/null 2>&1 || return 1
+  "$CURL_BIN" -q -fsS --noproxy '*' --max-time "$MIHOMO_API_TIMEOUT" "$MIHOMO_API/version" >/dev/null 2>&1 || return 1
+  selected="$("$CURL_BIN" -q -fsS --noproxy '*' --max-time "$MIHOMO_API_TIMEOUT" "$MIHOMO_API/proxies/AWG-MIHOMO" 2>/dev/null |
+    python3 -c 'import json,sys; x=json.load(sys.stdin).get("now"); assert isinstance(x,str) and x; print(x)' 2>/dev/null)" || return 1
+  # A live Mihomo cannot hide a stopped selected Xray sidecar.
+  if [[ "$selected" == AWG-XRAY-VLESS-LOCAL ]]; then
+    "$SYSTEMCTL_BIN" is-active --quiet awg-xray-vless.service || return 1
+  fi
+}
+
+# Local proxy success does not validate the selected node's Pi-bound TUN.
+
+# Separate from check/select: MANUAL never requires external reachability.
+# Use the same engine URL-test mechanism as awg-mihomo-pool, not service
+# eligibility. rc1 is a negative network observation; rc2 is infrastructure
+# or changed selection, and must never be counted as a dead provider node.
+network_check(){
+  check_mihomo || return 2
+  MIHOMO_NETWORK_API="$MIHOMO_API" python3 - <<'PY'
+import json,os,sys,urllib.request,urllib.parse,urllib.error
+api=os.environ['MIHOMO_NETWORK_API'].rstrip('/')
+opener=urllib.request.build_opener(urllib.request.ProxyHandler({}))
+def get(path,timeout=3):
+    with opener.open(api+path,timeout=timeout) as response:
+        return json.load(response)
+try:
+    group=get('/proxies/AWG-MIHOMO')
+    if group.get('type')!='Selector':sys.exit(2)
+    before=group.get('now')
+    if not isinstance(before,str) or not before:sys.exit(2)
+    query=urllib.parse.urlencode({'url':os.environ.get('MIHOMO_POOL_HEALTH_URL',
+        'https://www.gstatic.com/generate_204'),'timeout':5000})
+    verdict=2
+    try:
+        # Provider-owned leaves need not exist in /proxies. The fixed Selector
+        # URL-test delegates to its current node, including the Xray bridge.
+        # Never PUT/select or use a URLTest/fallback group here.
+        result=get('/proxies/AWG-MIHOMO/delay?'+query,7)
+        delay=result.get('delay')
+        if type(delay) is int and delay>0:verdict=0
+    except urllib.error.HTTPError as exc:
+        # Mihomo's delay endpoint reports an unsuccessful URL-test as 503/504.
+        if exc.code in (503,504):verdict=1
+    # Read back even after a negative test. A controller failure, absent
+    # target or concurrent switch invalidates the network observation.
+    if get('/proxies/AWG-MIHOMO').get('now')!=before:verdict=2
+    sys.exit(verdict)
+except (OSError,ValueError,TypeError,AttributeError):
+    sys.exit(2)
+PY
+}
+
+
+check_transport(){
+  case "${1:-}" in
+    awg) check_awg ;;
+    mihomo) check_mihomo ;;
+    *) return 2 ;;
+  esac
+}
+
+health_word(){
+  local rc
+  if [[ "${1:-}" == unconfigured ]]; then
+    printf '%s\n' not-ready
+    return 0
+  fi
+  if check_transport "$1"; then
+    printf '%s\n' healthy
+  else
+    rc=$?
+    if (( rc == 3 )); then
+      printf '%s\n' requires-root
+    else
+      printf '%s\n' down
+    fi
+  fi
+}
+
+atomic_transport_set(){
+  local transport="$1" dir tmp
+  dir="$(dirname "$AWG_TRANSPORT_FILE")"
+  mkdir -p "$dir"
+  tmp="$(mktemp "$dir/.transport.XXXXXX")"
+  printf '%s\n' "$transport" >"$tmp"
+  chmod 600 "$tmp"
+  mv -f "$tmp" "$AWG_TRANSPORT_FILE"
+}
+
+wait_transport_healthy(){
+  local transport="$1" attempts=25 pause=0.2 _
+  if [[ "$transport" == mihomo ]]; then
+    attempts="$MIHOMO_HEALTH_ATTEMPTS"
+    pause="$MIHOMO_HEALTH_SLEEP"
+  fi
+  for _ in $(seq 1 "$attempts"); do
+    if check_transport "$transport"; then
+      return 0
+    fi
+    "$SLEEP_BIN" "$pause"
+  done
+  return 1
+}
+
+preflight_target_transport(){
+  local target="$1" mode tmp rc
+  mode="$(awg_mode_get)"
+  [[ "$mode" == transit ]] || return 0
+
+  tmp="$(mktemp)"
+  printf '%s\n' "$target" >"$tmp"
+  chmod 600 "$tmp"
+
+  if AWG_TRANSPORT_FILE="$tmp" "$TRANSIT_PREFLIGHT"; then
+    rm -f "$tmp"
+    return 0
+  else
+    rc=$?
+    rm -f "$tmp"
+    return "$rc"
+  fi
+}
+
+backend_service(){
+  case "${1:-}" in
+    awg) printf 'awg-quick@%s.service\n' "$VPN_IF" ;;
+    mihomo) printf '%s\n' "$MIHOMO_SERVICE" ;;
+    *) return 2 ;;
+  esac
+}
+
+recover_selected_transport(){
+  local target="$1" service
+  service="$(backend_service "$target")"
+
+  "$SYSTEMCTL_BIN" start "$service"
+  if ! wait_transport_healthy "$target"; then
+    printf 'Selected transport is unhealthy after restart attempt: %s\n' "$target" >&2
+    return 1
+  fi
+  if ! preflight_target_transport "$target"; then
+    printf 'Selected transport preflight failed during recovery: %s\n' "$target" >&2
+    return 1
+  fi
+
+  "$SYSTEMCTL_BIN" enable "$service" >/dev/null
+  AWG_MAINTENANCE=1 "$AWG_ROUTE_BIN" reload
+  wait_transport_healthy "$target"
+  "$SYSTEMCTL_BIN" is-active --quiet "$HEALTH_SERVICE"
+
+  printf 'Transport recovered and enabled for boot: %s\n' "$(awg_transport_label "$target")"
+  printf 'Transport ID: %s\n' "$target"
+}
+
+select_transport(){
+  local target="$1" previous had_state=0 previous_state="" started_mihomo=0 rc health_was_active=0 target_service
+
+  awg_transport_backend_valid "$target" || {
+    echo "Unsupported selectable transport: $target" >&2
+    return 2
+  }
+
+  if (( ${EUID:-$(id -u)} != 0 )); then
+    exec sudo "$0" select "$target"
+  fi
+
+  exec 9>"$MAINTENANCE_LOCK"
+  flock -x 9
+
+  previous="$(awg_transport_get)"
+  if [[ -e "$AWG_TRANSPORT_FILE" ]]; then
+    had_state=1
+    previous_state="$(cat "$AWG_TRANSPORT_FILE")"
+  fi
+
+  if [[ "$target" == "$previous" ]]; then
+    target_service="$(backend_service "$target")"
+    if check_transport "$target"; then
+      "$SYSTEMCTL_BIN" enable "$target_service" >/dev/null
+      printf 'Transport already selected and enabled for boot: %s\n' "$(awg_transport_label "$target")"
+      return 0
+    fi
+    recover_selected_transport "$target"
+    return $?
+  fi
+
+  target_service="$(backend_service "$target")"
+
+  case "$target" in
+    awg)
+      "$SYSTEMCTL_BIN" start "awg-quick@$VPN_IF.service"
+      ;;
+    mihomo)
+      if ! "$SYSTEMCTL_BIN" is-active --quiet "$MIHOMO_SERVICE" 2>/dev/null; then
+        "$SYSTEMCTL_BIN" start "$MIHOMO_SERVICE"
+        started_mihomo=1
+      fi
+      ;;
+  esac
+
+  if ! wait_transport_healthy "$target"; then
+    (( started_mihomo == 1 )) && "$SYSTEMCTL_BIN" stop "$MIHOMO_SERVICE" >/dev/null 2>&1 || true
+    printf 'Target transport is unhealthy; state unchanged: %s\n' "$target" >&2
+    return 1
+  fi
+
+  "$SYSTEMCTL_BIN" is-active --quiet "$HEALTH_SERVICE" 2>/dev/null && health_was_active=1 || true
+  "$SYSTEMCTL_BIN" stop "$HEALTH_SERVICE" >/dev/null 2>&1 || true
+
+  if ! preflight_target_transport "$target"; then
+    (( health_was_active == 1 )) && "$SYSTEMCTL_BIN" restart "$HEALTH_SERVICE" >/dev/null 2>&1 || true
+    (( started_mihomo == 1 )) && "$SYSTEMCTL_BIN" stop "$MIHOMO_SERVICE" >/dev/null 2>&1 || true
+    printf 'Target transport preflight failed; state unchanged: %s\n' "$target" >&2
+    return 1
+  fi
+
+  rollback(){
+    rc=$?
+    trap - ERR
+    "$SYSTEMCTL_BIN" stop "$HEALTH_SERVICE" >/dev/null 2>&1 || true
+    if (( had_state == 1 )); then
+      printf '%s\n' "$previous_state" >"$AWG_TRANSPORT_FILE"
+      chmod 600 "$AWG_TRANSPORT_FILE"
+    else
+      rm -f "$AWG_TRANSPORT_FILE"
+    fi
+    AWG_MAINTENANCE=1 "$AWG_ROUTE_BIN" reload >/dev/null 2>&1 || true
+    (( started_mihomo == 1 )) && "$SYSTEMCTL_BIN" stop "$MIHOMO_SERVICE" >/dev/null 2>&1 || true
+    printf 'Transport switch failed; rollback restored %s.\n' "$previous" >&2
+    exit "$rc"
+  }
+  trap rollback ERR
+
+  atomic_transport_set "$target"
+  AWG_MAINTENANCE=1 "$AWG_ROUTE_BIN" reload
+  wait_transport_healthy "$target"
+  "$SYSTEMCTL_BIN" is-active --quiet "$HEALTH_SERVICE"
+  "$SYSTEMCTL_BIN" enable "$target_service" >/dev/null
+
+  trap - ERR
+
+  if [[ "$target" == awg && "$previous" == mihomo ]]; then
+    "$SYSTEMCTL_BIN" stop "$MIHOMO_SERVICE" >/dev/null 2>&1 || true
+  fi
+
+  # Telegram is an optional side-channel: enqueue AFTER all transport
+  # preflight/postchecks. Never abort or roll back a live VPN on notify failure.
+  if [[ -s /etc/awg-pbr/notify/telegram.json &&
+        -x /usr/local/sbin/awg-notify ]] &&
+     systemctl is-enabled --quiet awg-notify-flush.timer 2>/dev/null; then
+    local notify_kind=TRANSPORT_SWITCH
+    [[ "${AWG_NOTIFY_AUTOMATIC:-0}" != 1 ]] || notify_kind=TRANSPORT_FAILOVER
+    printf 'Transport: %s -> %s; postcheck completed' "$previous" "$target" |
+      timeout 2s /usr/local/sbin/awg-notify emit --kind "$notify_kind" \
+        --severity warning >/dev/null 2>&1 || true
+  fi
+  printf 'Transport activated: %s\n' "$(awg_transport_label "$target")"
+  printf 'Transport ID: %s\n' "$target"
+}
+
+cmd="${1:-status}"
+case "$cmd" in
+  network-check)
+    network_check
+    ;;
+  get)
+    awg_transport_get
+    ;;
+  check)
+    transport="${2:-$(awg_transport_get)}"
+    awg_transport_valid "$transport" || { echo "Unsupported transport: $transport" >&2; exit 2; }
+    if [[ "$transport" == unconfigured ]]; then
+      echo not-ready
+      exit 1
+    fi
+    if check_transport "$transport"; then
+      echo healthy
+    else
+      rc=$?
+      if (( rc == 3 )); then
+        echo requires-root
+        exit 3
+      fi
+      echo down
+      exit 1
+    fi
+    ;;
+  status)
+    if transport="$(awg_transport_get)"; then
+      printf 'Active transport: %s\n' "$(awg_transport_label "$transport")"
+      printf 'Transport ID: %s\n' "$transport"
+      printf 'Transport health: %s\n' "$(health_word "$transport")"
+    else
+      rc=$?
+      if (( rc == 3 )); then
+        printf 'Active transport: requires-root\n'
+        printf 'Transport ID: requires-root\n'
+        printf 'Transport health: requires-root\n'
+      fi
+      exit "$rc"
+    fi
+    ;;
+  list)
+    for transport in awg mihomo; do
+      printf '%-8s %-12s %s\n' "$transport" "$(awg_transport_label "$transport")" "$(health_word "$transport")"
+    done
+    ;;
+  select)
+    [[ $# -eq 2 ]] || { usage >&2; exit 2; }
+    select_transport "$2"
+    ;;
+  -h|--help|help)
+    usage
+    ;;
+  *)
+    usage >&2
+    exit 2
+    ;;
+esac

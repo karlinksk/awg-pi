@@ -15,9 +15,57 @@ unavailable.
 
 ## Stable release
 
-Current stable release: **v1.2.0**
+Current stable release: **v1.2.0** (until the v1.3.0 tag and release are published)
 
-**Permanent maintenance policy:** [Installer-first change policy](docs/INSTALLER-CHANGE-POLICY.md). All verified fixes must be preserved in the installer/upgrade source, regression tests and documentation; see also [AGENTS.md](AGENTS.md). This policy is independent of unreleased v1.3.0 features.
+**Permanent maintenance policy:** [Installer-first change policy](docs/INSTALLER-CHANGE-POLICY.md). Every tested correction belongs in the installer/upgrade source, regression tests and documentation; see [AGENTS.md](AGENTS.md).
+
+## v1.3.0 release candidate — verified scope
+
+v1.3.0 is the multi-transport Raspberry Pi 4 / Debian 13 ARM64 release
+candidate. It preserves **Selective FAIL-OPEN**, **MikroTik Transit
+FAIL-CLOSED**, independent DNS and management SSH/SSTP. The two installed
+transport engines are **AmneziaWG** and **Mihomo**, with the supported passive
+Xray adapter for VLESS nodes. **Mihomo is the default primary**, and a
+configured healthy AWG is the ultimate fallback after the allowed
+Mihomo/Xray candidates have been exhausted. The agreed conservative AUTO
+policy does not switch merely for speed; healthy AWG remains selected until
+explicitly changed or proven unhealthy. Manual transport/node selection
+does not require remote ChatGPT/OpenAI/YouTube website eligibility.
+
+**Clean installation installs both engines and shipped Stage18/media
+dependencies before any profiles are supplied.** It finishes safely in
+`Selective + unconfigured`; the owner imports AWG and/or Mihomo after
+installation and explicitly selects the gateway mode. No automatic
+first-node wizard, READY/Hot Pool eligibility gate or editable FIXED chain
+is required under the current v1.3.0 release contract. Operator settings
+are preserved on upgrade.
+
+Fresh Debian installations default to **Asia/Novosibirsk**, with
+`AWG_PI_TIMEZONE` allowing another valid IANA zone; upgrades preserve
+the previously selected timezone. The SSH menu includes accepted Russian
+numeric/Matrix appearance and standard gateway controls.
+
+**Release acceptance:** actual pinned Debian 13.7 ARM64 clean installation,
+profile onboarding, both transport TUN HTTPS, configured and empty reboots,
+bounded real client LAN/Selective/Transit failure behavior, Xray AUTO and
+sticky AWG recovery have scoped hardware evidence. A cold full-card image
+was restored to an approved test microSD and booted; the original acceptance
+detected an unwanted AWG-to-Mihomo change. The boot monitor was corrected
+in `f00c93e` with a bounded monotonic grace and re-tested on real hardware,
+including reboot. This does **not** retroactively make the first restored
+state PASS or claim a byte-identical whole-card SHA (two Windows FAT metadata
+bytes changed); the owner accepted the documented exception instead of
+re-imaging the card. The operator's manually enabled Xray AUTO is preserved.
+Historical acceptance is scoped; no arbitrary IPv6 or all-client guarantee.
+
+Release evidence: [v1.3.0 validation](docs/TESTING-v1.3.0.md) and
+[release acceptance ledger](docs/RELEASE-ACCEPTANCE-MATRIX-v1.3.0.md).
+Maintenance rule: [installer-first change policy](docs/INSTALLER-CHANGE-POLICY.md)
+and [repository agent rules](AGENTS.md).
+
+Until an actual `v1.3.0` tag and GitHub Release are published,
+**v1.2.0 remains the published stable install target**. Do not install an
+unversioned development branch on the production gateway.
 
 ## Install / upgrade
 

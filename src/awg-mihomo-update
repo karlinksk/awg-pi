@@ -1,0 +1,330 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+MIHOMO_ENV_FILE="${MIHOMO_ENV_FILE:-/etc/awg-pbr/transports/mihomo/provider.env}"
+AWG_ENV_FILE="${AWG_ENV_FILE:-/etc/awg-pbr/env}"
+MIHOMO_LAST_FETCH_FILE="${MIHOMO_LAST_FETCH_FILE:-/var/lib/awg-pbr/mihomo/last-fetch-path}"
+MIHOMO_BIN="${MIHOMO_BIN:-/usr/local/bin/mihomo}"
+MIHOMO_PROVIDER_FILE="${MIHOMO_PROVIDER_FILE:-/var/lib/awg-pbr/mihomo/providers/subscription.yaml}"
+MIHOMO_SERVICE="${MIHOMO_SERVICE:-awg-mihomo.service}"
+CURL_BIN="${CURL_BIN:-curl}"
+AWG_FETCH_BIN="${AWG_FETCH_BIN:-/usr/local/sbin/awg-fetch}"
+SYSTEMCTL_BIN="${SYSTEMCTL_BIN:-systemctl}"
+MIHOMO_PREPARE="${MIHOMO_PREPARE:-/usr/local/sbin/awg-mihomo-prepare}"
+MIHOMO_PROVIDER_HELPER="${MIHOMO_PROVIDER_HELPER:-/usr/local/lib/awg-pi/mihomo-provider.py}"
+PYTHON_BIN="${PYTHON_BIN:-python3}"
+MIHOMO_LAST_FORMAT_FILE="${MIHOMO_LAST_FORMAT_FILE:-/var/lib/awg-pbr/mihomo/last-provider-format}"
+MIHOMO_CANDIDATE_FILE="${MIHOMO_CANDIDATE_FILE:-/var/lib/awg-pbr/mihomo/providers/candidate.yaml}"
+MIHOMO_CANDIDATE_ENV_FILE="${MIHOMO_CANDIDATE_ENV_FILE:-/var/lib/awg-pbr/mihomo/providers/candidate.env}"
+MIHOMO_CANDIDATE_FETCH_FILE="${MIHOMO_CANDIDATE_FETCH_FILE:-/var/lib/awg-pbr/mihomo/candidate-fetch-path}"
+MIHOMO_CANDIDATE_FORMAT_FILE="${MIHOMO_CANDIDATE_FORMAT_FILE:-/var/lib/awg-pbr/mihomo/candidate-provider-format}"
+
+[[ -r "$MIHOMO_ENV_FILE" ]] || {
+  echo "Missing Mihomo provider environment: $MIHOMO_ENV_FILE" >&2
+  exit 2
+}
+# shellcheck disable=SC1090
+source "$MIHOMO_ENV_FILE"
+# shellcheck disable=SC1090
+[[ -r "$AWG_ENV_FILE" ]] && source "$AWG_ENV_FILE"
+
+
+MIHOMO_UPDATE_INTERFACE="${MIHOMO_UPDATE_INTERFACE:-}"
+MIHOMO_FETCH_MODE="${MIHOMO_FETCH_MODE:-}"
+MIHOMO_PROXY_URL="${MIHOMO_PROXY_URL:-http://127.0.0.1:7890}"
+MIHOMO_UPDATE_SUFFIX="${MIHOMO_UPDATE_SUFFIX:-}"
+MIHOMO_DEVICE_OS="${MIHOMO_DEVICE_OS:-Linux}"
+MIHOMO_DEVICE_VERSION="${MIHOMO_DEVICE_VERSION:-Debian}"
+MIHOMO_DEVICE_MODEL="${MIHOMO_DEVICE_MODEL:-AWG Pi Gateway}"
+MIHOMO_PROVIDER_USER_AGENT="${MIHOMO_PROVIDER_USER_AGENT:-mihomo/1.19.32}"
+MIHOMO_PROVIDER_AUTHORIZATION="${MIHOMO_PROVIDER_AUTHORIZATION:-}"
+MIHOMO_PROVIDER_FORMAT="${MIHOMO_PROVIDER_FORMAT:-auto}"
+
+usage(){
+  cat <<'USAGE'
+Usage:
+  awg-mihomo-update [--mode auto|direct|mihomo|awg] [--format auto|mihomo|vless|base64]
+  awg-mihomo-update --file PROFILE [--format auto|mihomo|vless|base64]
+  awg-mihomo-update --cache-only [--mode auto|direct|mihomo|awg] [--format auto|mihomo|vless|base64]
+  awg-mihomo-update --stage-only [--file PROFILE] [--mode auto|direct|mihomo|awg] [--format auto|mihomo|vless|base64]
+
+--stage-only validates a candidate provider without changing live state.
+AUTO delegates to awg-fetch: DIRECT first, then the selected healthy backend,
+then other healthy backends. Legacy mode "router" is mapped to DIRECT.
+USAGE
+}
+
+local_file=""
+cache_only=0
+stage_only=0
+while (( $# )); do
+  case "$1" in
+    --mode)
+      [[ $# -ge 2 ]] || { usage >&2; exit 2; }
+      MIHOMO_FETCH_MODE="$2"
+      shift 2
+      ;;
+    --file)
+      [[ $# -ge 2 ]] || { usage >&2; exit 2; }
+      local_file="$2"
+      shift 2
+      ;;
+    --format)
+      [[ $# -ge 2 ]] || { usage >&2; exit 2; }
+      MIHOMO_PROVIDER_FORMAT="$2"
+      shift 2
+      ;;
+    --cache-only)
+      cache_only=1
+      shift
+      ;;
+    --stage-only)
+      stage_only=1
+      shift
+      ;;
+    -h|--help|help)
+      usage
+      exit 0
+      ;;
+    *)
+      echo "Unknown argument: $1" >&2
+      usage >&2
+      exit 2
+      ;;
+  esac
+done
+
+if [[ -z "$local_file" ]]; then
+  : "${MIHOMO_PROVIDER_URL:?MIHOMO_PROVIDER_URL is required}"
+fi
+
+# Backward compatibility with the first v1.3 runtime drafts.
+if [[ -z "$MIHOMO_FETCH_MODE" ]]; then
+  case "$MIHOMO_UPDATE_INTERFACE" in
+    "") MIHOMO_FETCH_MODE=auto ;;
+    awg0) MIHOMO_FETCH_MODE=awg ;;
+    direct) MIHOMO_FETCH_MODE=direct ;;
+    *) MIHOMO_FETCH_MODE=auto ;;
+  esac
+fi
+
+[[ "$MIHOMO_FETCH_MODE" == router ]] && MIHOMO_FETCH_MODE=direct
+case "$MIHOMO_FETCH_MODE" in
+  auto|direct|mihomo|awg) ;;
+  *)
+    echo "Unsupported MIHOMO_FETCH_MODE: $MIHOMO_FETCH_MODE" >&2
+    exit 2
+    ;;
+esac
+
+case "$MIHOMO_PROVIDER_FORMAT" in
+  auto|mihomo|vless|base64) ;;
+  *)
+    echo "Unsupported MIHOMO_PROVIDER_FORMAT: $MIHOMO_PROVIDER_FORMAT" >&2
+    exit 2
+    ;;
+esac
+
+[[ -r "$MIHOMO_PROVIDER_HELPER" ]] || {
+  echo "Mihomo provider adapter is unavailable: $MIHOMO_PROVIDER_HELPER" >&2
+  exit 2
+}
+
+[[ -x "$MIHOMO_BIN" ]] || {
+  echo "Mihomo binary is unavailable: $MIHOMO_BIN" >&2
+  exit 2
+}
+
+provider_dir="$(dirname "$MIHOMO_PROVIDER_FILE")"
+candidate_dir="$(dirname "$MIHOMO_CANDIDATE_FILE")"
+mkdir -p "$provider_dir" "$candidate_dir"
+chmod 700 "$provider_dir" "$candidate_dir"
+
+tmp="$(mktemp "$provider_dir/.subscription.XXXXXX")"
+trap 'rm -f "$tmp"' EXIT
+
+curl_args=(
+  -4 --http1.1 -fsSL
+  --connect-timeout 10 --max-time 45
+  -A "$MIHOMO_PROVIDER_USER_AGENT"
+)
+
+if [[ -n "${MIHOMO_PROVIDER_HWID:-}" ]]; then
+  curl_args+=(
+    -H "x-hwid: $MIHOMO_PROVIDER_HWID"
+    -H "x-device-os: $MIHOMO_DEVICE_OS"
+    -H "x-ver-os: $MIHOMO_DEVICE_VERSION"
+    -H "x-device-model: $MIHOMO_DEVICE_MODEL"
+  )
+fi
+
+if [[ -n "$MIHOMO_PROVIDER_AUTHORIZATION" ]]; then
+  curl_args+=(-H "Authorization: $MIHOMO_PROVIDER_AUTHORIZATION")
+fi
+
+fetch_path=""
+url="${MIHOMO_PROVIDER_URL:-}"
+if [[ -n "$url" && -n "$MIHOMO_UPDATE_SUFFIX" ]]; then
+  url="${url%/}/${MIHOMO_UPDATE_SUFFIX#/}"
+fi
+
+if [[ -n "$local_file" ]]; then
+  [[ -f "$local_file" && -r "$local_file" && ! -L "$local_file" ]] || {
+    echo "Local provider profile is not a readable regular file: $local_file" >&2
+    exit 2
+  }
+  cp -- "$local_file" "$tmp"
+  fetch_path=file
+else
+  [[ -x "$AWG_FETCH_BIN" ]] || {
+    echo "Bootstrap fetch manager is unavailable: $AWG_FETCH_BIN" >&2
+    exit 2
+  }
+  fetch_output="$(
+    CURL_BIN="$CURL_BIN" MIHOMO_PROXY_URL="$MIHOMO_PROXY_URL" \
+      "$AWG_FETCH_BIN" --mode "$MIHOMO_FETCH_MODE" --url "$url" --output "$tmp" -- "${curl_args[@]}"
+  )" || {
+    echo "Unable to download Mihomo provider through bootstrap manager" >&2
+    exit 1
+  }
+  fetch_path="$(awk -F= '$1=="AWG_FETCH_PATH"{print $2}' <<<"$fetch_output" | tail -n1)"
+  [[ "$fetch_path" =~ ^(direct|awg|mihomo)$ ]] || {
+    echo "Bootstrap manager returned an invalid fetch path" >&2
+    exit 1
+  }
+fi
+
+[[ -s "$tmp" ]] || {
+  echo "Downloaded Mihomo provider is empty" >&2
+  exit 1
+}
+
+normalized_tmp="$(mktemp "$provider_dir/.normalized.XXXXXX")"
+adapter_output="$("$PYTHON_BIN" "$MIHOMO_PROVIDER_HELPER" normalize "$tmp" "$normalized_tmp" --format "$MIHOMO_PROVIDER_FORMAT")" || {
+  rm -f "$normalized_tmp"
+  echo "Provider adapter rejected the subscription; working cache unchanged" >&2
+  exit 1
+}
+install -m 600 "$normalized_tmp" "$tmp"
+rm -f "$normalized_tmp"
+
+detected_format="$(awk -F= '$1=="MIHOMO_PROVIDER_FORMAT_DETECTED"{print $2}' <<<"$adapter_output" | head -n1)"
+node_count="$(awk -F= '$1=="MIHOMO_PROVIDER_NODE_COUNT"{print $2}' <<<"$adapter_output" | head -n1)"
+[[ "$detected_format" =~ ^(mihomo|vless|base64)$ ]] || {
+  echo "Provider adapter did not return a supported detected format" >&2
+  exit 1
+}
+[[ "$node_count" =~ ^[1-9][0-9]*$ ]] || {
+  echo "Provider adapter did not return a valid node count" >&2
+  exit 1
+}
+printf 'MIHOMO_PROVIDER_FORMAT_DETECTED=%s\n' "$detected_format"
+printf 'MIHOMO_PROVIDER_NODE_COUNT=%s\n' "$node_count"
+
+validate_dir="$(mktemp -d)"
+trap 'rm -f "$tmp"; rm -rf "$validate_dir"' EXIT
+"$MIHOMO_BIN" -t -d "$validate_dir" -f "$tmp" >/dev/null
+
+write_state_file(){
+  local path="$1" value="$2" dir state_tmp
+  dir="$(dirname "$path")"
+  mkdir -p "$dir"
+  chmod 700 "$dir"
+  state_tmp="$(mktemp "$dir/.state.XXXXXX")"
+  printf '%s\n' "$value" >"$state_tmp"
+  chmod 600 "$state_tmp"
+  mv -f "$state_tmp" "$path"
+}
+
+stage_candidate(){
+  install -m 600 "$tmp" "$MIHOMO_CANDIDATE_FILE"
+  # A normal refresh uses the current live env. Drop any source metadata from
+  # an older manually staged provider. Explicit staging passes candidate.env
+  # itself as MIHOMO_ENV_FILE, so its source metadata stays coupled to payload.
+  if [[ "$MIHOMO_ENV_FILE" != "$MIHOMO_CANDIDATE_ENV_FILE" && -e "$MIHOMO_CANDIDATE_ENV_FILE" ]]; then
+    rm -f "$MIHOMO_CANDIDATE_ENV_FILE"
+  fi
+  write_state_file "$MIHOMO_CANDIDATE_FETCH_FILE" "$fetch_path"
+  write_state_file "$MIHOMO_CANDIDATE_FORMAT_FILE" "$detected_format"
+  printf 'MIHOMO_PROVIDER=STAGED\n'
+  printf 'MIHOMO_CANDIDATE_NODE_COUNT=%s\n' "$node_count"
+  printf 'MIHOMO_CANDIDATE_FORMAT=%s\n' "$detected_format"
+  printf 'MIHOMO_CANDIDATE_FETCH_PATH=%s\n' "$fetch_path"
+}
+
+clear_candidate(){
+  rm -f "$MIHOMO_CANDIDATE_FILE" "$MIHOMO_CANDIDATE_ENV_FILE" \
+    "$MIHOMO_CANDIDATE_FETCH_FILE" "$MIHOMO_CANDIDATE_FORMAT_FILE"
+}
+
+if (( stage_only == 1 )); then
+  # Periodic refreshes use the live source metadata. If the validated payload
+  # is byte-for-byte identical to the current live provider, there is no
+  # pending update to present to the user. Explicit manual staging uses
+  # candidate.env and must remain staged even when the payload happens to
+  # match, because its source metadata may have changed.
+  if [[ "$MIHOMO_ENV_FILE" != "$MIHOMO_CANDIDATE_ENV_FILE" ]] &&
+     [[ -r "$MIHOMO_PROVIDER_FILE" ]] &&
+     cmp -s "$tmp" "$MIHOMO_PROVIDER_FILE"; then
+    clear_candidate
+    printf 'MIHOMO_PROVIDER=UNCHANGED\n'
+    printf 'MIHOMO_CANDIDATE_NODE_COUNT=0\n'
+    printf 'MIHOMO_CANDIDATE_FORMAT=%s\n' "$detected_format"
+    printf 'MIHOMO_CANDIDATE_FETCH_PATH=%s\n' "$fetch_path"
+    exit 0
+  fi
+  stage_candidate
+  exit 0
+fi
+
+changed=1
+backup=""
+if [[ -r "$MIHOMO_PROVIDER_FILE" ]] && cmp -s "$tmp" "$MIHOMO_PROVIDER_FILE"; then
+  changed=0
+  echo "MIHOMO_PROVIDER=UNCHANGED"
+else
+  stage_candidate >/dev/null
+  if [[ -r "$MIHOMO_PROVIDER_FILE" ]]; then
+    backup="$(mktemp "$provider_dir/.subscription.backup.XXXXXX")"
+    cp -a "$MIHOMO_PROVIDER_FILE" "$backup"
+  fi
+  install -m 600 "$tmp" "$MIHOMO_PROVIDER_FILE"
+  echo "MIHOMO_PROVIDER=UPDATED"
+fi
+
+if (( cache_only == 0 )) && [[ -x "$MIHOMO_PREPARE" ]]; then
+  if ! "$MIHOMO_PREPARE"; then
+    if (( changed == 1 )); then
+      if [[ -n "$backup" && -r "$backup" ]]; then
+        install -m 600 "$backup" "$MIHOMO_PROVIDER_FILE"
+        "$MIHOMO_PREPARE" >/dev/null 2>&1 || true
+      else
+        rm -f "$MIHOMO_PROVIDER_FILE"
+      fi
+    fi
+    [[ -z "$backup" ]] || rm -f "$backup"
+    echo "Mihomo runtime validation failed; live provider rolled back and candidate kept for node selection" >&2
+    exit 1
+  fi
+fi
+
+[[ -z "$backup" ]] || rm -f "$backup"
+
+# Record only a provider/cache update that survived normalization and runtime
+# validation. Failed attempts must not replace "last successful" status.
+write_state_file "$MIHOMO_LAST_FETCH_FILE" "$fetch_path"
+printf 'MIHOMO_FETCH_PATH=%s\n' "$fetch_path"
+write_state_file "$MIHOMO_LAST_FORMAT_FILE" "$detected_format"
+
+if (( changed == 1 )); then
+  clear_candidate
+fi
+
+if (( cache_only == 1 )); then
+  echo "MIHOMO_RUNTIME=DEFERRED"
+fi
+
+if (( cache_only == 0 && changed == 1 )) && "$SYSTEMCTL_BIN" is-active --quiet "$MIHOMO_SERVICE" 2>/dev/null; then
+  "$SYSTEMCTL_BIN" restart "$MIHOMO_SERVICE"
+  echo "MIHOMO_SERVICE=RESTARTED"
+fi

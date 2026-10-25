@@ -17,8 +17,10 @@ REPO=karlinksk/awg-pi
 API="https://api.github.com/repos/$REPO/releases/latest"
 RAW="https://raw.githubusercontent.com/$REPO"
 VERSION_FILE=/etc/awg-pbr/version
+PUBLIC_VERSION_FILE=/usr/share/awg-pbr/version
 BACKUP_ROOT=/var/backups/awg-gateway
 CORE_UPDATE=/usr/local/sbin/awg-core-update
+MIHOMO_INSTALLER=/usr/local/sbin/awg-mihomo-install
 ASSUME_YES=0
 
 confirm(){
@@ -29,7 +31,7 @@ confirm(){
   [[ "$ans" =~ ^[YyДд] ]]
 }
 current_version(){
-  cat "$VERSION_FILE" 2>/dev/null || echo "0.0.0"
+  cat "$PUBLIC_VERSION_FILE" 2>/dev/null || cat "$VERSION_FILE" 2>/dev/null || echo "0.0.0"
 }
 latest_release(){
   curl -4fsSL --retry 3 --connect-timeout 8 --max-time 20 "$API" |
@@ -42,24 +44,283 @@ version_gt(){
   [[ "$top" == "$a" ]]
 }
 backup_gateway(){
-  local dir="$1"
-  mkdir -p "$dir"
-  chmod 700 "$dir"
-  tar -C / -czf "$dir/gateway-state.tgz"     --ignore-failed-read     etc/awg-pbr     etc/amnezia/amneziawg     etc/dnsmasq.d/99-awg-pbr.conf     etc/dnsmasq.d/99-awg-pbr-domains.conf     etc/nftables.d/99-awg-pbr.nft     etc/sysctl.d/99-awg-pbr.conf     etc/profile.d/awg-menu.sh     etc/systemd/system/awg-pbr-setup.service     etc/systemd/system/awg-pbr-health.service     etc/systemd/system/awg-opencck-update.service     etc/systemd/system/awg-opencck-update.timer     usr/local/lib/awg-pi     usr/local/sbin/awg-route     usr/local/sbin/awg-menu     usr/local/sbin/awg-opencck-update     usr/local/sbin/awg-core-update     usr/local/sbin/awg-update     usr/local/sbin/awg-pbr-setup     usr/local/sbin/awg-pbr-health     usr/local/sbin/awg-pbr-failopen     usr/local/sbin/awg-transit-nft     usr/local/sbin/awg-transit-preflight     usr/local/sbin/awg-transit-apply     usr/local/sbin/awg-transit-routing     usr/local/sbin/awg-mode-switch 2>/dev/null || true
-  chmod 600 "$dir/gateway-state.tgz"
-  tar -tzf "$dir/gateway-state.tgz" >/dev/null || {
-    echo "Не удалось проверить backup archive" >&2
+  local dir="$1" target archive_tmp
+  local -a backup_targets=(
+    etc/awg-pbr \
+    etc/amnezia/amneziawg \
+    etc/dnsmasq.d/99-awg-pbr.conf \
+    etc/dnsmasq.d/99-awg-pbr-domains.conf \
+    etc/nftables.d/99-awg-pbr.nft \
+    etc/sysctl.d/99-awg-pbr.conf \
+    etc/systemd/system.conf.d/99-awg-gateway-watchdog.conf \
+    etc/profile.d/awg-menu.sh \
+    etc/systemd/system/awg-pbr-setup.service \
+    etc/systemd/system/awg-pbr-health.service \
+    etc/systemd/system/awg-opencck-update.service \
+    etc/systemd/system/awg-opencck-update.timer \
+    etc/systemd/system/awg-mihomo.service \
+    etc/systemd/system/awg-xray-vless.service \
+    etc/systemd/system/awg-xray-subscription-scan.service \
+    etc/systemd/system/awg-xray-subscription-scan.path \
+    etc/systemd/system/awg-xray-subscription-scan.timer \
+    etc/systemd/system/awg-mihomo.service.d/62-awg-xray-manual.conf \
+    etc/systemd/system/awg-mihomo-update.service \
+    etc/systemd/system/awg-mihomo-update.timer \
+    etc/systemd/system/awg-mihomo-hot-pool.service \
+    etc/systemd/system/awg-mihomo-hot-pool.timer \
+    etc/systemd/system/awg-selection-monitor.service \
+    etc/systemd/system/awg-traffic.service \
+    etc/systemd/system/awg-mihomo-pool-refresh.service \
+    etc/systemd/system/awg-mihomo-pool-refresh.timer \
+    etc/systemd/system/awg-mihomo-stage18-ram-runtime.service \
+    etc/systemd/system/awg-mihomo-stage18-ram-runtime.timer \
+    etc/systemd/system/awg-mihomo-stage18-ram-runtime.path \
+    etc/systemd/system/awg-dc-remote@.service \
+    etc/systemd/system/awg-notify-flush.service \
+    etc/systemd/system/awg-notify-flush.timer \
+    etc/systemd/system/awg-notify-daily.service \
+    etc/systemd/system/awg-notify-daily.timer \
+    etc/systemd/system/awg-notify-boot.service \
+    etc/systemd/system/awg-notify-watch.service \
+    etc/systemd/system/awg-notify-watch.timer \
+    var/lib/awg-pbr/notify \
+    var/lib/awg-pbr/mihomo \
+    var/lib/awg-pbr/xray-vless \
+    var/lib/awg-pbr/hot-pool \
+    var/lib/awg-pbr/stage18-runtime \
+    var/lib/awg-pbr/traffic \
+    usr/local/lib/awg-pi \
+    usr/share/awg-pbr \
+    usr/local/bin/mihomo \
+    usr/local/bin/awg-xray-vless-core \
+    usr/local/bin/node \
+    usr/local/bin/awg-dc \
+    usr/local/sbin/awg-mihomo-limits.py \
+    usr/local/sbin/awg-mihomo-service-check.py \
+    usr/local/sbin/awg-mihomo-video-decode.py \
+    usr/local/sbin/awg-mihomo-stage18-ram-runtime \
+    usr/local/sbin/awg-system-node \
+    usr/local/sbin/awg-mihomo-service-eligibility.py \
+    usr/local/sbin/awg-mihomo-network-eligibility.py \
+    usr/local/sbin/awg-mihomo-smart \
+    usr/local/sbin/awg-mihomo-tun-check \
+    usr/local/sbin/awg-route \
+    usr/local/sbin/awg-transport \
+    usr/local/sbin/awg-fetch \
+    usr/local/sbin/awg-first-run \
+    usr/local/sbin/awg-selection \
+    usr/local/sbin/awg-selection-monitor \
+    usr/local/sbin/awg-mihomo-node-policy \
+    usr/local/sbin/awg-xray-install \
+    usr/local/sbin/awg-xray-vless \
+    usr/local/sbin/awg-mihomo-unified-nodes \
+    usr/local/sbin/awg-mihomo-results-view \
+    usr/local/sbin/awg-mihomo-node-picker \
+    usr/local/sbin/awg-xray-activation-transaction \
+    usr/local/sbin/awg-xray-live-backend \
+    usr/local/sbin/awg-xray-manual-switch \
+    usr/local/sbin/awg-mihomo-ready-live-match \
+    usr/local/sbin/awg-mihomo-ready-postcheck-tun \
+    usr/local/sbin/awg-mihomo-hot-pool \
+    usr/local/sbin/awg-mihomo-pool \
+    usr/local/sbin/awg-mihomo-hot-service-scan \
+    usr/local/sbin/awg-mihomo-ip-connect-probe \
+    usr/local/sbin/awg-hot-pool-continuity.py \
+    usr/local/sbin/awg-mihomo-hot-continuity-run \
+    usr/local/sbin/awg-menu \
+    usr/local/sbin/awg-notify \
+    usr/local/sbin/awg-notify-pair-repair \
+    usr/local/sbin/awg-opencck-update \
+    usr/local/sbin/awg-core-update \
+    usr/local/sbin/awg-update \
+    usr/local/sbin/awg-traffic \
+    usr/local/sbin/awg-pbr-setup \
+    usr/local/sbin/awg-pbr-health \
+    usr/local/sbin/awg-health-probe \
+    usr/local/sbin/awg-pbr-failopen \
+    usr/local/sbin/awg-transit-nft \
+    usr/local/sbin/awg-transit-preflight \
+    usr/local/sbin/awg-transit-apply \
+    usr/local/sbin/awg-transit-routing \
+    usr/local/sbin/awg-mode-switch \
+    usr/local/sbin/awg-mihomo-config \
+    usr/local/sbin/awg-mihomo-update \
+    usr/local/sbin/awg-mihomo-install \
+    usr/local/sbin/awg-mihomo-prepare \
+    usr/local/sbin/awg-mihomo-configure \
+  )
+  local -a selected=()
+  local -a required=(etc/awg-pbr usr/local/sbin/awg-route usr/local/sbin/awg-update)
+  umask 077
+  install -d -o root -g root -m 0700 "$dir" || return 1
+  # Never silently certify an incomplete or unreadable gateway snapshot.
+  for target in "${required[@]}"; do
+    if [[ ! -e "/$target" ]]; then
+      echo "GATEWAY_BACKUP_ERROR=REQUIRED_PATH_MISSING" >&2
+      return 1
+    fi
+  done
+  for target in "${backup_targets[@]}"; do
+    if [[ -e "/$target" || -L "/$target" ]]; then
+      selected+=("$target")
+    fi
+  done
+  # Only the backup manifest is dynamic. Files from earlier releases may
+  # legitimately be absent; a present but unreadable file must FAIL the backup.
+  systemctl is-enabled awg-mihomo-hot-pool.timer 2>/dev/null >"$dir/hot-pool-timer-state" || true
+  chmod 600 "$dir/hot-pool-timer-state"
+  # Preserve explicitly opted-in notifier activation through rollback.
+  # Secrets are already included under etc/awg-pbr; queue is under var/lib.
+  local unit
+  for unit in awg-notify-flush.timer awg-notify-watch.timer awg-notify-daily.timer awg-notify-boot.service; do
+    systemctl is-enabled "$unit" 2>/dev/null >"$dir/notify-activation-$unit" || true
+    chmod 600 "$dir/notify-activation-$unit"
+  done
+  archive_tmp="$(mktemp "$dir/.gateway-state.XXXXXXXX")" || return 1
+  if ! tar -C / -czf "$archive_tmp" "${selected[@]}" 2>/dev/null; then
+    rm -f -- "$archive_tmp"
+    echo "GATEWAY_BACKUP_ERROR=ARCHIVE_CREATE_FAILED" >&2
+    return 1
+  fi
+  if ! tar -tzf "$archive_tmp" >/dev/null 2>&1; then
+    rm -f -- "$archive_tmp"
+    echo "GATEWAY_BACKUP_ERROR=ARCHIVE_INTEGRITY_FAILED" >&2
+    return 1
+  fi
+  mv -fT -- "$archive_tmp" "$dir/gateway-state.tgz" || {
+    rm -f -- "$archive_tmp"
+    echo "GATEWAY_BACKUP_ERROR=ARCHIVE_PUBLISH_FAILED" >&2
     return 1
   }
+  chmod 600 "$dir/gateway-state.tgz"
+  echo "GATEWAY_BACKUP=VERIFIED"
 }
 restore_gateway(){
   local dir="$1"
   echo "Восстановление предыдущей версии AWG Pi Gateway..." >&2
-  systemctl stop awg-opencck-update.timer awg-pbr-health.service 2>/dev/null || true
+  systemctl stop \
+    awg-mihomo-hot-pool.timer \
+    awg-mihomo-hot-pool.service \
+    awg-xray-subscription-scan.path \
+    awg-xray-subscription-scan.timer \
+    awg-xray-subscription-scan.service \
+    awg-xray-vless.service \
+    awg-mihomo-update.timer \
+    awg-mihomo.service \
+    awg-selection-monitor.service \
+    awg-traffic.service \
+    awg-opencck-update.timer \
+    awg-notify-flush.timer \
+    awg-notify-watch.timer \
+    awg-notify-daily.timer \
+    awg-notify-flush.service \
+    awg-notify-watch.service \
+    awg-notify-daily.service \
+    awg-notify-boot.service \
+    awg-pbr-health.service \
+    2>/dev/null || true
 
-  rm -rf /etc/awg-pbr /usr/local/lib/awg-pi
-  rm -f /usr/local/sbin/awg-route /usr/local/sbin/awg-menu /usr/local/sbin/awg-opencck-update         /usr/local/sbin/awg-core-update /usr/local/sbin/awg-update         /usr/local/sbin/awg-pbr-setup /usr/local/sbin/awg-pbr-health /usr/local/sbin/awg-pbr-failopen         /usr/local/sbin/awg-transit-nft /usr/local/sbin/awg-transit-preflight /usr/local/sbin/awg-transit-apply /usr/local/sbin/awg-transit-routing /usr/local/sbin/awg-mode-switch
-  rm -f /etc/systemd/system/awg-pbr-setup.service /etc/systemd/system/awg-pbr-health.service         /etc/systemd/system/awg-opencck-update.service /etc/systemd/system/awg-opencck-update.timer         /etc/profile.d/awg-menu.sh
+  # Only remove the Node.js link when this gateway itself manages it. Never
+  # overwrite/delete an unrelated system-level Node.js installation.
+  if [[ -L /usr/local/bin/node ]]; then
+    _node_target="$(readlink -- /usr/local/bin/node)"
+    if [[ "$_node_target" == /usr/local/lib/awg-pi/node/*/node ]]; then
+      rm -f -- /usr/local/bin/node
+    fi
+  fi
+  rm -rf /etc/awg-pbr /var/lib/awg-pbr/xray-vless /var/lib/awg-pbr/mihomo /var/lib/awg-pbr/hot-pool /var/lib/awg-pbr/traffic /usr/local/lib/awg-pi /usr/share/awg-pbr
+  rm -rf /var/lib/awg-pbr/stage18-runtime /var/lib/awg-pbr/notify
+  # A failed restore must not leave notifier timers or the boot hook enabled.
+  systemctl disable --now awg-notify-flush.timer awg-notify-watch.timer awg-notify-daily.timer awg-notify-boot.service 2>/dev/null || true
+  rm -f \
+    /usr/local/bin/mihomo \
+    /usr/local/bin/awg-xray-vless-core \
+    /usr/local/bin/awg-dc \
+    /usr/local/sbin/awg-mihomo-limits.py \
+    /usr/local/sbin/awg-mihomo-service-check.py \
+    /usr/local/sbin/awg-mihomo-video-decode.py \
+    /usr/local/sbin/awg-mihomo-stage18-ram-runtime \
+    /usr/local/sbin/awg-system-node \
+    /usr/local/sbin/awg-mihomo-service-eligibility.py \
+    /usr/local/sbin/awg-mihomo-network-eligibility.py \
+    /usr/local/sbin/awg-mihomo-smart \
+    /usr/local/sbin/awg-mihomo-tun-check \
+    /usr/local/sbin/awg-route \
+    /usr/local/sbin/awg-transport \
+    /usr/local/sbin/awg-fetch \
+    /usr/local/sbin/awg-first-run \
+    /usr/local/sbin/awg-selection \
+    /usr/local/sbin/awg-selection-monitor \
+    /usr/local/sbin/awg-mihomo-node-policy \
+    /usr/local/sbin/awg-xray-install \
+    /usr/local/sbin/awg-xray-vless \
+    /usr/local/sbin/awg-mihomo-unified-nodes \
+    /usr/local/sbin/awg-mihomo-results-view \
+    /usr/local/sbin/awg-mihomo-node-picker \
+    /usr/local/sbin/awg-xray-activation-transaction \
+    /usr/local/sbin/awg-xray-live-backend \
+    /usr/local/sbin/awg-xray-manual-switch \
+    /usr/local/sbin/awg-mihomo-ready-live-match \
+    /usr/local/sbin/awg-mihomo-ready-postcheck-tun \
+    /usr/local/sbin/awg-mihomo-hot-pool \
+    /usr/local/sbin/awg-mihomo-pool \
+    /usr/local/sbin/awg-mihomo-hot-service-scan \
+    /usr/local/sbin/awg-mihomo-ip-connect-probe \
+    /usr/local/sbin/awg-hot-pool-continuity.py \
+    /usr/local/sbin/awg-mihomo-hot-continuity-run \
+    /usr/local/sbin/awg-menu \
+    /usr/local/sbin/awg-notify \
+    /usr/local/sbin/awg-notify-pair-repair \
+    /usr/local/sbin/awg-opencck-update \
+    /usr/local/sbin/awg-core-update \
+    /usr/local/sbin/awg-update \
+    /usr/local/sbin/awg-traffic \
+    /usr/local/sbin/awg-pbr-setup \
+    /usr/local/sbin/awg-pbr-health \
+    /usr/local/sbin/awg-health-probe \
+    /usr/local/sbin/awg-pbr-failopen \
+    /usr/local/sbin/awg-transit-nft \
+    /usr/local/sbin/awg-transit-preflight \
+    /usr/local/sbin/awg-transit-apply \
+    /usr/local/sbin/awg-transit-routing \
+    /usr/local/sbin/awg-mode-switch \
+    /usr/local/sbin/awg-mihomo-config \
+    /usr/local/sbin/awg-mihomo-update \
+    /usr/local/sbin/awg-mihomo-install \
+    /usr/local/sbin/awg-mihomo-prepare \
+    /usr/local/sbin/awg-mihomo-configure
+  rm -f \
+    /etc/systemd/system/awg-pbr-setup.service \
+    /etc/systemd/system/awg-pbr-health.service \
+    /etc/systemd/system/awg-opencck-update.service \
+    /etc/systemd/system/awg-opencck-update.timer \
+    /etc/systemd/system/awg-mihomo.service \
+    /etc/systemd/system/awg-xray-vless.service \
+    /etc/systemd/system/awg-xray-subscription-scan.service \
+    /etc/systemd/system/awg-xray-subscription-scan.path \
+    /etc/systemd/system/awg-xray-subscription-scan.timer \
+    /etc/systemd/system/awg-mihomo.service.d/62-awg-xray-manual.conf \
+    /etc/systemd/system/awg-mihomo-update.service \
+    /etc/systemd/system/awg-mihomo-update.timer \
+    /etc/systemd/system/awg-mihomo-hot-pool.service \
+    /etc/systemd/system/awg-mihomo-hot-pool.timer \
+    /etc/systemd/system/awg-selection-monitor.service \
+    /etc/systemd/system/awg-traffic.service \
+    /etc/systemd/system/awg-mihomo-pool-refresh.service \
+    /etc/systemd/system/awg-mihomo-pool-refresh.timer \
+    /etc/systemd/system/awg-mihomo-stage18-ram-runtime.service \
+    /etc/systemd/system/awg-mihomo-stage18-ram-runtime.timer \
+    /etc/systemd/system/awg-mihomo-stage18-ram-runtime.path \
+    /etc/systemd/system/awg-dc-remote@.service \
+    /etc/systemd/system/awg-notify-flush.service \
+    /etc/systemd/system/awg-notify-flush.timer \
+    /etc/systemd/system/awg-notify-daily.service \
+    /etc/systemd/system/awg-notify-daily.timer \
+    /etc/systemd/system/awg-notify-boot.service \
+    /etc/systemd/system/awg-notify-watch.service \
+    /etc/systemd/system/awg-notify-watch.timer \
+    /etc/systemd/system.conf.d/99-awg-gateway-watchdog.conf \
+    /etc/profile.d/awg-menu.sh
 
   tar -C / -xzf "$dir/gateway-state.tgz"
   systemctl daemon-reload
@@ -68,7 +329,37 @@ restore_gateway(){
   systemctl restart dnsmasq.service 2>/dev/null || true
   systemctl restart awg-quick@awg0.service 2>/dev/null || true
   systemctl restart awg-pbr-health.service 2>/dev/null || true
+  [[ -f /etc/systemd/system/awg-selection-monitor.service ]] &&
+    systemctl restart awg-selection-monitor.service 2>/dev/null || true
+  [[ -f /etc/systemd/system/awg-traffic.service ]] &&
+    systemctl restart awg-traffic.service 2>/dev/null || true
   systemctl start awg-opencck-update.timer 2>/dev/null || true
+  [[ -f /etc/systemd/system/awg-mihomo.service ]] &&
+    systemctl start awg-mihomo.service 2>/dev/null || true
+  [[ -f /etc/systemd/system/awg-mihomo-update.timer ]] &&
+    systemctl start awg-mihomo-update.timer 2>/dev/null || true
+  # Restore the exact prior activation policy: fresh/passive installations
+  # must NOT accidentally enable Hot Pool during rollback.
+  if [[ -f /etc/systemd/system/awg-mihomo-hot-pool.timer &&
+        "$(cat "$dir/hot-pool-timer-state" 2>/dev/null || true)" == enabled ]]; then
+    systemctl enable --now awg-mihomo-hot-pool.timer 2>/dev/null || true
+  else
+    systemctl disable --now awg-mihomo-hot-pool.timer 2>/dev/null || true
+  fi
+  # Restore notifier opt-in status, never auto-enable on old/passive setups.
+  local notify_unit notify_enabled
+  for notify_unit in awg-notify-flush.timer awg-notify-watch.timer awg-notify-daily.timer awg-notify-boot.service; do
+    notify_enabled="$(cat "$dir/notify-activation-$notify_unit" 2>/dev/null || true)"
+    if [[ -f "/etc/systemd/system/$notify_unit" && "$notify_enabled" == enabled ]]; then
+      if [[ "$notify_unit" == *.timer ]]; then
+        systemctl enable --now "$notify_unit" 2>/dev/null || true
+      else
+        systemctl enable "$notify_unit" 2>/dev/null || true
+      fi
+    else
+      systemctl disable --now "$notify_unit" 2>/dev/null || true
+    fi
+  done
   echo "Rollback завершён." >&2
 }
 
@@ -85,10 +376,10 @@ gateway_update(){
   fi
   confirm "Обновить AWG Pi Gateway $cur -> $latest?" || return 0
 
-  if [[ "$cur" == 1.1.0 && "$latest" == 1.2.0 ]]; then
+  if [[ "$cur" == 1.1.0 ]] && version_gt "$latest" "1.1.0"; then
     if (( ASSUME_YES == 1 )); then
       transit_choice=1
-      echo "v1.1.0 -> v1.2.0: --yes подтверждает post-upgrade Transit preflight/switch."
+      echo "v1.1.0 -> $latest: --yes подтверждает post-upgrade Transit preflight/switch."
     elif confirm "После обновления попытаться включить MikroTik Transit / Backup VPN? При ошибке останется Selective Gateway."; then
       transit_choice=1
     else
@@ -140,6 +431,22 @@ gateway_update(){
     sort -nr | awk 'NR>5{sub(/^[^ ]+ /,""); print}' | xargs -r rm -rf
 }
 
+mihomo_status(){
+  if [[ -x "$MIHOMO_INSTALLER" ]]; then
+    "$MIHOMO_INSTALLER" status || true
+  else
+    echo "Mihomo engine updater: missing"
+  fi
+}
+
+mihomo_ensure(){
+  [[ -x "$MIHOMO_INSTALLER" ]] || {
+    echo "$MIHOMO_INSTALLER не найден" >&2
+    return 1
+  }
+  "$MIHOMO_INSTALLER" ensure
+}
+
 show_status(){
   local cur latest
   cur="$(current_version)"
@@ -150,6 +457,7 @@ show_status(){
   else
     echo "AmneziaWG core updater: missing"
   fi
+  mihomo_status
 }
 
 cmd="${1:-}"
@@ -157,6 +465,18 @@ cmd="${1:-}"
 case "$cmd" in
   status)
     show_status
+    ;;
+  backup)
+    umask 077
+    install -d -o root -g root -m 0700 "$BACKUP_ROOT"
+    manual_backup="$(mktemp -d "$BACKUP_ROOT/gateway-manual-$(date +%Y%m%d-%H%M%S)-XXXXXXXX")"
+    if backup_gateway "$manual_backup"; then
+      printf "GATEWAY_BACKUP_ARCHIVE=%s\n" "$manual_backup/gateway-state.tgz"
+      printf "GATEWAY_BACKUP_BYTES=%s\n" "$(stat -c %s "$manual_backup/gateway-state.tgz")"
+    else
+      rm -rf -- "$manual_backup"
+      exit 1
+    fi
     ;;
   gateway)
     gateway_update
@@ -167,28 +487,34 @@ case "$cmd" in
     (( ASSUME_YES == 1 )) && exec "$CORE_UPDATE" --yes
     exec "$CORE_UPDATE" "$@"
     ;;
+  mihomo)
+    mihomo_ensure
+    ;;
   all)
     gateway_update
     if [[ -x "$CORE_UPDATE" ]]; then
       (( ASSUME_YES == 1 )) && "$CORE_UPDATE" --yes || "$CORE_UPDATE"
     fi
+    mihomo_ensure
     ;;
   "")
     echo "1) AWG Pi Gateway"
     echo "2) AmneziaWG core"
-    echo "3) Всё"
-    echo "4) Только показать версии"
-    read -r -p "Выбор [4]: " choice </dev/tty
-    case "${choice:-4}" in
+    echo "3) Mihomo engine (supported pinned version)"
+    echo "4) Всё"
+    echo "5) Только показать версии"
+    read -r -p "Выбор [5]: " choice </dev/tty
+    case "${choice:-5}" in
       1) gateway_update ;;
       2) exec "$CORE_UPDATE" ;;
-      3) gateway_update; "$CORE_UPDATE" ;;
-      4) show_status ;;
+      3) mihomo_ensure ;;
+      4) gateway_update; "$CORE_UPDATE"; mihomo_ensure ;;
+      5) show_status ;;
       *) echo "Неверный выбор" >&2; exit 2 ;;
     esac
     ;;
   *)
-    echo "Использование: awg-update [--yes] {status|gateway|core|all}" >&2
+    echo "Использование: awg-update [--yes] {status|backup|gateway|core|mihomo|all}" >&2
     exit 2
     ;;
 esac

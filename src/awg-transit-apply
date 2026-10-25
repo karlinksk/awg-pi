@@ -16,6 +16,7 @@ CANDIDATE="$AWG_TRANSIT_STATE_DIR/transit-candidate.nft"
 BACKUP="$AWG_TRANSIT_STATE_DIR/pre-transit-table.nft"
 APPLY_TXN="$AWG_TRANSIT_STATE_DIR/transit-apply.nft"
 ROLLBACK_TXN="$AWG_TRANSIT_STATE_DIR/transit-rollback.nft"
+PREPARED_TRANSPORT_IF=""
 
 fail(){
   printf 'FAIL: %s\n' "$*" >&2
@@ -28,7 +29,7 @@ ensure_state_dir(){
 }
 
 prepare_transit(){
-  local preflight_out router_mac tmp
+  local preflight_out router_mac transport_if tmp
 
   ensure_state_dir
 
@@ -37,6 +38,13 @@ prepare_transit(){
     fail "Transit preflight failed"
   fi
   printf '%s\n' "$preflight_out"
+
+  transport_if="$(
+    awk -F= '$1=="TRANSPORT_IF"{print $2}' <<<"$preflight_out" | tail -n1
+  )"
+  [[ -n "$transport_if" ]] ||
+    fail "Transit preflight did not return an active transport interface"
+  PREPARED_TRANSPORT_IF="$transport_if"
 
   router_mac="$(
     awk -F= '$1=="ROUTER_MAC"{print $2}' <<<"$preflight_out" | tail -n1
@@ -97,10 +105,11 @@ verify_transit_table(){
   mark="$("$NFT_BIN" list chain inet awg_pbr prerouting_mark 2>/dev/null)" || return 1
   nat="$("$NFT_BIN" list chain inet awg_pbr postrouting_nat 2>/dev/null)" || return 1
 
-  grep -Fq 'oifname "awg0"' <<<"$forward" || return 1
+  [[ -n "$PREPARED_TRANSPORT_IF" ]] || return 1
+  grep -Fq "oifname \"$PREPARED_TRANSPORT_IF\"" <<<"$forward" || return 1
   grep -Fq 'ether saddr' <<<"$forward" || return 1
   grep -Fq 'meta mark set' <<<"$mark" || return 1
-  grep -Fq 'oifname "awg0" masquerade' <<<"$nat" || return 1
+  grep -Fq "oifname \"$PREPARED_TRANSPORT_IF\" masquerade" <<<"$nat" || return 1
 }
 
 rollback_previous_table(){

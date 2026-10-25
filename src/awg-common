@@ -149,3 +149,69 @@ awg_mode_set(){
   chmod 600 "$tmp"
   mv -f "$tmp" "$AWG_MODE_FILE"
 }
+# Persistent transport backend for AWG Pi Gateway v1.3+.
+# "unconfigured" is a real recovery/control-plane state: no data transport is
+# assumed healthy merely because the gateway is installed.
+AWG_TRANSPORT_FILE="${AWG_TRANSPORT_FILE:-/etc/awg-pbr/transport}"
+
+awg_transport_valid(){
+  case "${1:-}" in
+    unconfigured|awg|mihomo) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+awg_transport_backend_valid(){
+  case "${1:-}" in
+    awg|mihomo) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+awg_transport_get(){
+  local transport dir
+  dir="$(dirname "$AWG_TRANSPORT_FILE")"
+
+  if [[ -e "$AWG_TRANSPORT_FILE" ]]; then
+    if [[ ! -r "$AWG_TRANSPORT_FILE" ]]; then
+      printf 'Transport state requires root: %s\n' "$AWG_TRANSPORT_FILE" >&2
+      return 3
+    fi
+  elif (( ${EUID:-$(id -u)} != 0 )) && [[ -d "$dir" && ! -x "$dir" ]]; then
+    # A root-only parent directory makes -e look like "missing" to an
+    # unprivileged caller. Do not silently fall back to AWG in that case.
+    printf 'Transport state requires root: %s\n' "$AWG_TRANSPORT_FILE" >&2
+    return 3
+  else
+    printf '%s\n' unconfigured
+    return 0
+  fi
+
+  transport="$(tr -d '\r\n' <"$AWG_TRANSPORT_FILE")"
+
+  if ! awg_transport_valid "$transport"; then
+    printf 'Invalid transport in %s: %s\n' \
+      "$AWG_TRANSPORT_FILE" "${transport:-<empty>}" >&2
+    return 1
+  fi
+
+  printf '%s\n' "$transport"
+}
+
+awg_transport_label(){
+  case "${1:-}" in
+    unconfigured) printf '%s\n' 'Not configured' ;;
+    awg) printf '%s\n' 'AmneziaWG' ;;
+    mihomo) printf '%s\n' 'Mihomo' ;;
+    *) return 1 ;;
+  esac
+}
+
+awg_transport_device(){
+  case "${1:-}" in
+    awg) printf '%s\n' "${VPN_IF:-awg0}" ;;
+    mihomo) printf '%s\n' "${MIHOMO_TUN_IF:-mihomo0}" ;;
+    *) return 1 ;;
+  esac
+}
+

@@ -2,18 +2,32 @@
 set -Eeuo pipefail
 
 AWG_ENV_FILE="${AWG_ENV_FILE:-/etc/awg-pbr/env}"
+AWG_COMMON_FILE="${AWG_COMMON_FILE:-/usr/local/lib/awg-pi/common.sh}"
 # shellcheck disable=SC1090
 source "$AWG_ENV_FILE"
+# shellcheck disable=SC1090
+source "$AWG_COMMON_FILE"
 
 : "${LAN_IF:?LAN_IF is required}"
 : "${LAN_CIDR:?LAN_CIDR is required}"
 : "${VPN_IF:?VPN_IF is required}"
 : "${VPN_MARK:?VPN_MARK is required}"
 LOCKDOWN="${AWG_TRANSIT_LOCKDOWN:-0}"
+TRANSPORT_ID="$(awg_transport_get)"
+TRANSPORT_IF=""
+transport_return_rule=""
+if awg_transport_backend_valid "$TRANSPORT_ID"; then
+  TRANSPORT_IF="$(awg_transport_device "$TRANSPORT_ID")"
+  transport_return_rule="    iifname \"$TRANSPORT_IF\" oifname \"$LAN_IF\" ct state established,related accept"
+elif [[ "$LOCKDOWN" != 1 ]]; then
+  echo "No active transport is configured; only Transit lockdown can be rendered." >&2
+  exit 1
+fi
 
 forward_rule=""
 mark_rule=""
 nat_rule=""
+transport_mss_rule=""
 
 case "$LOCKDOWN" in
   0)
@@ -22,9 +36,12 @@ case "$LOCKDOWN" in
       echo "Invalid ROUTER_MAC: $ROUTER_MAC" >&2
       exit 2
     fi
-    forward_rule="    iifname \"$LAN_IF\" ether saddr $ROUTER_MAC ip saddr @transit4 oifname \"$VPN_IF\" accept"
+    forward_rule="    iifname \"$LAN_IF\" ether saddr $ROUTER_MAC ip saddr @transit4 oifname \"$TRANSPORT_IF\" accept"
     mark_rule="    iifname \"$LAN_IF\" ether saddr $ROUTER_MAC ip saddr @transit4 ip daddr != $LAN_CIDR meta mark set $VPN_MARK"
-    nat_rule="    ip saddr @transit4 oifname \"$VPN_IF\" masquerade"
+    nat_rule="    ip saddr @transit4 oifname \"$TRANSPORT_IF\" masquerade"
+    # Forwarded LAN sockets do not inherit the VPN link's smaller MTU.
+    # nft's MSS setter only lowers an existing option; route lookup is live.
+    transport_mss_rule="    iifname \"$LAN_IF\" ether saddr $ROUTER_MAC ip saddr @transit4 oifname \"$TRANSPORT_IF\" meta nfproto ipv4 tcp flags & (syn | rst) == syn tcp option maxseg size set rt mtu"
     ;;
   1)
     # Emergency/boot-safe state: no new forwarded flow is accepted or marked.
@@ -37,7 +54,7 @@ case "$LOCKDOWN" in
 esac
 
 cat <<NFT
-# Transit-mode nftables candidate for AWG Pi Gateway v1.2.
+# Transit-mode nftables candidate for AWG Pi Gateway v1.3 transport backends.
 # This renderer does not apply rules by itself.
 table inet awg_pbr {
   set vpn4 {
@@ -78,11 +95,12 @@ table inet awg_pbr {
   chain forward_guard {
     type filter hook forward priority filter; policy drop;
 
-    # Return traffic may leave only from AWG back toward LAN.
-    iifname "$VPN_IF" oifname "$LAN_IF" ct state established,related accept
+    # Return traffic may leave only from the active transport back toward LAN.
+$transport_return_rule
 
-    # Normal Transit accepts only MikroTik-MAC ingress with actual AWG egress.
+    # Normal Transit accepts only MikroTik-MAC ingress with actual active-transport egress.
     # Lockdown emits no new-flow accept rule.
+$transport_mss_rule
 $forward_rule
   }
 
@@ -90,7 +108,7 @@ $forward_rule
     type filter hook prerouting priority mangle; policy accept;
 
     # Normal Transit marks trusted MikroTik-forwarded Internet traffic.
-    # Lockdown emits no mark rule, so no new client flow can enter AWG policy.
+    # Lockdown emits no mark rule, so no new client flow can enter transport policy.
 $mark_rule
   }
 

@@ -29,6 +29,7 @@ BACKUPS = '/var/backups/awg-gateway'
 FAILOPEN = '/usr/local/sbin/awg-pbr-failopen'
 SETUP = '/usr/local/sbin/awg-pbr-setup'
 ROUTE = '/usr/local/sbin/awg-route'
+HTTPS_PROBE = '/usr/local/sbin/awg-health-probe'
 CONF_DIR = '/etc/amnezia/amneziawg'
 CANCEL_EXIT = 20
 
@@ -325,7 +326,9 @@ def reconfigure(args, env):
         raise ValueError('Неоднозначная dnsmasq конфигурация; ожидается один LAN interface/listen-address')
     tx = Transaction('network', [ENV, DNS, NFT, DOMAINS, CLIENTS])
     try:
+        print('[1/4] Приостанавливаю policy/health и сохраняю rollback...', flush=True)
         tx.pause()
+        print('[2/4] Применяю LAN и DNS-конфигурацию...', flush=True)
         atomic(ENV, new_env)
         atomic(DNS, dns)
         run('dnsmasq', '--test')
@@ -333,10 +336,12 @@ def reconfigure(args, env):
         # reload regenerates domain/static sets and restarts health, so keep it
         # gated until all network checks have completed.
         run('systemctl', 'restart', 'dnsmasq.service')
+        print('[3/4] Проверяю роутер и DNS через новый адрес Pi...', flush=True)
         run('ping', '-4', '-n', '-c1', '-W3', actual['ROUTER_IP'])
         answer = run('dig', '+time=3', '+tries=1', '+short', 'A', 'example.com', '@' + actual['PI_IP']).stdout
         if not any(re.fullmatch(r'\d+(\.\d+){3}', x) for x in answer.splitlines()):
             raise RuntimeError('DNS через новый адрес Pi не отвечает')
+        print('[4/4] Восстанавливаю маршрутизацию и монитор состояния...', flush=True)
         run(ROUTE, 'reload')
         if not tx.health:
             run('systemctl', 'stop', HEALTH)
@@ -389,16 +394,13 @@ def profile(text):
     if [s[0] for s in sections] != ['Interface', 'Peer']:
         raise ValueError('Нужны ровно [Interface] и один [Peer] для gateway')
     interface, peer = sections[0][1], sections[1][1]
-    # AWG v3 header protection profiles need not contain the legacy H1-H4.
-    # Let the installed core validate AWG combinations and value ranges.
+    # Plain WireGuard and AmneziaWG profiles share this backend. AWG-specific
+    # fields are optional here; the installed core validates their combinations
+    # and value ranges when they are present.
     for section, required in ((interface, ('PrivateKey', 'Address')),
                               (peer, ('PublicKey', 'Endpoint', 'AllowedIPs'))):
         if not all(k in section for k in required):
-            raise ValueError('Отсутствуют обязательные native AmneziaWG поля')
-    awg_fields = {'Jc', 'Jmin', 'Jmax', 'S1', 'S2', 'S3', 'S4', 'H1', 'H2', 'H3', 'H4',
-                  'I1', 'I2', 'I3', 'I4', 'I5', 'HeaderProtectionKey'}
-    if not awg_fields.intersection(interface):
-        raise ValueError('В профиле отсутствуют параметры AmneziaWG')
+            raise ValueError('Отсутствуют обязательные native WireGuard/AmneziaWG поля')
     for section in (interface, peer):
         for key in ('PrivateKey', 'PublicKey', 'PresharedKey', 'HeaderProtectionKey'):
             if key in section:
@@ -457,14 +459,23 @@ awg setconf "$1" "$2" >/dev/null 2>&1
 def tunnel_ok(env, since):
     mark = str(int(env['HEALTH_MARK'], 0))
     run('ip', '-4', 'route', 'replace', 'default', 'dev', env['VPN_IF'], 'table', env['HEALTH_TABLE'])
-    # A unique probe rule avoids changing existing health rules during validation.
+    # Priority 89 is reserved for transactional AWG validation. A previous
+    # interrupted maintenance run may have left an identical rule behind, so
+    # clear every exact stale copy before adding the temporary rule.
     rule = ('priority', '89', 'fwmark', mark, 'lookup', env['HEALTH_TABLE'])
-    run('ip', '-4', 'rule', 'add', *rule)
+    for _ in range(16):
+        if run('ip', '-4', 'rule', 'del', *rule, check=False).returncode != 0:
+            break
+    else:
+        raise RuntimeError('Не удалось очистить временное правило проверки AWG')
     try:
+        run('ip', '-4', 'rule', 'add', *rule)
         for _ in range(10):
-            transport = any(run('ping', '-4', '-n', '-I', env['VPN_IF'], '-m', mark,
-                                '-c1', '-W2', target, check=False).returncode == 0
-                            for target in ('9.9.9.9', '1.1.1.1'))
+            icmp_ok = any(run('ping', '-4', '-n', '-I', env['VPN_IF'], '-m', mark,
+                              '-c1', '-W2', target, check=False).returncode == 0
+                          for target in ('9.9.9.9', '1.1.1.1'))
+            https_ok = icmp_ok or run(HTTPS_PROBE, mark, env['VPN_IF'], check=False).returncode == 0
+            transport = icmp_ok or https_ok
             output = run('awg', 'show', env['VPN_IF'], 'latest-handshakes').stdout
             stamps = [int(line.split()[1]) for line in output.splitlines() if len(line.split()) == 2]
             now = int(time.time())
@@ -482,10 +493,21 @@ def replace_config(args, env):
         raise ValueError('Некорректный VPN_IF')
     active = Path(CONF_DIR) / (vpn + '.conf')
     previous = active.with_suffix('.conf.previous')
+    if args.action == 'rollback' and not previous.is_file():
+        raise ValueError(
+            'Откат недоступен: предыдущий AWG-профиль отсутствует. '
+            'Он появится после первой успешной замены профиля через v1.3.'
+        )
     source = previous if args.action == 'rollback' else Path(args.file)
     clean, endpoint = profile(source.read_text())
-    old_endpoint = re.search(r'^\s*Endpoint\s*=\s*([^#\r\n]+)', active.read_text(), re.M)
-    print('Старый Endpoint: ' + (old_endpoint[1].strip() if old_endpoint else '(не указан)'))
+    had_active = active.exists()
+    old_endpoint = None
+    if had_active:
+        old_endpoint = re.search(r'^\s*Endpoint\s*=\s*([^#\r\n]+)', active.read_text(), re.M)
+    print('Старый Endpoint: ' + (
+        old_endpoint[1].strip() if old_endpoint else
+        ('(не указан)' if had_active else '(профиль не установлен)')
+    ))
     print('Новый Endpoint: ' + endpoint)
     with tempfile.TemporaryDirectory(prefix='awg-preflight-') as temp:
         candidate = Path(temp) / (vpn + '.conf')
@@ -496,37 +518,54 @@ def replace_config(args, env):
             return
         confirm(args, 'Заменить профиль? ' + paused_policy_description())
         tx = Transaction('config', [str(active), str(previous)])
-        old = active.read_bytes()
+        old = active.read_bytes() if had_active else None
         service = f'awg-quick@{vpn}.service'
         try:
             tx.pause()
             # Down reads the old profile, never the replacement.
-            run('systemctl', 'stop', service)
+            run('systemctl', 'stop', service, check=False)
             atomic(active, clean)
             since = int(time.time())
             run('systemctl', 'start', service)
             if not tunnel_ok(env, since):
                 raise RuntimeError('Новый профиль: handshake/transport не прошли проверку')
-            atomic(previous, old)
+            if old is not None:
+                atomic(previous, old)
+            else:
+                previous.unlink(missing_ok=True)
             tx.resume()
-        except BaseException:
-            print('Ошибка профиля; автоматический rollback.', file=sys.stderr)
+        except BaseException as exc:
+            print(f'Ошибка профиля: {exc}; автоматический rollback.', file=sys.stderr)
             run('systemctl', 'stop', HEALTH, check=False)
             run(FAILOPEN, check=False)
             run('systemctl', 'stop', service, check=False)
             tx.restore()
+            # Re-assert the in-memory pre-transaction profile so a partial
+            # restore can never leave the rejected candidate as awg0.conf.
+            if had_active and old is not None:
+                atomic(active, old)
+            else:
+                active.unlink(missing_ok=True)
             recovered = False
             try:
-                since = int(time.time())
-                run('systemctl', 'start', service)
-                recovered = tunnel_ok(env, since)
-                tx.resume(healthy=recovered)
+                if had_active:
+                    since = int(time.time())
+                    run('systemctl', 'start', service)
+                    recovered = tunnel_ok(env, since)
+                    tx.resume(healthy=recovered)
+                else:
+                    # First-profile failure returns to the transport-unconfigured
+                    # recovery state. There is no previous tunnel to restart.
+                    run('systemctl', 'stop', service, check=False)
+                    tx.resume(healthy=False)
             finally:
-                if not recovered:
+                if had_active and not recovered:
                     run('systemctl', 'stop', HEALTH, check=False)
                     run(FAILOPEN, check=False)
                     fallback = 'FAIL-CLOSED' if current_mode() == 'transit' else 'DIRECT/FAIL-OPEN'
                     print(f'Старый файл возвращён, туннель не подтверждён: {fallback}; health остановлен.', file=sys.stderr)
+                elif not had_active:
+                    print('Первый AWG-профиль не принят; active transport не изменён.', file=sys.stderr)
             raise
     print('Профиль активирован. Handshake: OK. Transport: OK. Остальные настройки сохранены.')
 

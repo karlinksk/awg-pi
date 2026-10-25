@@ -1,0 +1,11 @@
+[Unit]
+Description=Bootstrap Stage18 media runtime when Mihomo provider is updated
+
+[Path]
+# A changed subscription triggers RAM recovery, including when the timer's
+# OnBootSec already elapsed before the operator supplied a provider.
+PathChanged=/var/lib/awg-pbr/mihomo/providers/subscription.yaml
+Unit=awg-mihomo-stage18-ram-runtime.service
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,11 @@
+[Unit]
+Description=Periodic Mihomo health-pool refresh for AWG Pi Gateway
+
+[Timer]
+OnBootSec=5min
+OnUnitActiveSec=30min
+RandomizedDelaySec=5min
+Persistent=false
+
+[Install]
+WantedBy=timers.target

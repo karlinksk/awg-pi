@@ -24,11 +24,22 @@ This applies to both **Selective Gateway** and **MikroTik Transit / Backup VPN**
 - [ ] Secret-free documentation updated
 - [ ] Commit verified; PR status and remaining hardware gates reported accurately
 
+## Owner-directed selection revision — 2026-10-24
+
+Manual never gates on external reachability. AUTO uses fresh engine-native
+fixed-Selector network assessment, independent of OpenAI/ipify/ChatGPT/YouTube,
+for incumbent failure and candidate recovery. This latest owner instruction
+supersedes the earlier local-only AUTO contract and older HTTPS/READY rules.
+Distinguish negative engine network evidence from controller/infrastructure
+unknown; preserve local core/profile/route/guard/management checks, quiesce,
+retry and rollback. Engine delay is not proof of Pi TUN or LAN forwarding.
+Independent hardware traffic tests remain required for release evidence.
+
 ## Ground rules specific to Mihomo
 
 - **Backend/proxy availability**, **Pi-bound `mihomo0` HTTPS**, and **forwarded LAN-client success** are separate levels of evidence. Do not report one as another.
 - For **Selective**, Raspberry Pi `dnsmasq` and `nftset` classify destination IPs based on client DNS requests that actually arrive at the Pi; this does **not** automatically pass hostnames to the Mihomo TUN. For **Transit**, DNS may be resolved elsewhere. Maintain DNS independence from VPN availability; never introduce hijacking, sniffing, fake-IP, router/DoH changes without targeted tests and approval.
-- Preserve READY Hot Pool's real OpenAI/ChatGPT/decoded-YouTube checks without resurrecting known-bad preliminary YouTube HTTP checks. Require actual selected-node TUN postchecks. Investigate which checks legitimately belong to node readiness rather than automatically discarding domain-functional nodes.
+- Under the current PR #165 scope, Hot Pool/READY and service eligibility are excluded from MANUAL/AUTO and release gates. Historical service/media experiments do not reinstate them. Preserve independent hardware forwarding evidence and local route/guard/identity safety checks; AUTO uses only the agreed native engine network assessment.
 - Treat `iproute2` output semantically, not as an exact string sensitive to whitespace. Wait within bounded limits for policy routing to reappear after Mihomo restarts before judging restore failure or disarming independent recovery.
 - Do not automatically promote an untested candidate to live service, merge a draft PR, or overwrite working provider/secret state. Keep a reversible plan for any test that changes the active VPN node.
 

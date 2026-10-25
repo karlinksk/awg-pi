@@ -51,17 +51,28 @@ DisableCookies = on
 [Peer]''').replace('AllowedIPs = 0.0.0.0/0', 'AllowedIPs = 0.0.0.0/0, ::/0')
 V3_PROFILE += 'PersistentKeepalive = 25-35\n'
 
+WG_PROFILE = f'''[Interface]
+PrivateKey = {KEY}
+Address = 10.9.0.2/32
+[Peer]
+PublicKey = {KEY}
+Endpoint = 192.0.2.55:51820
+AllowedIPs = 0.0.0.0/0
+PersistentKeepalive = 25
+'''
+
 
 class Maintenance(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
         self.root = Path(self.tmp.name)
-        for key in ('ENV', 'DNS', 'NFT', 'CLIENTS', 'DOMAINS', 'BACKUPS', 'CONF_DIR'):
+        for key in ('ENV', 'DNS', 'NFT', 'CLIENTS', 'DOMAINS', 'BACKUPS', 'CONF_DIR', 'MODE'):
             p = patch.object(m, key, str(self.root / key))
             p.start()
             self.addCleanup(p.stop)
         Path(m.CONF_DIR).mkdir()
+        Path(m.MODE).write_text('selective\n')
         self.env = dict(LAN_IF='eth0', PI_IP='192.168.1.2', LAN_CIDR='192.168.1.0/24',
                         ROUTER_IP='192.168.1.1', VPN_IF='awg0', HEALTH_MARK='0x101',
                         HEALTH_TABLE='101', UPSTREAM_DNS='9.9.9.9', VPN_MARK='0x100')
@@ -70,6 +81,7 @@ class Maintenance(unittest.TestCase):
         Path(m.NFT).write_text('old nft\n')
         Path(m.CLIENTS).write_text('192.168.1.28\n')
         Path(m.DOMAINS).write_text('old domains\n')
+        Path(m.MODE).write_text('selective\n')
         self.active = Path(m.CONF_DIR) / 'awg0.conf'
         self.active.write_text(PROFILE)
         self.previous = self.active.with_suffix('.conf.previous')
@@ -117,6 +129,12 @@ class Maintenance(unittest.TestCase):
                     PROFILE.replace('Address = 10.8.0.2/32', 'Address = garbage')):
             with self.subTest(bad=bad[:20]), self.assertRaises(ValueError):
                 m.profile(bad)
+
+    def test_plain_wireguard_profile_is_supported_by_shared_backend(self):
+        clean, endpoint = m.profile(WG_PROFILE)
+        self.assertIn('Table = off', clean)
+        self.assertNotIn('Jc =', clean)
+        self.assertEqual(endpoint, '192.0.2.55:51820')
 
     def test_v31_profile_preserves_native_fields_and_dual_stack(self):
         clean, _ = m.profile(V3_PROFILE)
@@ -242,6 +260,43 @@ class Maintenance(unittest.TestCase):
             m.network_status(self.env)
         self.assertEqual(out.getvalue(), '')
 
+    def test_first_awg_profile_install_uses_same_validation_path(self):
+        self.active.unlink()
+        self.previous.unlink(missing_ok=True)
+        m.replace_config(self.args(), self.env)
+        self.assertIn('192.0.2.2:', self.active.read_text())
+        self.assertIn('Table = off', self.active.read_text())
+        self.assertFalse(self.previous.exists())
+        self.preflight.assert_called_once()
+        self.assertEqual(
+            sum(call == ('systemctl', 'start', 'awg-quick@awg0.service') for call in self.calls),
+            1,
+        )
+
+    def test_failed_first_awg_profile_returns_to_no_profile(self):
+        self.active.unlink()
+        self.previous.unlink(missing_ok=True)
+        self.health.return_value = False
+        with self.assertRaises(RuntimeError):
+            m.replace_config(self.args(), self.env)
+        self.assertFalse(self.active.exists())
+        self.assertFalse(self.previous.exists())
+        self.assertEqual(
+            sum(call == ('systemctl', 'start', 'awg-quick@awg0.service') for call in self.calls),
+            1,
+        )
+
+    def test_rollback_without_previous_profile_is_explicit_and_safe(self):
+        self.previous.unlink(missing_ok=True)
+        with self.assertRaisesRegex(
+                ValueError,
+                'Откат недоступен: предыдущий AWG-профиль отсутствует'):
+            m.replace_config(self.args(action='rollback', file=None), self.env)
+        self.assertEqual(self.calls, [])
+        self.preflight.assert_not_called()
+        self.assertEqual(self.active.read_text(), PROFILE)
+        self.assertFalse(Path(m.BACKUPS).exists())
+
     def test_config_success_and_manual_rollback(self):
         before = {f: Path(f).read_bytes() for f in [m.ENV, m.DNS, m.NFT, m.CLIENTS, m.DOMAINS]}
         m.replace_config(self.args(), self.env)
@@ -290,6 +345,13 @@ class Maintenance(unittest.TestCase):
         self.assertEqual(self.active.read_text(), PROFILE)
         self.assertFalse(self.previous.exists())
 
+    def test_config_failure_reasserts_original_active_profile(self):
+        self.health.side_effect = [False, True]
+        with patch.object(m.Transaction, 'restore', autospec=True):
+            with self.assertRaises(RuntimeError):
+                m.replace_config(self.args(), self.env)
+        self.assertEqual(self.active.read_text(), PROFILE)
+
     def test_failed_recovery_keeps_direct(self):
         self.health.return_value = False
         with self.assertRaises(RuntimeError):
@@ -329,21 +391,50 @@ class Discovery(unittest.TestCase):
             with self.assertRaises(ValueError):
                 m.discover({'VPN_IF': 'awg0'})
 
-    def test_transport_requires_ping_and_fresh_handshake(self):
+    def test_transport_accepts_https_fallback_and_requires_fresh_handshake(self):
         env = dict(HEALTH_MARK='0x101', HEALTH_TABLE='101', VPN_IF='awg0')
         calls = []
-        stamp, ping_code = 100, 0
+        stamp, ping_code, https_code = 100, 0, 1
+        probe_rules = 1
+        probe_rule = ('priority', '89', 'fwmark', '257', 'lookup', '101')
+
         def run(*args, **kwargs):
+            nonlocal probe_rules
             calls.append(args)
-            return subprocess.CompletedProcess(args, ping_code if args[0] == 'ping' else 0,
-                                               f'publickey {stamp}\n' if args[0] == 'awg' else '')
+            if args[:4] == ('ip', '-4', 'rule', 'del') and args[4:] == probe_rule:
+                if probe_rules:
+                    probe_rules -= 1
+                    code, out = 0, ''
+                else:
+                    code, out = 2, ''
+            elif args[:4] == ('ip', '-4', 'rule', 'add') and args[4:] == probe_rule:
+                code, out = (2, '') if probe_rules else (0, '')
+                if code == 0:
+                    probe_rules = 1
+            elif args[0] == 'ping':
+                code, out = ping_code, ''
+            elif args[0] == m.HTTPS_PROBE:
+                code, out = https_code, ''
+            elif args[0] == 'awg':
+                code, out = 0, f'publickey {stamp}\n'
+            else:
+                code, out = 0, ''
+            return subprocess.CompletedProcess(args, code, out)
+
         with patch.object(m, 'run', side_effect=run), patch.object(m.time, 'sleep'), patch.object(m.time, 'time', return_value=101):
             self.assertTrue(m.tunnel_ok(env, 100))
+            self.assertEqual(probe_rules, 0)
+            first_add = calls.index(('ip', '-4', 'rule', 'add', *probe_rule))
+            self.assertIn(('ip', '-4', 'rule', 'del', *probe_rule), calls[:first_add])
             self.assertIn(('ping', '-4', '-n', '-I', 'awg0', '-m', '257', '-c1', '-W2', '9.9.9.9'), calls)
             stamp = 99
             self.assertFalse(m.tunnel_ok(env, 100))
-            stamp, ping_code = 100, 1
+            stamp, ping_code, https_code = 100, 1, 0
+            self.assertTrue(m.tunnel_ok(env, 100))
+            self.assertIn((m.HTTPS_PROBE, '257', 'awg0'), calls)
+            https_code = 1
             self.assertFalse(m.tunnel_ok(env, 100))
+            self.assertEqual(probe_rules, 0)
             self.assertEqual(calls[-1][:4], ('ip', '-4', 'rule', 'del'))
 
 

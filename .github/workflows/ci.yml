@@ -1,15 +1,18 @@
-name: v1.2.0 CI
+name: v1.3.0 CI
 
 on:
   push:
     branches:
-      - 'develop/v1.2.0'
-      - 'feature/v1.2-*'
-      - 'rc/v1.2.0-*'
+      - 'develop/v1.3.0'
+      - 'feature/v1.3-*'
+      - 'integration/v1.3.0-*'
+      - 'rc/v1.3.0-*'
+      - 'refactor/v1.3-*'
   pull_request:
     branches:
       - main
-      - 'develop/v1.2.0'
+      - 'develop/v1.3.0'
+      - 'integration/v1.3.0-*'
 
 jobs:
   shell:
@@ -22,12 +25,25 @@ jobs:
           # intermittently return 403 and block apt-get update. CI does not use it.
           sudo find /etc/apt/sources.list.d -maxdepth 1 -type f -iname '*microsoft*' -delete
           sudo apt-get update
-          sudo apt-get install -y nftables
+          sudo apt-get install -y nftables python3-yaml tzdata
       - name: Bash syntax
         run: |
           bash -n install.sh
           bash -n src/awg-common
           bash -n src/awg-route
+          bash -n src/awg-transport
+          bash -n src/awg-fetch
+          bash -n src/awg-first-run
+          bash -n src/awg-selection
+          bash -n src/awg-selection-monitor
+          bash -n src/awg-mihomo-node-policy
+          bash -n src/awg-mihomo-ready-postcheck-tun
+          bash -n src/awg-mihomo-tun-check
+          bash -n src/awg-dc
+          bash -n scripts/awg-mihomo-stage18-ram-runtime.sh
+          bash -n scripts/awg-system-node.sh
+          bash -n scripts/awg-mihomo-balanced-canary.sh
+          python3 -m py_compile src/awg-mihomo-ready-live-match
           bash -n src/awg-pbr-setup
           bash -n src/awg-transit-nft
           bash -n src/awg-transit-preflight
@@ -38,8 +54,27 @@ jobs:
           bash -n src/awg-opencck-update
           bash -n src/awg-core-update
           bash -n src/awg-update
+          bash -n src/awg-traffic
           bash -n src/awg-menu
+          bash -n src/awg-mihomo-prepare
+          bash -n src/awg-mihomo-configure
+          bash -n src/awg-mihomo-install
+          bash -n src/awg-mihomo-update
+          bash -n src/awg-mihomo-config
+          python3 -m py_compile src/awg-mihomo-provider.py
+          python3 -m py_compile src/awg-mihomo-pool.py
           bash -n tests/test-common.sh
+          bash -n tests/test-transport.sh
+          bash -n tests/test-bootstrap-fetch.sh
+          bash -n tests/test-first-run.sh
+          bash -n tests/test-selection.sh
+          bash -n tests/test-mihomo-node-policy.sh
+          bash -n tests/test-transport-switch.sh
+          bash -n tests/test-mihomo-runtime.sh
+          bash -n tests/test-mihomo-install.sh
+          bash -n tests/test-mihomo-configure.sh
+          bash -n tests/test-mihomo-node-select.sh
+          bash -n tests/test-mihomo-onboarding.sh
           bash -n tests/test-mode.sh
           bash -n tests/test-route-mode.sh
           bash -n tests/test-setup-mode.sh
@@ -50,18 +85,34 @@ jobs:
           bash -n tests/test-health-mode.sh
           bash -n tests/test-mode-switch.sh
           bash -n tests/test-upgrade-mode.sh
+          bash -n tests/test-ready-install-integration.sh
+          bash -n tests/test-hot-pool-packaging.sh
           bash -n tests/test-opencck-updater.sh
           bash -n tests/test-direct-domain-precedence.sh
+          bash -n tests/test-traffic.sh
           bash -n tests/mock-curl.sh
           bash -n tests/test-nft-template.sh
           bash -n tests/test-rc2.sh
           bash -n tests/test-redaction.sh
+          bash -n tests/test-diagnostics-hardening.sh
+          bash -n tests/test-visible-inputs.sh
       - name: ShellCheck errors
         run: |
-          shellcheck -S error install.sh src/awg-common src/awg-route src/awg-pbr-setup src/awg-transit-nft src/awg-transit-preflight src/awg-transit-apply src/awg-transit-routing src/awg-mode-switch src/awg-pbr-health src/awg-opencck-update src/awg-core-update src/awg-update src/awg-menu tests/test-common.sh tests/test-mode.sh tests/test-route-mode.sh tests/test-setup-mode.sh tests/test-transit-nft.sh tests/test-transit-preflight.sh tests/test-transit-apply.sh tests/test-transit-routing.sh tests/test-health-mode.sh tests/test-mode-switch.sh tests/test-upgrade-mode.sh tests/test-opencck-updater.sh tests/test-direct-domain-precedence.sh tests/mock-curl.sh tests/test-nft-template.sh
+          shellcheck -S error install.sh src/awg-common src/awg-route src/awg-transport src/awg-fetch src/awg-first-run src/awg-selection src/awg-selection-monitor src/awg-mihomo-node-policy src/awg-mihomo-ready-postcheck-tun src/awg-pbr-setup src/awg-transit-nft src/awg-transit-preflight src/awg-transit-apply src/awg-transit-routing src/awg-mode-switch src/awg-pbr-health src/awg-opencck-update src/awg-core-update src/awg-update src/awg-traffic src/awg-menu src/awg-mihomo-config src/awg-mihomo-update src/awg-mihomo-install src/awg-mihomo-prepare src/awg-mihomo-configure tests/test-mihomo-install.sh tests/test-diagnostics-hardening.sh tests/test-common.sh tests/test-transport.sh tests/test-bootstrap-fetch.sh tests/test-first-run.sh tests/test-selection.sh tests/test-mihomo-node-policy.sh tests/test-transport-switch.sh tests/test-mihomo-runtime.sh tests/test-mihomo-configure.sh tests/test-mihomo-node-select.sh tests/test-mihomo-onboarding.sh tests/test-mode.sh tests/test-route-mode.sh tests/test-setup-mode.sh tests/test-transit-nft.sh tests/test-transit-preflight.sh tests/test-transit-apply.sh tests/test-transit-routing.sh tests/test-health-mode.sh tests/test-mode-switch.sh tests/test-upgrade-mode.sh tests/test-opencck-updater.sh tests/test-direct-domain-precedence.sh tests/test-traffic.sh tests/mock-curl.sh tests/test-nft-template.sh tests/test-visible-inputs.sh src/awg-dc src/awg-mihomo-tun-check scripts/awg-mihomo-stage18-ram-runtime.sh scripts/awg-system-node.sh extras/mihomo-hot-pool-shadow/awg-mihomo-hot-continuity-run
       - name: Unit tests
         run: |
           bash tests/test-common.sh
+          bash tests/test-transport.sh
+          bash tests/test-bootstrap-fetch.sh
+          bash tests/test-first-run.sh
+          bash tests/test-selection.sh
+          bash tests/test-mihomo-node-policy.sh
+          bash tests/test-transport-switch.sh
+          bash tests/test-mihomo-runtime.sh
+          bash tests/test-mihomo-install.sh
+          bash tests/test-mihomo-configure.sh
+          bash tests/test-mihomo-node-select.sh
+          bash tests/test-mihomo-onboarding.sh
           bash tests/test-mode.sh
           bash tests/test-route-mode.sh
           bash tests/test-setup-mode.sh
@@ -72,14 +123,65 @@ jobs:
           bash tests/test-health-mode.sh
           bash tests/test-mode-switch.sh
           bash tests/test-upgrade-mode.sh
+          bash tests/test-ready-install-integration.sh
+          python3 -B tests/test-installer-script-dispatch.py
+          python3 -B tests/test-installer-interrupted-resume.py
+          bash tests/test-hot-pool-packaging.sh
+          python3 -B tests/test-hot-pool-timer-detection.py
+          python3 -B extras/mihomo-hot-pool-shadow/test_hot_pool.py
+          python3 -B extras/mihomo-hot-pool-shadow/test_hot_pool_continuity.py
+          python3 -B extras/mihomo-hot-pool-shadow/test_hot_scan.py
+          python3 -B extras/mihomo-hot-pool-shadow/test_network_gate_contract.py
+          python3 -B tests/test-mihomo-periodic-review.py
           bash tests/test-opencck-updater.sh
           bash tests/test-direct-domain-precedence.sh
+          bash tests/test-traffic.sh
           bash tests/test-nft-template.sh
           bash tests/test-rc2.sh
           bash tests/test-redaction.sh
+          bash tests/test-diagnostics-hardening.sh
+          bash tests/test-visible-inputs.sh
+          python3 tests/test-mihomo-provider.py
+          python3 tests/test-mihomo-pool.py
           python3 tests/test-maintenance.py
           python3 tests/test-confirm.py
           python3 tests/test-menu.py
+          python3 -B tests/test_menu_ux.py
+          python3 -B tests/test_ready_auto_canary.py
+          python3 -B tests/test_ready_tun_postcheck.py
+          python3 -B tests/test_mihomo_ip_connect_probe.py
+          python3 -B tests/test_mihomo_ip_connect_gate.py
+          python3 -B tests/test_mihomo_shadow_live_guard.py
+          python3 -B tests/test_mihomo_video_decode.py
+          python3 -B tests/test_ready_monitor_contract.py
+          python3 -B tests/test_auto_smart_calibration.py
+          python3 -B tests/test_auto_smart_history.py
+          python3 -B tests/test_desktop_commander_installer.py
+          python3 -B tests/test_installer_eager_mihomo.py
+          python3 -B tests/test_mihomo_balanced_canary.py
+          python3 -B tests/test_mihomo_balanced_full_chain.py
+          python3 -B tests/test_mihomo_browser_session.py
+          python3 -B tests/test_mihomo_network_balanced.py
+          python3 -B tests/test_mihomo_service_check.py
+          python3 -B tests/test_mihomo_service_eligibility.py
+          python3 -B tests/test_mihomo_service_quickcheck.py
+          python3 -B tests/test_mihomo_service_trigger.py
+          python3 -B tests/test_mihomo_stage18_boot.py
+          python3 -B tests/test_mihomo_tun_installer.py
+          python3 -B tests/test_ready_auto_persistence.py
+          python3 -B tests/test_system_node_runtime.py
+          python3 -B tests/test_installer_transit_auto_policy.py
+          python3 -B tests/test_mihomo_standby_repair.py
+          python3 -B tests/test_transport_tun_preflight.py
+          python3 -B tests/test_release_backup_coverage.py
+          python3 -B tests/test_gateway_backup_integrity.py
+          python3 -B tests/test_backup_full_component_audit.py
+          python3 -B tests/test_installer_timezone.py
+          python3 -B tests/test_systemd_units.py
+      - name: Complete Python regression discovery
+        run: python3 -B -m unittest discover -s tests -p 'test_*.py' -q
+      - name: Real isolated forwarded TCP MSS regression
+        run: sudo env AWG_MSS_NETNS_TEST=1 python3 -B -m unittest discover -s tests -p 'test_tcp_mss_forward.py' -v
 
   awg-v31:
     runs-on: ubuntu-latest

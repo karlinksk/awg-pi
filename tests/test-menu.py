@@ -3,6 +3,7 @@ from pathlib import Path
 
 menu = Path("src/awg-menu").read_text()
 
+# Core safety / configuration flows must stay present.
 required = [
     'mktemp /run/awg-pbr/config-paste.XXXXXX.conf',
     'chmod 600 "$PASTE_TMP"',
@@ -12,57 +13,486 @@ required = [
     'config replace "$PASTE_TMP" --yes',
     '"Вставить конфигурацию текстом"',
     '"Загрузить конфигурацию из файла"',
-    '"Откатить предыдущую конфигурацию"',
+    '"Откатить предыдущую конфигурацию [$rollback_state]"',
+    '"Mihomo"',
+    '"Резервирование узлов Mihomo"',
+    '"MANUAL — ручной выбор. AUTO — переход к следующей доступной ноде при отказе."',
+    '"Часовой пояс"',
+    '"Статистика трафика"',
+    '"Проверить / восстановить Mihomo"',
+    '"VPN-сервисы / домены"',
+    '"Подписка / источник"',
+    '"Заменить URL подписки"',
+    '"Обновить подписку — AUTO"',
+    '"Импорт профиля / подписки"',
+    '"Импортировать из файла"',
+    '"Вставить текстом"',
+    '"Обновить через выбранный канал"',
+    'mihomo_open_candidate_after_update',
+    '"Точка выхода Mihomo / Xray"',
+    '"Активный транспорт"',
+    '"Дополнительные настройки"',
+    '"Конфигурация AmneziaWG"',
+    '"Политика выбора транспорта"',
+    '"Citadel / Remnawave"',
+    '"AUTO — пул узлов"',
+    '"Фильтр региона [',
+    '"Протокол пула узлов"',
+    '"Проверка узлов Mihomo"',
+    '"Формат подписки"',
+    '"Mihomo / Clash YAML"',
+    '"VLESS URI"',
+    '"Base64 VLESS"',
 ]
-
 for needle in required:
     assert needle in menu, f"missing menu safety/config feature: {needle}"
 
+policy_menu=menu.split('mihomo_node_policy_menu(){',1)[1].split('\n}\n',1)[0]
+assert '3) mihomo_node_chain_editor' not in policy_menu
+assert '5) mihomo_auto_strategy_menu' not in policy_menu
+assert '2)\n' in policy_menu and 'mode manual' in policy_menu
+assert '4) mihomo_node_auto_menu' in policy_menu
+
+# Pasted AWG profile is always checked before replacement.
 check_pos = menu.index('config check "$PASTE_TMP"')
 replace_pos = menu.index('config replace "$PASTE_TMP" --yes')
-assert check_pos < replace_pos, "pasted profile must be validated before replacement"
-
+assert check_pos < replace_pos
 assert 'PASTE_TMP=""' in menu
+assert 'PASTE_OUT=""' in menu
 assert 'trap cleanup EXIT' in menu
 
+# Long/silent menu commands must expose a live heartbeat instead of leaving a
+# blank terminal while the user waits.
+assert 'run_with_progress(){' in menu
+assert '--infobox' in menu
+assert 'Прошло: ${elapsed} с' in menu
+assert "MIHOMO_POOL_(READY|HEALTH_PROGRESS|GEO_PROGRESS)" in menu
+assert 'Этап: $phase' in menu
+assert 'Прогресс: $current из $total ($percent%)' in menu
+assert 'Загрузка узлов в проверочный Mihomo' in menu
+assert 'Проверка доступности узлов' in menu
+assert 'Определение фактической страны выхода' in menu
+assert 'grep -E' in menu and 'tail -n1' in menu
+assert 'SSH-сессию не закрывайте' in menu
+assert 'kill -0 "$pid"' in menu
+assert 'wait "$pid"' in menu
+assert 'run_with_progress "$heading" "$@"' in menu
+assert 'run_with_progress "Перезапуск $label" systemctl restart "$service"' in menu
+assert 'run_with_progress "Перезапуск монитора состояния" systemctl restart awg-pbr-health.service' in menu
 
-# Every interactive menu must provide context help for the highlighted item.
-assert menu.count("--menu") == menu.count("--item-help --menu"), (
-    "every dialog menu must use --item-help"
-)
+# Non-interactive long operations should use the progress-aware capture path.
+assert 'run_interactive "Переключение на Mihomo"' not in menu
+assert 'run_interactive "Переключение на AmneziaWG"' not in menu
+assert 'run_interactive "Обновление AWG Pi Gateway"' not in menu
+assert 'run_interactive "Обновление AmneziaWG"' not in menu
+assert 'run_interactive "Проверка Mihomo"' not in menu
+assert 'run_interactive "Полное обновление"' not in menu
+assert 'run_interactive "Изменение DNS"' not in menu
+assert '"$AWG_ROUTE" dns set "$servers" --yes' in menu
+assert '"$AWG_ROUTE" config replace "$path" --yes' in menu
+assert '"$AWG_ROUTE" config rollback --yes' in menu
 
+# Truly interactive wizards still keep a terminal screen, but explicitly tell
+# the user that silent stages may take time.
+assert 'Операция запущена. Сообщения и запросы появятся ниже.' in menu
+assert 'процесс не завис' in menu
+
+# dialog --editbox returns edited text on its output stream; it does not modify
+# the input file. Both paste flows must capture that output into a root-only
+# temporary file before validating/using it.
+assert menu.count('dialog --stdout --backtitle "$BACKTITLE"') >= 2
+assert menu.count('>"$PASTE_OUT"') == 2
+assert menu.count('mv -f "$PASTE_OUT" "$PASTE_TMP"') == 2
+assert 'config-paste-result.XXXXXX.conf' in menu
+assert 'mihomo-paste-result.XXXXXX' in menu
+
+# Every dialog menu has item help.
+menu_calls = [line for line in menu.splitlines() if "dialog " in line and "--menu" in line]
+assert len(menu_calls) == menu.count("--item-help --menu")
+
+# Main menu: compact and Russian-first.
+main_start = menu.index('while true; do\n  refresh_backtitle', menu.index('system_menu(){'))
+main_block = menu[main_start:]
 for label in (
-    '"Состояние системы"',
-    '"VPN-маршрутизация"',
-    '"Домены VPN"',
-    '"DIRECT-исключения"',
-    '"OpenCCK"',
-    '"Клиенты"',
-    '"Диагностика"',
-    '"Обновления"',
-    '"Журналы"',
-    '"Системные функции"',
-    '"Выйти в обычный Shell"',
-    '"Завершить SSH-сессию"',
-    '"Selective Gateway"',
-    '"MikroTik Transit / Backup VPN"',
+    '1 "Состояние системы"',
+    '2 "VPN-маршрутизация"',
+    '3 "VPN-сервисы / домены"',
+    '4 "DIRECT-исключения"',
+    '5 "Клиенты"',
+    '6 "Диагностика"',
+    '7 "Обновления"',
+    '8 "Журналы"',
+    '9 "Система"',
+    '10 "Выйти в командную строку"',
+    '0 "Завершить SSH-сессию"',
 ):
-    assert label in menu, f"missing documented menu item: {label}"
+    assert label in main_block, f"missing main-menu item: {label}"
+assert '5 "OpenCCK"' not in main_block
+assert 'OpenCCK — расширенно' in menu
+assert 'Проверить и установить обновления компонентов.' in main_block
 
-assert "Весь маршрутизируемый трафик будет идти DIRECT" in menu
-assert "SSH и Transit backup" in menu
+# Provider/subscription staging remains transactional. Setup input is visible
+# by design; secrets remain redacted only after they have been applied.
+assert '--passwordbox' not in menu
+assert '--insecure' not in menu
+assert 'secret_input' not in menu
+assert 'Ввод отображается полностью.' in menu
+assert '--inputbox "$prompt" 11 110 "$initial"' in menu
+assert 'MIHOMO_ENV_FILE=/etc/awg-pbr/transports/mihomo/provider.env' in menu
+assert 'current_mihomo_provider_url' in menu
+assert '"$current_url"' in menu
+assert 'Текущий URL подставлен в поле, если он сохранён.' in menu
+assert '"$MIHOMO_CONFIGURE" provider stage-url-file "$url_tmp"' in menu
+assert '"$MIHOMO_CONFIGURE" provider stage-file "$path" "$source_mode"' in menu
+assert '"$MIHOMO_CONFIGURE" provider candidate commit-auto "$node_name"' in menu
+assert 'не прошёл финальную проверку работоспособности' in menu
+assert 'provider-url set-file "$url_tmp"' not in menu
+assert '"$MIHOMO_CONFIGURE" provider update auto' in menu
+assert '4 "Протокол пула узлов"' in menu
+assert 'Настройка подписки и обновление списка нод.' in menu
+assert '1 "DIRECT"' in menu
+assert 'router "Router/default"' not in menu
+assert 'сначала DIRECT, затем доступные транспорты' in menu
+assert 'Рабочий профиль не меняется до выбора узла и применения.' in menu
+assert 'mktemp /run/awg-pbr/mihomo-paste.XXXXXX' in menu
+assert '"$MIHOMO_CONFIGURE" provider stage-file "$PASTE_TMP" "$source_mode"' in menu
 
+# Manual switching stays in the VPN menu; a clean first-time Mihomo setup
+# may also activate its backend automatically when no transport exists.
+assert menu.count('"$AWG_TRANSPORT" select mihomo') == 2
+assert 'mihomo_candidate_auto_apply(){' in menu
+assert '"$MIHOMO_POOL" best candidate' in menu
+assert 'mihomo_candidate_auto_apply "$behavior"' in menu
+assert menu.count('"$AWG_TRANSPORT" select awg') == 1
+assert 'active_transport_menu' in menu
+assert 'mihomo_active_transport_menu' not in menu
 
+# Mihomo node selection and DIRECT invariant.
+assert '"$XRAY_MANUAL_SWITCH" native-apply "$node_name"' in menu
+assert '--direct-confirmed' not in menu
+assert 'run_with_progress "$title" "$MIHOMO_CONFIGURE" node prepare "$node_name"' in menu
+assert 'Адрес сервера в списке — не IP выхода' in menu
+assert 'TUN HTTPS подтверждён' not in menu
+assert 'Доступность внешних сайтов не проверялась' in menu
+assert 'Введите один из показанных выше IPv4-адресов сервера:' not in menu
+assert 'повторно вводить его не нужно' in menu
+
+# Secondary-transport onboarding is state-aware; first-run is not called directly
+# by the normal VPN menus.
+assert 'first_transport_setup(){' not in menu
+assert '"$AWG_FIRST_RUN" awg-file "$path"' in menu
+assert '"$AWG_FIRST_RUN" awg-file "$PASTE_TMP"' in menu
+assert 'secondary_transport_setup' not in menu
+assert 'rollback_state="доступен"' in menu
+assert 'rollback_state="нет предыдущего профиля"' in menu
+assert 'Предыдущий AWG-профиль для быстрого отката отсутствует.' in menu
+assert 'Архивные резервные копии установки и обновлений' in menu
+assert 'if [[ ! -s "$previous" ]]' in menu
+assert '5) active_transport_menu' in menu
+assert '6) active_transport_menu' in menu
+assert 'mihomo_initial_setup_flow secondary' in menu
+assert 'mihomo_initial_setup_flow secondary' in menu
+assert 'Конфигурация AmneziaWG' in menu
+assert 'не изменён' in menu
+vpn_function = menu[menu.index('vpn_menu(){'):menu.index('dns_menu(){')]
+assert 'run_interactive "Первичная настройка транспорта" "$AWG_FIRST_RUN" wizard' not in vpn_function
+
+# Transport selection policies.
+assert 'AWG_SELECTION=/usr/local/sbin/awg-selection' in menu
+for command in (
+    '"$AWG_SELECTION" mode manual',
+    '"$AWG_SELECTION" mode fixed awg mihomo',
+    '"$AWG_SELECTION" mode fixed mihomo awg',
+    '"$AWG_SELECTION" mode auto awg mihomo',
+    '"$AWG_SELECTION" mode auto mihomo awg',
+):
+    assert command in menu
+assert 'Выберите порядок автоматического переключения VPN при отказе.' in menu
+
+# Mihomo exact-node failover editor.
+assert 'MIHOMO_NODE_POLICY=/usr/local/sbin/awg-mihomo-node-policy' in menu
+assert 'MIHOMO_POOL=/usr/local/sbin/awg-mihomo-pool' in menu
+assert '"$MIHOMO_POOL" ensure "$target" --geo-if-policy' in menu
+assert '"$MIHOMO_POOL" policy set europe' in menu
+assert '"$MIHOMO_POOL" policy set all' in menu
+assert '"$MIHOMO_POOL" protocol get' in menu
+assert '"$MIHOMO_POOL" protocol set "$selected"' in menu
+assert 'mihomo_protocol_select(){' in menu
+assert 'mihomo_protocol_settings(){' in menu
+for index, (tag, label) in enumerate((
+    ("all", "Все протоколы"), ("vless", "VLESS"), ("trojan", "Trojan"),
+    ("hysteria2", "Hysteria2"), ("ss", "Shadowsocks (SS)"),
+    ("vmess", "VMess"),
+), start=1):
+    assert f'{index} "$(awg_option_label "{label}" {tag} "$current")"' in menu
+picker=menu.split('mihomo_pool_pick(){',1)[1].split('\n}\n',1)[0]
+assert '"$MIHOMO_POOL" protocol set' not in picker
+assert 'Протокол [$protocol_label]' not in picker
+assert 'Узлов в выбранном протоколе: $total' in menu
+assert 'Узлов в источнике: $source_total' in menu
+# FIXED uses the exact same read-only full-provider picker as manual nodes;
+# the backend still rejects all but verified native Mihomo candidates.
+assert '"$MIHOMO_POOL" list live --all --ignore-policy --format json' in menu
+assert '"$MIHOMO_NODE_PICKER" "$node_json" --target live --protocol all --region all' in menu
+assert 'if [[ "$scope" == fixed && "$node_health" != MIHOMO_OK ]]' in menu
+assert '"$MIHOMO_NODE_POLICY" mode auto' in menu
+assert '"$MIHOMO_NODE_POLICY" mode manual' in menu
+assert '"$MIHOMO_NODE_POLICY" mode fixed "${nodes[@]}"' in menu
+assert 'При отказе переход выполняется только слева направо' in menu
+assert 'resolve_tsv_node_choice' not in menu
+assert 'select_tsv_node_dialog' in menu
+assert 'Введите номер или ТОЧНОЕ имя узла из списка выше:' not in menu
+assert 'Введите номер или ТОЧНОЕ имя узла из списка:' not in menu
+assert 'Точка выхода Mihomo / Xray' in menu
+assert 'Xray VLESS — выбран' in menu
+assert 'Выберите основной живой узел подготовленной подписки.' in menu
+assert '🔎 Поиск / фильтр' in menu
+assert 'grep -iF -- "$query"' in menu
+assert 'Показано: $count из $shown_total' in menu
+assert 'ui_idx=$((ui_idx + 1))' in menu
+assert 'choice_name["$ui_idx"]="$name"' in menu
+# Unified row must include engine, protocol, server endpoint, ping and state.
+assert 'line_label="$display_name | $engine_label | $type | $shown_endpoint | $shown_delay | $state_label"' in menu
+assert 'Статистика пула узлов' in menu
+assert 'MIHOMO_POOL_PICKED_NODE=""' in menu
+assert 'MIHOMO_POOL_PICKED_NODE="$node"' in menu
+assert 'if ! mihomo_pool_pick live' in menu
+assert 'if ! mihomo_pool_pick candidate' in menu
+assert 'mihomo_candidate_is_staged(){' in menu
+assert "grep -Fqx 'Provider candidate: staged'" in menu
+assert 'mihomo_candidate_require || return 0' in menu
+assert 'Подготовленный профиль отсутствует.' in menu
+assert 'Для фильтрации, поиска, статистики и выбора узлов текущего профиля используйте «Точка выхода / узел».' in menu
+assert 'mihomo_open_candidate_after_update' in menu
+assert 'Новых данных в подписке нет: подготовленный профиль не создавался.' in menu
+# Candidate state is processed by the existing update flow, not a direct menu row.
+assert 'Пул: $target_ru' in menu
+assert 'Статистика рабочего пула Mihomo' in menu
+assert 'Статистика подготовленного пула Mihomo' in menu
+assert 'node_name="$(mihomo_pool_pick' not in menu
+assert 'mihomo_pool_status_dialog "$target"' in menu
+assert 'Работоспособных: $healthy' in menu
+assert 'Европейских точек выхода: $europe' in menu
+assert 'mihomo_display_node_name(){' in menu
+assert 'mihomo_display_chain(){' in menu
+assert 'mihomo_pool_results_dialog(){' in menu
+assert 'display_name="$(mihomo_clip_node_label "$(mihomo_display_node_name "$name")" 24)"' in menu
+# Unified row must include engine, protocol, server endpoint, ping and state.
+assert 'line_label="$display_name | $engine_label | $type | $shown_endpoint | $shown_delay | $state_label"' in menu
+assert 'capture "$MIHOMO_POOL" list "$target" --all --ignore-policy' not in menu
+assert 'mihomo_pool_results_dialog "$target"' in menu
+assert 'mihomo_pool_results_dialog live' in menu
+assert 'Причина теста:' in Path('src/awg-mihomo-results-view.py').read_text()
+assert 'Состояние' in menu
+assert "'RTT':>7" in Path('src/awg-mihomo-results-view.py').read_text()
+assert '"$XRAY_MANUAL_SWITCH" native-preview "$node_name"' in menu
+assert '"$XRAY_MANUAL_SWITCH" native-apply "$node_name"' in menu
+assert 'Ручной выбор Mihomo — предварительная проверка' in menu
+assert 'Защищённый выбор ноды Mihomo' in menu
+assert 'Действующий выход и политика резервирования не изменены.' in menu
+
+# Existing-item operations use selectors instead of asking the user to
+# remember and retype values already known to the gateway.
+assert 'select_opencck_source' in menu
+assert 'name="$(input "OpenCCK" "Имя источника:")"' not in menu
+assert 'select_client' in menu
+assert menu.count('ip="$(input "Клиенты" "IPv4 клиента:")"') == 1  # add only
+assert 'select_chain_index' in menu
+assert 'Номер элемента 1..' not in menu
+assert 'Номер элемента 2..' not in menu
+assert 'select_timezone' in menu
+assert 'Введите точное имя часового пояса IANA:' not in menu
+assert 'select_manual_domain' in menu
+assert 'Введите домен для удаления:' not in menu
+assert 'Введите домен для удаления из ручного списка:' not in menu
+assert 'if (( count > 200 )); then' in menu
+
+# OpenCCK unified input and system helpers.
+assert '"$AWG_ROUTE" source add opencck "$target" --type domains --kind "$method"' in menu
+assert 'Имя вводится один раз' in menu
+assert 'AWG_TRAFFIC=/usr/local/sbin/awg-traffic' in menu
+assert '"$AWG_TRAFFIC" status compact' in menu
+assert 'timedatectl set-timezone "$zone"' in menu
+assert '"$AWG_UPDATE" --yes mihomo' in menu
+assert 'Произвольная самая новая версия из интернета не устанавливается.' in menu
+assert 'cpu_temperature' in menu
+assert 'memory_summary' in menu
+assert 'system_uptime' in menu
+assert 'localize_status_file' in menu
+assert 'capture_ru' in menu
+assert 'capture_ru "$AWG_ROUTE" status' in menu
+assert 'capture_ru "$MIHOMO_CONFIGURE" status' in menu
+assert 'capture_ru "$MIHOMO_NODE_POLICY" status' in menu
+assert 'capture_ru "$AWG_SELECTION" status' in menu
+assert 'capture_ru "$AWG_UPDATE" status' in menu
+assert '=== Политика выбора транспорта ===' in menu
+assert 'Активный транспорт:' in menu
+assert 'URL подписки:' in menu
+assert 'MIHOMO_INSTALLER=/usr/local/sbin/awg-mihomo-install' in menu
+# Local archive install remains a backend capability, not a daily menu action.
+
+# Replacing a URL before Mihomo is configured must go through the initial
+# source-profile wizard so Citadel/Remnawave cannot be staged as a generic URL.
+assert "status=\"$(\"$MIHOMO_CONFIGURE\" status 2>/dev/null || true)\"" in menu
+assert "grep -Fqx 'Configured: no'" in menu
+assert '"$MIHOMO_CONFIGURE" provider candidate clear' in menu
+assert 'mihomo_initial_setup_flow secondary' in menu
+assert 'Citadel / Remnawave' in menu
+assert 'mihomo_source_profile_dialog' in menu
+assert 'current_mihomo_provider_profile' in menu
+assert 'Тип нового источника:' in menu
+assert 'URL используется как есть; HWID и служебный суффикс /mihomo не добавляются.' in menu
+
+# URL entry is intentionally visible during setup, while post-apply handling
+# stays file-based and ordinary status/diagnostics continue to redact it.
+assert 'Введённые символы отображаются как *' not in menu
+assert 'После применения полный URL не выводится в обычном статусе и диагностике.' in menu
+assert 'содержимым' in menu or 'содержимое отображается полностью' in menu
+
+# URL handling stays file-based.
+assert 'mktemp /run/awg-pbr/mihomo-url.XXXXXX' in menu
+assert 'chmod 600 "$url_tmp"' in menu
+assert "printf 'MIHOMO_PROVIDER_URL=%q\\n' \"$url\"" in menu
+assert "printf 'MIHOMO_PROVIDER_PROFILE=%q\\n' \"$profile\"" in menu
+assert 'provider-url set "$url"' not in menu
+assert 'mktemp /run/awg-pbr/mihomo-init.XXXXXX' in menu
+assert 'chmod 600 "$init_tmp"' in menu
+assert '"$MIHOMO_CONFIGURE" init "$init_tmp"' in menu
+assert 'MIHOMO_PROVIDER_PROFILE=%q' in menu
+assert 'MIHOMO_PROVIDER_FORMAT=%q' in menu
+assert '"$MIHOMO_CONFIGURE" provider format set "$provider_format"' in menu
+
+# Top-level Mihomo menu contains only daily operations.
+mihomo_start = menu.index('mihomo_menu(){')
+mihomo_end = menu.index('selection_policy_menu(){', mihomo_start)
+mihomo_block = menu[mihomo_start:mihomo_end]
+for label in (
+    '1 "Состояние Mihomo"',
+    '2 "Подписка / источник"',
+    '3 "Точка выхода Mihomo / Xray"',
+    '4 "Политика узлов Mihomo (FIXED/AUTO)"',
+    '5 "Дополнительные настройки"',
+):
+    assert label in mihomo_block, f"missing compact Mihomo item: {label}"
+assert '"Активный транспорт"' not in mihomo_block
+for legacy in (
+    '"Mihomo / Multi-Transport"',
+    '"Subscription / Provider"',
+    '"Mihomo Node Failover"',
+    '"Расширенные / Recovery"',
+    '"Staged provider / candidate"',
+    '"Offline engine recovery (.gz)"',
+):
+    assert legacy not in mihomo_block
+
+# Obsolete Mihomo actions must not reappear in this compact submenu.
+additional=menu.split('mihomo_advanced_menu(){',1)[1].split('\n}\n',1)[0]
+for old in (
+    '3 "$candidate_label"', '4 "Локальное восстановление',
+    '5 "Восстановить резерв Mihomo при AWG"',
+    '6 "Xray VLESS: диагностика"',
+    'mihomo_standby_repair_menu ;;', 'mihomo_xray_vless_menu ;;',
+):
+    assert old not in additional, f"retired Mihomo menu action restored: {old}"
+for label in ('1 "Обновить через выбранный канал"', '2 "Формат подписки"', '0 "Назад"'):
+    assert label in additional, f"missing retained setting: {label}"
+# The supporting recovery / diagnostics functions remain installed as before.
+for func in ('mihomo_candidate_menu(){', 'mihomo_standby_repair_menu(){',
+             'mihomo_xray_vless_menu(){'):
+    assert func in menu
+
+# System menu: one entry per action, with no duplicate configuration reload.
+system_menu=menu.split('system_menu(){',1)[1].split('\n}\n',1)[0]
+assert 'Перезагрузить конфигурацию AWG-шлюза' not in system_menu
+assert 'capture "$AWG_ROUTE" reload' not in system_menu
+for tag, label, dispatch in (
+    (1, "Перезагрузить Raspberry Pi", "systemctl reboot"),
+    (2, "Выключить Raspberry Pi", "systemctl poweroff"),
+    (3, "Перенастроить сеть LAN", 'network reconfigure'),
+    (4, "Внешние DNS-серверы", 'dns_menu'),
+    (5, "Режим работы", 'operating_mode_menu'),
+    (6, "Часовой пояс", 'timezone_menu'),
+    (7, "Статистика трафика", 'traffic_screen'),
+    (8, "Desktop Commander — удалённый доступ", 'desktop_commander_menu'),
+    (9, "Telegram — уведомления", 'notify_menu'),
+    (10, "Оформление интерфейса", 'appearance_menu'),
+):
+    assert f'{tag} "{label}' in system_menu
+    assert dispatch in system_menu
+
+# Active transport lives at VPN-routing level in both modes.
+vpn_start = menu.index('vpn_menu(){')
+vpn_end = menu.index('dns_menu(){', vpn_start)
+vpn_block = menu[vpn_start:vpn_end]
+assert vpn_block.count('"Активный транспорт"') == 2
+assert '5 "Активный транспорт"' in vpn_block
+assert '6 "Активный транспорт"' in vpn_block
+assert '5) active_transport_menu' in vpn_block
+assert '6) active_transport_menu' in vpn_block
+
+# Restart action is transport-aware and safe in fresh/recovery installs.
+assert 'restart_active_transport(){' in menu
+assert menu.count('"Перезапустить активный транспорт и монитор состояния"') == 2
+assert 'service="awg-quick@awg0.service"' in menu
+assert 'service="awg-mihomo.service"' in menu
+assert 'Активный транспорт пока не настроен.' in menu
+assert 'Откройте «Конфигурация AmneziaWG» либо «Mihomo»' in menu
+assert 'systemctl restart awg-quick@awg0.service awg-pbr-health.service' not in vpn_block
+assert 'Перезапустить awg0 и монитор состояния' not in vpn_block
+assert '6 "Политика выбора транспорта"' in vpn_block
+assert '7 "Политика выбора транспорта"' in vpn_block
+
+# Mode-change result dialogs refresh the header after the command, so the
+# backtitle cannot show the previous SELECTIVE/TRANSIT state.
+assert 'capture_mode_change(){' in menu
+assert 'capture_mode_change "$AWG_ROUTE" mode selective' in menu
+assert 'capture_mode_change "$AWG_ROUTE" mode transit' in menu
+mode_change_start = menu.index('capture_mode_change(){')
+mode_change_end = menu.index('localize_status_file(){', mode_change_start)
+mode_change_block = menu[mode_change_start:mode_change_end]
+assert 'refresh_backtitle' in mode_change_block
+assert 'show_operation_result "$rc" "$heading"' in mode_change_block
+
+# Mode indicators remain explicit technical IDs, but labels/help are Russian.
 for needle in (
     'BASE_BACKTITLE="AWG Pi Gateway v$VERSION"',
     'BACKTITLE="$BASE_BACKTITLE | Режим: $(operating_mode_badge "$mode")"',
-    "РЕЖИМ РАБОТЫ:",
+    "РЕЖИМ:",
     'Главное меню — [$mode_badge]',
-    '[ТЕКУЩИЙ]',
-    'Operating mode [$mode_badge]',
-    'AWG / Transit [TRANSIT]',
-    'VPN policy [SELECTIVE]',
+    'awg_option_label "$selective_label" selective "$current_id"',
+    'Режим работы [$mode_badge]',
+    'VPN-маршрутизация [TRANSIT]',
+    'VPN-маршрутизация [SELECTIVE]',
 ):
     assert needle in menu, f"missing operating-mode indicator: {needle}"
 
-print("menu config paste/help checks: OK")
+# Russian-first UI guard: these old English/mixed user-facing labels must not return.
+for forbidden in (
+    '"Mihomo / Multi-Transport"',
+    '"Transport Selection Policy"',
+    '"Активный transport"',
+    '"Subscription / Provider"',
+    '"Mihomo Node Failover"',
+    '"Расширенные / Recovery"',
+    '"Operating mode',
+    '"DNS upstream"',
+    '"Статистика traffic"',
+    '"Выйти в обычный Shell"',
+    '"Проверить / восстановить Mihomo engine"',
+    '"Добавить / настроить transport"',
+):
+    assert forbidden not in menu, f"untranslated UI label returned: {forbidden}"
+
+print("menu localization/safety checks: OK")
+
+assert "Статистика health-pool" not in menu
+
+assert "HEALTHY-узлов" not in menu
+
+assert "страна egress" not in menu
+
+assert "health-pool" not in menu
+
+assert "cooldown" not in menu
+
+assert "транспортный fallback" not in menu

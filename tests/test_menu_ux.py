@@ -1,0 +1,451 @@
+#!/usr/bin/env python3
+"""Rootless behavioral contract for Russian SSH UI; does not change VPN state."""
+import fcntl
+import os
+from pathlib import Path
+import pty
+import re
+import struct
+import subprocess
+import tempfile
+import termios
+import unittest
+
+ROOT = Path(__file__).resolve().parents[1]
+SOURCE = (ROOT / "src/awg-menu").read_text()
+
+
+def body(name):
+    start = SOURCE.index(name + "(){")
+    end = SOURCE.index("\n}\n", start)
+    return SOURCE[start:end + 2]
+
+
+class MenuUX(unittest.TestCase):
+    def test_fresh_install_neither_health_error_nor_missing_engine(self):
+        with tempfile.TemporaryDirectory(prefix="awg-menu-clean-") as td:
+            root = Path(td)
+            for filename in ("awg", "mihomo", "traffic", "transport"):
+                script = root / filename
+                script.write_text("#!/bin/sh\n" + (
+                    "echo unconfigured\n" if filename == "transport"
+                    else "echo 'Сегодня: 0 | Месяц: 0'\n" if filename == "traffic"
+                    else "exit 0\n"))
+                script.chmod(0o700)
+            code = body("quick_summary")
+            code = code.replace("/usr/local/bin/mihomo", str(root / "mihomo"))
+            code = code.replace("/etc/amnezia/amneziawg/awg0.conf", str(root / "awg0.conf"))
+            code = code.replace("/etc/awg-pbr/transports/mihomo/node-name", str(root / "node-name"))
+            shell = ("""
+operating_mode_id(){ echo selective; }
+operating_mode_label(){ echo 'Выборочный шлюз'; }
+operating_mode_badge(){ echo SELECTIVE; }
+current_timezone(){ echo UTC; }
+cpu_temperature(){ echo '42°C'; }
+system_uptime(){ echo '1ч'; }
+memory_summary(){ echo '100/400 MiB'; }
+disk_summary(){ echo '1/10 GiB'; }
+hot_pool_summary(){ echo 'EXCLUDED_HOT_POOL_CALLED' >&2; }
+ip(){ return 1; }
+systemctl(){ return 1; }
+command(){ if [[ "$1" == -v && "$2" == awg ]]; then return 0; fi; builtin command "$@"; }
+""" + code + f"""
+AWG_TRANSPORT='{root / "transport"}'
+AWG_TRAFFIC='{root / "traffic"}'
+PI_IP='0.0.0.0'
+ROUTER_IP='0.0.0.0'
+quick_summary
+""")
+            r = subprocess.run(["bash", "-c", shell], text=True,
+                               capture_output=True, timeout=8)
+            self.assertEqual(r.returncode, 0, r.stderr)
+            for required in (
+                "VPN: ожидает настройки",
+                "AWG: не настроено",
+                "Mihomo: не настроено",
+                "DIRECT (FAIL-OPEN)",
+            ):
+                self.assertIn(required, r.stdout)
+            self.assertNotIn("ГОРЯЧИЙ РЕЗЕРВ", r.stdout)
+            self.assertNotIn("EXCLUDED_HOT_POOL_CALLED", r.stderr)
+            self.assertNotIn("VPN: сбой", r.stdout)
+            self.assertNotIn("AWG: неисправен", r.stdout)
+
+    def run_dialog(self, rows, cols, prompt):
+        with tempfile.TemporaryDirectory(prefix="awg-menu-tty-") as td:
+            root = Path(td)
+            mock = root / "dialog"
+            out = root / "args"
+            mock.write_text('#!/bin/sh\nprintf "%s\\0" "$@" > "$AWG_MENU_CAPTURE"\n')
+            mock.chmod(0o700)
+            master, slave = pty.openpty()
+            try:
+                fcntl.ioctl(slave, termios.TIOCSWINSZ,
+                            struct.pack("HHHH", rows, cols, 0, 0))
+                # Provide a controlling terminal for stty size </dev/tty.
+                def term_session():
+                    os.setsid()
+                    fcntl.ioctl(slave, termios.TIOCSCTTY, 0)
+                shell = body("dialog") + "\n" + (
+                    'dialog --backtitle test --title test --item-help --menu "$PROMPT" '
+                    '31 116 14 "1" "Первый пункт" "Русская подсказка"'
+                )
+                env = dict(os.environ, PATH=str(root) + ":" + os.environ["PATH"],
+                           AWG_MENU_CAPTURE=str(out), PROMPT=prompt)
+                proc = subprocess.run(["bash", "-c", shell], stdin=slave,
+                                      stdout=slave, stderr=slave, env=env,
+                                      preexec_fn=term_session, timeout=5)
+                args = [chunk.decode() for chunk in out.read_bytes().split(b"\x00") if chunk] if out.exists() else []
+                return proc.returncode, args
+            finally:
+                os.close(slave)
+                os.close(master)
+
+    def test_long_dashboard_fits_80_by_24(self):
+        rc, args = self.run_dialog(24, 80, "\n".join(["Строка состояния"] * 11))
+        self.assertEqual(rc, 0)
+        at = args.index("--menu")
+        self.assertLessEqual(int(args[at + 2]), 22)
+        self.assertLessEqual(int(args[at + 3]), 78)
+        self.assertLessEqual(int(args[at + 4]), 6)
+        # Synthetic test has one menu item; no need for fake spacer rows.
+        self.assertEqual(int(args[at + 4]), 1)
+
+    def test_menu_fits_real_71_by_33_ssh(self):
+        rc, args = self.run_dialog(33, 71, "Выберите узел.")
+        self.assertEqual(rc, 0)
+        at = args.index("--menu")
+        self.assertEqual(args[at + 2:at + 4], ["12", "69"])
+        self.assertEqual(args[at + 4], "1")
+
+    def test_sparse_menu_centers_compact_dialog(self):
+        rc, args = self.run_dialog(40, 140, "Выберите действие.")
+        self.assertEqual(rc, 0)
+        at = args.index("--menu")
+        self.assertEqual(args[at + 2:at + 5], ["12", "116", "1"])
+
+    def test_too_small_terminal_is_rejected_without_running_dialog(self):
+        rc, args = self.run_dialog(18, 64, "Введите настройку.")
+        self.assertNotEqual(rc, 0)
+        self.assertEqual(args, [])
+
+    def test_explicit_outcome_and_safe_reentry(self):
+        with tempfile.TemporaryDirectory(prefix="awg-menu-result-") as td:
+            root = Path(td)
+            log = root / "operation"
+            log.write_text("Завершился этап проверки.\n")
+            mock = root / "dialog"
+            mock.write_text("#!/bin/sh\nexit 0\n")
+            mock.chmod(0o700)
+            env = dict(os.environ, PATH=str(root) + ":" + os.environ["PATH"])
+            shell = body("awg_readable_status_text") + "\n" + body("show_operation_result") + f"""
+TMP='{log}'
+BACKTITLE=Тест
+show_operation_result 7 'Проверка подписки'
+"""
+            proc = subprocess.run(["bash", "-c", shell], env=env,
+                                  capture_output=True, text=True, timeout=5)
+            self.assertEqual(proc.returncode, 0, proc.stderr)
+            self.assertTrue(log.read_text().startswith("Результат: ОШИБКА (код 7)"))
+            self.assertIn("Завершился этап проверки.", log.read_text())
+        for action in ("gateway", "all"):
+            self.assertIn(f'if capture "$AWG_UPDATE" --yes {action}; then', SOURCE)
+            self.assertNotIn(f'capture "$AWG_UPDATE" --yes {action} || true', SOURCE)
+
+    def test_fresh_install_onboarding_is_direct_and_installer_first(self):
+        vpn=body("vpn_menu")
+        awg=body("awg_config_menu")
+        mihomo=body("mihomo_replace_subscription")
+        self.assertNotIn("Добавить / настроить транспорт",vpn)
+        self.assertNotIn("secondary_transport_setup",vpn)
+        self.assertNotIn("first_transport_setup(){",SOURCE)
+        self.assertIn('3 "Конфигурация AmneziaWG"',vpn)
+        self.assertIn('4 "Mihomo"',vpn)
+        self.assertIn('4 "Конфигурация AmneziaWG"',vpn)
+        self.assertIn('5 "Mihomo"',vpn)
+        self.assertIn('capture "$AWG_FIRST_RUN" awg-file "$PASTE_TMP"',SOURCE)
+        self.assertIn('capture "$AWG_FIRST_RUN" awg-file "$path"',SOURCE)
+        self.assertIn("mihomo_initial_setup_flow secondary",mihomo)
+        self.assertIn("mihomo_initial_setup_flow(){",SOURCE)
+        self.assertIn('run_with_progress "$title" "$MIHOMO_CONFIGURE" node prepare',SOURCE)
+        self.assertIn('run_with_progress "$title" "$MIHOMO_CONFIGURE" provider candidate prepare',SOURCE)
+        self.assertIn("if [[ ! -s \"$previous\" ]]",awg)
+
+    def test_mihomo_additional_settings_are_ui_only_and_compact(self):
+        main=body("mihomo_menu")
+        additional=body("mihomo_advanced_menu")
+        self.assertIn('3 "Точка выхода Mihomo / Xray"',main)
+        self.assertIn('5 "Дополнительные настройки"',main)
+        self.assertNotIn("Диагностика Xray —",main)
+        self.assertIn('1 "Обновить через выбранный канал"',additional)
+        self.assertIn('2 "Формат подписки"',additional)
+        self.assertIn('0 "Назад"',additional)
+        for retired in (
+            '3 "$candidate_label"', '4 "Локальное восстановление',
+            '5 "Восстановить резерв Mihomo при AWG"',
+            '6 "Xray VLESS: диагностика"',
+            '3) mihomo_candidate_menu',
+            'capture "$MIHOMO_INSTALLER" --file',
+            '5) mihomo_standby_repair_menu',
+            '6) mihomo_xray_vless_menu',
+        ):
+            self.assertNotIn(retired,additional)
+        # Existing recovery / diagnostics engines are unchanged, just not
+        # exposed as duplicate or unsafe day-to-day menu actions.
+        self.assertIn("mihomo_candidate_menu(){",SOURCE)
+        self.assertIn("mihomo_standby_repair_menu(){",SOURCE)
+        self.assertIn("mihomo_xray_vless_menu(){",SOURCE)
+        self.assertIn('awg-xray-vless list',body("mihomo_xray_vless_menu"))
+
+
+    def test_utf8_local_menu_without_system_locale_mutation(self):
+        self.assertIn('locale charmap', SOURCE)
+        self.assertIn('export LC_ALL=C.UTF-8', SOURCE)
+        self.assertIn('locale -a', SOURCE)
+        self.assertIn('Для русского меню требуется окно SSH', SOURCE)
+        self.assertIn('exit 10', SOURCE)
+        self.assertNotIn('localectl set-locale', SOURCE)
+        self.assertNotIn('update-locale', SOURCE)
+
+    def test_evidence_semantics_and_russian_auto(self):
+        self.assertIn('hot_pool_summary(){', SOURCE)
+        self.assertIn('status_args=(--provider', SOURCE)
+        self.assertIn('"${status_args[@]}"', SOURCE)
+        self.assertIn('if [[ "$transport" == "не настроен" ]]', SOURCE)
+        self.assertIn('MANUAL — ручной выбор. AUTO — переход к следующей доступной ноде при отказе.', SOURCE)
+        self.assertIn('только если профиль AWG настроен и работоспособен', SOURCE)
+        self.assertNotIn('узел и страна Mihomo не переключаются автоматически', SOURCE)
+
+
+    def test_persisted_choice_marker_and_unknown_choice(self):
+        shell = body("awg_option_label") + """
+awg_option_label "Все протоколы" all all
+printf '\\n'
+awg_option_label "VLESS" vless all
+printf '\\n'
+awg_option_label "Выборочный шлюз" selective ""
+printf '\\n'
+awg_option_label "Matrix Gradient" matrix matrix
+printf '\\n'
+"""
+        p = subprocess.run(["bash", "-c", shell], capture_output=True,
+                           text=True, timeout=5, check=True)
+        self.assertEqual(p.stdout.splitlines(), [
+            "Все протоколы ✓", "VLESS", "Выборочный шлюз", "Matrix Gradient ✓",
+        ])
+        for statement in (
+            'awg_option_label "Все протоколы" all "$current"',
+            'awg_option_label "$mihomo_label" mihomo "$current"',
+            'awg_option_label "$selective_label" selective "$current_id"',
+            'awg_option_label "Matrix Gradient" matrix "$current"',
+            'awg_option_label "MANUAL" manual "$active_policy"',
+            'awg_option_label "Включить Xray в AUTO" enabled "$xray_option"',
+        ):
+            self.assertIn(statement, SOURCE)
+
+    def test_appearance_changes_persist_then_restart_without_modal(self):
+        # Fake config under temp directory: never writes the test Pi setting.
+        for initial, chosen, expected_value, expected_restart in (
+            ("classic", "2", "matrix", True),
+            ("matrix", "1", "classic", True),
+            ("classic", "1", "classic", False),
+            ("matrix", "2", "matrix", False),
+            ("classic", "0", "classic", False),
+        ):
+            with self.subTest(initial=initial, chosen=chosen):
+                with tempfile.TemporaryDirectory(prefix="awg-theme-switch-") as td:
+                    root = Path(td)
+                    state = root / "appearance"
+                    state.write_text(initial + "\n")
+                    mock_comp = root / "matrix.py"
+                    mock_comp.write_text("# placeholder\n")
+                    code = body("appearance_menu")
+                    code = code.replace("/etc/awg-pbr/menu-appearance", str(state))
+                    code = code.replace(
+                        "/etc/awg-pbr/.menu-appearance.XXXXXXXX",
+                        str(root / ".appearance.XXXXXXXX"))
+                    code = code.replace(
+                        "/usr/local/lib/awg-pi/awg-matrix-compositor.py",
+                        str(mock_comp))
+                    shell = (
+                        body("awg_option_label") + "\n" +
+                        code + "\n" +
+                        'BACKTITLE=TEST\n'
+                        'dialog(){ printf "%s\\n" "$CHOICE" >&2; }\n'
+                        'command(){ if [[ "$1" == -v && "$2" == tmux ]]; then '
+                        'return 0; fi; builtin command "$@"; }\n'
+                        'msg(){ echo "UNEXPECTED_DIALOG"; }\n'
+                        'awg_menu_restart_for_appearance(){ '
+                        'echo RESTART_CALLED; }\n'
+                        'appearance_menu\n'
+                    )
+                    proc = subprocess.run(
+                        ["bash", "-c", shell], capture_output=True,
+                        text=True, timeout=5,
+                        env={**os.environ, "CHOICE": chosen})
+                    self.assertEqual(proc.returncode, 0, proc.stderr)
+                    self.assertEqual(
+                        state.read_text().strip(),
+                        expected_value)
+                    self.assertEqual("RESTART_CALLED" in proc.stdout,
+                                     expected_restart)
+                    self.assertNotIn("UNEXPECTED_DIALOG", proc.stdout)
+
+    def test_restart_handoff_preserves_ssh_process(self):
+        restart = body("awg_menu_restart_for_appearance")
+        shell = (
+            restart + "\n"
+            "AWG_MENU_MATRIX_INNER=1\n"
+            "cleanup(){ echo CLEANUP; }\n"
+            "awg_menu_restart_for_appearance\n"
+        )
+        process = subprocess.run(["bash", "-c", shell],
+                                 capture_output=True, text=True, timeout=5)
+        self.assertEqual(process.returncode, 42, process.stderr)
+        self.assertIn("AWG_MENU_MATRIX_INNER", restart)
+        self.assertIn("unset AWG_MENU_REEXEC", restart)
+        self.assertIn("exec /usr/local/sbin/awg-menu", restart)
+        self.assertIn("exec /usr/local/sbin/awg-menu --classic", SOURCE)
+        self.assertIn("_matrix_rc == 42", SOURCE)
+        compositor = (ROOT / "extras" / "awg-matrix-compositor.py").read_text()
+        self.assertIn("AWG_MENU_MATRIX_INNER=1", compositor)
+        self.assertIn('if status.startswith("1 "):', compositor)
+        self.assertIn("return int(status.split()[1])", compositor)
+        self.assertNotIn("Изменение действует при следующем запуске", SOURCE)
+        self.assertNotIn("Сохранено: $choice. Изменение действует", SOURCE)
+
+    def test_classic_dialog_uses_standard_input(self):
+        wrapper=body("dialog")
+        self.assertIn('command dialog "${args[@]}"', wrapper)
+
+
+    def test_numbered_choices_preserve_backend_values(self):
+        # Execute the actual Bash picker functions with an isolated dialog
+        # stub. No live provider file, transport, network or menu is changed.
+        scenarios = (
+            ("mihomo_source_profile_dialog", " standard", "", (
+                ("1", "standard", 0), ("2", "remnawave", 0),
+                ("0", "0", 0))),
+            ("mihomo_protocol_select", " all", "", (
+                ("1", "all", 0), ("2", "vless", 0),
+                ("3", "trojan", 0), ("4", "hysteria2", 0),
+                ("5", "ss", 0), ("6", "vmess", 0),
+                ("0", "", 1))),
+            ("mihomo_provider_format_dialog", "",
+             'MIHOMO_CONFIGURE=mock_status\n'
+             'mock_status(){ echo "Provider format requested: auto"; }\n', (
+                ("1", "auto", 0), ("2", "mihomo", 0),
+                ("3", "vless", 0), ("4", "base64", 0),
+                ("0", "0", 0))),
+        )
+        for fn, params, setup, choices in scenarios:
+            for choice, expected, rc in choices:
+                with self.subTest(function=fn, selection=choice):
+                    shell = (
+                        body("awg_option_label") + "\n" + body(fn) + "\n" +
+                        setup + "BACKTITLE=Test\n" +
+                        'CHOICE="' + choice + '"\n' +
+                        'dialog(){ printf "%s\\\n" "$CHOICE" >&2; }\n' +
+                        fn + params + "\n"
+                    )
+                    result = subprocess.run(
+                        ["bash", "-c", shell], capture_output=True,
+                        text=True, timeout=5)
+                    self.assertEqual(result.returncode, rc, result.stderr)
+                    self.assertEqual(result.stdout.strip(), expected)
+                    self.assertEqual(result.stderr, "")
+
+    def test_appearance_picker_uses_numeric_keys_and_saved_choice(self):
+        appearance = body("appearance_menu")
+        self.assertIn('1 "$(awg_option_label "Классическое"', appearance)
+        self.assertIn('2 "$(awg_option_label "Matrix Gradient"', appearance)
+        self.assertIn('0 "Назад"', appearance)
+        self.assertNotIn('classic "$(awg_option_label', appearance)
+        self.assertNotIn('matrix "$(awg_option_label', appearance)
+        self.assertIn('1|2)', appearance)
+        self.assertIn('if [[ "$choice" == 1 ]]', appearance)
+
+
+    def test_subscription_format_marks_requested_not_detected(self):
+        # Provider auto may detect base64 content; the saved choice is AUTO.
+        # No backend files are changed by this dialog.
+        with tempfile.TemporaryDirectory(prefix="awg-format-menu-") as td:
+            root = Path(td)
+            fake = root / "configure"
+            capture = root / "args"
+            fake.write_text(
+                "#!/bin/sh\n"
+                "printf 'Provider format requested: %s\\n' \"$REQUESTED\"\n"
+                "printf 'Provider format detected: base64\\n'\n"
+            )
+            fake.chmod(0o700)
+            shell = (
+                body("awg_option_label") + "\n" +
+                body("mihomo_provider_format_dialog") + "\n" +
+                'dialog(){ printf "%s\\n" "$@" > "$CAPTURE"; return 1; }\n' +
+                'BACKTITLE=TEST\n'
+                'MIHOMO_CONFIGURE="$FAKE"\n'
+                'mihomo_provider_format_dialog\n'
+            )
+            labels = {
+                "auto": "AUTO", "mihomo": "Mihomo / Clash YAML",
+                "vless": "VLESS URI", "base64": "Base64 VLESS",
+            }
+            for requested in (*labels, "malformed"):
+                with self.subTest(requested=requested):
+                    result = subprocess.run(
+                        ["bash", "-c", shell], capture_output=True, text=True,
+                        timeout=5, env={**os.environ, "REQUESTED": requested,
+                                        "FAKE": str(fake), "CAPTURE": str(capture)})
+                    self.assertEqual(result.returncode, 1, result.stderr)
+                    args = capture.read_text().splitlines()
+                    for key, name in labels.items():
+                        expected = name + (" ✓" if key == requested else "")
+                        self.assertIn(expected, args)
+                    self.assertEqual(sum("✓" in x for x in args),
+                                     1 if requested in labels else 0)
+                    if requested == "auto":
+                        self.assertNotIn("Base64 VLESS ✓", args)
+
+    def test_protocol_setting_has_one_ui_entry_point(self):
+        # Extra picker action was a duplicate writer of the same pool protocol.
+        self.assertIn("mihomo_protocol_settings", body("mihomo_subscription_menu"))
+        extra = body("mihomo_pool_pick")
+        self.assertNotIn("mihomo_protocol_select ", extra)
+        self.assertNotIn('"$MIHOMO_POOL" protocol set', extra)
+        self.assertNotIn('3 "Протокол', extra)
+        self.assertIn('2 "Фильтр региона', extra)
+        self.assertIn('3 "Обновить проверку', extra)
+        self.assertIn('5 "Показать все результаты', extra)
+
+    def test_unified_catalog_never_counts_unverified_xray_as_fail(self):
+        with tempfile.TemporaryDirectory(prefix="awg-node-evidence-") as td:
+            capture = Path(td) / "dialog-args"
+            listing = "\n".join([
+                "1\tXray-unknown\tvless\tn1.example:443\t-\tXRAY_UNTESTED\t??\t-",
+                "2\tXray-good\tvless\tn2.example:443\t-\tXRAY_HTTPS\t??\t-",
+                "3\tXray-bad\tvless\tn3.example:443\t-\tXRAY_NETWORK_FAIL\t??\t-",
+                "4\tMihomo-fail\thysteria2\tn4.example:2097\t-\tMIHOMO_FAIL\tDE\t-",
+            ])
+            shell = body("select_tsv_node_dialog") + """
+mihomo_clip_node_label(){ printf '%s' "$1"; }
+mihomo_display_node_name(){ printf '%s' "$1"; }
+dialog(){ printf '%s\\n' "$@" > "$CAPTURE"; return 1; }
+MIHOMO_UNIFIED=/bin/false
+select_tsv_node_dialog "Точка выхода Mihomo / Xray" "Выберите ноду" "$LISTING" yes candidate
+"""
+            result = subprocess.run(["bash", "-c", shell],
+                                    env={**os.environ, "CAPTURE": str(capture),
+                                         "LISTING": listing},
+                                    capture_output=True, text=True, timeout=5)
+            self.assertEqual(result.returncode, 1, result.stderr)
+            output = capture.read_text()
+            self.assertIn("Xray: OK 1 | FALL 1 | без вердикта 1", output)
+            self.assertIn("Mihomo: OK 0 | FALL 1 | без вердикта 0", output)
+            self.assertIn("Xray-unknown | Xray | vless | n1.example:443 | — | НЕ ПРОВ.", output)
+            self.assertIn("Xray-bad | Xray | vless | n3.example:443 | — | FALL", output)
+            self.assertNotIn("Xray OK: 0", output)
+
+
+if __name__ == "__main__":
+    unittest.main()

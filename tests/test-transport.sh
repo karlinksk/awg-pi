@@ -1,0 +1,99 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+TMP="$(mktemp -d)"
+trap 'rm -rf "$TMP"' EXIT
+mkdir -p "$TMP/bin"
+cat >"$TMP/env" <<ENV
+VPN_IF=awg0
+HANDSHAKE_MAX_AGE=180
+ENV
+cat >"$TMP/bin/ip" <<'MOCK'
+#!/usr/bin/env bash
+case "$*" in
+  "link show awg0"|"link show mihomo0") exit 0 ;;
+  *) exit 1 ;;
+esac
+MOCK
+cat >"$TMP/bin/awg" <<'MOCK'
+#!/usr/bin/env bash
+[[ "$*" == "show awg0 latest-handshakes" ]] || exit 1
+echo 'peer 1000'
+MOCK
+cat >"$TMP/bin/date" <<'MOCK'
+#!/usr/bin/env bash
+echo 1100
+MOCK
+cat >"$TMP/bin/curl" <<'MOCK'
+#!/usr/bin/env bash
+case "$*" in
+  *127.0.0.1:9090/proxies/AWG-MIHOMO*) echo '{"now":"Native"}' ;;
+  *127.0.0.1:9090/version*) echo '{}' ;;
+  *api.ipify.org*) echo '45.86.66.170' ;;
+  *api.openai.com*) [[ "${MOCK_TUN_STATE:-up}" == up ]] || exit 35; echo 401 ;;
+  *) exit 1 ;;
+esac
+MOCK
+cat >"$TMP/bin/systemctl" <<'MOCK'
+#!/usr/bin/env bash
+[[ "${MOCK_CORE_STATE:-up}" == up ]]
+MOCK
+export SYSTEMCTL_BIN="$TMP/bin/systemctl"
+chmod +x "$TMP/bin/"*
+echo '45.86.66.170' >"$TMP/expected"
+export AWG_ENV_FILE="$TMP/env"
+export AWG_COMMON_FILE="$ROOT/src/awg-common"
+export AWG_TRANSPORT_FILE="$TMP/transport"
+export IP_BIN="$TMP/bin/ip"
+export AWG_BIN="$TMP/bin/awg"
+export DATE_BIN="$TMP/bin/date"
+export CURL_BIN="$TMP/bin/curl"
+export MIHOMO_EXPECTED_EGRESS_IP_FILE="$TMP/expected"
+CLI="$ROOT/src/awg-transport"
+[[ "$($CLI get)" == unconfigured ]]
+OUT="$($CLI status)"
+grep -Fq 'Transport ID: unconfigured' <<<"$OUT"
+grep -Fq 'Transport health: not-ready' <<<"$OUT"
+if $CLI check >/dev/null 2>&1; then
+  echo 'unconfigured transport unexpectedly passed health check' >&2
+  exit 1
+fi
+printf '%s\n' awg >"$TMP/transport"
+OUT="$($CLI status)"
+grep -Fq 'Transport ID: awg' <<<"$OUT"
+grep -Fq 'Transport health: healthy' <<<"$OUT"
+OUT="$($CLI list)"
+grep -Eq '^awg +AmneziaWG +healthy$' <<<"$OUT"
+grep -Eq '^mihomo +Mihomo +healthy$' <<<"$OUT"
+printf '%s\n' mihomo >"$TMP/transport"
+OUT="$($CLI status)"
+grep -Fq 'Transport ID: mihomo' <<<"$OUT"
+OUT="$($CLI check mihomo)"
+[[ "$OUT" == healthy ]]
+# External HTTPS failure must not veto a locally ready core.
+MOCK_TUN_STATE=bad "$CLI" check mihomo | grep -Fxq healthy
+if MOCK_CORE_STATE=down "$CLI" check mihomo >/dev/null 2>&1; then
+  echo 'stopped core was accepted' >&2
+  exit 1
+fi
+printf '%s\n' broken >"$TMP/transport"
+if $CLI get >/dev/null 2>&1; then
+  echo 'invalid transport unexpectedly accepted' >&2
+  exit 1
+fi
+
+echo "=== inaccessible transport state requires root ==="
+printf '%s\n' mihomo >"$TMP/transport"
+chmod 000 "$TMP/transport"
+set +e
+OUT="$($CLI status 2>"$TMP/status.err")"
+RC=$?
+set -e
+chmod 600 "$TMP/transport"
+[[ "$RC" -eq 3 ]]
+grep -Fqx 'Active transport: requires-root' <<<"$OUT"
+grep -Fqx 'Transport ID: requires-root' <<<"$OUT"
+grep -Fqx 'Transport health: requires-root' <<<"$OUT"
+grep -Fq 'Transport state requires root' "$TMP/status.err"
+
+echo 'test-transport: PASS'

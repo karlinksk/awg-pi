@@ -1,0 +1,13 @@
+[Unit]
+Description=AWG Pi Gateway low-write transport traffic accounting
+After=network-online.target awg-pbr-setup.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/sbin/awg-traffic daemon
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

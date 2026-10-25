@@ -1,28 +1,106 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-grep -Fq 'AWG_PI_VERSION="1.2.0"' install.sh
-grep -Fq 'ACTIVATE_TRANSIT_AFTER_INSTALL=1' install.sh
+grep -Fq 'AWG_PI_VERSION="1.3.0"' install.sh
+grep -Fq 'ACTIVATE_TRANSIT_AFTER_INSTALL=0' install.sh
 grep -Fq '[[ "$EXISTING_VERSION" == 1.1.0 && "$MODE_PREEXISTED" == 0 ]]' install.sh
 grep -Fq 'ACTIVATE_TRANSIT_AFTER_INSTALL=1' install.sh
 grep -Fq 'AUTO_TRANSIT="${AWG_PI_UPGRADE_TRANSIT:-}"' install.sh
 grep -Fq 'AWG_PI_UPGRADE_TRANSIT=0|1' install.sh
 grep -Fq 'AWG_PI_UPGRADE_TRANSIT="$transit_choice"' src/awg-update
+grep -Fq 'MIHOMO_INSTALLER=/usr/local/sbin/awg-mihomo-install' src/awg-update
+grep -Fq '"$MIHOMO_INSTALLER" status || true' src/awg-update
+grep -Fq '"$MIHOMO_INSTALLER" ensure' src/awg-update
+grep -Fq 'mihomo)' src/awg-update
+grep -Fq 'Использование: awg-update [--yes] {status|backup|gateway|core|mihomo|all}' src/awg-update
 grep -Fq '"$ROUTE_CLI" mode transit' install.sh
 grep -Fq '"$ROUTE_CLI" mode selective' install.sh
-grep -Fq 'RESTORE_VPN_OFF=0' install.sh
-grep -Fq 'echo 1 >"$VPN_ENABLED_FILE"' install.sh
-grep -Fq 'if (( RESTORE_VPN_OFF == 1 )); then' install.sh
-grep -Fq 'echo 0 >"$VPN_ENABLED_FILE"' install.sh
+grep -Fq 'TRANSPORT_FILE="$PBR_DIR/transport"' install.sh
+grep -Fq "printf '%s\\n' unconfigured >\"\$TRANSPORT_FILE\"" install.sh
+grep -Fq 'FIRST_RUN_CLI="/usr/local/sbin/awg-first-run"' install.sh
+! grep -Fq '"$FIRST_RUN_CLI" wizard' install.sh
+grep -Fq 'No VPN onboarding during clean install' install.sh
+grep -Fq 'Active transport не настроен. Это допустимое recovery-состояние' install.sh
 
-# Fresh installs stage in Selective while AWG is validated, then the default
-# post-install transaction activates Transit. Legacy systems without a mode file
-# still stage as Selective for v1.1.x compatibility.
+# Installed version is public metadata. Keep /etc/awg-pbr private and
+# publish a separate world-readable copy under /usr/share.
+grep -Fq 'PUBLIC_VERSION_DIR="/usr/share/awg-pbr"' install.sh
+grep -Fq 'PUBLIC_VERSION_FILE="$PUBLIC_VERSION_DIR/version"' install.sh
+grep -Fq 'chmod 700 "$CONF_DIR" "$PBR_DIR"' install.sh
+grep -Fq 'install -d -o root -g root -m 755 "$PUBLIC_VERSION_DIR"' install.sh
+grep -Fq 'install -o root -g root -m 644 "$VERSION_FILE" "$PUBLIC_VERSION_FILE"' install.sh
+grep -Fq 'cat /usr/share/awg-pbr/version 2>/dev/null || cat /etc/awg-pbr/version' src/awg-menu
+grep -Fq 'cat /usr/share/awg-pbr/version 2>/dev/null || cat /etc/awg-pbr/version' src/awg-route
+grep -Fq 'PUBLIC_VERSION_FILE=/usr/share/awg-pbr/version' src/awg-update
+grep -Fq 'usr/share/awg-pbr' src/awg-update
+
+# Interactive confirmations must tolerate CR/whitespace from SSH terminals and
+# accept common English/Russian affirmative forms.
+confirm_parser="$(awk '/^confirm_yes\(\)\{/{capture=1} capture{print} capture && /^}$/{exit}' install.sh)"
+eval "$confirm_parser"
+cr="$(printf '\r')"
+for answer in y Y yes Yes YES у У д Д да Да ДА "y${cr}" "у${cr}" ' y ' ' у ' "да${cr}"; do
+  confirm_yes "$answer" || { echo "FAIL: affirmative confirmation rejected: [$answer]" >&2; exit 1; }
+done
+for answer in n N no No NO нет Нет '' '   '; do
+  if confirm_yes "$answer"; then
+    echo "FAIL: negative/empty confirmation accepted: [$answer]" >&2
+    exit 1
+  fi
+done
+
+# Fresh install installs engines and leaves first VPN configuration for the menu.
 grep -Fq "printf '%s\\n' selective >\"\$MODE_FILE\"" install.sh
-grep -Fq 'ACTIVATE_TRANSIT_AFTER_INSTALL=1' install.sh
-grep -Fq 'if (( ACTIVATE_TRANSIT_AFTER_INSTALL == 1 )); then' install.sh
+grep -Fq 'log "[11a/12] No VPN onboarding during clean install"' install.sh
+grep -Fq 'log "[11b/12] Deferred VPN and Operating Mode configuration"' install.sh
+grep -Fq '"$(cat "$TRANSPORT_FILE")" == unconfigured' install.sh
+! grep -Fq 'ask "Режим работы" "1"' install.sh
+grep -Fq 'elif (( ACTIVATE_TRANSIT_AFTER_INSTALL == 1 )); then' install.sh
 
-# Existing v1.2+ mode state is preserved instead of being reset during upgrade.
+# Existing v1.2+ mode and v1.3 transport state are preserved during upgrade.
 grep -Fq '[[ -f "$MODE_FILE" ]] || printf' install.sh
+grep -Fq 'if [[ ! -f "$TRANSPORT_FILE" ]]; then' install.sh
+grep -Fq 'Миграция legacy state: существующий AWG backend принят как active transport.' install.sh
 
-echo "v1.2 upgrade mode policy: OK"
+# The updater must support direct legacy v1.1 -> newer releases, while
+# preserving existing v1.2+ mode state through the installer.
+grep -Fq '[[ "$cur" == 1.1.0 ]] && version_gt "$latest" "1.1.0"' src/awg-update
+grep -Fq 'v1.1.0 -> $latest: --yes подтверждает post-upgrade Transit preflight/switch.' src/awg-update
+
+# v1.3 rollback must include the complete Mihomo transport state, not only the
+# v1.2 AWG files.
+for needle in \
+  'var/lib/awg-pbr/mihomo' \
+  'usr/local/bin/mihomo' \
+  'usr/local/sbin/awg-transport' \
+  'usr/local/sbin/awg-first-run' \
+  'usr/local/sbin/awg-selection' \
+  'usr/local/sbin/awg-selection-monitor' \
+  'usr/local/sbin/awg-mihomo-node-policy' \
+  'usr/local/sbin/awg-traffic' \
+  'usr/local/sbin/awg-mihomo-config' \
+  'usr/local/sbin/awg-mihomo-update' \
+  'usr/local/sbin/awg-mihomo-install' \
+  'usr/local/sbin/awg-mihomo-prepare' \
+  'usr/local/sbin/awg-mihomo-configure' \
+  'etc/systemd/system/awg-mihomo.service' \
+  'etc/systemd/system/awg-mihomo-update.service' \
+  'etc/systemd/system/awg-mihomo-update.timer' \
+  'etc/systemd/system/awg-selection-monitor.service' \
+  'etc/systemd/system/awg-traffic.service' \
+  'var/lib/awg-pbr/traffic'
+do
+  grep -Fq "$needle" src/awg-update
+done
+
+grep -Fq 'rm -rf /etc/awg-pbr /var/lib/awg-pbr/xray-vless /var/lib/awg-pbr/mihomo /var/lib/awg-pbr/hot-pool /var/lib/awg-pbr/traffic /usr/local/lib/awg-pi' src/awg-update
+grep -Fq 'systemctl stop \' src/awg-update
+grep -Fq 'awg-mihomo-update.timer \' src/awg-update
+grep -Fq 'awg-mihomo.service \' src/awg-update
+
+echo "v1.3 upgrade/rollback policy: OK"
+
+grep -Fq 'install_project_helper src/awg-mihomo-node-policy "$MIHOMO_NODE_POLICY_CLI"' install.sh
+grep -Fq 'install_project_helper src/awg-traffic "$TRAFFIC_CLI"' install.sh
+grep -Fq 'install_project_unit units/awg-traffic.service /etc/systemd/system/awg-traffic.service' install.sh
+grep -Fq 'systemctl restart awg-traffic.service' install.sh

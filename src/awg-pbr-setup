@@ -32,6 +32,12 @@ source "$AWG_COMMON_FILE"
 : "${VPN_TABLE:?VPN_TABLE is required}"
 : "${DNS_REDIRECT:?DNS_REDIRECT is required}"
 
+TRANSPORT_ID="$(awg_transport_get)"
+TRANSPORT_IF=""
+if awg_transport_backend_valid "$TRANSPORT_ID"; then
+  TRANSPORT_IF="$(awg_transport_device "$TRANSPORT_ID")"
+fi
+
 fail(){
   printf 'FAIL: %s\n' "$*" >&2
   exit 1
@@ -68,9 +74,15 @@ clear_policy(){
 }
 
 render_selective(){
-  local candidate="$1" client_filter=""
+  local candidate="$1" client_filter="" transport_forward_rule="" transport_nat_rule="" transport_mss_rule=""
   if grep -Ev '^\s*(#|$)' "$CLIENTS" 2>/dev/null | grep -q .; then
     client_filter='ip saddr @clients4 '
+  fi
+  if [[ -n "$TRANSPORT_IF" ]]; then
+    transport_forward_rule="    iifname \"$LAN_IF\" ip saddr $LAN_CIDR oifname \"$TRANSPORT_IF\" accept"
+    transport_nat_rule="    ip saddr $LAN_CIDR oifname \"$TRANSPORT_IF\" masquerade"
+    # Only VPN-forwarded IPv4 SYNs: DIRECT forwarding and management are unchanged.
+    transport_mss_rule="    iifname \"$LAN_IF\" ip saddr $LAN_CIDR oifname \"$TRANSPORT_IF\" meta nfproto ipv4 tcp flags & (syn | rst) == syn tcp option maxseg size set rt mtu"
   fi
 
   {
@@ -111,7 +123,8 @@ table inet awg_pbr {
     type filter hook forward priority filter; policy drop;
     ct state established,related accept
     iifname "$LAN_IF" ip saddr $LAN_CIDR oifname "$LAN_IF" accept
-    iifname "$LAN_IF" ip saddr $LAN_CIDR oifname "$VPN_IF" accept
+$transport_mss_rule
+$transport_forward_rule
   }
 
   chain prerouting_mark {
@@ -133,7 +146,7 @@ NFT
 
   chain postrouting_nat {
     type nat hook postrouting priority srcnat; policy accept;
-    ip saddr $LAN_CIDR oifname "$VPN_IF" masquerade
+$transport_nat_rule
     ip saddr $LAN_CIDR oifname "$LAN_IF" masquerade
   }
 }
@@ -170,6 +183,12 @@ setup_transit(){
   AWG_TRANSIT_LOCKDOWN=1 "$TRANSIT_NFT" >"$lockdown"
   replace_owned_table "$lockdown"
   clear_policy
+
+  if [[ -z "$TRANSPORT_IF" ]]; then
+    printf 'AWG_SETUP_MODE=transit\n'
+    printf 'TRANSPORT=unconfigured\n'
+    return 0
+  fi
 
   "$PING_BIN" -4 -c1 -W2 "$ROUTER_IP" >/dev/null 2>&1 ||
     fail "Transit setup: router $ROUTER_IP is unreachable; lockdown remains active"

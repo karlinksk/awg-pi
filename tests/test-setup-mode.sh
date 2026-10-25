@@ -6,6 +6,7 @@ tmp="$(mktemp -d)"
 trap 'sudo rm -rf "$tmp"' EXIT
 mkdir -p "$tmp/bin"
 : >"$tmp/clients"
+echo awg >"$tmp/transport"
 
 cat >"$tmp/env" <<'EOF'
 LAN_IF='eth0'
@@ -15,10 +16,6 @@ VPN_IF='awg0'
 VPN_MARK='0x100'
 VPN_TABLE='100'
 DNS_REDIRECT='1'
-EOF
-
-cat >"$tmp/common" <<'EOF'
-awg_mode_get(){ cat "${AWG_MODE_FILE}"; }
 EOF
 
 cat >"$tmp/bin/ping" <<'EOF'
@@ -77,6 +74,10 @@ EOF
 cat >"$tmp/transit-nft" <<'EOF'
 #!/usr/bin/env bash
 set -Eeuo pipefail
+case "$(cat "${AWG_TRANSPORT_FILE}" 2>/dev/null || echo awg)" in
+  mihomo) transport_if=mihomo0 ;;
+  *) transport_if=awg0 ;;
+esac
 if [[ "${AWG_TRANSIT_LOCKDOWN:-0}" == 1 ]]; then
   cat <<'NFT'
 table inet awg_pbr {
@@ -99,7 +100,7 @@ else
 table inet awg_pbr {
   chain forward_guard {
     type filter hook forward priority filter; policy drop;
-    iifname "eth0" ether saddr ${ROUTER_MAC} oifname "awg0" accept
+    iifname "eth0" ether saddr ${ROUTER_MAC} oifname "${transport_if}" accept
   }
   chain prerouting_mark {
     type filter hook prerouting priority mangle; policy accept;
@@ -110,7 +111,7 @@ table inet awg_pbr {
   }
   chain postrouting_nat {
     type nat hook postrouting priority srcnat; policy accept;
-    oifname "awg0" masquerade
+    oifname "${transport_if}" masquerade
   }
 }
 NFT
@@ -121,7 +122,7 @@ chmod +x "$tmp/bin/"* "$tmp/transit-nft"
 
 run_setup(){
   sudo env \
-    AWG_ENV_FILE="$tmp/env" AWG_COMMON_FILE="$tmp/common" AWG_MODE_FILE="$tmp/mode" \
+    AWG_ENV_FILE="$tmp/env" AWG_COMMON_FILE="$repo_root/src/awg-common" AWG_MODE_FILE="$tmp/mode" AWG_TRANSPORT_FILE="$tmp/transport" \
     AWG_CLIENTS_FILE="$tmp/clients" AWG_NFT_FILE="$tmp/active.nft" AWG_TRANSIT_NFT="$tmp/transit-nft" \
     AWG_SETUP_LOCK_FILE="$tmp/setup.lock" \
     NFT_BIN="$tmp/bin/nft" IP_BIN="$tmp/bin/ip" PING_BIN="$tmp/bin/ping" \
@@ -153,6 +154,49 @@ if sudo grep -Fq 'redirect to :53' "$tmp/active.nft"; then
   exit 1
 fi
 grep -Fq -- '-4 route flush table 100' "$tmp/ip.log"
+
+echo "=== selective setup with Mihomo transport ==="
+echo mihomo >"$tmp/transport"
+echo selective >"$tmp/mode"
+out="$(run_setup)"
+grep -Fqx 'AWG_SETUP_MODE=selective' <<<"$out"
+sudo grep -Fq 'oifname "mihomo0" accept' "$tmp/active.nft"
+sudo grep -Fq 'oifname "mihomo0" masquerade' "$tmp/active.nft"
+if sudo grep -Fq 'oifname "awg0" accept' "$tmp/active.nft"; then
+  echo 'FAIL: Selective Mihomo setup still allows awg0 egress' >&2
+  exit 1
+fi
+
+echo "=== transit setup with Mihomo transport ==="
+echo transit >"$tmp/mode"
+out="$(run_setup)"
+grep -Fqx 'AWG_SETUP_MODE=transit' <<<"$out"
+sudo grep -Fq 'oifname "mihomo0" accept' "$tmp/active.nft"
+sudo grep -Fq 'oifname "mihomo0" masquerade' "$tmp/active.nft"
+echo awg >"$tmp/transport"
+
+echo "=== selective setup without configured transport ==="
+echo unconfigured >"$tmp/transport"
+echo selective >"$tmp/mode"
+out="$(run_setup)"
+grep -Fqx 'AWG_SETUP_MODE=selective' <<<"$out"
+sudo grep -Fq 'oifname "eth0" accept' "$tmp/active.nft"
+if sudo grep -Eq 'oifname "(awg0|mihomo0)"' "$tmp/active.nft"; then
+  echo 'FAIL: unconfigured Selective setup contains transport egress' >&2
+  exit 1
+fi
+
+echo "=== transit setup without configured transport stays lockdown ==="
+echo transit >"$tmp/mode"
+out="$(run_setup)"
+grep -Fqx 'AWG_SETUP_MODE=transit' <<<"$out"
+grep -Fqx 'TRANSPORT=unconfigured' <<<"$out"
+sudo grep -Fq 'policy drop;' "$tmp/active.nft"
+if sudo grep -Fq 'ether saddr' "$tmp/active.nft"; then
+  echo 'FAIL: unconfigured Transit setup accepted new client forwarding' >&2
+  exit 1
+fi
+echo awg >"$tmp/transport"
 
 echo "=== transit router failure leaves lockdown ==="
 echo transit >"$tmp/mode"

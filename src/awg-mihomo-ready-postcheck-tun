@@ -1,0 +1,98 @@
+#!/usr/bin/env bash
+# Read-only verification of PI-bound mihomo TUN. This does not prove LAN forwarding.
+# Transit health monitoring restores table 100 asynchronously after Mihomo restarts.
+# Wait for that route separately; NEVER treat backend-only "healthy" as TUN proof.
+# Disallow inherited HTTP proxy settings and curlrc: test the actual TUN.
+set -Eeuo pipefail
+[[ $# == 1 && -n "$1" ]] || exit 2
+NODE_FILE="${MIHOMO_READY_NODE_FILE:-/etc/awg-pbr/transports/mihomo/node-name}"
+TUN="${MIHOMO_READY_TUN_IF:-mihomo0}"
+TABLE="${MIHOMO_READY_TABLE:-100}"
+CURL="${MIHOMO_READY_CURL_BIN:-curl}"
+ROUTE="${MIHOMO_READY_IP_BIN:-ip}"
+SLEEP="${MIHOMO_READY_SLEEP_BIN:-sleep}"
+ATTEMPTS="${MIHOMO_READY_POSTCHECK_ATTEMPTS:-3}"
+DELAY="${MIHOMO_READY_POSTCHECK_DELAY:-3}"
+ROUTE_POLLS="${MIHOMO_READY_ROUTE_POLLS:-12}"
+ROUTE_DELAY="${MIHOMO_READY_ROUTE_DELAY:-2}"
+[[ "$TUN" =~ ^[a-zA-Z0-9_.-]{1,15}$ && "$TABLE" =~ ^[0-9]{1,5}$ ]] || exit 2
+[[ "$ATTEMPTS" =~ ^[1-4]$ && "$DELAY" =~ ^[0-9]$ ]] || exit 2
+[[ "$ROUTE_POLLS" =~ ^([1-9]|1[0-5])$ && "$ROUTE_DELAY" =~ ^[0-3]$ ]] || exit 2
+
+same_node(){
+  [[ "$(cat "$NODE_FILE" 2>/dev/null || true)" == "$1" ]]
+}
+is_valid_public_ipv4(){
+  python3 - "$1" <<'PY'
+import ipaddress,sys
+try:
+    ip=ipaddress.ip_address(sys.argv[1].strip())
+    assert ip.version==4 and ip.is_global
+except (ValueError,AssertionError):
+    raise SystemExit(1)
+PY
+}
+# Phase A: bounded readiness for asynchronously restored Transit policy.
+# This is route discovery only; no HTTP or proxy traffic is generated.
+route_reason=UNKNOWN
+route_ready=0
+for (( route_poll=1; route_poll<=ROUTE_POLLS; route_poll++ )); do
+  if ! same_node "$1"; then
+    echo READY_TUN_CHECK=NODE_CHANGED
+    exit 1
+  fi
+  if ! "$ROUTE" -o link show dev "$TUN" 2>/dev/null | grep -q 'UP'; then
+    route_reason=IF_DOWN
+  elif ! "$ROUTE" -4 route show table "$TABLE" 2>/dev/null | grep -Eq "^default dev $TUN( |$)"; then
+    route_reason=ROUTE_MISSING
+  elif ! "$ROUTE" -4 route get 1.1.1.1 mark 0x100 2>/dev/null | grep -q "dev $TUN"; then
+    route_reason=MARK_MISMATCH
+  else
+    route_ready=1
+    break
+  fi
+  if (( route_poll < ROUTE_POLLS )); then "$SLEEP" "$ROUTE_DELAY"; fi
+done
+if (( route_ready != 1 )); then
+  echo "READY_TUN_CHECK=$route_reason"
+  echo "READY_TUN_ROUTE_POLLS=$ROUTE_POLLS"
+  exit 1
+fi
+
+# Phase B: independent public egress and OpenAI API reachability. A 403,
+# challenge or network timeout is NOT a service success.
+reason=UNKNOWN
+for (( attempt=1; attempt<=ATTEMPTS; attempt++ )); do
+  if ! same_node "$1"; then
+    echo READY_TUN_CHECK=NODE_CHANGED
+    exit 1
+  fi
+  if ! ip_out="$("$CURL" -q -4 --noproxy '*' --interface "$TUN" --connect-timeout 3 --max-time 8 -fsS https://api.ipify.org 2>/dev/null)"; then
+    reason=EGRESS_FAILED
+  elif ! is_valid_public_ipv4 "$ip_out"; then
+    reason=EGRESS_INVALID
+  elif ! same_node "$1"; then
+    echo READY_TUN_CHECK=NODE_CHANGED
+    exit 1
+  elif ! code="$("$CURL" -q -4 --noproxy '*' --interface "$TUN" --connect-timeout 3 --max-time 8 -sS -o /dev/null -w '%{http_code}' https://api.openai.com/v1/models 2>/dev/null)"; then
+    reason=OPENAI_NETWORK_FAILED
+  elif [[ "$code" != 401 ]]; then
+    reason=OPENAI_NOT_QUALIFIED
+  elif ! same_node "$1"; then
+    echo READY_TUN_CHECK=NODE_CHANGED
+    exit 1
+  else
+    echo READY_TUN_CHECK=PASS
+    echo "READY_TUN_ROUTE_POLLS=$route_poll"
+    if (( attempt > 1 )); then echo "READY_TUN_RECOVERED_FROM=$reason"; fi
+    echo "READY_TUN_ATTEMPTS=$attempt"
+    echo READY_TUN_SCOPE=PI_BOUND_TUN_NOT_FORWARDED_CLIENT
+    exit 0
+  fi
+  if (( attempt < ATTEMPTS )); then "$SLEEP" "$DELAY"; fi
+done
+echo "READY_TUN_CHECK=$reason"
+echo "READY_TUN_ROUTE_POLLS=$route_poll"
+echo "READY_TUN_ATTEMPTS=$ATTEMPTS"
+exit 1
+

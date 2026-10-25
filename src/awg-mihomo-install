@@ -1,0 +1,196 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+[[ ${EUID:-$(id -u)} -eq 0 ]] || exec sudo "$0" "$@"
+
+MIHOMO_VERSION="${MIHOMO_VERSION:-1.19.32}"
+MIHOMO_TARGET="${MIHOMO_TARGET:-/usr/local/bin/mihomo}"
+CURL_BIN="${CURL_BIN:-curl}"
+AWG_ENV_FILE="${AWG_ENV_FILE:-/etc/awg-pbr/env}"
+AWG_FETCH_BIN="${AWG_FETCH_BIN:-/usr/local/sbin/awg-fetch}"
+MIHOMO_INSTALL_FETCH_MODE="${MIHOMO_INSTALL_FETCH_MODE:-auto}"
+MIHOMO_INSTALL_ASSET_URL="${MIHOMO_INSTALL_ASSET_URL:-}"
+MIHOMO_INSTALL_ASSET_SHA256="${MIHOMO_INSTALL_ASSET_SHA256:-}"
+SYSTEMCTL_BIN="${SYSTEMCTL_BIN:-systemctl}"
+
+
+usage(){
+  cat <<'USAGE'
+Usage:
+  awg-mihomo-install [--mode auto|direct|awg|mihomo]
+  awg-mihomo-install --file PINNED_ASSET.gz
+  awg-mihomo-install status
+  awg-mihomo-install ensure [--mode auto|direct|awg|mihomo]
+
+AUTO delegates to the bootstrap manager: DIRECT first, then the selected
+healthy transport, then other healthy transports. Legacy "router" maps to DIRECT.
+
+status compares the installed binary with the version pinned by this Gateway
+release. ensure is a no-op when they already match; otherwise it installs only
+the pinned, SHA256-verified build. A mismatched active Mihomo service is not
+replaced in-place: switch transport first, then run ensure.
+
+--file is offline recovery. The local archive must match the pinned SHA256 and
+Mihomo version for this gateway release; arbitrary binaries are not accepted.
+USAGE
+}
+
+command_mode="install"
+if [[ "${1:-}" == status || "${1:-}" == ensure ]]; then
+  command_mode="$1"
+  shift
+fi
+
+installed_version(){
+  local line
+  [[ -x "$MIHOMO_TARGET" ]] || { printf '%s\n' missing; return 0; }
+  line="$("$MIHOMO_TARGET" -v 2>/dev/null | head -n1 || true)"
+  if [[ "$line" =~ Mihomo[[:space:]]+Meta[[:space:]]+v([0-9][^[:space:]]*) ]]; then
+    printf '%s\n' "${BASH_REMATCH[1]}"
+  else
+    printf '%s\n' unknown
+  fi
+}
+
+engine_status(){
+  local installed state
+  installed="$(installed_version)"
+  if [[ "$installed" == "$MIHOMO_VERSION" ]]; then
+    state=OK
+  else
+    state=REPAIR_REQUIRED
+  fi
+  printf 'Mihomo engine: installed=%s supported=%s state=%s\n' "$installed" "$MIHOMO_VERSION" "$state"
+  [[ "$state" == OK ]]
+}
+
+if [[ "$command_mode" == status ]]; then
+  (( $# == 0 )) || { usage >&2; exit 2; }
+  engine_status
+  exit $?
+fi
+
+local_archive=""
+while (( $# )); do
+  case "$1" in
+    --mode)
+      [[ $# -ge 2 ]] || { usage >&2; exit 2; }
+      MIHOMO_INSTALL_FETCH_MODE="$2"
+      shift 2
+      ;;
+    --file)
+      [[ $# -ge 2 ]] || { usage >&2; exit 2; }
+      local_archive="$2"
+      shift 2
+      ;;
+    -h|--help|help)
+      usage
+      exit 0
+      ;;
+    *)
+      echo "Unknown argument: $1" >&2
+      usage >&2
+      exit 2
+      ;;
+  esac
+done
+
+if [[ "$command_mode" == ensure ]]; then
+  if engine_status; then
+    echo "Mihomo engine update is not required."
+    exit 0
+  fi
+  if "$SYSTEMCTL_BIN" is-active --quiet awg-mihomo.service 2>/dev/null; then
+    echo "Mihomo engine repair refused while awg-mihomo.service is active. Switch active transport to AWG first." >&2
+    exit 1
+  fi
+fi
+
+[[ "$MIHOMO_INSTALL_FETCH_MODE" == router ]] && MIHOMO_INSTALL_FETCH_MODE=direct
+case "$MIHOMO_INSTALL_FETCH_MODE" in
+  auto|direct|awg|mihomo) ;;
+  *)
+    echo "Unsupported MIHOMO_INSTALL_FETCH_MODE: $MIHOMO_INSTALL_FETCH_MODE" >&2
+    exit 2
+    ;;
+esac
+
+case "$(dpkg --print-architecture 2>/dev/null || uname -m)" in
+  arm64|aarch64)
+    asset="mihomo-linux-arm64-v${MIHOMO_VERSION}.gz"
+    asset_id="601415736"
+    pinned_sha256="9dd862e28b46ff7d775f169cceebc28deccaa0a9e804237d421cd2571e0caba0"
+    ;;
+  amd64|x86_64)
+    asset="mihomo-linux-amd64-compatible-v${MIHOMO_VERSION}.gz"
+    asset_id="601415773"
+    pinned_sha256="ba3ce607747a07f948fc35780e108a4a7c7f552a38b9bd4d115f313ebcb89c20"
+    ;;
+  *)
+    echo "Unsupported architecture for Mihomo: $(uname -m)" >&2
+    exit 2
+    ;;
+esac
+
+sha256="${MIHOMO_INSTALL_ASSET_SHA256:-$pinned_sha256}"
+api_url="${MIHOMO_INSTALL_ASSET_URL:-https://api.github.com/repos/MetaCubeX/mihomo/releases/assets/$asset_id}"
+
+tmpdir="$(mktemp -d)"
+trap 'rm -rf "$tmpdir"' EXIT
+archive="$tmpdir/$asset"
+binary="$tmpdir/mihomo"
+
+curl_args=(
+  -4 --http1.1 --tlsv1.2 -fsSL
+  --retry 3 --retry-all-errors --retry-delay 1
+  --connect-timeout 10 --max-time 180
+  -H 'Accept: application/octet-stream'
+  -H 'User-Agent: AWG-Pi-Gateway-v1.3'
+)
+
+fetch_path=""
+if [[ -n "$local_archive" ]]; then
+  [[ -f "$local_archive" && -r "$local_archive" && ! -L "$local_archive" ]] || {
+    echo "Local Mihomo asset must be a readable regular file, not a symlink: $local_archive" >&2
+    exit 2
+  }
+  cp -- "$local_archive" "$archive"
+  fetch_path=file
+else
+  [[ -x "$AWG_FETCH_BIN" ]] || {
+    echo "Bootstrap fetch manager is unavailable: $AWG_FETCH_BIN" >&2
+    exit 2
+  }
+
+  fetch_output="$(
+    AWG_ENV_FILE="$AWG_ENV_FILE" CURL_BIN="$CURL_BIN" \
+      "$AWG_FETCH_BIN" --mode "$MIHOMO_INSTALL_FETCH_MODE" --url "$api_url" --output "$archive" -- "${curl_args[@]}"
+  )" || {
+    echo "Unable to download Mihomo binary through bootstrap manager" >&2
+    exit 1
+  }
+  fetch_path="$(awk -F= '$1=="AWG_FETCH_PATH"{print $2}' <<<"$fetch_output" | tail -n1)"
+  [[ "$fetch_path" =~ ^(direct|awg|mihomo)$ ]] || {
+    echo "Bootstrap manager returned an invalid binary fetch path" >&2
+    exit 1
+  }
+fi
+
+if ! printf '%s  %s\n' "$sha256" "$archive" | sha256sum -c - >/dev/null; then
+  echo "Mihomo asset SHA256 mismatch; refusing installation" >&2
+  exit 1
+fi
+if ! gzip -dc "$archive" >"$binary"; then
+  echo "Mihomo asset is not a valid gzip archive" >&2
+  exit 1
+fi
+chmod 755 "$binary"
+if ! "$binary" -v | grep -Fq "Mihomo Meta v${MIHOMO_VERSION}"; then
+  echo "Mihomo binary version mismatch; expected v${MIHOMO_VERSION}" >&2
+  exit 1
+fi
+
+install -m 755 "$binary" "$MIHOMO_TARGET"
+printf 'MIHOMO_VERSION=%s\n' "$MIHOMO_VERSION"
+printf 'MIHOMO_BINARY=%s\n' "$MIHOMO_TARGET"
+printf 'MIHOMO_BINARY_FETCH_PATH=%s\n' "$fetch_path"
