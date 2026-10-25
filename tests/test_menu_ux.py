@@ -243,6 +243,72 @@ printf '\\n'
         ):
             self.assertIn(statement, SOURCE)
 
+    def test_appearance_changes_persist_then_restart_without_modal(self):
+        # Fake config under temp directory: never writes the test Pi setting.
+        for initial, chosen, expected_restart in (
+            ("classic", "matrix", True),
+            ("matrix", "classic", True),
+            ("classic", "classic", False),
+            ("matrix", "matrix", False),
+            ("classic", "back", False),
+        ):
+            with self.subTest(initial=initial, chosen=chosen):
+                with tempfile.TemporaryDirectory(prefix="awg-theme-switch-") as td:
+                    root = Path(td)
+                    state = root / "appearance"
+                    state.write_text(initial + "\n")
+                    mock_comp = root / "matrix.py"
+                    mock_comp.write_text("# placeholder\n")
+                    code = body("appearance_menu")
+                    code = code.replace("/etc/awg-pbr/menu-appearance", str(state))
+                    code = code.replace(
+                        "/etc/awg-pbr/.menu-appearance.XXXXXXXX",
+                        str(root / ".appearance.XXXXXXXX"))
+                    code = code.replace(
+                        "/usr/local/lib/awg-pi/awg-matrix-compositor.py",
+                        str(mock_comp))
+                    shell = (
+                        body("awg_option_label") + "\n" +
+                        code + "\n" +
+                        'BACKTITLE=TEST\n'
+                        'dialog(){ printf "%s\\n" "$CHOICE" >&2; }\n'
+                        'command(){ if [[ "$1" == -v && "$2" == tmux ]]; then '
+                        'return 0; fi; builtin command "$@"; }\n'
+                        'msg(){ echo "UNEXPECTED_DIALOG"; }\n'
+                        'awg_menu_restart_for_appearance(){ '
+                        'echo RESTART_CALLED; }\n'
+                        'appearance_menu\n'
+                    )
+                    proc = subprocess.run(
+                        ["bash", "-c", shell], capture_output=True,
+                        text=True, timeout=5,
+                        env={**os.environ, "CHOICE": chosen})
+                    self.assertEqual(proc.returncode, 0, proc.stderr)
+                    self.assertEqual(
+                        state.read_text().strip(),
+                        initial if chosen == "back" else chosen)
+                    self.assertEqual("RESTART_CALLED" in proc.stdout,
+                                     expected_restart)
+                    self.assertNotIn("UNEXPECTED_DIALOG", proc.stdout)
+
+    def test_restart_handoff_preserves_ssh_process(self):
+        restart = body("awg_menu_restart_for_appearance")
+        shell = (
+            restart + "\n"
+            "AWG_MENU_MATRIX_INNER=1\n"
+            "cleanup(){ echo CLEANUP; }\n"
+            "awg_menu_restart_for_appearance\n"
+        )
+        process = subprocess.run(["bash", "-c", shell],
+                                 capture_output=True, text=True, timeout=5)
+        self.assertEqual(process.returncode, 42, process.stderr)
+        self.assertIn("AWG_MENU_MATRIX_INNER", restart)
+        self.assertIn("unset AWG_MENU_REEXEC", restart)
+        self.assertIn("exec /usr/local/sbin/awg-menu", restart)
+        self.assertIn("exec /usr/local/sbin/awg-menu --classic", SOURCE)
+        self.assertNotIn("Изменение действует при следующем запуске", SOURCE)
+        self.assertNotIn("Сохранено: $choice. Изменение действует", SOURCE)
+
     def test_subscription_format_marks_requested_not_detected(self):
         # Provider auto may detect base64 content; the saved choice is AUTO.
         # No backend files are changed by this dialog.
