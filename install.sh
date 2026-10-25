@@ -1019,6 +1019,7 @@ install_project_helper src/awg-traffic "$TRAFFIC_CLI"
 # install it is the initial theme; on upgrade preserve the operator's choice.
 # A recovery path always remains: sudo awg-menu --classic.
 install_project_python_helper extras/awg-matrix-compositor.py /usr/local/lib/awg-pi/awg-matrix-compositor.py
+install_project_python_helper extras/awg-classic-wheel.py /usr/local/lib/awg-pi/awg-classic-wheel.py
 install_project_helper src/awg-menu /usr/local/sbin/awg-menu
 if [[ ! -e /etc/awg-pbr/menu-appearance ]]; then
   install -d -o root -g root -m 0700 /etc/awg-pbr
