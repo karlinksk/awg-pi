@@ -152,7 +152,7 @@ assert '4 "Протокол пула узлов"' in menu
 assert 'Настройка подписки и обновление списка нод.' in menu
 assert 'direct "DIRECT"' in menu
 assert 'router "Router/default"' not in menu
-assert 'сначала пробует DIRECT' in menu
+assert 'сначала DIRECT, затем доступные транспорты' in menu
 assert 'Рабочий профиль не меняется до выбора узла и применения.' in menu
 assert 'mktemp /run/awg-pbr/mihomo-paste.XXXXXX' in menu
 assert '"$MIHOMO_CONFIGURE" provider stage-file "$PASTE_TMP" "$source_mode"' in menu
@@ -207,7 +207,7 @@ for command in (
     '"$AWG_SELECTION" mode auto mihomo awg',
 ):
     assert command in menu
-assert 'Смена узлов Mihomo управляется отдельной политикой' in menu
+assert 'Выберите порядок автоматического переключения VPN при отказе.' in menu
 
 # Mihomo exact-node failover editor.
 assert 'MIHOMO_NODE_POLICY=/usr/local/sbin/awg-mihomo-node-policy' in menu
