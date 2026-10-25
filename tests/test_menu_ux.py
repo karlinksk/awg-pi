@@ -243,11 +243,11 @@ printf '\\n'
     def test_unified_catalog_never_counts_unverified_xray_as_fail(self):
         with tempfile.TemporaryDirectory(prefix="awg-node-evidence-") as td:
             capture = Path(td) / "dialog-args"
-            listing = "\\n".join([
-                "1\\tXray-unknown\\tvless\\tn1.example:443\\t-\\tXRAY_UNTESTED\\t??\\t-",
-                "2\\tXray-good\\tvless\\tn2.example:443\\t-\\tXRAY_HTTPS\\t??\\t-",
-                "3\\tXray-bad\\tvless\\tn3.example:443\\t-\\tXRAY_NETWORK_FAIL\\t??\\t-",
-                "4\\tMihomo-fail\\thysteria2\\tn4.example:2097\\t-\\tMIHOMO_FAIL\\tDE\\t-",
+            listing = "\n".join([
+                "1\tXray-unknown\tvless\tn1.example:443\t-\tXRAY_UNTESTED\t??\t-",
+                "2\tXray-good\tvless\tn2.example:443\t-\tXRAY_HTTPS\t??\t-",
+                "3\tXray-bad\tvless\tn3.example:443\t-\tXRAY_NETWORK_FAIL\t??\t-",
+                "4\tMihomo-fail\thysteria2\tn4.example:2097\t-\tMIHOMO_FAIL\tDE\t-",
             ])
             shell = body("select_tsv_node_dialog") + """
 mihomo_clip_node_label(){ printf '%s' "$1"; }
