@@ -1,3 +1,17 @@
+# Исторический документ — TESTING-v1.1.0.md
+
+Планы и результаты относятся к указанной дате/версии, а не к текущему статусу GitHub или очереди новых испытаний.
+
+Текущий продукт: [руководство v1.3.0](PRODUCT-GUIDE-v1.3.0.md). Итоговые доказательства: [реестр](RELEASE-ACCEPTANCE-MATRIX-v1.3.0.md).
+
+
+---
+
+<details>
+<summary>Исторический текст и датированные записи</summary>
+
+Статусы, команды и номера меню ниже относятся к указанным этапам разработки. При противоречии используйте актуальное описание выше и руководство v1.3.0.
+
 # v1.1.0 Raspberry Pi RC validation
 
 This checklist is intentionally run on real Raspberry Pi 4 hardware before
@@ -928,3 +942,6 @@ Result: **PASS**.
 
 This validates the exact frozen RC4 candidate on a fully clean microSD and
 closes the DNS-default / health-target-order release-gate follow-up.
+
+
+</details>

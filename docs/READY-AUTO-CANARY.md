@@ -1,3 +1,17 @@
+# Исторический документ — READY-AUTO-CANARY.md
+
+Hot Pool/READY и website/service eligibility исключены из текущего выбора MANUAL/AUTO и рабочего меню. Команды их включения ниже — старый эксперимент, а не инструкция v1.3.0.
+
+Текущий продукт: [руководство v1.3.0](PRODUCT-GUIDE-v1.3.0.md). Итоговые доказательства: [реестр](RELEASE-ACCEPTANCE-MATRIX-v1.3.0.md).
+
+
+---
+
+<details>
+<summary>Исторический текст и датированные записи</summary>
+
+Статусы, команды и номера меню ниже относятся к указанным этапам разработки. При противоречии используйте актуальное описание выше и руководство v1.3.0.
+
 # READY-priority AUTO canary (v1.3.0 — historical review)
 
 > **Updated 17 October 2026:** The paragraphs below chronicle the earlier standalone, opt-in canary (#111). They are **not the current PR #115 fresh-install defaults**. The current installer enables persisted `ready-auto` priority on a **fresh installation** and auto-arms Hot Pool/Stage18 timers while keeping Hot Pool scanning **SHADOW_ONLY**. Existing gateway upgrades preserve their prior operator-selected state. A fresh install does not automatically choose a READY node until a provider is configured, eligibility proofs exist and a real post-switch TUN check passes. Do not use the earlier “default OFF” wording to evaluate the new installer; see `HOT-POOL-READY-AUTO.md` and `RC1-INTEGRATION-REVIEW.md`. Complete hardware validation is still pending.
@@ -140,3 +154,6 @@ Do not activate unattended AUTO based on this draft.
 - Dry-run stack rehearsal in a *separate unpushed local checkout*: PR #110 + #111 merged cleanly, then PR #109 merged cleanly. Composite fixture runs: 54 Hot Pool + 10 periodic update + 30 READY/TUN/monitor PASS. **No PR was merged and main/develop/production were not changed**.
 - **Packaging limitation:** Hot Pool and continuity code currently remain under `extras/mihomo-hot-pool-shadow/` with a separate experimental `install-shadow.sh`; the normal `install.sh` does **not** install/enable that package. Before considering a full-from-scratch RC1, either provide a safe optional installer integrated with backup/upgrade, or clearly identify Hot Pool as a separate, opt-in post-install prerequisite. Its service and retention tests must be checked together with the other stacked PRs.
 - The pending merge order is service eligibility #106; shadow reserve #108 + continuation #110; periodic refresh safety #109; READY AUTO #111. Because these are **open draft PRs**, do not tag RC1 or enable unattended production READY AUTO yet.
+
+
+</details>

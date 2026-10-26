@@ -1,3 +1,17 @@
+# Исторический документ — EXPERIMENTAL-UNIFIED-AUTO-XRAY.md
+
+Cross-core Mihomo/Xray реализован в опубликованном v1.3.0 в согласованных границах; Xray AUTO разрешается отдельно. Draft/rootless-only ниже — статус этапа разработки.
+
+Текущий продукт: [руководство v1.3.0](PRODUCT-GUIDE-v1.3.0.md). Итоговые доказательства: [реестр](RELEASE-ACCEPTANCE-MATRIX-v1.3.0.md).
+
+
+---
+
+<details>
+<summary>Исторический текст и датированные записи</summary>
+
+Статусы, команды и номера меню ниже относятся к указанным этапам разработки. При противоречии используйте актуальное описание выше и руководство v1.3.0.
+
 # Experimental unified Mihomo / Xray AUTO (v1.3.0)
 
 Status: **draft source / rootless tests only**. NOT enabled on the test Pi, NOT merged, installed, released, or certified for live automatic cross-core failover.
@@ -49,3 +63,6 @@ Native health-pool AUTO retains its bounded attempts. When exhausted, and only u
 The root-only `scripts/awg-xray-selective-auto-preflight.py --check|--scan` protects unchanged live transport/node/routes. `--scan` invokes bounded isolated Xray HTTPS probes; only credential-fingerprinted Xray network cache is modified. **Not yet executed as root on the live test stand** (Desktop Commander sudo block). 
 
 Full isolated-Pi Python regression suite: **589/589 PASS** at commit `e855ae92`, Bash syntax PASS, no live service changes. Root-only preflight, sidecar AUTO, rollback timers, forwarded client and reboot remain **OPEN**. Do not call Selective PASS or enable on production from source tests.
+
+
+</details>

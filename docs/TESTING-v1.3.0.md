@@ -1,5 +1,11 @@
 # AWG Pi Gateway v1.3.0 — release validation
 
+**Статус на 2026-10-26:** стабильный [v1.3.0](https://github.com/karlinksk/awg-pi/releases/tag/v1.3.0) опубликован. Тег указывает на `5b1a8b802ce09a27c51f4e284f1a13207059a48e`. PR #165–167 merged; CI shell/awg-v31 успешен на их точных head-кандидатах. Отдельный main-push CI на коммите тега не заявляется. Production deployment не выполнялся.
+
+**Исключение сохранено:** исходный IMAGE_BOOT_ACCEPT=FAIL из-за раннего AWG → Mihomo; f00c93e прошёл отдельный реальный reboot. Повторного full-media восстановления нового исправленного образа не было. Отличались два FAT last-access-date metadata bytes; raw whole-card SHA equality не достигнуто. Исторические FAIL/UNKNOWN и непроверенные сценарии не становятся PASS.
+
+Описание продукта: [руководство](PRODUCT-GUIDE-v1.3.0.md). Старые планы Hot Pool/READY/website/media и FIXED-редактора узлов не являются текущими release gates. Датированные результаты сохраняют исходную версию и границы.
+
 ## Final owner acceptance exception — 2026-10-26
 
 The owner decided to complete the v1.3.0 release without another full-media
@@ -19,7 +25,7 @@ their original scope; service/website/media and old 150-item matrix checkboxes
 must not be resurrected as mandatory gates. PR merge, main promotion, tag and
 GitHub Release are separate actions, not implied by accepting this exception.
 
-## Current candidate contract — 2026-10-24, PR #165
+## Selection contract retained in v1.3.0 — decision 2026-10-24
 
 Owner-directed revision: manual selection must not require external HTTPS,
 OpenAI HTTP401, ipify, ChatGPT or YouTube eligibility. AUTO uses fresh engine
@@ -929,3 +935,4 @@ Mandatory tests: ordinary rootless discovery covers both renderers and unconfigu
 Still require final dynamic-source LAN recheck, real Selective recovery and relevant mode/failure cases; don't infer complete upload, IPv6, no-network reboot or full release acceptance from this single-site canary. Latest detailed scope is in PROJECT_STATE.md.
 
 Final dynamic-source hardware follow-up: installed0cdcf0a, ordinary Windows DNS, owner-disabled SSTP and real Transit/AWG forwarding:22/22 phase-correlated HTTP200/curl0, TLS0.209–0.594s, observed outgoing SYN MSS1380,0 target-bound direct Pi egress. No temporary MSS table. Original native Mihomo and13 scoped private-state digests restored,158 external SSH observations/0 failures, recovery retired; SSTP confirmed running afterward. This closes the targeted final-source AWG LAN/TLS delay case. Actual Selective recovery, remaining fault/mode cases and frozen-candidate installation/upgrade/reboot/media gates remain separate and open.
+

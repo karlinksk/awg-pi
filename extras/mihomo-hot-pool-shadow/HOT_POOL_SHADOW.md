@@ -1,3 +1,15 @@
+# Historical Hot Pool experiment
+
+Hot Pool/READY is excluded from the v1.3.0 working menu and MANUAL/AUTO admission. This archived text is not the current installation or release contract. See [the current guide](../../docs/PRODUCT-GUIDE-v1.3.0.md).
+
+
+---
+
+<details>
+<summary>Исторический текст и датированные записи</summary>
+
+Статусы, команды и номера меню ниже относятся к указанным этапам разработки. При противоречии используйте актуальное описание выше и руководство v1.3.0.
+
 # Mihomo hot reserve — shadow prototype
 
 **Scope: NOT a production selector.** This module creates a separate eligibility
@@ -253,3 +265,6 @@ atomically updates only the shadow-only tester and can roll back in
   (future integration hook; never trigger manually based only on ping)
 
 This code is an experimental stage, not a stable v1.3.0 feature.
+
+
+</details>

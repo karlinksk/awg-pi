@@ -1,3 +1,17 @@
+# Текущее состояние AWG Pi Gateway
+
+**Статус на 2026-10-26:** стабильный [v1.3.0](https://github.com/karlinksk/awg-pi/releases/tag/v1.3.0) опубликован. Тег указывает на `5b1a8b802ce09a27c51f4e284f1a13207059a48e`. PR #165–167 merged; CI shell/awg-v31 успешен на их точных head-кандидатах. Отдельный main-push CI на коммите тега не заявляется. Production deployment не выполнялся.
+
+**Исключение сохранено:** исходный IMAGE_BOOT_ACCEPT=FAIL из-за раннего AWG → Mihomo; f00c93e прошёл отдельный реальный reboot. Повторного full-media восстановления нового исправленного образа не было. Отличались два FAT last-access-date metadata bytes; raw whole-card SHA equality не достигнуто. Исторические FAIL/UNKNOWN и непроверенные сценарии не становятся PASS.
+
+## Документация после выпуска
+
+Текущее поведение: [руководство](PRODUCT-GUIDE-v1.3.0.md), [навигатор](README.md). Два транспорта AWG/Mihomo; Xray — дополнительный outbound через Mihomo TUN. Hot Pool/READY/service eligibility и редактор FIXED-цепочек узлов не входят в рабочее упрощённое меню; FIXED транспорта сохранён. Эта сверка меняет только документацию. Настройки устройств не менялись, новых аппаратных PASS не добавлено.
+
+## Датированный журнал
+
+Записи ниже сохраняют состояние на момент проверки. Старые draft/not tagged/not released/remaining gate не являются текущим статусом GitHub. Применяйте более позднюю проверенную запись, сохраняя границы доказательств.
+
 ### 2026-10-26 — release source promoted to main; tag/publication distinct
 
 - PR **#165** (`refactor/v1.3-simplified-auto-20261024`) merged into `integration/v1.3.0-pre-rc-20261024` at `1501279d8631cc419f467117c9f3ae58b5c52ad1`. Current candidate SHA before merge was `149e2dd6f1ec52026a6568c8db771763f4debea1`; both final-head push and PR CI passed.

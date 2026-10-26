@@ -1,3 +1,15 @@
+# Historical Hot Pool experiment
+
+Hot Pool/READY is excluded from the v1.3.0 working menu and MANUAL/AUTO admission. This archived text is not the current installation or release contract. See [the current guide](../../docs/PRODUCT-GUIDE-v1.3.0.md).
+
+
+---
+
+<details>
+<summary>Исторический текст и датированные записи</summary>
+
+Статусы, команды и номера меню ниже относятся к указанным этапам разработки. При противоречии используйте актуальное описание выше и руководство v1.3.0.
+
 # AWG v1.3 — Hot Pool provider continuity (experimental SHADOW_ONLY)
 
 ## Contract
@@ -28,3 +40,5 @@ The vault survives subscription rotation and Pi reboot; **READY proofs in RAM do
 `python3 -B extras/mihomo-hot-pool-shadow/test_hot_pool_continuity.py`
 
 Original Hot Pool tests should remain green. No network access or production service changes are needed for fixture tests.
+
+</details>

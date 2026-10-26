@@ -1,3 +1,17 @@
+# Исторический документ — RC1-INTEGRATION-REVIEW.md
+
+Планы и результаты относятся к указанной дате/версии, а не к текущему статусу GitHub или очереди новых испытаний.
+
+Текущий продукт: [руководство v1.3.0](PRODUCT-GUIDE-v1.3.0.md). Итоговые доказательства: [реестр](RELEASE-ACCEPTANCE-MATRIX-v1.3.0.md).
+
+
+---
+
+<details>
+<summary>Исторический текст и датированные записи</summary>
+
+Статусы, команды и номера меню ниже относятся к указанным этапам разработки. При противоречии используйте актуальное описание выше и руководство v1.3.0.
+
 # AWG Pi Gateway v1.3.0 — RC1 integration review (16 October 2026)
 
 **Status: DRAFT. Not an RC1 release or production migration.**
@@ -99,3 +113,6 @@ constitute production acceptance of this new bundled installer**.
 
 **Do not tag or install on the working Raspberry Pi solely because static
 tests and CI pass.**
+
+
+</details>
