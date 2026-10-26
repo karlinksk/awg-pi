@@ -1,6 +1,11 @@
-# AWG Pi Gateway v1.3.0 — complete release acceptance matrix
+# AWG Pi Gateway v1.3.0 — release acceptance ledger
 
-**Status: RELEASE REVIEW ACCEPTED WITH DOCUMENTED EXCEPTION** (owner decision 2026-10-26; publication remains separate from PR merge/tag; #115 closed/superseded).
+**Статус на 2026-10-26:** стабильный [v1.3.0](https://github.com/karlinksk/awg-pi/releases/tag/v1.3.0) опубликован. Тег указывает на `5b1a8b802ce09a27c51f4e284f1a13207059a48e`. PR #165–167 merged; CI shell/awg-v31 успешен на их точных head-кандидатах. Отдельный main-push CI на коммите тега не заявляется. Production deployment не выполнялся.
+
+**Исключение сохранено:** исходный IMAGE_BOOT_ACCEPT=FAIL из-за раннего AWG → Mihomo; f00c93e прошёл отдельный реальный reboot. Повторного full-media восстановления нового исправленного образа не было. Отличались два FAT last-access-date metadata bytes; raw whole-card SHA equality не достигнуто. Исторические FAIL/UNKNOWN и непроверенные сценарии не становятся PASS.
+
+
+**Status: PUBLISHED v1.3.0 WITH DOCUMENTED EXCEPTION** (2026-10-26; #115 closed/superseded). Scoped acceptance does not complete every historical checkbox.
 
 ## Current release ledger — supersedes the historical checklist below
 
@@ -13,7 +18,7 @@ engine network assessment, never individual service eligibility.
 
 | Required area | Evidence and exact scope | Current disposition |
 | --- | --- | --- |
-| Current HEAD CI | Installed runtime base `443bfa5` remains historically tested. Repair source `f00c93e` has complete runs 40221601725 / 40221605679 SUCCESS (shell + awg-v31), plus 7/7 boot regression, 31/31 AUTO, 5/5 policy and original selector suite. Subsequent documentation HEAD requires its own CI. | Runtime and repair-source CI PASS in stated scope; recheck docs HEAD |
+| Current HEAD CI | Installed runtime base `443bfa5` remains historically tested. Repair source `f00c93e` has complete runs 40221601725 / 40221605679 SUCCESS (shell + awg-v31), plus 7/7 boot regression, 31/31 AUTO, 5/5 policy and original selector suite. Final #165 heads: 40223700689 / 40223705156; #166: 40224029023; #167: 40224398843, all success (shell + awg-v31). | PASS on the stated PR heads; no main-push CI claim |
 | Installed source / delivery | Fresh read-only privileged audit of all 75 literal installer helper/unit deliveries against `5466a73`: 75 byte matches, all root-owned; helpers 0755, common library/units 0644. Eight network helpers and accepted numeric menu also match exact Git blobs. Test-only repair changes none of these files. | PASS for audited delivery set; not an installer execution |
 | Transit IPv4 LAN | Windows Mihomo correlated ingress/TUN/return; installed dynamic-MSS AWG 22/22 HTTP200, outgoing MSS1380, zero target-bound direct egress. | Existing bounded hardware PASS credited |
 | Transit FAIL-CLOSED | Both backends stopped under recovery: 26 target ingress, zero matching direct egress/VPN traffic; six contained client attempts timed out; baseline recovered. | Existing target-scoped IPv4 negative PASS credited; no all-path/IPv6 claim |
@@ -22,7 +27,7 @@ engine network assessment, never individual service eligibility.
 | Clean install / onboarding | Actual fresh Debian13.7 ARM64 installation pinned to `443bfa5`, 75/75 delivered bytes/owners/modes match. Owner subsequently imported AWG and Mihomo profiles; both validate, both independent Pi-bound HTTPS requests HTTP200/curl0, Selective/AWG healthy, DNS/SSH active, failed units0. | Exact-candidate clean install and new-card Pi-TUN onboarding PASS; not a new forwarded LAN proof |
 | Upgrade / gateway restore / reboot | Earlier actual `07d8e0d` preserving upgrade/snapshot restore remains scoped evidence (installer/updater unchanged). Exact `443bfa5` empty-state reboot15/15 and configured reboot18/18 private entries,75/75 deliveries. Configured boot independently checked by root timer: HEALTHY_NO_RESTORE, controls/routes/DNS healthy; both Pi TUN HTTPS200 after boot, AWG remains selected, temporary units removed. | Exact-candidate empty and configured reboot PASS; earlier upgrade/actual snapshot-restore scope remains explicit |
 | Full-media recovery | Owner-approved same test card restored from private cold image and booted. Full read-back differed by two Windows FAT access-date bytes only; Linux partition exact. First as-captured acceptance failed (AUTO AWG->Mihomo); fixed monitor `f00c93e` survived a separate actual reboot with AWG stable. | OWNER-ACCEPTED EXCEPTION: hardware boot and repaired monitor reboot proven; as-captured checker remains FAIL, corrected-source image restore not repeated |
-| Promotion | PR targets integration branch, not main. Inspect integration/release path and final checks before any merge/tag/release. | Draft, unmerged, unreleased |
+| Promotion | #165 integration, #166 main promotion and #167 final ledger merged; v1.3.0 tag and stable Latest Release verified on 5b1a8b802ce09a27c51f4e284f1a13207059a48e. | Published; production not deployed |
 
 ### 2026-10-26 — actual full-media card restore and subsequent boot repair (scope-separated)
 
@@ -354,3 +359,4 @@ history, not the current release queue.
 - **A08 partial**: LAN route to MikroTik and ICMP verified, test Pi SSH and DC persistent systemd service active/enabled. Remote SSTP management via actual independent external client NOT VERIFIED. The Pi's healthy services and remote DC are not proof of independent recovery.
 - **A09 not armed**: backup path exists root-owned 0700, but current backup contents, timed rescue mechanism and restore procedure have not been proven. The former removable SD is no longer mounted. No destructive tests authorized until an independent watchdog and restoration are actually verified.
 - Detailed stop/go requirements: [RELEASE-TEST-SAFETY-v1.3.0.md](RELEASE-TEST-SAFETY-v1.3.0.md). No live VPN/MikroTik/SSTP edits in this step.
+

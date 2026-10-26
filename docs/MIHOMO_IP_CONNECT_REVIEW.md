@@ -1,3 +1,17 @@
+# Исторический документ — MIHOMO_IP_CONNECT_REVIEW.md
+
+Планы и результаты относятся к указанной дате/версии, а не к текущему статусу GitHub или очереди новых испытаний.
+
+Текущий продукт: [руководство v1.3.0](PRODUCT-GUIDE-v1.3.0.md). Итоговые доказательства: [реестр](RELEASE-ACCEPTANCE-MATRIX-v1.3.0.md).
+
+
+---
+
+<details>
+<summary>Исторический текст и датированные записи</summary>
+
+Статусы, команды и номера меню ниже относятся к указанным этапам разработки. При противоречии используйте актуальное описание выше и руководство v1.3.0.
+
 # IP-literal HTTPS compatibility — isolated review (2026-10-16)
 
 Status: **draft review; not merged**. A previous IP-CONNECT diagnostic and Stage18 error classifier were manually staged on the **test microSD**. The newer live-host isolation and YouTube-path changes remain **GitHub-only**. Production microSD, MikroTik and SSTP are untouched.
@@ -46,3 +60,6 @@ These observations do **not** prove that an entire proxy protocol is defective o
 - First Shadowsocks's domain-only health can no longer authorize IP-dependent forwarding.
 - Contradictory results distinguish `DOMAIN_CONNECT`, `IP_CONNECT` and `TUN_POSTCHECK` without implying a global proxy protocol outage.
 - No extra global health polling, YouTube HTTP precheck, or changes to live transport until explicit supervised rollout.
+
+
+</details>

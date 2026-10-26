@@ -1,3 +1,17 @@
+# Исторический документ — TESTING-v1.2.0.md
+
+Планы и результаты относятся к указанной дате/версии, а не к текущему статусу GitHub или очереди новых испытаний.
+
+Текущий продукт: [руководство v1.3.0](PRODUCT-GUIDE-v1.3.0.md). Итоговые доказательства: [реестр](RELEASE-ACCEPTANCE-MATRIX-v1.3.0.md).
+
+
+---
+
+<details>
+<summary>Исторический текст и датированные записи</summary>
+
+Статусы, команды и номера меню ниже относятся к указанным этапам разработки. При противоречии используйте актуальное описание выше и руководство v1.3.0.
+
 # AWG Pi Gateway v1.2.0 hardware validation
 
 This is the release-gate checklist for the v1.2.0 Selective + MikroTik Transit
@@ -371,3 +385,6 @@ Before tagging v1.2.0:
 
 RouterOS reboot persistence of the optional Netwatch automation has now also
 been verified on the test hAP ax² with physical recovery available.
+
+
+</details>

@@ -1,3 +1,20 @@
+# Безопасность новых испытаний
+
+**Статус на 2026-10-26:** стабильный [v1.3.0](https://github.com/karlinksk/awg-pi/releases/tag/v1.3.0) опубликован. Тег указывает на `5b1a8b802ce09a27c51f4e284f1a13207059a48e`. PR #165–167 merged; CI shell/awg-v31 успешен на их точных head-кандидатах. Отдельный main-push CI на коммите тега не заявляется. Production deployment не выполнялся.
+
+Текущая документационная сверка не требует новых сбоев, reboot, reimage или изменений MikroTik. Этот файл не означает, что сейчас вооружён rollback-таймер. Для нового материального runtime-изменения заново проверьте независимое управление, актуальную приватную копию, точно выбранный тестовый объект и независимый проверенный откат. Старое состояние armed не переносится между сессиями. Hot Pool/READY/website/media gates не восстанавливаются по историческим чекбоксам.
+
+**Исключение сохранено:** исходный IMAGE_BOOT_ACCEPT=FAIL из-за раннего AWG → Mihomo; f00c93e прошёл отдельный реальный reboot. Повторного full-media восстановления нового исправленного образа не было. Отличались два FAT last-access-date metadata bytes; raw whole-card SHA equality не достигнуто. Исторические FAIL/UNKNOWN и непроверенные сценарии не становятся PASS.
+
+
+
+---
+
+<details>
+<summary>Исторический текст и датированные записи</summary>
+
+Статусы, команды и номера меню ниже относятся к указанным этапам разработки. При противоречии используйте актуальное описание выше и руководство v1.3.0.
+
 # AWG Pi Gateway v1.3 — release-test safety gate (A07–A09)
 
 **STATUS: SOURCE PLAN ONLY — ROOT BACKUP AND TIMED RECOVERY NOT YET ARMED.**
@@ -67,3 +84,6 @@ A09: PENDING (root-owned verified backup, timed rescue arm/trigger and restore t
 
 
 Hardware failover tests must remain BLOCKED until A08 and A09 gates pass.
+
+
+</details>

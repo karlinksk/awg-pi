@@ -1,3 +1,41 @@
+# Telegram — AWG Notify в v1.3.0
+
+Подсистема поставляется в стабильном релизе как необязательная.
+На чистой установке доставка выключена; существующие настройки
+бота и событий сохраняются. Оповещения не меняют VPN, DNS или MikroTik.
+
+**Система → Telegram**: настройка бота/привязка приватного чата,
+тест, общий переключатель доставки, типы событий, состояние/очередь,
+исправление привязки. Категории: VPN_LOST, VPN_RESTORED, BOOT,
+DAILY_REPORT, NODE_SWITCH, TRANSPORT_SWITCH.
+Первые четыре выбраны по умолчанию, последние две выключены.
+Выбор категории сам по себе не включает общую доставку.
+Сводка — 09:00 по часовому поясу Pi, при включённой доставке и DAILY_REPORT.
+
+В опубликованном коде есть hooks узлов/транспорта; наличие hook/галочки
+не доказывает end-to-end доставку на каждом пути переключения.
+Старые статусы «hook не установлен» ниже относятся к этапам разработки.
+События хранятся в очереди, допускаются повторы.
+sent/pending в журнале не заменяет подтверждение получателя.
+
+Отправитель использует разрешённые привязанные VPN-пути awg0/mihomo0.
+eth0 fallback запрещён без отдельной root-owned аттестации реального
+SSTP FAIL-CLOSED на роутере. Доступность MikroTik/HTTPS через eth0
+такой аттестацией не является.
+
+`sudo awg-notify status` — безопасный просмотр.
+`sudo awg-notify test` — тест после настройки бота.
+Токены, chat ID, очередь и резервные копии держите приватными.
+[Руководство по системе](PRODUCT-GUIDE-v1.3.0.md).
+
+
+---
+
+<details>
+<summary>Исторический текст и датированные записи</summary>
+
+Статусы, команды и номера меню ниже относятся к указанным этапам разработки. При противоречии используйте актуальное описание выше и руководство v1.3.0.
+
 # AWG Notify — Telegram notifications (experimental draft)
 
 This independent, optional **disabled-by-default** notification subsystem is
@@ -265,3 +303,6 @@ Do not enable on production before gates are closed.
   reboot, genuine failover, LAN forwarded traffic and SSTP proof remain
   **unverified**. Source is only in draft PR #158 stacked on draft #115;
   the active menu was installed separately on the test Pi, not production.
+
+
+</details>

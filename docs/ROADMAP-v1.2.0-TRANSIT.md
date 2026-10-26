@@ -1,3 +1,17 @@
+# Исторический документ — ROADMAP-v1.2.0-TRANSIT.md
+
+Планы и результаты относятся к указанной дате/версии, а не к текущему статусу GitHub или очереди новых испытаний.
+
+Текущий продукт: [руководство v1.3.0](PRODUCT-GUIDE-v1.3.0.md). Итоговые доказательства: [реестр](RELEASE-ACCEPTANCE-MATRIX-v1.3.0.md).
+
+
+---
+
+<details>
+<summary>Исторический текст и датированные записи</summary>
+
+Статусы, команды и номера меню ниже относятся к указанным этапам разработки. При противоречии используйте актуальное описание выше и руководство v1.3.0.
+
 # v1.2.0 design note: MikroTik Transit / Backup VPN mode
 
 This document records the v1.2.0 Transit design and implementation contract.
@@ -231,3 +245,6 @@ management input stays reachable.
 OpenCCK may continue refreshing its persistent cached lists while Transit is
 active, but those cache updates do not reload the live Transit datapath. The
 latest cache is applied when Selective mode is restored.
+
+
+</details>

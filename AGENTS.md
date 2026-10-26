@@ -14,4 +14,9 @@ For every completed fix, report the verified source/installer commit and tests; 
 
 Before implementing or suggesting further AWG Pi Gateway work, read [docs/PROJECT_STATE.md](docs/PROJECT_STATE.md) for the current **gateway completion goal, agreed invariants, known evidence, and next release gates**. Also consult [docs/TESTING-v1.3.0.md](docs/TESTING-v1.3.0.md). For ChatGPT project settings use [docs/CHATGPT-PROJECT-INSTRUCTIONS.md](docs/CHATGPT-PROJECT-INSTRUCTIONS.md).
 
-Treat backup verification as a **completed supporting milestone**, not a reason to grow backup infrastructure. Resume work on the v1.3 installer and real clean-install/TUN/LAN/failover/reboot acceptance unless a new issue truly blocks that goal. Update project state only with verified facts; distinguish test Pi, old known-good SD, draft PR, merged code, released tag, and production deployment.
+Treat backup verification as a **completed supporting milestone**, not a reason to grow backup infrastructure. v1.3.0 is published; resume maintenance from the current product guide and latest verified project state. Reopen hardware only for a concrete new defect or material runtime change. Do not repeat accepted gates from historical checkboxes. Update project state only with verified facts; distinguish test Pi, old known-good SD, draft PR, merged code, released tag, and production deployment.
+
+
+## Published product baseline
+
+v1.3.0 is published at 5b1a8b802ce09a27c51f4e284f1a13207059a48e; production deployment is not implied. Read [the current guide](docs/PRODUCT-GUIDE-v1.3.0.md) and [documentation index](docs/README.md). Historical experimental statuses do not describe current release state. Preserve IMAGE_BOOT_ACCEPT=FAIL and the accepted full-media exception. Removed Hot Pool/READY/service gates and node FIXED editor must not return as release requirements; transport FIXED remains implemented. Documentation-only work does not authorize device/router/media changes.

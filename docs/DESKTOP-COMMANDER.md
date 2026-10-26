@@ -1,3 +1,46 @@
+# Desktop Commander в AWG Pi Gateway v1.3.0
+
+DC — необязательный агент администрирования. Он не участвует в VPN dataplane,
+DNS, выборе транспорта и здоровье шлюза. Отказ DC не должен останавливать VPN.
+
+**Система → Desktop Commander**: подключение/авторизация, состояние,
+включение/выключение автозапуска. Нужны явное подтверждение владельца
+и обычный пользователь Debian, не root. systemd-служба использует
+сохранённую приватную авторизацию; отключение её не удаляет.
+
+```bash
+sudo awg-dc prepare USER
+```
+
+USER замените на имя существующего обычного пользователя.
+Затем от этого пользователя запустите `awg-dc pair`,
+подтвердите устройство в браузере и следуйте указаниям команды.
+После завершения foreground pairing helper пытается включить
+постоянную службу; при необходимости доступны:
+
+```bash
+sudo awg-dc enable USER
+sudo awg-dc status USER
+sudo awg-dc disable USER
+```
+
+Установщик доставляет helper/unit. Подготовка/автозапуск при установке
+опциональны через AWG_DC_PREPARE, AWG_DC_AUTOSTART, AWG_DC_USER.
+Наличие файлов само по себе не авторизует устройство.
+
+Реальная авторизация, persistent nonroot-служба, удалённое выполнение
+и reboot проверялись в записанных версиях/сценариях.
+Это не гарантия всех внешних каналов и не доказательство SSTP по ping роутера.
+[Реестр доказательств](RELEASE-ACCEPTANCE-MATRIX-v1.3.0.md).
+
+
+---
+
+<details>
+<summary>Исторический текст и датированные записи</summary>
+
+Статусы, команды и номера меню ниже относятся к указанным этапам разработки. При противоречии используйте актуальное описание выше и руководство v1.3.0.
+
 # Optional Remote Desktop Commander on a Raspberry Pi
 
 Remote Desktop Commander (DC) is **not part of VPN dataplane, DNS, the transport selector, or gateway health**. It is an optional device agent for administration. A gateway must keep operating even when DC is offline or unpaired.
@@ -135,3 +178,6 @@ If the Pi is rebuilt from a blank OS, OAuth credentials cannot magically survive
 5. Reboot test Pi and check DC device Online, unit `active/enabled`, correct Node process, same device identity and preserved OAuth authorization.
 6. Perform a gateway version upgrade and an intentionally failed upgrade with rollback; verify the DC service and local npm cache are not lost. Validate no inbound firewall changes or impacts to routing/SSTP.
 
+
+
+</details>

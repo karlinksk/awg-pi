@@ -1,4 +1,6 @@
-# MikroTik Transit / Backup VPN for AWG Pi Gateway v1.2.0
+# MikroTik Transit — historical v1.2.0 RouterOS template
+
+**v1.3.0 context:** separately applied example, not an automatic Pi installer action or proof of the current router configuration. The Pi uses selected AWG or Mihomo; Xray uses the Mihomo TUN path. Preserve independent management and Transit FAIL-CLOSED. Do not apply example router changes merely to reconcile documentation. See the [current guide](PRODUCT-GUIDE-v1.3.0.md).
 
 This document is a RouterOS v7 implementation template. Replace the placeholders
 with the actual interface names, Pi address and existing policy selectors before
@@ -199,3 +201,4 @@ route. New selected flows should again use SSTP.
 After validation, migrate the existing production classifier to
 `routing-table=vpn_backup` in small steps. Keep a rollback/export of the current
 RouterOS configuration before modifying the production policy.
+

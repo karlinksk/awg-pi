@@ -1,3 +1,35 @@
+# Единый список Mihomo/Xray — v1.3.0
+
+Реализован в опубликованном релизе. Один текущий provider используется
+обоими движками; отдельный Xray URL не требуется. URL заменяем,
+количество/порядок/ключи узлов не фиксированы.
+Импорт: URL, локальный файл или текст — YAML, VLESS URI, Base64 VLESS.
+
+Выбор: **VPN-маршрутизация → Mihomo → Точка выхода Mihomo / Xray**.
+При активном AWG сначала явно выберите транспорт Mihomo.
+Просмотр каталога не вытесняет здоровый AWG.
+Активация защищена проверками профиля, локального TUN/маршрутов и откатом.
+
+Есть фильтры региона (все страны/подтверждённая Европа) и протокола
+(все/VLESS/Trojan/Hysteria2/Shadowsocks/VMess), обновление проверки,
+статистика/результаты. NETWORK_OK и локальная готовность не означают
+проверку сайта или LAN-клиента.
+
+Политики узлов рабочего меню — MANUAL/AUTO.
+Xray AUTO разрешается отдельно при настроенном резервном AWG.
+Нативные кандидаты рассматриваются перед Xray; резерв AWG зависит
+от политики транспорта. Hot Pool/READY и редактор FIXED-цепочек узлов
+убраны из рабочего меню; FIXED транспорта сохранён.
+[Система](PRODUCT-GUIDE-v1.3.0.md), [Xray](XRAY-VLESS-ADAPTER.md).
+
+
+---
+
+<details>
+<summary>Исторический текст и датированные записи</summary>
+
+Статусы, команды и номера меню ниже относятся к указанным этапам разработки. При противоречии используйте актуальное описание выше и руководство v1.3.0.
+
 # Unified Mihomo/Xray subscription catalogue — experimental phase 1
 
 ## Agreed behavior
@@ -87,3 +119,6 @@ not a stable release and not a replacement for v1.3.0 release gates. The
 next stage adds the guarded live TUN switch/rollback for MANUAL, AUTO and
 FIXED across engine changes. Only after real TUN, LAN, failover and reboot
 tests may it be enabled in the main node-policy path.
+
+
+</details>

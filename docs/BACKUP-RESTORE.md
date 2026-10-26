@@ -1,5 +1,9 @@
 # Full-media backup and bare-metal recovery
 
+**Исключение сохранено:** исходный IMAGE_BOOT_ACCEPT=FAIL из-за раннего AWG → Mihomo; f00c93e прошёл отдельный реальный reboot. Повторного full-media восстановления нового исправленного образа не было. Отличались два FAT last-access-date metadata bytes; raw whole-card SHA equality не достигнуто. Исторические FAIL/UNKNOWN и непроверенные сценарии не становятся PASS.
+
+For v1.3.0 distinguish archive integrity, device byte comparison, actual boot and preserved runtime state. See the [release ledger](RELEASE-ACCEPTANCE-MATRIX-v1.3.0.md).
+
 This document describes a **full storage-device image** backup for an AWG Pi Gateway host and the corresponding bare-metal restore procedure.
 
 It is intentionally separate from the gateway's built-in transactional backups under
@@ -99,7 +103,7 @@ created. That is why the pre-shutdown gateway checks matter.
 4. Boot with the normal Ethernet connection available. Do not immediately change
    routing/firewall state until the restored baseline is verified.
 
-5. Confirm the restored version and service state:
+5. Confirm version, selected transport and expected service state against the private baseline. AWG need not be active for a Mihomo or unconfigured baseline. Check `sudo awg-transport get` and `sudo awg-selection status` first:
 
    ```bash
    sudo cat /etc/awg-pbr/version
@@ -109,7 +113,6 @@ created. That is why the pre-shutdown gateway checks matter.
    sudo systemctl is-active \
      awg-pbr-setup.service \
      dnsmasq.service \
-     awg-quick@awg0.service \
      awg-pbr-health.service \
      awg-opencck-update.timer
    ```
@@ -132,10 +135,10 @@ created. That is why the pre-shutdown gateway checks matter.
 Confirm that:
 
 - normal Internet traffic remains DIRECT;
-- a known VPN-selected destination uses `awg0`;
+- a known VPN-selected destination uses the expected active interface (`awg0` or `mihomo0`, including the Mihomo/Xray bridge where selected);
 - DIRECT exceptions still override VPN/OpenCCK classification;
 - DNS/OpenCCK state is present;
-- stopping the VPN path causes Selective to remain FAIL-OPEN as designed.
+- the expected Selective FAIL-OPEN configuration is preserved; a new disruptive failure test needs independent recovery preparation.
 
 Use the current release validation guide for the full regression sequence.
 
@@ -145,17 +148,18 @@ Confirm that:
 
 - the Pi reports Transit mode;
 - Transit guard is SAFE;
-- healthy AWG reports active policy / ready VPN table;
-- the AWG endpoint itself remains DIRECT through the LAN router;
+- the expected active AWG/Mihomo path reports active policy / ready VPN table;
+- VPN endpoints remain DIRECT through the LAN router;
 - selected MikroTik backup traffic exits only through the VPN path;
-- an unhealthy AWG path produces FAIL-CLOSED rather than WAN leakage.
+- an unavailable active VPN leaves Transit FAIL-CLOSED rather than direct forwarding; do not induce an outage without a separate guarded plan.
 
 Also verify the corresponding MikroTik primary/backup routing state before declaring
 the restored system production-ready.
 
 See:
 
-- [TESTING-v1.2.0.md](TESTING-v1.2.0.md)
+- [TESTING-v1.3.0.md](TESTING-v1.3.0.md)
+- [PRODUCT-GUIDE-v1.3.0.md](PRODUCT-GUIDE-v1.3.0.md)
 - [MIKROTIK-TRANSIT-v1.2.0.md](MIKROTIK-TRANSIT-v1.2.0.md)
 
 ## Restoring to a larger device
@@ -182,3 +186,4 @@ at least:
 
 This separation keeps the public project documentation reproducible without publishing
 machine-specific backup metadata or credentials.
+

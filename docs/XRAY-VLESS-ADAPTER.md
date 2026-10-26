@@ -1,3 +1,37 @@
+# Xray VLESS — поддержка в v1.3.0
+
+Закреплённый core 26.3.27 ARM64 с проверкой SHA256 поставляется как
+дополнительный движок. Путь: **Mihomo TUN → локальный SOCKS Xray → сервер**.
+Отдельного Xray TUN и отдельной подписки нет.
+
+Строго валидируется подмножество VLESS:
+- REALITY XHTTP, режимы auto/stream-one/stream-up/packet-up;
+- REALITY gRPC;
+- обычный TLS gRPC с проверкой сертификата и HTTP/2 ALPN h2.
+
+Проверяются endpoint, UUID, SNI, TLS и параметры профиля.
+Неподдерживаемые комбинации и отключённая проверка сертификата отклоняются.
+Это **TCP outbound**, не универсальная поддержка всех VLESS/UDP.
+
+Ручной выбор доступен в едином списке Mihomo/Xray. При активном AWG сначала
+явно выбирается транспорт Mihomo. Профиль сверяется с текущим provider;
+изменённая/исчезнувшая идентичность не считается прежним узлом.
+
+Xray AUTO выключен после чистой установки. Включение отдельно требует
+AUTO узлов, нужных компонентов и настроенного резервного AWG,
+с проверками безопасной активации/отката. Нативные кандидаты идут первыми.
+Cross-core activation и возврат к native уже реализованы;
+старые experimental/unmerged статусы ниже описывают этапы 19–20 октября.
+[Руководство](PRODUCT-GUIDE-v1.3.0.md), [проверки](RELEASE-ACCEPTANCE-MATRIX-v1.3.0.md).
+
+
+---
+
+<details>
+<summary>Исторический текст и датированные записи</summary>
+
+Статусы, команды и номера меню ниже относятся к указанным этапам разработки. При противоречии используйте актуальное описание выше и руководство v1.3.0.
+
 # Experimental Xray VLESS/Reality adapter (opt-in)
 
 **Architecture:** Mihomo stays the primary TUN router; AWG is a fallback when configured. Xray v26.3.27 is an additional **TCP outbound only** for VLESS Reality XHTTP and gRPC, never a replacement TUN.
@@ -73,3 +107,6 @@ isolated Xray proxy tests and the earlier manual healthy-HY2 canary are
 different evidence scopes. No runtime service or MikroTik configuration was
 modified while developing this versioned executor. Release v1.3.0 and PR
 #115 remain gated by clean install, LAN, failover and reboot validation.
+
+
+</details>

@@ -46,3 +46,8 @@ Independent hardware traffic tests remain required for release evidence.
 **Recorded example (2026-10-17):** The active Shadowsocks node passed local proxy checks but failed actual Pi-bound TUN TLS; a reserve passed genuine `mihomo0` HTTPS without DNS or sniffing changes. The draft v1.3 installer gained an on-demand TUN verification helper, explicit proxy-bypass on its bound HTTPS checks, and warning-only first-start diagnostics. That confirms neither forwarded LAN clients nor automatic failover. Those acceptance tests remain pending.
 
 **Policy status:** This document applies to new contributions and troubleshooting in the AWG Pi Gateway project. It is not proof that all earlier Pi-only helpers were already backported or that a draft PR has been released.
+
+
+## Published system reference
+
+v1.3.0 is published. Use [the product guide](PRODUCT-GUIDE-v1.3.0.md) and [documentation index](README.md) for current behavior. This policy still applies to new runtime corrections. Documentation reconciliation does not require new installs, faults, reboot or media writes. The recorded full-media exception remains an exception, not PASS.

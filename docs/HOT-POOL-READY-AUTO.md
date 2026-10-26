@@ -1,3 +1,17 @@
+# Исторический документ — HOT-POOL-READY-AUTO.md
+
+Hot Pool/READY и website/service eligibility исключены из текущего выбора MANUAL/AUTO и рабочего меню. Команды их включения ниже — старый эксперимент, а не инструкция v1.3.0.
+
+Текущий продукт: [руководство v1.3.0](PRODUCT-GUIDE-v1.3.0.md). Итоговые доказательства: [реестр](RELEASE-ACCEPTANCE-MATRIX-v1.3.0.md).
+
+
+---
+
+<details>
+<summary>Исторический текст и датированные записи</summary>
+
+Статусы, команды и номера меню ниже относятся к указанным этапам разработки. При противоречии используйте актуальное описание выше и руководство v1.3.0.
+
 # Hot Pool READY-first automatic Mihomo failover (v1.3.0 RC)
 
 The user-facing meaning of **Mihomo AUTO** on a *newly installed* AWG Pi Gateway:
@@ -65,3 +79,6 @@ In Selective, Raspberry Pi's `dnsmasq` answers client queries **when the client 
 On the TEST Pi, active `shadowsocks-1827968609` successfully proxied domain-based HTTPS but failed numeric-IP CONNECT and real TUN TLS. Reserve `shadowsocks-1827145438` passed numeric-IP HTTPS **with and without SNI sniffing**, then passed both an independently guarded real `mihomo0` postcheck and Google HTTP 204; the original node was restored. No DNS/sniffing changes were needed. A subsequent one-off script's exact route comparison failed transiently just after restoration; later inspection confirmed `fwmark 0x100 → table 100 → mihomo0`. Use bounded recovery polling and route-semantic checks, not whitespace-sensitive string equality, for further canaries.
 
 Hot Pool's service `READY` currently qualifies hostname-based OpenAI/ChatGPT/decoded YouTube, **not** numeric-IP or TUN suitability. The separate `awg-mihomo-smart service-scan` requires numeric-IP HTTPS on candidates, and real node activation has a mandatory bound TUN postcheck. Do not confuse these levels of eligibility or reintroduce the rejected legacy YouTube HTTP prefilter. **Unattended failover, routed LAN client and healthy AWG fallback are still not accepted**; this PR remains draft.
+
+
+</details>

@@ -1,3 +1,17 @@
+# Исторический документ — MIHOMO_SERVICE_ELIGIBILITY.md
+
+Hot Pool/READY и website/service eligibility исключены из текущего выбора MANUAL/AUTO и рабочего меню. Команды их включения ниже — старый эксперимент, а не инструкция v1.3.0.
+
+Текущий продукт: [руководство v1.3.0](PRODUCT-GUIDE-v1.3.0.md). Итоговые доказательства: [реестр](RELEASE-ACCEPTANCE-MATRIX-v1.3.0.md).
+
+
+---
+
+<details>
+<summary>Исторический текст и датированные записи</summary>
+
+Статусы, команды и номера меню ниже относятся к указанным этапам разработки. При противоречии используйте актуальное описание выше и руководство v1.3.0.
+
 # Mihomo Service Eligibility — ChatGPT + YouTube (focused change)
 
 **Scope:** complete the original node-selection request, not replace AWG Pi's working routing or add a recovery system. Code remains **opt-in** until independent live tests. MikroTik and NAS are independent immutable devices. MikroTik already sends marked traffic through SSTP while available, and via Pi when SSTP is down. Pi must preserve Transit FAIL-CLOSED.
@@ -447,3 +461,6 @@ interfaces. The full Python regression suite is 129/129 PASS.
 This canary script is NOT invoked automatically by the normal
 installation or timers. The actual root apply/restore and monitored
 opt-in transition to balanced remain separate final acceptance gates.
+
+
+</details>

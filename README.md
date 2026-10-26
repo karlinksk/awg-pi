@@ -1,272 +1,129 @@
 # AWG Pi Gateway
 
-Raspberry Pi 4 AmneziaWG gateway with **Selective Gateway** and
-**MikroTik Transit / Backup VPN** operating modes.
+VPN-шлюз для **Raspberry Pi 4 / Debian 13 ARM64** с AmneziaWG, Mihomo
+и поддержкой выбранных VLESS-профилей через Xray. Управление — русское
+SSH-меню `awg-menu` и командная строка.
 
-In Selective mode, the normal Internet route stays **DIRECT** through the home
-router and only selected domains/address lists are marked for AmneziaWG. If VPN
-health fails, Selective removes the policy rule and falls back to the normal
-Internet route (**FAIL-OPEN**).
+**Стабильная версия: [v1.3.0](https://github.com/karlinksk/awg-pi/releases/tag/v1.3.0).**
 
-In Transit mode, MikroTik selects traffic for the Pi and the Pi forwards that
-traffic through AmneziaWG. Transit keeps the Pi management path and AWG endpoint
-DIRECT, while selected transit traffic is **FAIL-CLOSED** if AWG becomes
-unavailable.
+## Режимы работы
 
-## Stable release
+| Режим | Кто выбирает трафик | Маршрут | При отказе VPN |
+| --- | --- | --- | --- |
+| **Selective Gateway** | Pi: VPN-домены, OpenCCK и список клиентов | Выбранные направления через активный VPN, остальное DIRECT через роутер | **FAIL-OPEN**: обычный прямой маршрут |
+| **MikroTik Transit / Backup VPN** | MikroTik: отдельно настроенные правила направляют трафик на Pi | Через активный VPN, с проверкой источника и MAC доверенного роутера | **FAIL-CLOSED**: выбранный транзитный трафик блокируется |
 
-Current stable release: **v1.2.0** (until the v1.3.0 tag and release are published)
+Оба режима используют **AWG или Mihomo**. При выборе Xray-ноды TUN остаётся
+у Mihomo, а Xray обслуживает поддерживаемое исходящее соединение.
+Это не третий независимый TUN-транспорт. DNS и управление Pi независимы от VPN.
+Настройки RouterOS и приоритет SSTP задаются отдельно: установщик Pi их
+автоматически не создаёт.
 
-**Permanent maintenance policy:** [Installer-first change policy](docs/INSTALLER-CHANGE-POLICY.md). Every tested correction belongs in the installer/upgrade source, regression tests and documentation; see [AGENTS.md](AGENTS.md).
+## Возможности
 
-## v1.3.0 release candidate — verified scope
+- **AmneziaWG:** импорт конфигурации из файла или вставленного текста,
+  проверка, замена с откатом к предыдущему профилю; поддержка AWG v3.1.
+- **Mihomo:** подписка по URL или импорт из файла/текста — YAML,
+  VLESS URI и Base64 VLESS. Новый профиль подготавливается до применения;
+  ошибка обновления не должна уничтожать рабочий кэш.
+- **Единый список Mihomo/Xray:** ручной выбор узла, состояния проверок,
+  фильтры региона и протокола. В меню есть VLESS, Trojan, Hysteria2,
+  Shadowsocks и VMess; совместимость конкретного профиля проверяется отдельно.
+- **Резервирование:** отдельные политики транспорта и узлов,
+  проверка доступности, защищённое переключение и откат при ошибке.
+  Исправный канал не меняется ради меньшей задержки.
+- **Selective:** ручные VPN-домены, приоритет DIRECT-исключений над
+  пересекающимися VPN/OpenCCK-доменами, импорт/экспорт списков,
+  группы/сайты OpenCCK, IPv4/CIDR-источники и список клиентов.
+- **Transit:** защита от прямого выхода при отказе VPN; ограничение
+  IPv4 TCP MSS по MTU активного VPN-маршрута. Списки Selective сохраняются,
+  но не классифицируют Transit.
+- **Диагностика и обслуживание:** состояние, журналы, отчёты с маскированием
+  секретов, дневная/месячная статистика AWG/Mihomo, обновления шлюза
+  и AmneziaWG, проверка/восстановление закреплённой версии Mihomo,
+  резервные копии при изменениях, настройка DNS и согласование LAN-конфигурации.
+- **Telegram:** необязательные уведомления, ежедневная сводка,
+  выбор типов событий, очередь и повторные попытки доставки.
+- **Desktop Commander:** необязательный удалённый агент с явной
+  авторизацией и автозапуском от обычного пользователя.
+- **Русское SSH-меню:** подсказки, классическое или Matrix-оформление,
+  режим шлюза, DNS, часовой пояс, reboot/poweroff.
 
-v1.3.0 is the multi-transport Raspberry Pi 4 / Debian 13 ARM64 release
-candidate. It preserves **Selective FAIL-OPEN**, **MikroTik Transit
-FAIL-CLOSED**, independent DNS and management SSH/SSTP. The two installed
-transport engines are **AmneziaWG** and **Mihomo**, with the supported passive
-Xray adapter for VLESS nodes. **Mihomo is the default primary**, and a
-configured healthy AWG is the ultimate fallback after the allowed
-Mihomo/Xray candidates have been exhausted. The agreed conservative AUTO
-policy does not switch merely for speed; healthy AWG remains selected until
-explicitly changed or proven unhealthy. Manual transport/node selection
-does not require remote ChatGPT/OpenAI/YouTube website eligibility.
+## MANUAL и AUTO
 
-**Clean installation installs both engines and shipped Stage18/media
-dependencies before any profiles are supplied.** It finishes safely in
-`Selective + unconfigured`; the owner imports AWG and/or Mihomo after
-installation and explicitly selects the gateway mode. No automatic
-first-node wizard, READY/Hot Pool eligibility gate or editable FIXED chain
-is required under the current v1.3.0 release contract. Operator settings
-are preserved on upgrade.
+**Транспорт AWG/Mihomo:** MANUAL, FIXED с заданной парой основной/резервный,
+консервативный AUTO. **Узлы Mihomo:** MANUAL и AUTO; участие Xray в AUTO
+включается отдельно и требует настроенного резервного AWG.
+На чистой установке Xray AUTO выключен.
 
-Fresh Debian installations default to **Asia/Novosibirsk**, with
-`AWG_PI_TIMEZONE` allowing another valid IANA zone; upgrades preserve
-the previously selected timezone. The SSH menu includes accepted Russian
-numeric/Matrix appearance and standard gateway controls.
+При отказе узла AUTO рассматривает разрешённые нативные узлы текущей
+подписки, затем разрешённые Xray-кандидаты. Настроенный работоспособный
+AWG — последний резерв при соответствующей политике транспорта.
+Здоровый AWG остаётся выбранным до ручной смены или подтверждённого отказа.
 
-**Release acceptance:** actual pinned Debian 13.7 ARM64 clean installation,
-profile onboarding, both transport TUN HTTPS, configured and empty reboots,
-bounded real client LAN/Selective/Transit failure behavior, Xray AUTO and
-sticky AWG recovery have scoped hardware evidence. A cold full-card image
-was restored to an approved test microSD and booted; the original acceptance
-detected an unwanted AWG-to-Mihomo change. The boot monitor was corrected
-in `f00c93e` with a bounded monotonic grace and re-tested on real hardware,
-including reboot. This does **not** retroactively make the first restored
-state PASS or claim a byte-identical whole-card SHA (two Windows FAT metadata
-bytes changed); the owner accepted the documented exception instead of
-re-imaging the card. The operator's manually enabled Xray AUTO is preserved.
-Historical acceptance is scoped; no arbitrary IPv6 or all-client guarantee.
+Ручной выбор проверяет локальную готовность и безопасность переключения.
+AUTO использует штатную сетевую оценку движка. Доступность
+ChatGPT/OpenAI/YouTube не является условием допуска узла.
+**Hot Pool, READY и редактор FIXED-цепочки узлов убраны из рабочего меню**;
+FIXED между транспортами сохранён. Наличие старого кода и настроек
+для совместимости не означает доступность этих функций в текущем интерфейсе.
 
-Release evidence: [v1.3.0 validation](docs/TESTING-v1.3.0.md) and
-[release acceptance ledger](docs/RELEASE-ACCEPTANCE-MATRIX-v1.3.0.md).
-Maintenance rule: [installer-first change policy](docs/INSTALLER-CHANGE-POLICY.md)
-and [repository agent rules](AGENTS.md).
+## Установка и обновление
 
-Until an actual `v1.3.0` tag and GitHub Release are published,
-**v1.2.0 remains the published stable install target**. Do not install an
-unversioned development branch on the production gateway.
-
-## Install / upgrade
-
-Use the stable tag for both a fresh install and an upgrade from an existing
-AWG Pi Gateway installation:
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/karlinksk/awg-pi/v1.2.0/install.sh -o /tmp/install.sh && sudo bash /tmp/install.sh
-```
-
-A fresh v1.2.0 install stages Selective safely while AWG is validated, then
-defaults to **MikroTik Transit / Backup VPN** after a successful Transit
-preflight.
-
-When v1.1.0 is already installed, the same installer detects the existing
-gateway, preserves the AWG profile, VPN/DIRECT lists, clients, requested VPN
-state and OpenCCK state, and offers the v1.2.0 operating-mode choice. If Transit
-preflight or activation fails, the installer keeps/restores Selective instead of
-leaving a partial Transit state.
-
-## v1.1.0 release validation
-
-v1.1.0 completed the hardware release gate on Raspberry Pi 4 using a clean
-Debian 13 (trixie) ARM64 microSD install and a reboot/persistence check.
-
-The final frozen release candidate was:
-
-```text
-branch: rc/v1.1.0-rc4
-SHA:    85fbd6a93361635051a2a5569cb8c1bec697ee69
-```
-
-The clean-install test used the unmodified RC4 installer, confirmed the default
-upstream DNS pair `9.9.9.9,149.112.112.112`, verified `9.9.9.9` as the
-first transport-health probe with `1.1.1.1` retained as fallback, and passed
-post-reboot service, health, policy-routing, DNS, and watchdog checks.
-
-Earlier RC snapshots remain in the repository for traceability. Detailed
-hardware evidence is recorded in `docs/TESTING-v1.1.0.md`.
-v1.1.0 includes:
-
-- SSH TUI control panel (`awg-menu`)
-- bulk VPN/DIRECT domain import and export
-- OpenCCK sources with last-known-good cache and automatic timer refresh
-- domain, IPv4 and IPv4 CIDR source modes
-- source/routing diagnostics and FAIL-OPEN health monitoring
-- separate AWG Pi Gateway and AmneziaWG core updates
-- transactional LAN reconfiguration with backup/rollback
-- transactional native AmneziaWG profile check/replace/rollback
-- transactional upstream DNS change from CLI/TUI with validation and rollback
-- AWG v3.1 native-profile compatibility and secret redaction
-- CI regression tests for the hardware-discovered RC1/RC2 issues
-- post-RC2 real Linux `/dev/tty` confirmation fix
-- distinct TUI status for a user-cancelled maintenance operation
-
-## Main commands
+Нужны Pi 4, Debian 13 ARM64, Ethernet, рабочий SSH и доступ к источникам
+установки. Сохраните рабочий носитель или проверенную резервную копию.
 
 ```bash
-sudo awg-route status
-sudo awg-route vpn add example.com
-sudo awg-route vpn import domains.txt
-sudo awg-route direct add example.com
-
-sudo awg-route source add opencck youtube
-sudo awg-route source list
-sudo awg-route source update
-
-sudo awg-route diagnostics
-sudo awg-route dns status
-sudo awg-route dns set 9.9.9.9,149.112.112.112
-sudo awg-route network reconfigure
-sudo awg-route config check /etc/amnezia/amneziawg/awg0.conf
-sudo awg-route config replace /path/to/new.conf
-sudo awg-route config rollback
-sudo awg-menu
-
-sudo awg-update status
-sudo awg-update gateway
-sudo awg-update core
+curl -fL --proto '=https' --tlsv1.2 \
+  https://raw.githubusercontent.com/karlinksk/awg-pi/v1.3.0/install.sh \
+  -o awg-pi-install-v1.3.0.sh
+sudo env AWG_PI_REF=v1.3.0 bash ./awg-pi-install-v1.3.0.sh
 ```
 
-Interactive SSH logins open the TUI automatically after installation.
-Create `~/.no-awg-menu` to disable automatic TUI launch for that account while
-keeping normal SSH access.
+Вторую команду запускайте после успешной загрузки и проверки скрипта.
+`AWG_PI_REF` закрепляет компоненты проекта на той же версии.
+Тот же установщик распознаёт существующую установку и сохраняет
+явные настройки оператора.
 
-## Maintenance and upgrade
+Новая установка подготавливает движки и зависимости и заканчивает в
+**Selective + unconfigured**, без профилей и подписок. Подготовлен порядок
+транспорта Mihomo → AWG, но без профилей работающего VPN нет.
+Через `sudo awg-menu` импортируйте AWG и/или подписку Mihomo,
+выберите транспорт и политики, затем при необходимости включите Transit.
+Telegram и удалённый агент настраиваются отдельно.
 
-The RC2 line fixed CIDR validation under `set -u`, decimal ping marks
-(including old hexadecimal values in saved env), installer version isolation
-from Debian `/etc/os-release`, and skips underscore DNS service names in
-OpenCCK domain sources. Malformed hostnames still reject the update and preserve
-its cache.
+Часовой пояс новой установки — `Asia/Novosibirsk`; другой IANA-пояс
+задаётся через `AWG_PI_TIMEZONE`. Обновление сохраняет существующий пояс.
+[Пошаговая установка](docs/CLEAN-INSTALL-v1.3.0-CANDIDATE.md).
 
-`network reconfigure` discovers the current IPv4 LAN/default router, displays
-old/new values, asks for confirmation, and backs up env, dnsmasq, nftables and
-client settings before applying them. It updates gateway configuration for an
-**already changed network**; it does not change Pi addresses, DHCP reservations,
-router settings or client gateway/DNS. Ambiguous routes/addresses are rejected.
-`status` warns about a mismatch. Clients outside the new subnet are retained
-after explicit acknowledgement; add their new addresses before removing old
-ones. Empty allow-list means all gateway clients. For unattended use:
-`awg-route network reconfigure --yes --keep-clients`.
+## Проверки и ограничения
 
-`config replace FILE` and `config rollback` also appear in the VPN menu.
-Native gateway profiles need one peer, an IPv4 interface address and IPv4
-default AllowedIPs (`0.0.0.0/0`). Additional IPv6 Address/AllowedIPs entries
-are preserved; Table=off does not enable IPv6 policy routing. AWG v3.1
-HeaderProtectionKey, timing ranges, padding and security options are supported;
-legacy H1-H4 are not mandatory. DNS is stripped, Table is forced off, and
-executable hooks/SaveConfig are rejected. Preflight uses `awg-quick strip` and
-the installed AWG core on a temporary userspace interface in an isolated
-network namespace (`unshare`, `amneziawg-go`, `awg`). Unsupported AWG
-parameters fail before live changes. The kernel-only peer option
-`AdvancedSecurity` is rejected by this userspace gateway, matching the
-upstream tools' userspace transport restriction.
+Тег v1.3.0 закреплён на
+`5b1a8b802ce09a27c51f4e284f1a13207059a48e`.
+CI shell/awg-v31 прошёл на точных кандидатах PR #165–167.
+Аппаратные результаты установки, TUN, LAN, failover, обновления
+и reboot имеют разные версии и границы:
+[реестр проверок](docs/RELEASE-ACCEPTANCE-MATRIX-v1.3.0.md).
 
-Keys are never printed. During switching the health monitor is stopped and
-policy is DIRECT. A fresh handshake and marked, interface-bound transport probe
-must pass before health monitoring resumes. Failure restores the old profile;
-failure of that tunnel leaves DIRECT with health stopped. Restore connectivity,
-then start `awg-pbr-health.service` manually. Manual rollback validates the
-saved `.conf.previous` through the same transaction.
+**Исключение восстановления сохранено:** исходный IMAGE_BOOT_ACCEPT=FAIL
+из-за раннего AWG → Mihomo. Исправление f00c93e прошло отдельный реальный
+reboot; повторного full-media восстановления нового исправленного образа
+не было. Отличались два байта FAT-метаданных; raw whole-card SHA equality
+не достигнуто. Эти результаты не переименованы в PASS.
+[Подробности](docs/TESTING-v1.3.0.md).
 
-Use `sudo awg-route config check /etc/amnezia/amneziawg/awg0.conf` to validate
-the current native profile with the installed core without switching the live
-tunnel or restarting services. Status, diagnostics reports and installer AWG
-failure output redact private, preshared and header-protection keys before
-printing or saving them. Reports from older builds are not rewritten.
+Реализована IPv4-маршрутизация; IPv6 policy routing не поддерживается.
+Xray-адаптер имеет ограниченный набор VLESS-профилей и TCP-выход.
+Локальная готовность узла не доказывает работу всех сайтов и клиентов.
+Публикация релиза не означает установку на production.
 
-`dns status` displays the saved upstream list and the active `dnsmasq`
-`server=` entries. `dns set IPv4[,IPv4...]` validates one to four IPv4
-servers, checks that at least one answers directly, asks for confirmation,
-updates both `UPSTREAM_DNS` and the managed `dnsmasq` config, validates
-`dnsmasq`, restarts it and requires a successful query through the Pi. Failure
-restores both files and attempts to restart the previous DNS configuration. The
-same operation is available in `System -> DNS upstream` in the TUI.
+## Документация
 
-Backups are under `/var/backups/awg-gateway/{network,config,dns}-*`, directories
-mode 700/files 600. Operations handle command failures and catchable signals;
-power loss/SIGKILL require recovery from the backup. They preserve VPN/DIRECT
-lists, OpenCCK sources, requested VPN on/off state and DNS upstream settings.
-Maintenance is exclusive; concurrent CLI/OpenCCK changes are refused.
+- [Навигатор документации](docs/README.md) · [Руководство по системе](docs/PRODUCT-GUIDE-v1.3.0.md)
+- [Mihomo/Xray и подписки](docs/UNIFIED-MIHOMO-XRAY-NODES.md) · [Xray-адаптер](docs/XRAY-VLESS-ADAPTER.md)
+- [Telegram](docs/AWG-NOTIFY.md) · [Desktop Commander](docs/DESKTOP-COMMANDER.md)
+- [Полный образ и восстановление](docs/BACKUP-RESTORE.md)
+- [Политика сопровождения](docs/INSTALLER-CHANGE-POLICY.md) · [AGENTS](AGENTS.md)
 
-For the existing Pi upgrade procedure and hardware validation, see
-[TESTING-v1.1.0.md](docs/TESTING-v1.1.0.md#13-rc2-existing-pi-upgrade-first).
-
-For full microSD/SSD imaging and bare-metal recovery, see
-[BACKUP-RESTORE.md](docs/BACKUP-RESTORE.md).
-
-## v1.2.0
-
-v1.2.0 adds an independent **MikroTik Transit / Backup VPN** mode alongside
-the existing Selective Gateway.
-
-v1.2.0 includes:
-
-- persistent `selective` / `transit` operating mode;
-- transactional mode switching with rollback;
-- Transit preflight that verifies a healthy AWG path and keeps the AWG endpoint
-  DIRECT through the normal LAN router;
-- MikroTik-MAC-restricted Transit forwarding and NAT to `awg0`;
-- Selective FAIL-OPEN and Transit FAIL-CLOSED health behavior;
-- a Transit lockdown ruleset that is installed before router/MAC-dependent boot setup;
-- mode-aware boot/reload setup;
-- CLI and SSH-TUI mode selection;
-- persistent TUI mode identification: the dialog backtitle, main-menu title and
-  System/Operating mode screens visibly show SELECTIVE or TRANSIT, and the
-  active choice is marked as current;
-- context help for every existing and new TUI menu item, with expanded warnings
-  before routing/network/power actions;
-- AmneziaWG profile replacement from the TUI either by file path or by pasting
-  the native .conf text into a root-only temporary file in /run; pasted profiles
-  are validated before transactional replacement and automatic rollback remains
-  available;
-- preservation of VPN/DIRECT/OpenCCK/client state while Transit classification
-  is active; OpenCCK continues refreshing its persistent cache without
-  reloading the live Transit datapath;
-- hierarchical manual DIRECT precedence in Selective mode: VPN/OpenCCK domain
-  directives already covered by a manual DIRECT parent are omitted from the
-  generated dnsmasq nftset rules, preventing a more-specific source entry from
-  overriding the DIRECT exception.
-
-Core mode commands are:
-
-```bash
-sudo awg-route mode status
-sudo awg-route mode selective
-sudo awg-route mode transit
-```
-
-A fresh v1.2.0 install defaults to **Transit**. During installation the Pi stages
-the safe Selective ruleset while AWG is validated, then transactionally switches
-to Transit after preflight succeeds. A v1.1.0 -> v1.2.0 upgrade also offers
-Transit as the default post-upgrade mode. If Transit preflight/activation fails,
-the runtime is restored to Selective instead of leaving a partial Transit state.
-
-v1.2.0 is the current stable release. The final frozen release candidate was
-`rc/v1.2.0-rc10`; hardware and CI evidence is recorded in the testing guide.
-
-Design: [ROADMAP-v1.2.0-TRANSIT.md](docs/ROADMAP-v1.2.0-TRANSIT.md)
-
-Hardware release gate: [TESTING-v1.2.0.md](docs/TESTING-v1.2.0.md)
-
-RouterOS template: [MIKROTIK-TRANSIT-v1.2.0.md](docs/MIKROTIK-TRANSIT-v1.2.0.md)
+Документация в main уточняется после выпуска. Тег v1.3.0 сохраняет выпущенный
+код и исторический снимок документации; тег не перемещается ради правок текста.
