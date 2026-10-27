@@ -945,3 +945,226 @@ Evidence now excludes the simple `mips` stack, `auto-detect-interface`, domain v
 4. После существенного результата обновлять **только проверенные факты** и статус следующего шага здесь; детали доказательств — в тестовой документации/PR. **Не плодить новые планы и документы вместо завершения шлюза.**
 
 См. [политику installer-first](INSTALLER-CHANGE-POLICY.md), [release gate](TESTING-v1.3.0.md), [правила для агентов](../AGENTS.md), [PR #115](https://github.com/karlinksk/awg-pi/pull/115).
+
+## Проверка 2026-10-21 — ручной переключатель Mihomo / Xray (тестовая Pi)
+
+Это отдельный аппаратный срез, **не release PASS**. На тестовой `awg-upgrade` изолированно испытан ручной выбор из подписки; после тестов восстановлена первоначальная Mihomo-нода, Xray неактивен, монитор снова активен. MikroTik, продуктивная microSD, DNS и SSH не изменялись.
+
+- Доработка — **draft PR [#145](https://github.com/karlinksk/awg-pi/pull/145)**, коммит `ed4f1fd3fe3e9b7e56652f50ca68e605886d346f`, поверх отдельной candidate-ветки. **Не merged, не released, не installed на продуктивный шлюз.** В рамках installer-first существующий `install.sh` уже устанавливает `src/awg-menu` и `src/awg-xray-manual-switch.py`, изменены именно эти версионированные файлы и регрессионные тесты.
+- Исправления: выбор через Mihomo controller idempotent (не посылать redundant PUT при уже выбранной ноде), подтверждение конечной выбранной ноды после HTTP 400, ограниченное ожидание восстановления TUN/маршрутов в момент COMMIT и при rollback, автоматическая изолированная проверка Xray без лишнего пользовательского диалога, явное различение **адреса сервера подписки** и **внешнего IP выхода через `mihomo0`**. Проверены 75 адресных unit/regression теста, синтаксис Python/Bash.
+- **LIVE Mihomo→Mihomo PASS:** переключение между нативными профилями 13→10 подтвердилось в контроллере; OpenAI API `HTTP 401, curl=0` через `mihomo0`, Transit guard SAFE. Адреса серверов в подписке у профилей различны, но публичный egress IP оказался одинаковым: равенство IP выхода **не** означает, что смены ноды не было.
+- **LIVE Mihomo→Xray №3 FAIL с безопасным откатом PASS:** `POSTCOMMIT_TUN` не прошёл HTTPS, транзакция `rolled_back`, `Xray` остановлен, прежний Mihomo/Transit SAFE/HTTPS 401 восстановлен. Нельзя выдавать isolated Xray HTTPS preflight за live TUN PASS или считать этот кандидат годным только по подписке.
+- **LIVE Mihomo→Xray №1 PASS:** контроллер действительно выбрал `AWG-XRAY-VLESS-LOCAL`, локальный Xray SOCKS работал, три последовательные OpenAI API HTTPS через `mihomo0` дали `401, curl=0`; Xray active, таблицы 100/101 через `mihomo0`, Transit SAFE, независимый DNS/SSH active.
+- **LIVE Xray→нативная Mihomo №13 PASS:** исходный профиль выбран в контроллере, Xray остановлен, TUN OpenAI HTTPS 401 и Transit SAFE. После завершения нет активных Xray manual watchdog timers. На тестовой Pi установленные два файла совпали с исходниками PR #145, сохранена root-only резервная копия предыдущих версий.
+- **Остаются незакрытыми:** аппаратный LAN-клиент при разных движках, reboot persistence, полный clean-install/upgrade на пустой карте, долгосрочная стабильность и интеграция изменения в ветку релиза/PR #115. READY-проверки для платной подписки могут быть штатно выключены, но это не отменяет защищённый TUN postcheck самого ручного перехода. YouTube24 при включённом READY тестировать только реальным декодом 24 кадров, без прежнего первичного HTTP-gate.
+
+
+**Уточнение UX, отдельный коммит PR #145 `3b224a7`:** раздел «Точка выхода / узел» теперь открывает каталог Mihomo/Xray непосредственно, без обязательного предварительного меню. Поиск встроен в список; фильтры по географии/протоколу, обновление и статистика доступны через опциональный пункт «Фильтры / обновление / статистика». Установленное меню на тестовой Pi совпадает с версионированным исходником; bash syntax и обновлённые адресные тесты PASS. Интерактивное ручное переключение подтверждено пользователем 2026-10-21 (см. дополнение ниже); LAN-клиент по-прежнему не зачтён.
+
+**Дополнение Xray-probe, отдельный коммит PR #145 `56a1001`:** если каталог помнит `NETWORK_OK`, но TTL изолированного Xray-доказательства уже истёк, ручной preflight теперь однократно перепроверяет **только выбранный Xray-кандидат**, сверяет индекс и профиль подписки и затем автоматически повторяет preflight. Не требуется возвращаться в техническое меню. Отказ проверки не меняет активный VPN. Это source/test + установленное меню; интерактивная проверка данного частного UX-сценария и LAN по-прежнему не засчитаны.
+
+
+**Пользовательское подтверждение ручного переключения, 2026-10-21 17:16 (+07):** пользователь на тестовой Pi подтвердил штатную работу через установленное меню во всех трёх направлениях — **Mihomo→Mihomo PASS, Mihomo→Xray PASS, Xray→Mihomo PASS**. Это закрывает gate **интерактивного ручного выбора и возврата** поверх ранее подтверждённых аппаратных controller/TUN/rollback-тестов. Не приравнивать к автоматическому failover, к работоспособности каждой Xray-ноды, к LAN-forwarding, reboot или чистой установке.
+
+**Независимый read-only срез Pi в 17:17 (+07):** `awg-transport get=mihomo`, health healthy; `awg-mihomo.service`, `awg-selection-monitor.service`, SSH, dnsmasq active, Xray inactive; table 100/101 `default dev mihomo0`; OpenAI HTTPS через `mihomo0` HTTP 401 / curl=0; Transit guard SAFE, policy ACTIVE, table READY; manual Xray watchdog timers absent. PR #145 и документационный PR #146 по-прежнему draft, не merged/released.
+
+
+## UX-решение 2026-10-21: меню резервирования узлов Mihomo (согласовано, не установлено)
+
+В диалоге «Резервирование узлов Mihomo» оставить только:
+1. «Показать политику».
+2. «MANUAL».
+3. «Редактировать цепочку FIXED».
+4. «AUTO — пул узлов»: внутри его настроек оставить явное управление участием Xray VLESS в **AUTO**; не смешивать с ручным выбором и не включать автоматический резерв без разрешения.
+5. «Способ AUTO: Hot Pool / обычный».
+0. «Назад».
+
+Удалить из этого окна прежний пункт 5 «Выбрать / фильтровать живые узлы»: он дублирует основной раздел «Точка выхода / узел». Перенести прежний пункт 6 «Восстановить резерв при AWG» в «Mihomo — Расширенные / восстановление» с прежним защищённым `standby-repair` (не менять активный AWG). Прежний пункт 8 «Xray VLESS в AUTO» перенести внутрь пункта 4; независимый общий выключатель Xray **не** вводить. Xray остается установленным движком, доступным для ручного выбора при наличии профиля, но автоматически участвует в резервировании только при явном разрешении. Служба запускается по необходимости.
+
+Это **согласованная схема интерфейса/макет**, ещё не внедрённый и не тестированный на Pi код; не зачёркивать gate clean-install/LAN/failover/reboot. Изменения должны пройти installer-first, regression и проверку меню перед зачётом installed/PASS.
+
+## UX-срез: единое оформление SSH-меню, 2026-10-21
+
+Пользователь согласовал светлый интерфейс с тёмным фоном, выделением и подробными подсказками для **всех окон awg-menu**. Реализация в отдельном **draft PR #147**, на основе draft PR #145: временный процессный DIALOGRC (общая тема для --menu, --yesno, --inputbox, --msgbox, --textbox, --infobox); без редактирования системного или пользовательского .dialogrc. Штатный dialog умеет показывать описание выбранного пункта через --item-help, но не поддерживает постоянные многострочные подписи под каждой строкой исходного макета: не заменять ради этого curses-библиотеку до завершения v1.3.0.
+
+Одновременно в PR #147 реализована согласованная ранее структура меню «Резервирование узлов Mihomo»: пункты 1 «Показать политику», 2 «MANUAL», 3 «Редактировать цепочку FIXED», 4 «AUTO — пул узлов» (внутри отдельный Xray AUTO opt-in), 5 «Способ AUTO: Hot Pool / обычный», 0 «Назад». Прежний 5-дубликат точки выхода исключён, прежний 6 (standby-repair) сохранён в техническом восстановлении, глобальный выключатель ручного Xray не добавляется. Действующие настройки не меняются просто при открытии меню.
+
+**Статус:** изменения только в GitHub draft PR #147 и тестовой копии исходников на Pi; **не installed** на тестовой Pi, **не merged, не released**. Адресная группа 38 тестов меню PASS; ptу/реальный dialog smoke: infobox, menu, yesno, msgbox без ошибки разбора палитры; ввод inputbox не подтверждён интерактивным тестом (PTY timeout). Зачёт глазами пользователя и сохранение состояния после reboot/clean-install/LAN/automatic failover по-прежнему открыты. Обновление проектного состояния — отдельный документальный draft PR #146.
+
+### Установка оформления меню на тестовую Pi, 2026-10-21 17:54 (+07)
+
+**Installed on test Pi only**: после явной пользовательской авторизации `sudo` обновлён `/usr/local/sbin/awg-menu` из исходника **draft PR #147** (`src/awg-menu`, blob `88a8bbb74705f67f424c7a18df976e81ac631322`); побайтовое совпадение установленных данных подтверждено `cmp` и `git hash-object`. Предыдущий исполняемый файл сохранён в root-only `/var/backups/awg-gateway/menu-theme-20261021.*`. Другие службы, настройки AUTO/FIXED, Xray, DNS, SSH и MikroTik установкой не менялись.
+
+**Проверено:** `bash -n` PASS; 38 тестов меню + 5 тестов темы PASS; реальный PTY-запуск **установленного root-меню** при 132×36 показал главный экран с ANSI-оформлением выбранной темы, ESC/Cancel принят без изменения конфигурации; отдельных активных процессов меню и временных DIALOGRC после теста нет. На Pi `awg-transport=mihomo`, health healthy, службы Mihomo/selection-monitor/SSH/dnsmasq active, table 100 через mihomo0, OpenAI API HTTPS через TUN = 401/curl0; Transit guard SAFE ранее проверен, нет Xray manual watchdog timers. **Визуальная пользовательская приёмка на собственном SSH-терминале ещё не зафиксирована**; концептуальный макет не является пиксельным стандартом для native dialog.
+
+**GitHub:** PR #147 по-прежнему draft/open, не merged и не released; документационный PR #146 draft. Не закрывает аппаратные clean-install, LAN-client, reboot и автоматический failover release gates v1.3.0.
+
+### Удаление дублирующего пункта Xray-диагностики, 2026-10-21 18:05 (+07)
+
+По согласованию с пользователем из главного меню «Mihomo» удалён самостоятельный пункт 6 «Xray VLESS: диагностика»; технический подэкран и функциональность сохранены в пункте 5 «Расширенные / восстановление» → «Xray VLESS: диагностика» (пункт 6 вложенного экрана). Ручной выбор Mihomo/Xray остался в главном пункте 3. Уточнена помощь пункта 3: ручное переключение идёт через защищённую транзакцию/TUN/откат, а не «только через AUTO».
+
+**Installed test Pi**: заменён лишь `/usr/local/sbin/awg-menu` из версионированного `src/awg-menu` draft PR #147, коммит `b4f0b20b5d48e04d36d04f97f84916b683beb757`; проверено совпадение blob `24258a620f71f4438beaf94f17d8ee1898c6e7ac`. Предыдущее меню сохранено в root-only backup. Работавшая в момент установки пользовательская сессия продолжила использовать свою временную копию: новый список появится после перезапуска `awg-menu`.
+
+**Тесты**: `bash -n`, `git diff --check`, 39 menu-проверок, 12 Mihomo↔Xray bridge, 4 unified installer, 4 picker-stage, 5 theme tests PASS. После установки транспорт Mihomo healthy, Transit SAFE/policy ACTIVE/table READY, службы Mihomo/selection-monitor/SSH/dnsmasq active, Xray sidecar inactive, OpenAI API HTTPS TUN=401/curl0. Человеческая проверка этого конкретного нового экрана после перезапуска пока не засчитана. Никакого изменения policy/failover/подписки не вносилось. PR #147 остаётся draft, не merged/released; релизные LAN/clean-install/reboot/auto-failover gates открыты.
+
+### Навигационная строка во вложенных окнах — 2026-10-21 18:25 (+07)
+
+По запросу пользователя все вложенные окна AWG SSH-меню показывают хлебные крошки в **заголовке рамки**, сохраняя высоту текста и рабочего списка на SSH 70×22. Например «Главная › VPN › Mihomo › Резервирование › AUTO»; заголовок главного меню без крошек. При недостаточной ширине путь сокращается с многоточием, но текущий раздел остается видимым. Стек берётся из реального call stack Bash без глобального состояния, поэтому Esc/Cancel не портит историю. Вызовы `dialog --stdout` (ввод подписки/профиля) учтены отдельно. Это визуальная навигация, **не кликабельные ссылки**; кнопки и управление остаются штатными.
+
+**Статусы:** source/installer-first — commit `491b333e0bb496307fa7c6b5117957e96e0fd465` в **draft PR #147**; installed на **тестовую** Pi `awg-upgrade` (файлы установочного исходника и `/usr/local/sbin/awg-menu` проверены по git blob `1cc9714d8f8019c29c8fccd5e177ed104ba68e2f`). Перед заменой сделана root-only резервная копия. `bash -n`, 45 тестов меню (включая 6 breadcrumb PTY/regression), 12 bridge и 4 installer integration PASS. После установки активный Mihomo healthy, Transit guard SAFE/policy ACTIVE/table READY, SSH/dnsmasq и selection-monitor active, OpenAI HTTPS через Pi TUN 401/curl0. Системные маршруты/подписки/политика AUTO не менялись.
+
+**Не подтверждено:** визуальная приёмка пользователем новых крошек; полный проход по вложенным окнам настоящего меню не засчитан (изолированный PTY-скрипт навигации завис на завершении, его процессы остановлены без влияния на VPN/другие сеансы). Меню в текущих пользовательских SSH-сессиях обновится только после закрытия/повторного запуска `sudo awg-menu`. PR #147 draft/open, не merged/released. Gate LAN/automatic failover/reboot/clean install остаются открытыми.
+
+### Удаление дублирующего мастера транспорта, 2026-10-21 (тестовая Pi)
+
+По запросу пользователя из `VPN-маршрутизация [TRANSIT]` удалён пункт 5 «Добавить / настроить транспорт»; перенумерованы «Активный транспорт»→5 и «Политика выбора транспорта»→6. В `SELECTIVE` аналогичный прежний пункт 6 удалён, а «Активный транспорт»→6 и «Политика»→7. Мастер `first_transport_setup` / `secondary_transport_setup` удалён как дублирующий вход в уже существующие конфигураторы. Чистая установка **без профилей** сохраняет прямые пути: «Конфигурация AmneziaWG» через `awg-first-run` и «Mihomo → Подписка / источник» через `mihomo_initial_setup_flow secondary`. Движки остаются installer-first; политики routing/failover/DNS не изменялись.
+
+**Выполнено:** installed только на тестовую Pi `awg-upgrade`; перед установкой сделан root-only backup предыдущего `awg-menu`, установленный файл совпадает с git blob `0359bdf22ed48990f3894dda27f85153fbfb5586`. Проверки: `bash -n`, 48 menu tests PASS, 3 адресных теста новой навигации PASS (включая подставные вызовы для обоих режимов), 12 Mihomo/Xray bridge tests PASS, 4 installer integration tests PASS. После установки Mihomo healthy, Transit SAFE/policy ACTIVE/table READY, таблицы 100/101 `mihomo0`, SSH/DNS/monitor active, HTTPS OpenAI `401/curl=0`. **Версионировано** в draft PR #147, commit `531b5b393c0dde7ef18c46c315241192bb283038`; не merged/released. Текущие SSH-сеансы со старой временной копией меню требуют повторного запуска `sudo awg-menu`. Визуальную пользовательскую приёмку изменённого VPN-меню пока не считать PASS. Остальные gates LAN/reboot/clean-install/failover открыты.
+
+
+### Центрирование коротких списков в SSH-меню — 2026-10-21 (+07)
+
+Пользователь запросил, чтобы списки пунктов находились ближе к центру окна. Нативный Debian `dialog` всегда выравнивает пункты вверху внутренней области и не умеет центрировать их вертикально в прежней большой рамке. Выбран **безопасный компромисс**: общий `dialog()` теперь рассчитывает фактическое число пунктов (без фиктивных элементов), число строк описания с переносами и уменьшает высоту **всего диалога**, после чего ncurses центрирует окно на экране. Горизонтальное выравнивание пунктов остаётся левым; длинные списки сохраняют прокрутку, числовые теги, подсказки и выбор.
+
+**Installed on test Pi:** `/usr/local/sbin/awg-menu` совпадает с версионированным исходником (git blob `e7eadafd44292d8f9925286332c8eb881a4613e3`). Перед заменой создан root-only backup; изменение касается только меню. Тесты: 53 меню, в том числе 5 новых адресных тестов компактности и реального ncurses/PTy, 12 bridge, 4 installer integration — PASS; `bash -n` и diff-check PASS. После установки: Mihomo healthy, Transit SAFE/ACTIVE/READY, таблицы 100/101 через mihomo0, SSH/dnsmasq/selection-monitor active, HTTPS OpenAI `401/curl0`. Изменение в **draft PR #147**, commit `fd10c238b33be88aa3b5273a1329540ee854172e`; не merged/released. **Пользовательская визуальная приёмка новой компактной геометрии ожидается**, поскольку это не буквальное вертикальное центрирование внутри прежнего большого окна. Release gates LAN, automatic failover, reboot, clean-install по-прежнему открыты.
+
+
+### Контрастный вывод успешных проверок — 2026-10-21
+
+Пользователь подтвердил проблему читаемости зелёных OK и yes на светло-голубом фоне экрана «Диагностика». Независимый PTY-тест показал, что native Debian dialog рисует слова OK, yes и IPv4 **одним и тем же чёрным текстом на cyan**; ярко-зелёная/розовая окраска на снимке вероятно добавляется сторонней подсветкой SSH-клиента. Глобальная замена цветов dialog этого не исправляет.
+
+**UI-only решение:** в общих текстовых окнах результатов `show_operation_result` отображать отдельные OK как «ИСПРАВНО» и status-значения yes после «:»/«=» как «ДА», через временную копию файла просмотра 0600; файл копии удалять, исходный вывод и журналы не изменять. Машинные значения `NETWORK_OK` и IP-адреса не переписывать. Это сохраняет Fail-open/Fail-closed, DNS и всю маршрутизацию без изменений.
+
+**Статус:** `src/awg-menu` и регрессионный тест `tests/test_menu_status_contrast.py` версионированы в **draft PR #147**, commit `3771dc13a2aab7ce23922dc42111df5be89577af`, **installed только на тестовую Pi** `awg-upgrade`; root-only backup предыдущего меню создан, installed blob совпадает с `edb536b12a5392148b02f13de8596f3a178ec181`. `bash -n`, 55 menu tests (включая 2 новые проверки контрастности и удаления temp), 12 bridge tests, 4 installer integration tests PASS. После замены Mihomo healthy, Transit guard SAFE/policy ACTIVE/table READY, SSH/DNS/monitor active, таблицы 100/101 `mihomo0`, OpenAI HTTPS `401/curl0`. Визуальную проверку на пользовательском SSH-клиенте пока не считать PASS; исходные PR #145, #147 и документальный #146 остаются draft, не merged/released. LAN/clean-install/auto-failover/reboot release gates остаются открыты.
+
+
+## RC clean-install candidate 2026-10-21 — pin 58334409
+
+**Готовность источника к аппаратной чистой установке:** ветка `rc/v1.3.0-clean-install-20261021`, точный SHA `58334409c05b73c604ce7079106d6c4f62c6e60d`. Это наследник PR #115, #145 и #147; **draft candidate, не merged, не released и не clean-install PASS**. Проверка GitHub Actions [run 39600844638](https://github.com/karlinksk/awg-pi/actions/runs/39600844638): shell pipeline Bash + ShellCheck + shell/installer integration PASS; 764 Python unit/regression PASS (два теста изолированного hardware picker-stage пропускаются на обычном CI по явному маркеру тестового стенда); pinned AmneziaWG v3.1 build/profile preflight PASS. Предварительный rootless Python-прогон на тестовой Pi также прошёл 764 теста после hermetic mock/skip исправлений.
+
+**Последние оптимизации:** основное меню русскоязычное; глобальные кнопки dialog `ОК / Отмена / Да / Нет / Закрыть`. Зафиксированные ранее переходы Mihomo↔Xray, упрощение повторяющихся пунктов, хлебные крошки, компактные списки и высококонтрастные диагностические статусы входят в одну версионированную ветку. Исправлены **устаревшие unit-test ожидания**: реальная TUN-health проверка выполняется уже внутри раннего `check_mihomo`; Hot Pool на clean-install обязан оставаться OFF (при включённых provider-guarded базовых таймерах); удалённый дублирующий мастер транспорта больше не ожидается; isolated Xray tests не требуют установленного системного адаптера на CI. Защитная логика транспорта этим не ослаблялась.
+
+**Installer-first:** `install.sh` v1.3.0 устанавливает AmneziaWG, Mihomo, пассивный Xray, ffmpeg/ffprobe, Node 22/yt-dlp/Stage18 и TUI до настройки профилей, с исходниками из `AWG_PI_REF=<pinned SHA>`. Чистый старт: `Selective + unconfigured`, `Hot Pool OFF`, `READY_AUTO OFF`, `Xray AUTO OFF`, без тайного старта AWG без awg0.conf; пользователь добавляет профили после установки. Текущие настройки при upgrade сохраняются. Выбор paid-provider может штатно обходиться без READY по решению пользователя. Обновление DNS/SSH/SSTP не является частью UI-проверки.
+
+**Следующий аппаратный gate:** установить этот точный SHA на отдельно подготовленную тестовую Debian 13 ARM64 Raspberry Pi 4, без заранее внесённых профилей, сохранить журнал и проверить все обязательные компоненты и первые настройки, затем LAN-клиента, фактический TUN, failover и reboot. 24-кадровый YouTube decode/HTTPS ChatGPT/OpenAI проверять только в режиме, где READY включён; старый HTTP YouTube primary не возвращать. Проводить только на тестовой microSD; прежнюю рабочую и MikroTik не изменять без отдельного разрешения.
+
+### 2026-10-21 clean-install first-start read-only inspection — scoped PASS
+
+Отдельная свежая тестовая Raspberry Pi 4 / Debian 13 aarch64 прошла **read-only post-install** проверку через Desktop Commander после запуска зафиксированного RC `58334409c05b73c604ce7079106d6c4f62c6e60d`: Gateway version `1.3.0`; пять установленных `src/awg-menu`, `src/awg-xray-manual-switch.py`, `src/awg-mihomo-unified-nodes.py`, `src/awg-mihomo-node-picker.py`, `src/awg-mihomo-video-decode.py` — byte-identical git blobs из pinned commit. AWG engine и Mihomo доступны, Xray installer сообщает pinned core `26.3.27`; Node `22.16.0`, npm/npx `10.9.2`, ffmpeg/ffprobe `7.1.5` доступны. `bash -n` установленного awg-menu PASS. `awg-route status`: Selective, transport unconfigured / not-ready, FAIL-OPEN DIRECT, allowed AUTO order mihomo/awg, Mihomo node-policy manual, Hot Pool READY disabled, service eligibility off, VPN/domains/clients/OpenCCK empty. awg0/mihomo0/Xray inactive без конфигурации; Hot Pool timer disabled/inactive, базовые Stage18/health/scan таймеры активны, Stage18 service result success. SSH, dnsmasq, gateway setup, health monitor и selection monitor active; no failed systemd units. Запрос `dig @127.0.0.1 api.openai.com A` разрешился, `dnsmasq --test` PASS; default route сохранён через LAN router, timezone Asia/Novosibirsk, NTP synchronized. Отсутствие VPN policy FIB 100/101 в unconfigured состоянии не считается ошибкой.
+
+**Не проверено в этом срезе:** root-only installation log/отдельная проверка yt-dlp cache and 24-frame decode (yt-dlp намеренно не в PATH); фактический TUN после добавления подписки/профиля; LAN forwarding, failover, аварийный rollback, reboot, upgrade. Несмотря на доступность sudo-проверки, Desktop Commander отклонил несколько отдельных привилегированных чтений; это ограничение данного аудита, а не наблюдаемая ошибка шлюза. Полный clean-install end-to-end/release PASS ещё не объявлять. Следующий шаг — добавить VPN-профили через меню на тестовой Pi и последовательно выполнить TUN, LAN, failover, reboot acceptance. Работающую microSD и MikroTik не трогать.
+
+### 2026-10-21 installer log and diagnostics independent audit (test Pi)
+
+После чистой установки v1.3.0 прочитаны root-only файлы `/var/log/awg-gateway/install-20261021-194443.log` (87,116 байт, 1,572 строки, SHA256 `63bc4fa1d6a2dc4725bc27a9aade9c4e922fe5bfe09ecefe1d3846c431d5aef8`) и `diagnostics-20261021-195102.txt` (4,011 байт, 144 строки, SHA256 `2db665bc6e2d40f8005096e2c16a83b430c22ff4a6c1769bd2319bf9a4aa801e`). Installer: **0 ERROR / FAILED**, один ожидаемый WARN (стр.1353: `Active transport не настроен`, допустимо при первом запуске без профиля). Диагностика: **0 ERROR / WARN / FAILED**. Лог явно подтверждает отключённые Xray autostart, Hot Pool timer и READY, подготовку Stage18, наличие Mihomo/AWG, Selective/FAIL-OPEN DIRECT и независимого DNS. Xray-core installer status pinned `26.3.27`; файл `yt-dlp` фактически найден в `/var/lib/awg-pbr/stage18-runtime/yt-dlp`, его `--version=2026.08.19`, Stage18 systemd `Result=success`. **Проверено отсутствие сбоев установщика, но не объявляется полным clean-install/release PASS до LAN/failover/reboot.**
+
+На 20:14 (+07) пользователь уже настроил HoneyVPN и перевёл тестовую Pi в режим **Transit**: `awg-transport get=mihomo`, health=healthy, нативная нода Germany Hysteria2; Xray/AWG inactive. Read-only Pi-TUN check: tables 100/101 через `mihomo0`, `curl --interface mihomo0 --noproxy '*'` на OpenAI API `HTTP 401, curl=0`; `awg-transit-routing`: guard SAFE, policy ACTIVE, VPN table READY; локальный независимый dnsmasq разрешает OpenAI, SSH/dnsmasq/Mihomo/selection-monitor active, systemd --failed пуст. **Это Pi TUN, не LAN-client PASS.** В ходе аудита ChatGPT не выполнял переключений транспорта. Для чтения root-only журналов блокировка `sudo` в Desktop Commander была временно снята и восстановлена сразу после завершения проверок.
+
+Следующие release gates: работа LAN-клиента через Pi, Xray manual/rollback на fresh install, AWG fallback при установленном профиле, Selective vs Transit failure policies, reboot persistence и 24-кадровый YouTube decode только при включённых READY-проверках.
+
+### 2026-10-21 six Xray VLESS profiles visible on clean-install test Pi
+
+Пользователь сообщил, что не все Xray-ноды HoneyVPN видны в едином каталоге после собственной настройки чистой Pi. Независимый root-only агрегатный аудит подписки: **13 профилей**, изначально **5 Xray VLESS REALITY (4 xhttp + 1 gRPC)**, **7 Mihomo Hysteria2**, и **1 VLESS стандартный TLS/gRPC без REALITY**, который версия RC `58334409...` классифицировала `UNSUPPORTED`. Пять REALITY прошли независимый HTTPS `NETWORK_OK`; фильтры текущего каталога `region=all`, `protocol=all`. При `region=europe` все Xray остаются намеренно скрытыми ввиду отсутствия независимого Exit GeoIP; ни названия стран, ни IP сервера не считать Exit GeoIP.
+
+**Точное исправление, без расширения резервирования:** PR [#148](https://github.com/karlinksk/awg-pi/pull/148), draft, commit `b8cf7896154d8959e85ab60d9e8bc889f9a39906`, поверх RC. Версионированные `src/awg-xray-vless.py` и `src/awg-mihomo-unified-nodes.py` теперь поддерживают обычный VLESS TLS/gRPC в уже установленном пассивном Xray sidecar наряду с REALITY, без изменения Mihomo routing и без включения AUTO. Новая ветка требует TLS certificate validation (`allowInsecure=False`), HTTP/2 ALPN, отбрасывает небезопасный TLS, некорректные REALITY hint, TLS/XHTTP без REALITY и неподходящие flow. Тесты adapter/credential rotation добавлены к установочным исходникам; **768 Python-regression PASS** (2 hardware-only skipped). Первый изолированный аппаратный Xray/SOCKS test этой ноды на тестовой Pi **OpenAI API 401, curl=0**; живой Pi TUN через неё не проверялся.
+
+**Installed on test Pi only**: перед заменой двух Python helper создана root-only backup в `/var/backups/awg-gateway/xray-verified-tlsgrpc-20261021.*`; установленные blob: `awg-xray-vless` `95884bb05f1d5c651011218fd6d0d18393c7c6ef`, `awg-mihomo-unified-nodes` `1a96c0609c548eb93331eb14ce4cf833ae28c159`, совпадают с PR #148. Изолированная `unified probe 6` после установки дала `ENGINE=XRAY BASIC_NETWORK=NETWORK_OK`. Повторный provider/picker snapshot: **13 всего, XRAY 6/6 NETWORK_OK, Mihomo 7, Xray 6/6 доступны при all/all** (совокупный список содержит 10 узлов, потому что часть Mihomo HEALTH_FAIL). Активный Mihomo, Xray-service inactive, routing table 100/101 `mihomo0`, OpenAI TUN `401/curl=0`, SSH/DNS/monitor active, failed systemd units none. Права sudo Desktop Commander временно разрешены для проверки и восстановлены.
+
+**Статус релиза:** существующий pinned installer RC `58334409...` сам по себе ещё **не включает** PR #148; новые файлы сейчас установлены локально на тестовой Pi, не merged/released. Отдельный canary RC с SHA PR #148 создан для CI. Не объявлять поддержку шестой ноды полноценным Pi-TUN/LAN/failover PASS до соответствующего живого испытания и интеграции в проверенный installer snapshot. Сохранять приоритет закрытия v1.3.0 release gate.
+
+### Единый каталог 13 профилей — 2026-10-21
+
+Повод: пользователь показал расхождение «9 из 9» в ручном каталоге, 13 в диагностике и «5 из 5» в редакторе FIXED. Корневая причина — три разных слоя учёта (полная подписка, только работоспособные ноды, отдельный старый FIXED-picker). После предыдущего PR #148 на тестовой Pi источником являются 13 профилей: Xray VLESS 6, Mihomo Hysteria2 7; из них 6 Xray с изолированным OpenAI HTTPS NETWORK_OK, 4 Mihomo healthy, 3 Mihomo failed.
+
+В **draft PR #149** commit `8f88c4c9d0d971862c0b2ac59e33d541e9a00740` на базе draft PR #148 общий каталог и FIXED используют один provider-backed engine-aware picker, показывающий все 13 исходных профилей со статусом и исходным индексом. В FIXED пока допускаются только 4 подтверждённо исправные Mihomo; Xray и отказавшие профили видны, но случайно не включаются. Ручной Xray/Mihomo сохраняет защищённые preflight/TUN/rollback; AUTO, DNS, режим и policy routing не изменены. При протокольном фильтре видно 6 из 13 VLESS либо 7 из 13 HY2; Europe не выдаёт непроверенную географию Xray за факт.
+
+**Installed только на тестовой Pi:** root-only backup `/var/backups/awg-gateway/unified-node-inventory-20261021.*`; бинарные blobs: меню `71c7dc9ddba028f508568c501031fb8d370c2c06`, picker `cd6cf9fd248c298ebf1bfe7b1205de40854314b5`. Реальный provider audit: all/all 13 из 13, vless 6 из 13, hysteria2 7 из 13; статусы 6 XRAY_HTTPS, 4 MIHOMO_OK, 3 MIHOMO_FAIL. Локально 770 тестов PASS, 2 hardware-only skipped. После установки Mihomo healthy, Xray inactive, OpenAI Pi TUN 401/curl0, активная нода и transport policy неизменны. Временный sudo-доступ Desktop Commander снова заблокирован.
+
+**Не объявлять released/merged либо LAN/failover/reboot PASS.** Исходный clean-install RC SHA `58334409...` ещё не включает PR #148/149; требуется закрепить новую установочную версию, пройти CI и аппаратный release gate.
+
+### TSV status alignment bug — 2026-10-21 (13 nodes shown, 0 statuses)
+
+Screenshot from test Pi showed all 13 profiles in catalog but status «недоступен» and three counters 0. **Exact root cause proved with real Bash:** the 8-column picker TSV was generated with an empty fifth duplicate-name field, and `while IFS=$'\\t' read ...` collapses adjacent TAB IFS whitespace. As a result the actual `XRAY_HTTPS`/`MIHOMO_OK`/ `MIHOMO_FAIL` token was read into `duplicate`, and `country=??` shifted into `health`. This is **a menu serialization/parser defect, NOT a blanket upstream failure**. Actual provider evidence remains 13 profiles; Happ client may work even where Pi pool test previously failed.
+
+**Versioned fix:** [draft PR #149](https://github.com/karlinksk/awg-pi/pull/149), commit `b7b91e6d89bb19d91a14af70c82cb120ed7165dd`. Both live and prepared picker now emit explicit nonempty `-` in fifth duplicate field. Regression invokes a **real Bash** TSV reader and verifies 13 indices/6 XRAY_HTTPS/4 MIHOMO_OK/3 MIHOMO_FAIL including duplicated names and candidate fallback. Labels now distinguish `Mihomo тест OK/FAIL` from *actual provider availability*. Local complete Python regressions **771 PASS (2 hardware-only skipped)**, menu static check and bash syntax PASS. No engine/routing/failover change.
+
+**Crucial status:** `b7b91e...` is **committed, not installed on test Pi as of 21:30**. Live deployed menu/picker blobs still `71c7dc9...`/`cd6cf9f...`; the test Pi remains active Mihomo `healthy`, Xray inactive, OpenAI via Pi TUN HTTP 401/curl 0, no failed services. Desktop Commander session root authentication expired: `sudo -n` returns `password is required`. Do not claim actual menu rendering fixed until privileged install with root-only backup and fresh TUI verification; reauthorize sudo interactively on the test Pi, do not transmit credentials. GitHub full CI for commit was not confirmed yet. Release gates LAN/failover/reboot remain open.
+
+### Проверено после ручной установки исправления TSV — 2026-10-21 21:48 (+07)
+
+Пользователь подтвердил ручную установку исправления Bash TSV parser на тестовую Pi `awg-upgrade`. Независимо проверены **установленные git blobs**: `/usr/local/sbin/awg-menu` = `f88d89b6db197b485df157ded397b3749eb5acd9`, `/usr/local/sbin/awg-mihomo-node-picker` = `3b6a9259b96d3d75bd8f7cdd57fc9580d7fbd2aa`; оба совпадают с кодом draft PR #149 commit `b7b91e6d89bb19d91a14af70c82cb120ed7165dd`. Обе предыдущие версии присутствуют в root-only backup `/var/backups/awg-gateway/tsv-status-fix-20261021.eqV4ETjV/`. Bash syntax и Python AST parse PASS; попытка обычного `py_compile` без root не создала файл в системном `__pycache__` из-за прав, это не синтаксическая ошибка.
+
+**Фактический read-only snapshot подписки** уже после установки: ровно `13/13` в all/all, `6/13` VLESS и `7/13` Hysteria2. Python inventory: `6 XRAY_HTTPS` + `7 MIHOMO_OK`. Тот же TSV пропущен через настоящий `while IFS=$'\\t' read ...`; получено **13 записей с теми же статусами и индексами**, поле duplicate `-`/DUPLICATE не сдвигает столбцы: `CATALOG_STATUS_CONSISTENCY=PASS`. Все семь Mihomo-нод на *новом срезе* проходят текущий пул-тест (в старом срезе было 4 OK/3 FAIL); это динамическая проверка, а не эквивалент Happ/Pi TUN/LAN. При этом активный transport Mihomo `healthy`, Xray service inactive, SSH/dnsmasq/selection-monitor active, policy table 100/101 via mihomo0, OpenAI Pi TUN `401/curl0`, failed systemd units none. Никакой смены ноды/режима/политики не выполнялось.
+
+**CI status separate:** CI run `39618762066` для `b7b91e...` провалился в unit-тесте пустого provider из-за немокированного `load_view()` на runner без установленного view helper. Отдельным *test-only* коммитом `f07a74ed92eb197b1028dd5d42c77cd7008ca134` в ветке PR #149 добавлен `mock.patch.object(picker,"load_view",return_value=view)`; runtime code и установленные файлы Pi не менялись. Новый full GitHub CI по `f07a74e...` ещё не подтверждён. **Не смешивать** installed/Pi parser PASS с CI/released или с визуальной пользовательской приёмкой окна, LAN/failover/reboot, которые остаются открытыми.
+
+
+### SSH node catalog row format (2026-10-21)
+
+User requested one compact Russian-dominant presentation for node lists:
+name | engine | protocol | connection server | measured test RTT | scoped status.
+Do not confuse server endpoint with public egress IP, pool RTT with ICMP ping,
+or isolated Xray HTTPS proxy with Pi TUN, READY, or LAN. The repeated notes
+were moved to a shared legend and contextual help. Show — for unmeasured RTT,
+HY2 or actual VLESS/xHTTP/gRPC metadata, and status ТЕСТ OK/FAIL or HTTPS OK.
+Narrow SSH terminal keeps name, engine/protocol, RTT and status; full server
+address remains in help; backend selection always uses original exact names.
+Fixed-chain order views keep names only, avoiding invented live metrics.
+
+Code is in draft PR #150, commit 3a9ae4b3ee93298ec9f4b9c7d941c72777152f5e
+on top of draft PR #149. No routing, selection policy, DNS, probes,
+transport activation, rollback, or installer dependency changes.
+775 rootless Python tests PASS (2 hardware-only skipped), test-menu PASS.
+The revision is not installed on the test Pi yet because remote sudo expired.
+CI and live visual acceptance are pending. Do not mark merged/released or
+LAN/failover/reboot PASS.
+
+
+### SSH compact node layout installed on test Pi — 2026-10-21
+
+Draft PR #150 code from commit 3a9ae4b3ee93298ec9f4b9c7d941c72777152f5e
+installed on test Pi, three UI-only files with root-owned pre-change
+backup at /var/backups/awg-gateway/node-display-20261021.* .
+Installed exact Git blobs: menu 8918ff0b076417b232ec91a2217171c0b9a479f5,
+picker 1865096fb76ebf65727a91a46d4dbc7e3a6e56d6, results view
+b8cdf2852d78393b69a36181e44920b5f09ce0c9.
+GitHub CI run 39624669182: awg-v31 SUCCESS, shell SUCCESS.
+Test Pi regression: 775 Python tests PASS, 2 hardware-only skipped;
+test-menu and bash syntax PASS. Read-only provider inspection:
+13 profiles, 4 VLESS/xHTTP, 2 VLESS/gRPC, 7 HY2;
+6 Xray HTTPS checks and 7 Mihomo pool tests OK.
+Active transport unchanged Mihomo healthy, Xray service inactive,
+Pi TUN OpenAI HTTPS HTTP401/curl0, SSH and DNS active.
+Not a visual user-accepted TUI or a live Xray TUN/LAN PASS.
+No manual Xray switching, LAN, failover, reboot tested in this change.
+PR #150 draft; not merged/released. Continue v1.3.0 hardware release gate.
+
+
+### SSH scrollbar artifact correction installed — 2026-10-21
+
+User screenshot on the test Pi showed jagged fragments alongside the
+right border of scrollable dialog menus (including FIXED add-node),
+while individual node rows rendered properly. Root cause: global
+process-owned native ncurses dialog palette had use_scrollbar = ON;
+this draws a separate right-edge scrollbar which does not render
+cleanly in the user's SSH terminal. The fix is the single change
+use_scrollbar = OFF in src/awg-menu, with a theme regression and
+design note. Keyboard scrolling and percentage position indicator
+remain available. Real native dialog PTY on the test Pi: 18 items,
+5 visible rows, selected #14 from initially selected #13 with
+application Down + Enter, exit code 0. No routing/transport or
+policy changes.
+
+Code: draft PR #151, commit
+4bd676119c0f433b89b6d5f21e760c2156a3c710, on top of
+draft PR #150. Local 776 Python tests PASS, two hardware-only
+skipped, legacy test-menu PASS, Bash syntax PASS. Version-controlled
+install.sh already copies src/awg-menu on clean install.
+Installed on test Pi with root-only backup at
+/var/backups/awg-gateway/dialog-scrollbar-20261021.* :
+installed /usr/local/sbin/awg-menu Git blob
+390e4bffdeaada167fa50fe5dbdd09b0f2760028.
+Post-install Mihomo healthy, Xray inactive, SSH/dnsmasq active,
+Pi TUN OpenAI HTTP401/curl0. User's SSH visual acceptance
+and LAN/failover/reboot release gates remain open.
+Code is not merged/released. GitHub CI status must be verified.
