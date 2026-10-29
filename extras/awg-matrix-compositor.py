@@ -17,7 +17,7 @@ ESC = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]|\x1b\([A-Za-z0-9]")
 SOCKET = "awg-matrix-render-%s-%s" % (os.getuid(), os.getpid())
 PALETTE = [(190,255,190),(90,255,90),(0,255,0),(0,200,0),(0,140,0),(0,85,0),(0,42,0)]
 
-BUTTON_RE = re.compile(r"<\s*(?:ОК|OK|Да|Нет|Закрыть|Отмена)\s*>", re.IGNORECASE)
+BUTTON_RE = re.compile(r"<\s*(?:ОК|OK|Да|Нет|Yes|No|Закрыть|Close|Отмена|Cancel)\s*>", re.IGNORECASE)
 
 def shadow_row_columns(row):
     """Identify the bottom drop-shadow: long *blank* white-on-black runs.
@@ -96,7 +96,117 @@ def parse_line(line, cols):
 # of characters. Drain ncurses' ready input and forward consecutive printable
 # characters through one literal tmux call (not a subprocess per character).
 # Flush before control keys to preserve their order and native dialog behavior.
-def forward_pending_input(stdscr):
+
+# Native mouse escape bytes are unsafe to inject into the inner tmux dialog:
+# on some terminals ESC inside the sequence closes the widget. Instead, map a
+# click to ordinary dialog keyboard actions, using ONLY the currently visible,
+# validated tmux snapshot. A row click selects; only an explicit button click
+# can submit. Unsupported widgets and out-of-surface clicks do nothing.
+ANY_BUTTON_RE = re.compile(r"<[^<>]{1,28}>")
+
+def menu_keys_for_click(screen, x, y):
+    """Return safe keyboard steps for the visible item/button, else ()."""
+    if not screen or y < 0 or y >= len(screen) or x < 0 or x >= len(screen[y]):
+        return ()
+    row = screen[y]
+    line = "".join(cell[0] if cell is not None else " " for cell in row)
+
+    buttons = list(BUTTON_RE.finditer(line))
+    if buttons and y >= len(screen) // 2:
+        # An unrecognized button makes Tab order ambiguous: do not guess.
+        if len(buttons) != len(list(ANY_BUTTON_RE.finditer(line))):
+            return ()
+        for index, match in enumerate(buttons):
+            if match.start() <= x < match.end():
+                if len(buttons) == 1:
+                    return ("Enter",)
+                active = [
+                    idx for idx, button in enumerate(buttons)
+                    if any(
+                        cell is not None and cell[2] == 0 and cell[3]
+                        and cell[1] in (3, 7)
+                        for cell in row[button.start():button.end()]
+                    )
+                ]
+                if len(active) != 1:
+                    return ()
+                steps = (index - active[0]) % len(buttons)
+                return ("Tab",) * steps + ("Enter",)
+        return ()
+
+    # Only a real menu/list with exactly one highlighted item can be targeted.
+    # Selected item tag=yellow-on-black, label=white-on-black. This excludes
+    # prose, the animated background, text inputs and dialog buttons.
+    selected = []
+    for sy, cells in enumerate(screen):
+        caption = "".join(cell[0] if cell is not None else " " for cell in cells)
+        if BUTTON_RE.search(caption):
+            continue
+        tag_x = [i for i, c in enumerate(cells)
+                 if c and c[0].isalnum() and c[1] == 3
+                 and c[2] == 0 and c[3]]
+        label_x = [i for i, c in enumerate(cells)
+                   if c and c[0].isalpha() and c[1] == 7
+                   and c[2] == 0 and c[3]]
+        if tag_x and label_x and min(tag_x) < min(label_x):
+            selected.append((sy, min(tag_x), min(label_x)))
+    if len(selected) != 1:
+        return ()
+    sy, tag_col, label_col = selected[0]
+    if abs(y - sy) > 40:
+        return ()
+    # Every intervening row must have a tag and label in the SAME columns.
+    # This stops a click below the list or on a different dialog widget from
+    # causing an unintended long run of arrow presses.
+    for cy in range(min(y, sy), max(y, sy) + 1):
+        cells = screen[cy]
+        if max(tag_col, label_col) >= len(cells):
+            return ()
+        tag, label = cells[tag_col], cells[label_col]
+        if (not tag or not label or not tag[0].isalnum()
+                or not label[0].isalpha() or tag[2] not in (0, 4)
+                or label[2] not in (0, 4)):
+            return ()
+    # Click the text/tag itself, not blank padding, borders or rain.
+    target = screen[y][x]
+    if x < tag_col or not target or not target[0].isalnum():
+        return ()
+    if target[2] not in (0, 4):
+        return ()
+    delta = y - sy
+    return (("Down",) * delta if delta > 0 else ("Up",) * -delta)
+
+
+def forward_verified_click(x, y, screen, state):
+    """Reject stale screenshots before sending any click-derived key."""
+    if screen is None:
+        return
+    if not screen or y < 0 or y >= len(screen):
+        return
+    width = len(screen[y])
+    if not 0 <= x < width:
+        return
+    raw = tmux("capture-pane", "-e", "-p", "-t", "menu:0.0", capture=True)
+    if not raw:
+        return
+    fresh = [parse_line(line, width) for line in raw.splitlines()[:len(screen)]]
+    if fresh != screen:
+        return
+    keys = menu_keys_for_click(screen, x, y)
+    if not keys:
+        return
+    # A client may report RELEASED and CLICKED for the same press. Do not
+    # submit a button twice, especially across a dialog transition.
+    if keys[-1] == "Enter":
+        stamp = state.get("button_click")
+        now = time.monotonic()
+        if stamp and stamp[:2] == (x, y) and now - stamp[2] < 0.4:
+            return
+        state["button_click"] = (x, y, now)
+    tmux("send-keys", "-t", "menu:0.0", *keys)
+
+
+def forward_pending_input(stdscr, captured=None, mouse_state=None):
     navigation = {
         curses.KEY_UP: "Up", curses.KEY_DOWN: "Down",
         curses.KEY_LEFT: "Left", curses.KEY_RIGHT: "Right",
@@ -106,6 +216,8 @@ def forward_pending_input(stdscr):
         curses.KEY_BTAB: "BTab",
     }
     literal = []
+    if mouse_state is None:
+        mouse_state = {}
 
     def flush_literal():
         if literal:
@@ -126,13 +238,22 @@ def forward_pending_input(stdscr):
             # terminal's multi-arrow scrolling fallback.
             flush_literal()
             try:
-                _, _, _, _, buttons = curses.getmouse()
+                _, mx, my, _, buttons = curses.getmouse()
             except curses.error:
                 continue
             if buttons & curses.BUTTON4_PRESSED:
                 tmux("send-keys", "-t", "menu:0.0", "Up")
             elif buttons & curses.BUTTON5_PRESSED:
                 tmux("send-keys", "-t", "menu:0.0", "Down")
+            elif buttons & curses.BUTTON1_PRESSED:
+                mouse_state["down"] = (mx, my)
+            elif buttons & curses.BUTTON1_RELEASED:
+                down = mouse_state.pop("down", None)
+                if down == (mx, my):
+                    forward_verified_click(mx, my, captured, mouse_state)
+            elif buttons & curses.BUTTON1_CLICKED:
+                mouse_state.pop("down", None)
+                forward_verified_click(mx, my, captured, mouse_state)
         elif key in navigation:
             flush_literal()
             tmux("send-keys", "-t", "menu:0.0", navigation[key])
@@ -167,7 +288,9 @@ def main(stdscr):
     # tracking. Without it, a wheel notch may be emulated as several arrow
     # keys and skip multiple menu entries. No tracking is enabled in classic UI.
     try:
-        curses.mousemask(curses.BUTTON4_PRESSED | curses.BUTTON5_PRESSED)
+        curses.mousemask(curses.BUTTON4_PRESSED | curses.BUTTON5_PRESSED |
+                         curses.BUTTON1_PRESSED | curses.BUTTON1_RELEASED |
+                         curses.BUTTON1_CLICKED)
         curses.mouseinterval(0)
     except curses.error:
         pass
@@ -205,6 +328,7 @@ def main(stdscr):
     last=time.monotonic()
     last_snapshot=0
     captured=[]
+    mouse_state={}
     while True:
         h,w=stdscr.getmaxyx()
         if (h,w)!=dims:
@@ -283,7 +407,7 @@ def main(stdscr):
                 except curses.error:
                     pass
         stdscr.refresh()
-        if forward_pending_input(stdscr):
+        if forward_pending_input(stdscr, captured, mouse_state):
             break
         time.sleep(max(0,1/20-(time.monotonic()-now)))
 
