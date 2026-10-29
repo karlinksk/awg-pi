@@ -90,6 +90,61 @@ def parse_line(line, cols):
         x+=1
     return out
 
+
+# The Matrix renderer refreshes at 20 fps, but clipboard input must NOT be
+# throttled to one keystroke per redraw. A config paste can contain thousands
+# of characters. Drain ncurses' ready input and forward consecutive printable
+# characters through one literal tmux call (not a subprocess per character).
+# Flush before control keys to preserve their order and native dialog behavior.
+def forward_pending_input(stdscr):
+    navigation = {
+        curses.KEY_UP: "Up", curses.KEY_DOWN: "Down",
+        curses.KEY_LEFT: "Left", curses.KEY_RIGHT: "Right",
+        curses.KEY_BACKSPACE: "BSpace", curses.KEY_DC: "DC",
+        curses.KEY_PPAGE: "PPage", curses.KEY_NPAGE: "NPage",
+        curses.KEY_HOME: "Home", curses.KEY_END: "End",
+        curses.KEY_BTAB: "BTab",
+    }
+    literal = []
+
+    def flush_literal():
+        if literal:
+            # -- keeps pasted text starting with "-" out of tmux option parsing.
+            tmux("send-keys", "-t", "menu:0.0", "-l", "--", "".join(literal))
+            literal.clear()
+
+    # Cap work per frame so rain and window resizing remain responsive during
+    # enormous pastes; the remaining PTY input stays queued for the next frame.
+    for _ in range(8192):
+        try:
+            key = stdscr.get_wch()
+        except curses.error:
+            break
+        if key in navigation:
+            flush_literal()
+            tmux("send-keys", "-t", "menu:0.0", navigation[key])
+        elif key in ("\n", "\r", curses.KEY_ENTER):
+            flush_literal()
+            tmux("send-keys", "-t", "menu:0.0", "Enter")
+        elif key == "\x1b":
+            flush_literal()
+            tmux("send-keys", "-t", "menu:0.0", "Escape")
+        elif key in ("\x7f", "\b"):
+            flush_literal()
+            tmux("send-keys", "-t", "menu:0.0", "BSpace")
+        elif key == "\t":
+            flush_literal()
+            tmux("send-keys", "-t", "menu:0.0", "Tab")
+        elif key == "\x03":
+            flush_literal()
+            return True
+        elif isinstance(key, str) and key.isprintable():
+            literal.append(key)
+            if len(literal) >= 2048:
+                flush_literal()
+    flush_literal()
+    return False
+
 def main(stdscr):
     locale.setlocale(locale.LC_ALL, "")
     curses.curs_set(0)
@@ -207,32 +262,8 @@ def main(stdscr):
                 except curses.error:
                     pass
         stdscr.refresh()
-        try:
-            key = stdscr.get_wch()
-        except curses.error:
-            key = None
-        navigation = {
-            curses.KEY_UP: "Up", curses.KEY_DOWN: "Down",
-            curses.KEY_LEFT: "Left", curses.KEY_RIGHT: "Right",
-            curses.KEY_BACKSPACE: "BSpace", curses.KEY_DC: "DC",
-            curses.KEY_PPAGE: "PPage", curses.KEY_NPAGE: "NPage",
-            curses.KEY_HOME: "Home", curses.KEY_END: "End",
-            curses.KEY_BTAB: "BTab",
-        }
-        if key in navigation:
-            tmux("send-keys", "-t", "menu:0.0", navigation[key])
-        elif key in ("\n", "\r", curses.KEY_ENTER):
-            tmux("send-keys", "-t", "menu:0.0", "Enter")
-        elif key in ("\x1b",):
-            tmux("send-keys", "-t", "menu:0.0", "Escape")
-        elif key in ("\x7f", "\b"):
-            tmux("send-keys", "-t", "menu:0.0", "BSpace")
-        elif key == "\t":
-            tmux("send-keys", "-t", "menu:0.0", "Tab")
-        elif key == "\x03":
+        if forward_pending_input(stdscr):
             break
-        elif isinstance(key, str) and key.isprintable():
-            tmux("send-keys", "-t", "menu:0.0", "-l", key)
         time.sleep(max(0,1/20-(time.monotonic()-now)))
 
 if __name__=="__main__":
