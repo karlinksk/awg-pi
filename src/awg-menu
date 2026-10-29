@@ -2912,9 +2912,7 @@ notify_types_menu(){
   grep -Fxq 'NOTIFY_PREF_TRANSPORT_SWITCH=on' <<<"$current" && transport=on
   selection="$(dialog --backtitle "$BACKTITLE" --title "Типы уведомлений" \
     --separate-output --checklist \
-    "Пробел — поставить/снять галочку; ОК — сохранить; Отмена — выйти.
-
-Сводка в 09:00 настраивается только здесь. При включённой общей доставке её таймер синхронизируется автоматически. Остальные галочки управляют созданием событий и не меняют VPN." \
+    "Выберите события для отправки. Ежедневная сводка в 09:00 работает только при включённой доставке. VPN и MikroTik не меняются." \
     25 110 8 \
     VPN_LOST "Отказ выбранного VPN (две проверки)" "$lost" \
     VPN_RESTORED "Восстановление выбранного VPN" "$restored" \
@@ -2927,7 +2925,7 @@ notify_types_menu(){
   title="Типы уведомлений"
   if capture /usr/local/sbin/awg-notify preferences-set --enabled "$csv"; then
     if notify_sync_daily_schedule "$csv"; then
-      msg "Типы уведомлений" "Выбор сохранён. Сводка в 09:00 синхронизирована с её галочкой.
+      msg "Типы уведомлений" "Выбор сохранён. Расписание ежедневной сводки обновлено.
 
 При выключенной общей доставке сводка не запускается. Накопленная очередь сохранена. Другие службы, VPN, DNS и MikroTik не менялись."
     else
@@ -2936,8 +2934,39 @@ notify_types_menu(){
   fi
 }
 
+# Read-only summary of saved Telegram settings. Unknown is not disabled.
+notify_menu_header(){
+  local status="$1" delivery="$2" configured="не удалось проверить"
+  local kind label chosen="" sep="" complete=1
+  local -a kinds=(VPN_LOST VPN_RESTORED BOOT DAILY_REPORT NODE_SWITCH TRANSPORT_SWITCH)
+  if grep -Fxq 'NOTIFY_CONFIGURED=yes' <<<"$status"; then
+    configured="настроен"
+  elif grep -Fxq 'NOTIFY_CONFIGURED=no' <<<"$status"; then
+    configured="не настроен"
+  fi
+  for kind in "${kinds[@]}"; do
+    if grep -Fxq "NOTIFY_PREF_${kind}=on" <<<"$status"; then
+      case "$kind" in
+        VPN_LOST) label="отказ VPN" ;;
+        VPN_RESTORED) label="восстановление VPN" ;;
+        BOOT) label="запуск Raspberry Pi" ;;
+        DAILY_REPORT) label="ежедневная сводка" ;;
+        NODE_SWITCH) label="смена ноды" ;;
+        TRANSPORT_SWITCH) label="смена транспорта" ;;
+      esac
+      chosen+="$sep$label"
+      sep=", "
+    elif ! grep -Fxq "NOTIFY_PREF_${kind}=off" <<<"$status"; then
+      complete=0
+    fi
+  done
+  if (( ! complete )); then chosen="не удалось проверить"; fi
+  if (( complete )) && [[ -z "$chosen" ]]; then chosen="не выбраны"; fi
+  printf 'Бот: %s\nДоставка: %s\nУведомления: %s' "$configured" "$delivery" "$chosen"
+}
+
 notify_menu(){
-  local choice note_state daily_state watch_state current
+  local choice note_state current summary
   while true; do
     if [[ ! -x /usr/local/sbin/awg-notify ]]; then
       msg "Telegram" "AWG Notify не установлен. Проверьте состав инсталлятора."
@@ -2945,23 +2974,14 @@ notify_menu(){
     fi
     note_state="выключена"
     systemctl is-enabled --quiet awg-notify-flush.timer 2>/dev/null && note_state="включена" || true
-    watch_state="выключен"
-    systemctl is-enabled --quiet awg-notify-watch.timer 2>/dev/null && watch_state="включен" || true
-    current="$(/usr/local/sbin/awg-notify status 2>/dev/null || echo NOTIFY_CONFIGURED=no)"
-    daily_state="отключена"
-    if grep -Fxq 'NOTIFY_PREF_DAILY_REPORT=on' <<<"$current"; then
-      daily_state="включена"
-      systemctl is-enabled --quiet awg-notify-daily.timer 2>/dev/null || daily_state="ожидает включения доставки"
-    fi
+    current="$(/usr/local/sbin/awg-notify status 2>/dev/null)" || current=""
+    summary="$(notify_menu_header "$current" "$note_state")"
     choice="$(dialog --backtitle "$BACKTITLE" --title "Telegram" --item-help --menu \
-      "Доставка: $note_state. Watch: $watch_state. Сводка: $daily_state.
-$(grep -E '^NOTIFY_(CONFIGURED|PENDING|LAST_ROUTE)=' <<<"$current" || true)
-
-Типы уведомлений — отдельными галочками. Оповещения не управляют VPN и MikroTik." 23 106 7 \
+      "$summary" 23 106 7 \
       1 "Настроить Telegram-бота" "Защищённый ввод токена и привязка чата." \
       2 "Проверить доставку" "Тестовое сообщение по разрешённым VPN-маршрутам." \
       3 "Доставка Telegram [$note_state]" "Включить или выключить доставку, Watch, загрузку и расписание сводки." \
-      4 "Типы уведомлений [галочки]" "Отказ, восстановление, запуск, сводка, нода и транспорт." \
+      4 "Типы уведомлений" "Выбрать события для оповещений." \
       5 "Состояние и очередь" "Просмотр без токена и секретов." \
       6 "Исправить привязку чата" "Безопасная повторная привязка /pair." \
       0 "Назад" "Возврат в системное меню." 3>&1 1>&2 2>&3)" || return 0
