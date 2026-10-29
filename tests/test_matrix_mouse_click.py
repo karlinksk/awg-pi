@@ -54,6 +54,10 @@ class MouseClicks(unittest.TestCase):
         for i, ch in enumerate("<Закрыть>", 40):
             close[24][i] = cell(ch, 7, 0, True)
         self.assertEqual(ui.menu_keys_for_click(close, 44, 24), ("Enter",))
+        # Prose that happens to contain <Закрыть> must not act as a button.
+        for i, ch in enumerate("<Закрыть>", 40):
+            close[24][i] = cell(ch, 7, 4, False)
+        self.assertEqual(ui.menu_keys_for_click(close, 44, 24), ())
 
     def test_background_and_invalid_regions_are_ignored(self):
         s = screen()

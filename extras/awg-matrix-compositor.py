@@ -118,8 +118,6 @@ def menu_keys_for_click(screen, x, y):
             return ()
         for index, match in enumerate(buttons):
             if match.start() <= x < match.end():
-                if len(buttons) == 1:
-                    return ("Enter",)
                 active = [
                     idx for idx, button in enumerate(buttons)
                     if any(
@@ -128,6 +126,8 @@ def menu_keys_for_click(screen, x, y):
                         for cell in row[button.start():button.end()]
                     )
                 ]
+                # A solitary <OK>/<Close> token in textbox prose is NOT
+                # necessarily a dialog button. Require real active styling.
                 if len(active) != 1:
                     return ()
                 steps = (index - active[0]) % len(buttons)
