@@ -99,6 +99,9 @@ class Confirmation(unittest.TestCase):
         end = menu_text.index('\n}\n', start) + 3
         function = menu_text[start:end]
         script = function + r'''
+# This legacy test exercises CANCEL_EXIT from an operation already started.
+# The separate SSH-handoff tests cover pre-launch Cancel and Esc.
+dialog(){ return 0; }
 clear(){ :; }
 fake(){ return "$1"; }
 run_interactive "Test" fake "$1"
