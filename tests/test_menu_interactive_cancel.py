@@ -35,11 +35,12 @@ dialog(){
     return "$CONFIRM_RC"
   fi
   if [[ " $* " == *" --menu "* ]]; then
+    # Real dialog emits the choice on stderr; the TUI swaps fds 3>&1 1>&2 2>&3.
     if [[ ! -e "$CHOSEN" ]]; then
       : > "$CHOSEN"
-      printf '3\n'
+      printf '3\n' >&2
     else
-      printf '0\n'
+      printf '0\n' >&2
     fi
     return 0
   fi
