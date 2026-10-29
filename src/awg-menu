@@ -2817,11 +2817,11 @@ awg_dc_human_status(){
   printf 'Версия Node.js: %s\n' "${node:-не определена}"
   printf 'Необходимые компоненты: %s\n' "$components_text"
   printf 'Поддержка соединения: %s\n\n' "$network_text"
-  if [[ "$cloud" == check_dashboard ]]; then
-    printf 'Связь с сервером необходимо проверить в панели Desktop Commander.\n'
-  else
-    printf 'Подтверждения связи с сервером нет. Проверьте панель Desktop Commander.\n'
+  if [[ "$cloud" != check_dashboard ]]; then
+    printf 'Подтверждения связи с сервером нет.\n'
   fi
+  printf 'Для проверки подключения откройте панель Desktop Commander:\n'
+  printf 'https://mcp.desktopcommander.app\n'
   printf 'Работающий агент сам по себе не подтверждает подключение.\n'
 }
 

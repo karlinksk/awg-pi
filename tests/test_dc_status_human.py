@@ -50,6 +50,9 @@ class HumanDesktopCommanderStatus(unittest.TestCase):
         self.assertIn("Необходимые компоненты: установлены", lines)
         self.assertIn("Поддержка соединения: доступна", lines)
         self.assertIn("Работающий агент сам по себе не подтверждает подключение.", lines)
+        self.assertIn("Для проверки подключения откройте панель Desktop Commander:", lines)
+        self.assertEqual(lines.count("https://mcp.desktopcommander.app"), 1)
+        self.assertNotIn("https://mcp.desktopcommander.app/mcp", result.stdout)
         self.assertNotIn("Результат: ВЫПОЛНЕНО", result.stdout)
         self.assertNotIn("AWG_DC_", result.stdout)
 
@@ -82,6 +85,7 @@ AWG_DC_AGENT_SERVICE=INACTIVE
         self.assertIn("Необходимые компоненты: требуется установка", result.stdout)
         self.assertIn("Версия Node.js: не определена", result.stdout)
         self.assertIn("Поддержка соединения: используется дополнительный компонент", result.stdout)
+        self.assertIn("https://mcp.desktopcommander.app", result.stdout)
 
     def test_unknown_fields_and_untrusted_values_are_not_exposed(self):
         raw = (STATUS.replace("AWG_DC_USER=karlinks", "AWG_DC_USER=\\033[31mBAD")
