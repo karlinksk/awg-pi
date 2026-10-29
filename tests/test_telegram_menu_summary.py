@@ -67,5 +67,28 @@ class TelegramMenuHeader(unittest.TestCase):
         self.assertNotIn("NOTIFY_LAST_ROUTE",section)
         self.assertNotIn("NOTIFY_PENDING",section)
 
+    def test_telegram_menu_no_duplicate_technical_status_screen(self):
+        section = body("notify_menu")
+        # The compact five-action menu still has the chat repair workflow,
+        # while raw status remains accessible through the existing CLI.
+        self.assertIn('5 "Исправить привязку чата"', section)
+        self.assertIn('5) if [[ -x /usr/local/sbin/awg-notify-pair-repair ]]', section)
+        self.assertIn('run_interactive "Исправление Telegram chat ID"', section)
+        self.assertNotIn('6 "Исправить привязку чата"', section)
+        self.assertNotIn('6) if [[', section)
+        self.assertNotIn('"Состояние и очередь"', section)
+        self.assertNotIn('title="Telegram — состояние"', section)
+        self.assertNotIn('capture /usr/local/sbin/awg-notify status', section)
+        self.assertIn('current="$(/usr/local/sbin/awg-notify status', section)
+        self.assertIn('"$summary" 23 106 6', section)
+        self.assertIn('0) return 0 ;;', section)
+
+    def test_notify_status_cli_not_deleted(self):
+        notifier = (Path(__file__).resolve().parents[1]
+                    / "src" / "awg-notify.py").read_text()
+        self.assertIn('sub.add_parser("status")', notifier)
+        self.assertIn('print("NOTIFY_PENDING="', notifier)
+        self.assertIn('print("NOTIFY_LAST_ROUTE="', notifier)
+
 if __name__=="__main__":
     unittest.main()

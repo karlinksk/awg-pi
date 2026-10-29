@@ -23,7 +23,7 @@ class NotifyWiringTests(unittest.TestCase):
             "install_project_python_helper scripts/awg-notify-pair-repair.py "
             "/usr/local/sbin/awg-notify-pair-repair", install)
         self.assertNotIn("sudo /usr/local/sbin/awg-notify-pair-repair", install)
-        self.assertIn('6 "Исправить привязку чата"', menu)
+        self.assertIn('5 "Исправить привязку чата"', menu)
         self.assertIn('run_interactive "Исправление Telegram chat ID"', menu)
         self.assertIn('if [[ -x /usr/local/sbin/awg-notify-pair-repair ]]', menu)
 
@@ -294,12 +294,13 @@ class NotifyWiringTests(unittest.TestCase):
         section = menu.split("notify_menu(){", 1)[1].split("\\nappearance_menu(){", 1)[0]
         self.assertIn('3 "Доставка Telegram [$note_state]"', section)
         self.assertIn('4 "Типы уведомлений"', section)
-        self.assertIn('5 "Состояние и очередь"', section)
-        self.assertIn('6 "Исправить привязку чата"', section)
+        self.assertIn('5 "Исправить привязку чата"', section)
+        self.assertNotIn('"Состояние и очередь"', section)
         self.assertIn('      3)', section)
         self.assertIn('      4) notify_types_menu ;;', section)
         self.assertIn('      5)', section)
-        self.assertIn('      6)', section)
+        self.assertNotIn('      6)', section)
+        self.assertNotIn('capture /usr/local/sbin/awg-notify status', section)
         self.assertNotIn('"Включить сводку в 09:00"', section)
         self.assertNotIn('"Выключить ежедневную сводку"', section)
         self.assertNotIn('"Выключить уведомления"', section)

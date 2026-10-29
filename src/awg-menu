@@ -2977,13 +2977,12 @@ notify_menu(){
     current="$(/usr/local/sbin/awg-notify status 2>/dev/null)" || current=""
     summary="$(notify_menu_header "$current" "$note_state")"
     choice="$(dialog --backtitle "$BACKTITLE" --title "Telegram" --item-help --menu \
-      "$summary" 23 106 7 \
+      "$summary" 23 106 6 \
       1 "Настроить Telegram-бота" "Защищённый ввод токена и привязка чата." \
       2 "Проверить доставку" "Тестовое сообщение по разрешённым VPN-маршрутам." \
       3 "Доставка Telegram [$note_state]" "Включить или выключить доставку, Watch, загрузку и расписание сводки." \
       4 "Типы уведомлений" "Выбрать события для оповещений." \
-      5 "Состояние и очередь" "Просмотр без токена и секретов." \
-      6 "Исправить привязку чата" "Безопасная повторная привязка /pair." \
+      5 "Исправить привязку чата" "Безопасная повторная привязка /pair." \
       0 "Назад" "Возврат в системное меню." 3>&1 1>&2 2>&3)" || return 0
     case "$choice" in
       1) run_interactive "Настройка Telegram-бота" /usr/local/sbin/awg-notify configure ;;
@@ -3014,8 +3013,7 @@ notify_menu(){
         fi
         ;;
       4) notify_types_menu ;;
-      5) title="Telegram — состояние"; capture /usr/local/sbin/awg-notify status || true ;;
-      6) if [[ -x /usr/local/sbin/awg-notify-pair-repair ]]; then
+      5) if [[ -x /usr/local/sbin/awg-notify-pair-repair ]]; then
            run_interactive "Исправление Telegram chat ID" /usr/local/sbin/awg-notify-pair-repair
          else
            msg "Telegram" "Помощник привязки чата ещё не установлен."
