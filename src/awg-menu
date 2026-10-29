@@ -2735,15 +2735,22 @@ traffic_screen(){
 }
 
 desktop_commander_menu(){
-  local choice dc_user
+  local choice dc_user autostart_state
   dc_user="${SUDO_USER:-karlinks}"
   while true; do
+    # The checkmark describes persistent systemd enablement, not whether
+    # the optional remote agent is currently running or connected.
+    if systemctl is-enabled --quiet "awg-dc-remote@${dc_user}.service" 2>/dev/null; then
+      autostart_state=enabled
+    else
+      autostart_state=disabled
+    fi
     choice="$(dialog --backtitle "$BACKTITLE" --title "Desktop Commander (удалённый доступ)" --item-help --menu \
       "Необязательный удалённый агент. Подключение требует подтверждения в браузере. Для стабильного доступа сервер Desktop Commander должен проходить через настроенный на MikroTik SSTP. VPN-шлюз и DNS здесь не изменяются." 25 108 8 \
       1 "Подключить / авторизовать устройство" "Запустить штатный awg-dc pair от обычного пользователя; после подтверждения включается автозапуск." \
       2 "Состояние Desktop Commander" "Проверить авторизацию и службу без раскрытия учётных данных." \
-      3 "Включить автозапуск" "Для уже авторизованного устройства включить systemd-службу." \
-      4 "Выключить автозапуск" "Остановить службу, не удаляя авторизацию." \
+      3 "$(awg_option_label "Включить автозапуск" enabled "$autostart_state")" "Для уже авторизованного устройства включить systemd-службу." \
+      4 "$(awg_option_label "Выключить автозапуск" disabled "$autostart_state")" "Остановить службу, не удаляя авторизацию." \
       0 "Назад" "Вернуться к системным функциям." 3>&1 1>&2 2>&3)" || return 0
     case "$choice" in
       1)
