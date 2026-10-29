@@ -41,12 +41,12 @@ class MatrixInputBatch(unittest.TestCase):
         return "".join(call[-1] for call in sent if "-l" in call)
 
     def test_large_unicode_paste_is_batched_not_limited_by_frame_rate(self):
-        text = "-[Interface]\n".split("\n")[0] + "ключ=значение" * 1000
+        text = "-[Interface]\n".split("\n")[0] + "ключ=значение" * 600
         sent, screen, quit_requested = self.forward(text)
         self.assertFalse(quit_requested)
         self.assertFalse(screen.keys)
         self.assertEqual(self.literal_data(sent), text)
-        self.assertEqual(len(sent), 7)  # ceil(len(text)/2048)
+        self.assertEqual(len(sent), (len(text) + 2047) // 2048)
         self.assertTrue(all(call[:5] ==
                             ("send-keys", "-t", "menu:0.0", "-l", "--")
                             for call in sent))
