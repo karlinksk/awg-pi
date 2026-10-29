@@ -120,7 +120,20 @@ def forward_pending_input(stdscr):
             key = stdscr.get_wch()
         except curses.error:
             break
-        if key in navigation:
+        if key == curses.KEY_MOUSE:
+            # Xterm-style terminals report wheel notches as mouse buttons 4/5.
+            # Handle one arrow per wheel event instead of relying on the
+            # terminal's multi-arrow scrolling fallback.
+            flush_literal()
+            try:
+                _, _, _, _, buttons = curses.getmouse()
+            except curses.error:
+                continue
+            if buttons & curses.BUTTON4_PRESSED:
+                tmux("send-keys", "-t", "menu:0.0", "Up")
+            elif buttons & curses.BUTTON5_PRESSED:
+                tmux("send-keys", "-t", "menu:0.0", "Down")
+        elif key in navigation:
             flush_literal()
             tmux("send-keys", "-t", "menu:0.0", navigation[key])
         elif key in ("\n", "\r", curses.KEY_ENTER):
@@ -150,6 +163,14 @@ def main(stdscr):
     curses.curs_set(0)
     stdscr.nodelay(True)
     stdscr.keypad(True)
+    # Request native wheel events from SSH terminals that support xterm mouse
+    # tracking. Without it, a wheel notch may be emulated as several arrow
+    # keys and skip multiple menu entries. No tracking is enabled in classic UI.
+    try:
+        curses.mousemask(curses.BUTTON4_PRESSED | curses.BUTTON5_PRESSED)
+        curses.mouseinterval(0)
+    except curses.error:
+        pass
     curses.start_color()
     curses.use_default_colors()
     for i,c in enumerate(PALETTE):
@@ -266,9 +287,20 @@ def main(stdscr):
             break
         time.sleep(max(0,1/20-(time.monotonic()-now)))
 
+def run_with_mouse_cleanup(stdscr):
+    try:
+        return main(stdscr)
+    finally:
+        # Stop terminal-side mouse reporting before curses restores the TTY.
+        try:
+            curses.mousemask(0)
+        except curses.error:
+            pass
+
+
 if __name__=="__main__":
     try:
-        code = curses.wrapper(main)
+        code = curses.wrapper(run_with_mouse_cleanup)
     finally:
         subprocess.run(["tmux","-L",SOCKET,"kill-server"],capture_output=True)
     sys.exit(code or 0)
