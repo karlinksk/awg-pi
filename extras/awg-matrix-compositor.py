@@ -263,8 +263,10 @@ def forward_pending_input(stdscr, captured=None, mouse_state=None):
             except curses.error:
                 continue
             if buttons & curses.BUTTON4_PRESSED:
+                mouse_state.pop("armed_item", None)
                 tmux("send-keys", "-t", "menu:0.0", "Up")
             elif buttons & curses.BUTTON5_PRESSED:
+                mouse_state.pop("armed_item", None)
                 tmux("send-keys", "-t", "menu:0.0", "Down")
             elif buttons & curses.BUTTON1_PRESSED:
                 mouse_state["down"] = (mx, my)
@@ -284,23 +286,29 @@ def forward_pending_input(stdscr, captured=None, mouse_state=None):
                 forward_verified_click(mx, my, captured, mouse_state)
         elif key in navigation:
             flush_literal()
+            mouse_state.pop("armed_item", None)
             tmux("send-keys", "-t", "menu:0.0", navigation[key])
         elif key in ("\n", "\r", curses.KEY_ENTER):
             flush_literal()
+            mouse_state.pop("armed_item", None)
             tmux("send-keys", "-t", "menu:0.0", "Enter")
         elif key == "\x1b":
             flush_literal()
+            mouse_state.pop("armed_item", None)
             tmux("send-keys", "-t", "menu:0.0", "Escape")
         elif key in ("\x7f", "\b"):
             flush_literal()
+            mouse_state.pop("armed_item", None)
             tmux("send-keys", "-t", "menu:0.0", "BSpace")
         elif key == "\t":
             flush_literal()
+            mouse_state.pop("armed_item", None)
             tmux("send-keys", "-t", "menu:0.0", "Tab")
         elif key == "\x03":
             flush_literal()
             return True
         elif isinstance(key, str) and key.isprintable():
+            mouse_state.pop("armed_item", None)
             literal.append(key)
             if len(literal) >= 2048:
                 flush_literal()
