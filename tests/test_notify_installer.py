@@ -291,7 +291,7 @@ class NotifyWiringTests(unittest.TestCase):
 
     def test_telegram_menu_has_single_controls_no_duplicate_schedule(self):
         menu = (ROOT / "src/awg-menu").read_text()
-        section = menu.split("notify_menu(){", 1)[1].split("\\nappearance_menu(){", 1)[0]
+        section = menu.split("notify_menu(){", 1)[1].split("awg_menu_restart_for_appearance(){", 1)[0]
         self.assertIn('3 "Доставка Telegram [$note_state]"', section)
         self.assertIn('4 "Типы уведомлений"', section)
         self.assertIn('5 "Исправить привязку чата"', section)
