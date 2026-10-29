@@ -16,13 +16,13 @@ W, H = 90, 28
 def cell(ch=" ", fg=7, bg=4, bold=False):
     return (ch, fg, bg, bold)
 
-def screen():
+def screen(selected_index=0):
     rows = [[cell() for _ in range(W)] for _ in range(H)]
     for index, (tag, label) in enumerate([
             ("1", "Первая"), ("2", "Вторая"),
             ("3", "Третья"), ("0", "Назад")]):
         y = 8 + index
-        selected = index == 0
+        selected = index == selected_index
         rows[y][29] = cell(tag, 3 if selected else 6, 0 if selected else 4, True)
         for i, letter in enumerate(label):
             rows[y][33 + i] = cell(letter, 7, 0 if selected else 4, selected)
@@ -45,6 +45,8 @@ class MouseClicks(unittest.TestCase):
         self.assertEqual(ui.menu_keys_for_click(s, 35, 10), ("Down", "Down"))
         self.assertEqual(ui.menu_keys_for_click(s, 29, 11), ("Down",)*3)
         self.assertEqual(ui.menu_keys_for_click(s, 35, 8), ())
+        self.assertEqual(ui.menu_keys_for_click(s, 35, 8, activate_selected=True),
+                         ("Enter",))
 
     def test_ok_cancel_close_buttons(self):
         s = screen()
@@ -104,6 +106,101 @@ class MouseClicks(unittest.TestCase):
             ("send-keys","-t","menu:0.0","Enter"),
             ("send-keys","-t","menu:0.0","Down"),
         ])
+
+
+    def test_second_separate_click_on_selected_item_activates_once(self):
+        selected_first = screen()
+        selected_third = screen(selected_index=2)
+        state, sent = {}, []
+        active = [selected_first]
+
+        def fake_tmux(*args, **kwargs):
+            if args[0] == "capture-pane":
+                return "\n".join("row" + str(i) for i in range(H)) + "\n"
+            sent.append(args)
+            return ""
+
+        with patch.object(ui, "tmux", side_effect=fake_tmux), \
+             patch.object(ui, "parse_line",
+                          side_effect=lambda line, width: active[0][int(line[3:])]):
+            # First click selects Third, but must not execute any operation.
+            ui.forward_verified_click(35, 10, selected_first, state)
+            self.assertEqual(sent, [
+                ("send-keys", "-t", "menu:0.0", "Down", "Down"),
+            ])
+            active[0] = selected_third
+            ui.forward_verified_click(35, 10, selected_third, state)
+            self.assertEqual(sent[-1],
+                             ("send-keys", "-t", "menu:0.0", "Enter"))
+            self.assertNotIn("armed_item", state)
+
+    def test_preselected_item_requires_two_independent_clicks(self):
+        s = screen()
+        state, sent = {}, []
+        def fake_tmux(*args, **kwargs):
+            if args[0] == "capture-pane":
+                return "\n".join("row" + str(i) for i in range(H)) + "\n"
+            sent.append(args)
+            return ""
+
+        with patch.object(ui, "tmux", side_effect=fake_tmux), \
+             patch.object(ui, "parse_line",
+                          side_effect=lambda line, width: s[int(line[3:])]):
+            ui.forward_verified_click(35, 8, s, state)
+            self.assertEqual(sent, [])
+            ui.forward_verified_click(35, 8, s, state)
+            self.assertEqual(sent, [
+                ("send-keys", "-t", "menu:0.0", "Enter")])
+
+    def test_release_then_clicked_is_one_physical_click_not_two(self):
+        initial, selected = screen(), screen(selected_index=2)
+        state, sent = {}, []
+        active = [initial]
+        events = iter([
+            (0, 35, 10, 0, curses.BUTTON1_PRESSED),
+            (0, 35, 10, 0, curses.BUTTON1_RELEASED),
+            (0, 35, 10, 0, curses.BUTTON1_CLICKED),
+        ])
+        def fake_tmux(*args, **kwargs):
+            if args[0] == "capture-pane":
+                return "\n".join("row" + str(i) for i in range(H)) + "\n"
+            sent.append(args)
+            return ""
+
+        with patch.object(ui, "tmux", side_effect=fake_tmux), \
+             patch.object(ui, "parse_line",
+                          side_effect=lambda line, width: active[0][int(line[3:])]), \
+             patch.object(ui.curses, "getmouse", side_effect=lambda: next(events)):
+            ui.forward_pending_input(Input([curses.KEY_MOUSE] * 3), initial, state)
+            self.assertEqual(sent, [
+                ("send-keys", "-t", "menu:0.0", "Down", "Down")])
+            active[0] = selected
+            followup = iter([
+                (0, 35, 10, 0, curses.BUTTON1_PRESSED),
+                (0, 35, 10, 0, curses.BUTTON1_RELEASED),
+            ])
+            with patch.object(ui.curses, "getmouse",
+                              side_effect=lambda: next(followup)):
+                ui.forward_pending_input(Input([curses.KEY_MOUSE] * 2), selected, state)
+            self.assertEqual(sent[-1],
+                             ("send-keys", "-t", "menu:0.0", "Enter"))
+            self.assertEqual(len(sent), 2)
+
+    def test_keyboard_or_wheel_can_disarm_clicked_item(self):
+        s = screen(selected_index=2)
+        state = {"armed_item": (10, "".join(c[0] for c in s[10]).strip())}
+        # Reaching another selection via keyboard is a separate action.
+        # A later click of an already-selected item must first arm, not submit.
+        state.pop("armed_item")
+        sent = []
+        with patch.object(ui, "tmux", side_effect=lambda *args, **kwargs:
+                          "\n".join("row"+str(i) for i in range(H))+"\n"
+                          if args[0] == "capture-pane" else sent.append(args)), \
+             patch.object(ui, "parse_line",
+                          side_effect=lambda line,width:s[int(line[3:])]):
+            ui.forward_verified_click(35, 10, s, state)
+        self.assertEqual(sent, [])
+        self.assertIn("armed_item", state)
 
     def test_drag_and_unpaired_release_do_nothing(self):
         s = screen()
