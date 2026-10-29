@@ -104,7 +104,7 @@ def parse_line(line, cols):
 # can submit. Unsupported widgets and out-of-surface clicks do nothing.
 ANY_BUTTON_RE = re.compile(r"<[^<>]{1,28}>")
 
-def menu_keys_for_click(screen, x, y):
+def menu_keys_for_click(screen, x, y, activate_selected=False):
     """Return safe keyboard steps for the visible item/button, else ()."""
     if not screen or y < 0 or y >= len(screen) or x < 0 or x >= len(screen[y]):
         return ()
@@ -174,6 +174,8 @@ def menu_keys_for_click(screen, x, y):
     if target[2] not in (0, 4):
         return ()
     delta = y - sy
+    if delta == 0:
+        return ("Enter",) if activate_selected else ()
     return (("Down",) * delta if delta > 0 else ("Up",) * -delta)
 
 
@@ -193,11 +195,30 @@ def forward_verified_click(x, y, screen, state):
     if fresh != screen:
         return
     keys = menu_keys_for_click(screen, x, y)
+    # Two distinct clicks are needed for a menu item. The first arms the
+    # exact visible row (or selects it); the second, only if that same row is
+    # now highlighted, activates it. A highlighted row reached by keyboard
+    # or wheel is NOT automatically armed for mouse activation.
+    row_text = "".join(cell[0] if cell is not None else " "
+                       for cell in screen[y]).strip()
+    item_id = (y, row_text)
     if not keys:
-        return
+        if menu_keys_for_click(screen, x, y, activate_selected=True) == ("Enter",):
+            if state.get("armed_item") != item_id:
+                state["armed_item"] = item_id
+                return
+            keys = ("Enter",)
+        else:
+            state.pop("armed_item", None)
+            return
+    elif all(key in ("Up", "Down") for key in keys):
+        state["armed_item"] = item_id
+    else:
+        state.pop("armed_item", None)
     # A client may report RELEASED and CLICKED for the same press. Do not
     # submit a button twice, especially across a dialog transition.
     if keys[-1] == "Enter":
+        state.pop("armed_item", None)
         stamp = state.get("button_click")
         now = time.monotonic()
         if stamp and stamp[:2] == (x, y) and now - stamp[2] < 0.4:
@@ -250,9 +271,16 @@ def forward_pending_input(stdscr, captured=None, mouse_state=None):
             elif buttons & curses.BUTTON1_RELEASED:
                 down = mouse_state.pop("down", None)
                 if down == (mx, my):
+                    mouse_state["last_release"] = (mx, my, time.monotonic())
                     forward_verified_click(mx, my, captured, mouse_state)
             elif buttons & curses.BUTTON1_CLICKED:
                 mouse_state.pop("down", None)
+                # Some terminals emit CLICKED as well as PRESS/RELEASE for
+                # one physical click. Never interpret that as a second click.
+                recent = mouse_state.get("last_release")
+                if (recent and recent[:2] == (mx, my) and
+                        time.monotonic() - recent[2] < 0.3):
+                    continue
                 forward_verified_click(mx, my, captured, mouse_state)
         elif key in navigation:
             flush_literal()
