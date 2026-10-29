@@ -115,6 +115,13 @@ class DCAutostartMarker(unittest.TestCase):
         self.marked(screens[1], True)
         self.assertFalse(any(c.startswith("CAPTURE:") for c in calls))
 
+    def test_desktop_commander_header_is_short_and_transport_neutral(self):
+        source = function("desktop_commander_menu")
+        self.assertIn("Требуется подключение через VPN канал.", source)
+        self.assertNotIn("Для стабильного доступа сервер", source)
+        self.assertNotIn("настроенный на MikroTik SSTP", source)
+        self.assertIn("VPN-шлюз и DNS здесь не изменяются.", source)
+
     def test_read_only_probe_and_existing_helper_contract(self):
         source = function("desktop_commander_menu")
         self.assertIn('systemctl is-enabled --quiet "awg-dc-remote@' +
