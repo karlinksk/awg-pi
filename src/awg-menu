@@ -676,7 +676,14 @@ capture_ru(){
 run_interactive(){
   local heading="$1"
   shift
-  msg "Переход в SSH-терминал" "Для операции «$heading» откроется текстовый интерфейс SSH.\n\nВыполняйте подсказки на экране. После завершения нажмите Enter — меню восстановится автоматически."
+  # --msgbox has no Cancel button and Esc returns nonzero; under set -e
+  # that used to terminate the entire menu. Confirm explicitly, treating
+  # Cancel and Esc as a return to the calling submenu without side effects.
+  if ! dialog --backtitle "$BACKTITLE" --title "Переход в SSH-терминал" \
+       --yes-label "ОК" --no-label "Отмена" \
+       --yesno "Для операции «$heading» откроется текстовый интерфейс SSH.\n\nВыполняйте подсказки на экране. После завершения нажмите Enter — меню восстановится автоматически." 20 90; then
+    return 0
+  fi
   clear
   printf '=== %s ===\n\n' "$heading"
   printf 'Операция запущена. Сообщения и запросы появятся ниже.\n'
