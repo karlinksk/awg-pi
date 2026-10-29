@@ -309,7 +309,10 @@ class NotifyWiringTests(unittest.TestCase):
         self.assertIn('--title "Типы уведомлений"', menu)
         self.assertIn('notify_sync_daily_schedule "$csv"', menu)
         self.assertIn('notify_sync_daily_schedule "DAILY_REPORT"', menu)
-        self.assertIn('capture systemctl disable --now awg-notify-daily.timer', section)
+        self.assertIn('notify_apply_delivery off "" || true', section)
+        self.assertIn('notify_apply_delivery on "DAILY_REPORT" || true', section)
+        self.assertIn('notify_apply_delivery on "" || true', section)
+        self.assertNotIn('capture systemctl', section)
         self.assertIn('      0 "Назад"', section)
         self.assertEqual(section.count(' "Типы уведомлений"'), 1)
 

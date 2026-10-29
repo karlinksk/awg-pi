@@ -2965,6 +2965,34 @@ notify_menu_header(){
   printf 'Бот: %s\nДоставка: %s\nУведомления: %s' "$configured" "$delivery" "$chosen"
 }
 
+# Toggle only Telegram notification units without opening the generic command
+# result window on success. Keep the confirmation prompt in notify_menu and
+# display one readable warning if any unit action fails (never fake success).
+notify_apply_delivery(){
+  local desired="$1" daily_pref="$2"
+  local -a failed=()
+  case "$desired" in
+    on)
+      systemctl enable --now awg-notify-flush.timer >/dev/null 2>&1 || failed+=("доставки")
+      systemctl enable --now awg-notify-watch.timer >/dev/null 2>&1 || failed+=("контроля событий")
+      systemctl enable awg-notify-boot.service >/dev/null 2>&1 || failed+=("уведомления при запуске")
+      notify_sync_daily_schedule "$daily_pref" >/dev/null 2>&1 || failed+=("ежедневной сводки")
+      ;;
+    off)
+      systemctl disable --now awg-notify-flush.timer >/dev/null 2>&1 || failed+=("доставки")
+      systemctl disable --now awg-notify-watch.timer >/dev/null 2>&1 || failed+=("контроля событий")
+      systemctl disable --now awg-notify-daily.timer >/dev/null 2>&1 || failed+=("ежедневной сводки")
+      systemctl disable --now awg-notify-boot.service >/dev/null 2>&1 || failed+=("уведомления при запуске")
+      ;;
+    *) return 2 ;;
+  esac
+  if (( ${#failed[@]} )); then
+    msg "Доставка Telegram" "Не удалось изменить настройки: $(printf '%s, ' "${failed[@]}" | sed 's/, $//').\n\nПроверьте состояние доставки и повторите операцию."
+    return 1
+  fi
+  return 0
+}
+
 notify_menu(){
   local choice note_state current summary
   while true; do
@@ -2990,22 +3018,14 @@ notify_menu(){
       3)
         if [[ "$note_state" == "включена" ]]; then
           if confirm "Доставка Telegram" "Выключить все уведомления? Очередь и выбор типов останутся сохранёнными."; then
-            title="Telegram — выключение доставки"
-            capture systemctl disable --now awg-notify-flush.timer || true
-            capture systemctl disable --now awg-notify-watch.timer || true
-            capture systemctl disable --now awg-notify-daily.timer || true
-            capture systemctl disable --now awg-notify-boot.service || true
+            notify_apply_delivery off "" || true
           fi
         elif grep -Fxq 'NOTIFY_CONFIGURED=yes' <<<"$current"; then
           if confirm "Доставка Telegram" "Включить уведомления через настроенного бота? VPN и MikroTik не меняются."; then
-            title="Telegram — включение доставки"
-            capture systemctl enable --now awg-notify-flush.timer || true
-            capture systemctl enable --now awg-notify-watch.timer || true
-            capture systemctl enable awg-notify-boot.service || true
             if grep -Fxq 'NOTIFY_PREF_DAILY_REPORT=on' <<<"$current"; then
-              notify_sync_daily_schedule "DAILY_REPORT" || msg "Telegram" "Не удалось включить таймер сводки."
+              notify_apply_delivery on "DAILY_REPORT" || true
             else
-              notify_sync_daily_schedule "" || msg "Telegram" "Не удалось отключить таймер сводки."
+              notify_apply_delivery on "" || true
             fi
           fi
         else
