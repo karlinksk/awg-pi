@@ -188,11 +188,23 @@ class MouseClicks(unittest.TestCase):
 
     def test_keyboard_or_wheel_can_disarm_clicked_item(self):
         s = screen(selected_index=2)
-        state = {"armed_item": (10, "".join(c[0] for c in s[10]).strip())}
-        # Reaching another selection via keyboard is a separate action.
-        # A later click of an already-selected item must first arm, not submit.
-        state.pop("armed_item")
-        sent = []
+        initial_id = (10, "".join(c[0] for c in s[10]).strip())
+        for key in (curses.KEY_UP, curses.KEY_DOWN, "\t", "\x1b",
+                    "\r", "a", "\x7f", curses.KEY_LEFT):
+            with self.subTest(key=key):
+                state = {"armed_item": initial_id}
+                with patch.object(ui, "tmux", return_value=""):
+                    ui.forward_pending_input(Input([key]), s, state)
+                self.assertNotIn("armed_item", state)
+        for wheel in (curses.BUTTON4_PRESSED, curses.BUTTON5_PRESSED):
+            with self.subTest(wheel=wheel):
+                state = {"armed_item": initial_id}
+                with patch.object(ui, "tmux", return_value=""), \
+                     patch.object(ui.curses, "getmouse",
+                                  return_value=(0,20,8,0,wheel)):
+                    ui.forward_pending_input(Input([curses.KEY_MOUSE]),s,state)
+                self.assertNotIn("armed_item", state)
+        state, sent = {}, []
         with patch.object(ui, "tmux", side_effect=lambda *args, **kwargs:
                           "\n".join("row"+str(i) for i in range(H))+"\n"
                           if args[0] == "capture-pane" else sent.append(args)), \
