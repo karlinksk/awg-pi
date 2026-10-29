@@ -2734,6 +2734,114 @@ traffic_screen(){
   capture "$AWG_TRAFFIC" status full || true
 }
 
+# This read-only CLI exposes local pairing, service and dependencies, but
+# cannot establish that the agent has an active cloud connection. Translate
+# only known status keys and never leak raw or unknown diagnostic data.
+awg_dc_human_status(){
+  local raw="$1" line key value
+  local user="" node="" npm="" websocket="" bootstrap=""
+  local pairing="" autostart="" service="" cloud=""
+  local connection="не удалось определить" autostart_text="неизвестно"
+  local pairing_text="неизвестно" service_text="неизвестно"
+  local components_text="состояние неизвестно" network_text="состояние неизвестно"
+  while IFS= read -r line; do
+    [[ "$line" == *=* ]] || continue
+    key="${line%%=*}"
+    value="${line#*=}"
+    case "$key" in
+      AWG_DC_USER)
+        if [[ "$value" =~ ^[a-z_][a-z0-9_-]{0,31}$ ]]; then user="$value"; fi
+        ;;
+      AWG_DC_SYSTEM_NODE)
+        if [[ "$value" =~ ^v[0-9]+([.][0-9]+){1,2}$ ]]; then node="$value"; fi
+        ;;
+      AWG_DC_NPM) [[ "$value" != READY ]] || npm=ready ;;
+      AWG_DC_SYSTEM_WEBSOCKET)
+        case "$value" in
+          AVAILABLE|NOT_AVAILABLE_ISOLATED_FALLBACK_REQUIRED) websocket="$value" ;;
+        esac
+        ;;
+      AWG_DC_BOOTSTRAP)
+        [[ "$value" != MISSING_NODE18_OR_NPM ]] || bootstrap=missing
+        ;;
+      AWG_DC_PAIRING)
+        case "$value" in LOCAL_SESSION_PRESENT|NOT_VERIFIED) pairing="$value" ;; esac
+        ;;
+      AWG_DC_AUTOSTART)
+        case "$value" in ENABLED|DISABLED) autostart="$value" ;; esac
+        ;;
+      AWG_DC_AGENT_SERVICE)
+        case "$value" in ACTIVE|INACTIVE) service="$value" ;; esac
+        ;;
+      AWG_DC_REMOTE_CONNECTIVITY)
+        [[ "$value" != CHECK_DASHBOARD ]] || cloud=check_dashboard
+        ;;
+    esac
+  done <<< "$raw"
+
+  case "$autostart" in
+    ENABLED) autostart_text="включён" ;;
+    DISABLED) autostart_text="выключен" ;;
+  esac
+  case "$pairing" in
+    LOCAL_SESSION_PRESENT) pairing_text="сохранена на этом устройстве" ;;
+    NOT_VERIFIED) pairing_text="не подтверждена" ;;
+  esac
+  case "$service" in
+    ACTIVE) service_text="работает" ;;
+    INACTIVE) service_text="не запущен" ;;
+  esac
+  if [[ "$pairing" == NOT_VERIFIED ]]; then
+    connection="не настроено (требуется авторизация)"
+  elif [[ "$service" == INACTIVE ]]; then
+    connection="не установлено (агент не запущен)"
+  elif [[ "$service" == ACTIVE && "$pairing" == LOCAL_SESSION_PRESENT ]]; then
+    connection="не подтверждено (проверить в панели Desktop Commander)"
+  fi
+  if [[ "$npm" == ready ]]; then
+    components_text="установлены"
+  elif [[ "$bootstrap" == missing ]]; then
+    components_text="требуется установка"
+  fi
+  case "$websocket" in
+    AVAILABLE) network_text="доступна" ;;
+    NOT_AVAILABLE_ISOLATED_FALLBACK_REQUIRED)
+      network_text="используется дополнительный компонент"
+      ;;
+  esac
+  printf 'Подключение: %s\n' "$connection"
+  printf 'Автозапуск: %s\n\n' "$autostart_text"
+  printf 'Пользователь: %s\n' "${user:-неизвестен}"
+  printf 'Авторизация устройства: %s\n' "$pairing_text"
+  printf 'Удалённый агент: %s\n' "$service_text"
+  printf 'Версия Node.js: %s\n' "${node:-не определена}"
+  printf 'Необходимые компоненты: %s\n' "$components_text"
+  printf 'Поддержка соединения: %s\n\n' "$network_text"
+  if [[ "$cloud" == check_dashboard ]]; then
+    printf 'Связь с сервером необходимо проверить в панели Desktop Commander.\n'
+  else
+    printf 'Подтверждения связи с сервером нет. Проверьте панель Desktop Commander.\n'
+  fi
+  printf 'Работающий агент сам по себе не подтверждает подключение.\n'
+}
+
+desktop_commander_status_screen(){
+  local user="$1" raw
+  # TMP is the menu-owned private temporary file; it receives sanitized text.
+  if raw="$(/usr/local/bin/awg-dc status "$user" 2>/dev/null)"; then
+    awg_dc_human_status "$raw" > "$TMP"
+  else
+    printf '%s\n' \
+      'Подключение: не удалось проверить' \
+      'Автозапуск: не удалось проверить' \
+      '' \
+      'Не удалось получить сведения Desktop Commander.' \
+      'Проверьте установку и пользователя устройства.' > "$TMP"
+  fi
+  dialog --backtitle "$BACKTITLE" --title "Desktop Commander — состояние" \
+    --textbox "$TMP" 23 108 || true
+}
+
 desktop_commander_menu(){
   local choice dc_user autostart_state
   dc_user="${SUDO_USER:-karlinks}"
@@ -2761,10 +2869,7 @@ desktop_commander_menu(){
         run_interactive "Подготовка Desktop Commander" /usr/local/bin/awg-dc prepare "$dc_user"
         run_interactive "Авторизация Desktop Commander" runuser -u "$dc_user" -- /usr/local/bin/awg-dc pair
         ;;
-      2)
-        title="Desktop Commander — состояние"
-        capture /usr/local/bin/awg-dc status "$dc_user" || true
-        ;;
+      2) desktop_commander_status_screen "$dc_user" ;;
       3)
         confirm "Автозапуск DC" "Включить постоянный удалённый доступ для $dc_user после проверки авторизации?" || continue
         title="Desktop Commander — автозапуск"
