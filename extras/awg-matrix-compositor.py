@@ -40,12 +40,42 @@ def editbox_content_span(row):
 
 def editbox_focus(screen):
     """True only while the editor surface, not a footer button, has focus."""
+    # Selected menu rows also have an opaque highlighted label inside the
+    # same nested frame. Do not interpret that menu selection as field focus.
+    if menu_has_selected_item(screen):
+        return False
     for row in screen:
         span = editbox_content_span(row)
         if span and any(cell and cell[2] == 0 and cell[3] and cell[1] == 7
                         for cell in row[span[0]:span[1]]):
             return True
     return False
+
+
+def menu_has_selected_item(screen):
+    """Distinguish an actual highlighted menu option from an editbox cursor.
+
+    Both widgets draw four nested vertical borders, so looking at the frame
+    alone incorrectly reclassifies all menus as text editors. A menu option
+    has a highlighted yellow tag *before* a white highlighted description.
+    Plain editbox content does not use this paired tag/label style.
+    """
+    for row in screen:
+        line = "".join(cell[0] if cell is not None else " " for cell in row)
+        if BUTTON_RE.search(line):
+            continue
+        tags = [i for i, c in enumerate(row)
+                if c and c[0].isalnum() and c[1:] == (3, 0, True)]
+        labels = [i for i, c in enumerate(row)
+                  if c and c[0].isalpha() and c[1:] == (7, 0, True)]
+        if tags and labels and min(tags) < min(labels):
+            return True
+    return False
+
+
+def effective_editor_span(row, selected_menu):
+    """Only an actual text editor may suppress menu-style highlighting."""
+    return None if selected_menu else editbox_content_span(row)
 
 
 def shadow_row_columns(row):
@@ -162,7 +192,10 @@ def menu_keys_for_click(screen, x, y, activate_selected=False):
                 ]
                 # A solitary <OK>/<Close> token in textbox prose is NOT
                 # necessarily a dialog button. Require real active styling.
-                has_editor = any(editbox_content_span(cells) for cells in screen)
+                has_editor = (
+                    not menu_has_selected_item(screen) and
+                    any(editbox_content_span(cells) for cells in screen)
+                )
                 field_focused = has_editor and editbox_focus(screen)
                 # Input focus and highlighted button simultaneously is an
                 # inconsistent snapshot. Never guess where Enter would land.
@@ -450,11 +483,13 @@ def main(stdscr):
             s["y"]+=s["speed"]*dt
             if s["y"]-s["len"]>h: s["y"]=rng.uniform(-h,0)
         for y,row in enumerate(captured):
+            if y == 0:
+                selected_menu = menu_has_selected_item(captured)
             # Dialog button row contains < ОК > etc. Color *all* button glyphs alike.
             label = "".join(cell[0] if cell is not None else " " for cell in row)
             button_row = bool(BUTTON_RE.search(label))
             shadow = shadow_row_columns(row)
-            editor_span = editbox_content_span(row)
+            editor_span = effective_editor_span(row, selected_menu)
             highlight = [x for x, cell in enumerate(row) if cell is not None and
                          x not in shadow and
                          not (editor_span and editor_span[0] <= x < editor_span[1]) and
