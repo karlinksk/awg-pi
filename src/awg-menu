@@ -676,7 +676,14 @@ capture_ru(){
 run_interactive(){
   local heading="$1"
   shift
-  msg "Переход в SSH-терминал" "Для операции «$heading» откроется текстовый интерфейс SSH.\n\nВыполняйте подсказки на экране. После завершения нажмите Enter — меню восстановится автоматически."
+  # --msgbox has no Cancel button and Esc returns nonzero; under set -e
+  # that used to terminate the entire menu. Confirm explicitly, treating
+  # Cancel and Esc as a return to the calling submenu without side effects.
+  if ! dialog --backtitle "$BACKTITLE" --title "Переход в SSH-терминал" \
+       --yes-label "ОК" --no-label "Отмена" \
+       --yesno "Для операции «$heading» откроется текстовый интерфейс SSH.\n\nВыполняйте подсказки на экране. После завершения нажмите Enter — меню восстановится автоматически." 20 90; then
+    return 0
+  fi
   clear
   printf '=== %s ===\n\n' "$heading"
   printf 'Операция запущена. Сообщения и запросы появятся ниже.\n'
@@ -2479,6 +2486,63 @@ restart_active_transport(){
     return 1
   fi
 }
+# Read-only Transit status translation; route readiness is not VPN connectivity.
+transit_mode_status_text(){
+  local raw="$1" line mode="" guard="" rule="" routes=""
+  local m=0 g=0 p=0 r=0
+  local guard_text="не удалось проверить" rule_text="не удалось проверить"
+  local route_text="не удалось проверить"
+  while IFS= read -r line; do
+    case "$line" in
+      "Mode ID: "*) ((m+=1)); mode="${line#Mode ID: }" ;;
+      "Transit guard: "*) ((g+=1)); guard="${line#Transit guard: }" ;;
+      "Transit policy rule: "*) ((p+=1)); rule="${line#Transit policy rule: }" ;;
+      "Transit VPN table: "*) ((r+=1)); routes="${line#Transit VPN table: }" ;;
+    esac
+  done <<< "$raw"
+  if (( m != 1 )) || [[ "$mode" != transit ]]; then
+    printf '%s\n' 'Режим работы: не удалось подтвердить транзитный режим' '' \
+      'Защита от прямого выхода при сбое VPN: не удалось проверить' \
+      'Правило маршрутизации: не удалось проверить' \
+      'VPN-маршруты: не удалось проверить'
+    return 0
+  fi
+  if (( g == 1 )); then
+    case "$guard" in
+      SAFE) guard_text="настроена" ;;
+      LOCKDOWN) guard_text="блокировка действует, VPN-путь не готов" ;;
+      UNSAFE) guard_text="не обеспечена — требуется проверка" ;;
+    esac
+  fi
+  if (( p == 1 )); then
+    case "$rule" in
+      ACTIVE) rule_text="действует" ;;
+      INACTIVE) rule_text="не действует" ;;
+    esac
+  fi
+  if (( r == 1 )); then
+    case "$routes" in
+      READY) route_text="готовы" ;;
+      NOT_READY) route_text="не готовы" ;;
+    esac
+  fi
+  printf '%s\n' 'Режим работы: Транзитный VPN для MikroTik' '' \
+    "Защита от прямого выхода при сбое VPN: $guard_text" \
+    "Правило маршрутизации: $rule_text" \
+    "VPN-маршруты: $route_text"
+}
+
+transit_mode_status_screen(){
+  local raw
+  if raw="$("$AWG_ROUTE" mode status 2>/dev/null)"; then
+    transit_mode_status_text "$raw" > "$TMP"
+  else
+    transit_mode_status_text "" > "$TMP"
+  fi
+  dialog --backtitle "$BACKTITLE" --title "Режим TRANSIT — состояние" \
+    --textbox "$TMP" 23 108 || true
+}
+
 vpn_menu(){
   local choice mode
   while true; do
@@ -2495,10 +2559,7 @@ vpn_menu(){
         6 "Политика выбора транспорта" "Настроить автоматическое переключение между AWG и Mihomo." \
         0 "Назад" "Возвращает в главное меню без изменений." 3>&1 1>&2 2>&3)" || return 0
       case "$choice" in
-        1)
-          title="Режим TRANSIT"
-          capture_ru "$AWG_ROUTE" mode status || true
-          ;;
+        1) transit_mode_status_screen ;;
         2)
           restart_active_transport || true
           ;;
@@ -2703,20 +2764,11 @@ timezone_menu(){
   while true; do
     current="$(current_timezone)"
     choice="$(dialog --backtitle "$BACKTITLE" --title "Часовой пояс" --item-help --menu \
-      "Текущий часовой пояс: $current" 20 96 6 \
-      1 "Показать текущий часовой пояс" "Показывает текущий системный часовой пояс и местное время." \
-      2 "Показать список часовых поясов" "Показывает все часовые пояса IANA, доступные в системе." \
-      3 "Изменить часовой пояс" "Выберите регион, затем нужный часовой пояс IANA из списка." \
+      "Текущий часовой пояс: $current" 14 96 2 \
+      1 "Изменить часовой пояс" "Выберите регион, затем нужный часовой пояс IANA из списка." \
       0 "Назад" "Не менять часовой пояс." 3>&1 1>&2 2>&3)" || return 0
     case "$choice" in
       1)
-        msg "Часовой пояс" "Часовой пояс: $current\nМестное время: $(date '+%Y-%m-%d %H:%M:%S %Z')"
-        ;;
-      2)
-        title="Доступные часовые пояса"
-        capture timedatectl list-timezones || true
-        ;;
-      3)
         zone="$(select_timezone "$current")" || continue
         [[ -n "$zone" ]] || continue
         confirm "Часовой пояс" "Изменить часовой пояс:\n$current → $zone ? " || continue
@@ -2736,16 +2788,131 @@ traffic_screen(){
   capture "$AWG_TRAFFIC" status full || true
 }
 
+# This read-only CLI exposes local pairing, service and dependencies, but
+# cannot establish that the agent has an active cloud connection. Translate
+# only known status keys and never leak raw or unknown diagnostic data.
+awg_dc_human_status(){
+  local raw="$1" line key value
+  local user="" node="" npm="" websocket="" bootstrap=""
+  local pairing="" autostart="" service="" cloud=""
+  local connection="не удалось определить" autostart_text="неизвестно"
+  local pairing_text="неизвестно" service_text="неизвестно"
+  local components_text="состояние неизвестно" network_text="состояние неизвестно"
+  while IFS= read -r line; do
+    [[ "$line" == *=* ]] || continue
+    key="${line%%=*}"
+    value="${line#*=}"
+    case "$key" in
+      AWG_DC_USER)
+        if [[ "$value" =~ ^[a-z_][a-z0-9_-]{0,31}$ ]]; then user="$value"; fi
+        ;;
+      AWG_DC_SYSTEM_NODE)
+        if [[ "$value" =~ ^v[0-9]+([.][0-9]+){1,2}$ ]]; then node="$value"; fi
+        ;;
+      AWG_DC_NPM) [[ "$value" != READY ]] || npm=ready ;;
+      AWG_DC_SYSTEM_WEBSOCKET)
+        case "$value" in
+          AVAILABLE|NOT_AVAILABLE_ISOLATED_FALLBACK_REQUIRED) websocket="$value" ;;
+        esac
+        ;;
+      AWG_DC_BOOTSTRAP)
+        [[ "$value" != MISSING_NODE18_OR_NPM ]] || bootstrap=missing
+        ;;
+      AWG_DC_PAIRING)
+        case "$value" in LOCAL_SESSION_PRESENT|NOT_VERIFIED) pairing="$value" ;; esac
+        ;;
+      AWG_DC_AUTOSTART)
+        case "$value" in ENABLED|DISABLED) autostart="$value" ;; esac
+        ;;
+      AWG_DC_AGENT_SERVICE)
+        case "$value" in ACTIVE|INACTIVE) service="$value" ;; esac
+        ;;
+      AWG_DC_REMOTE_CONNECTIVITY)
+        [[ "$value" != CHECK_DASHBOARD ]] || cloud=check_dashboard
+        ;;
+    esac
+  done <<< "$raw"
+
+  case "$autostart" in
+    ENABLED) autostart_text="включён" ;;
+    DISABLED) autostart_text="выключен" ;;
+  esac
+  case "$pairing" in
+    LOCAL_SESSION_PRESENT) pairing_text="сохранена на этом устройстве" ;;
+    NOT_VERIFIED) pairing_text="не подтверждена" ;;
+  esac
+  case "$service" in
+    ACTIVE) service_text="работает" ;;
+    INACTIVE) service_text="не запущен" ;;
+  esac
+  if [[ "$pairing" == NOT_VERIFIED ]]; then
+    connection="не настроено (требуется авторизация)"
+  elif [[ "$service" == INACTIVE ]]; then
+    connection="не установлено (агент не запущен)"
+  elif [[ "$service" == ACTIVE && "$pairing" == LOCAL_SESSION_PRESENT ]]; then
+    connection="не подтверждено (проверить в панели Desktop Commander)"
+  fi
+  if [[ "$npm" == ready ]]; then
+    components_text="установлены"
+  elif [[ "$bootstrap" == missing ]]; then
+    components_text="требуется установка"
+  fi
+  case "$websocket" in
+    AVAILABLE) network_text="доступна" ;;
+    NOT_AVAILABLE_ISOLATED_FALLBACK_REQUIRED)
+      network_text="используется дополнительный компонент"
+      ;;
+  esac
+  printf 'Подключение: %s\n' "$connection"
+  printf 'Автозапуск: %s\n\n' "$autostart_text"
+  printf 'Пользователь: %s\n' "${user:-неизвестен}"
+  printf 'Авторизация устройства: %s\n' "$pairing_text"
+  printf 'Удалённый агент: %s\n' "$service_text"
+  printf 'Версия Node.js: %s\n' "${node:-не определена}"
+  printf 'Необходимые компоненты: %s\n' "$components_text"
+  printf 'Поддержка соединения: %s\n\n' "$network_text"
+  if [[ "$cloud" != check_dashboard ]]; then
+    printf 'Подтверждения связи с сервером нет.\n'
+  fi
+  printf 'Для проверки подключения откройте панель Desktop Commander:\n'
+  printf 'https://mcp.desktopcommander.app\n'
+  printf 'Работающий агент сам по себе не подтверждает подключение.\n'
+}
+
+desktop_commander_status_screen(){
+  local user="$1" raw
+  # TMP is the menu-owned private temporary file; it receives sanitized text.
+  if raw="$(/usr/local/bin/awg-dc status "$user" 2>/dev/null)"; then
+    awg_dc_human_status "$raw" > "$TMP"
+  else
+    printf '%s\n' \
+      'Подключение: не удалось проверить' \
+      'Автозапуск: не удалось проверить' \
+      '' \
+      'Не удалось получить сведения Desktop Commander.' \
+      'Проверьте установку и пользователя устройства.' > "$TMP"
+  fi
+  dialog --backtitle "$BACKTITLE" --title "Desktop Commander — состояние" \
+    --textbox "$TMP" 23 108 || true
+}
+
 desktop_commander_menu(){
-  local choice dc_user
+  local choice dc_user autostart_state
   dc_user="${SUDO_USER:-karlinks}"
   while true; do
+    # The checkmark describes persistent systemd enablement, not whether
+    # the optional remote agent is currently running or connected.
+    if systemctl is-enabled --quiet "awg-dc-remote@${dc_user}.service" 2>/dev/null; then
+      autostart_state=enabled
+    else
+      autostart_state=disabled
+    fi
     choice="$(dialog --backtitle "$BACKTITLE" --title "Desktop Commander (удалённый доступ)" --item-help --menu \
-      "Необязательный удалённый агент. Подключение требует подтверждения в браузере. Для стабильного доступа сервер Desktop Commander должен проходить через настроенный на MikroTik SSTP. VPN-шлюз и DNS здесь не изменяются." 25 108 8 \
+      "Требуется подключение через VPN канал." 25 108 8 \
       1 "Подключить / авторизовать устройство" "Запустить штатный awg-dc pair от обычного пользователя; после подтверждения включается автозапуск." \
       2 "Состояние Desktop Commander" "Проверить авторизацию и службу без раскрытия учётных данных." \
-      3 "Включить автозапуск" "Для уже авторизованного устройства включить systemd-службу." \
-      4 "Выключить автозапуск" "Остановить службу, не удаляя авторизацию." \
+      3 "$(awg_option_label "Включить автозапуск" enabled "$autostart_state")" "Для уже авторизованного устройства включить systemd-службу." \
+      4 "$(awg_option_label "Выключить автозапуск" disabled "$autostart_state")" "Остановить службу, не удаляя авторизацию." \
       0 "Назад" "Вернуться к системным функциям." 3>&1 1>&2 2>&3)" || return 0
     case "$choice" in
       1)
@@ -2756,10 +2923,7 @@ desktop_commander_menu(){
         run_interactive "Подготовка Desktop Commander" /usr/local/bin/awg-dc prepare "$dc_user"
         run_interactive "Авторизация Desktop Commander" runuser -u "$dc_user" -- /usr/local/bin/awg-dc pair
         ;;
-      2)
-        title="Desktop Commander — состояние"
-        capture /usr/local/bin/awg-dc status "$dc_user" || true
-        ;;
+      2) desktop_commander_status_screen "$dc_user" ;;
       3)
         confirm "Автозапуск DC" "Включить постоянный удалённый доступ для $dc_user после проверки авторизации?" || continue
         title="Desktop Commander — автозапуск"
@@ -2802,9 +2966,7 @@ notify_types_menu(){
   grep -Fxq 'NOTIFY_PREF_TRANSPORT_SWITCH=on' <<<"$current" && transport=on
   selection="$(dialog --backtitle "$BACKTITLE" --title "Типы уведомлений" \
     --separate-output --checklist \
-    "Пробел — поставить/снять галочку; ОК — сохранить; Отмена — выйти.
-
-Сводка в 09:00 настраивается только здесь. При включённой общей доставке её таймер синхронизируется автоматически. Остальные галочки управляют созданием событий и не меняют VPN." \
+    "Выберите события для отправки. Ежедневная сводка в 09:00 работает только при включённой доставке. VPN и MikroTik не меняются." \
     25 110 8 \
     VPN_LOST "Отказ выбранного VPN (две проверки)" "$lost" \
     VPN_RESTORED "Восстановление выбранного VPN" "$restored" \
@@ -2817,7 +2979,7 @@ notify_types_menu(){
   title="Типы уведомлений"
   if capture /usr/local/sbin/awg-notify preferences-set --enabled "$csv"; then
     if notify_sync_daily_schedule "$csv"; then
-      msg "Типы уведомлений" "Выбор сохранён. Сводка в 09:00 синхронизирована с её галочкой.
+      msg "Типы уведомлений" "Выбор сохранён. Расписание ежедневной сводки обновлено.
 
 При выключенной общей доставке сводка не запускается. Накопленная очередь сохранена. Другие службы, VPN, DNS и MikroTik не менялись."
     else
@@ -2826,8 +2988,67 @@ notify_types_menu(){
   fi
 }
 
+# Read-only summary of saved Telegram settings. Unknown is not disabled.
+notify_menu_header(){
+  local status="$1" delivery="$2" configured="не удалось проверить"
+  local kind label chosen="" sep="" complete=1
+  local -a kinds=(VPN_LOST VPN_RESTORED BOOT DAILY_REPORT NODE_SWITCH TRANSPORT_SWITCH)
+  if grep -Fxq 'NOTIFY_CONFIGURED=yes' <<<"$status"; then
+    configured="настроен"
+  elif grep -Fxq 'NOTIFY_CONFIGURED=no' <<<"$status"; then
+    configured="не настроен"
+  fi
+  for kind in "${kinds[@]}"; do
+    if grep -Fxq "NOTIFY_PREF_${kind}=on" <<<"$status"; then
+      case "$kind" in
+        VPN_LOST) label="отказ VPN" ;;
+        VPN_RESTORED) label="восстановление VPN" ;;
+        BOOT) label="запуск Raspberry Pi" ;;
+        DAILY_REPORT) label="ежедневная сводка" ;;
+        NODE_SWITCH) label="смена ноды" ;;
+        TRANSPORT_SWITCH) label="смена транспорта" ;;
+      esac
+      chosen+="$sep$label"
+      sep=", "
+    elif ! grep -Fxq "NOTIFY_PREF_${kind}=off" <<<"$status"; then
+      complete=0
+    fi
+  done
+  if (( ! complete )); then chosen="не удалось проверить"; fi
+  if (( complete )) && [[ -z "$chosen" ]]; then chosen="не выбраны"; fi
+  printf 'Бот: %s\nДоставка: %s\nУведомления: %s' "$configured" "$delivery" "$chosen"
+}
+
+# Toggle only Telegram notification units without opening the generic command
+# result window on success. Keep the confirmation prompt in notify_menu and
+# display one readable warning if any unit action fails (never fake success).
+notify_apply_delivery(){
+  local desired="$1" daily_pref="$2"
+  local -a failed=()
+  case "$desired" in
+    on)
+      systemctl enable --now awg-notify-flush.timer >/dev/null 2>&1 || failed+=("доставки")
+      systemctl enable --now awg-notify-watch.timer >/dev/null 2>&1 || failed+=("контроля событий")
+      systemctl enable awg-notify-boot.service >/dev/null 2>&1 || failed+=("уведомления при запуске")
+      notify_sync_daily_schedule "$daily_pref" >/dev/null 2>&1 || failed+=("ежедневной сводки")
+      ;;
+    off)
+      systemctl disable --now awg-notify-flush.timer >/dev/null 2>&1 || failed+=("доставки")
+      systemctl disable --now awg-notify-watch.timer >/dev/null 2>&1 || failed+=("контроля событий")
+      systemctl disable --now awg-notify-daily.timer >/dev/null 2>&1 || failed+=("ежедневной сводки")
+      systemctl disable --now awg-notify-boot.service >/dev/null 2>&1 || failed+=("уведомления при запуске")
+      ;;
+    *) return 2 ;;
+  esac
+  if (( ${#failed[@]} )); then
+    msg "Доставка Telegram" "Не удалось изменить настройки: $(printf '%s, ' "${failed[@]}" | sed 's/, $//').\n\nПроверьте состояние доставки и повторите операцию."
+    return 1
+  fi
+  return 0
+}
+
 notify_menu(){
-  local choice note_state daily_state watch_state current
+  local choice note_state current summary
   while true; do
     if [[ ! -x /usr/local/sbin/awg-notify ]]; then
       msg "Telegram" "AWG Notify не установлен. Проверьте состав инсталлятора."
@@ -2835,25 +3056,15 @@ notify_menu(){
     fi
     note_state="выключена"
     systemctl is-enabled --quiet awg-notify-flush.timer 2>/dev/null && note_state="включена" || true
-    watch_state="выключен"
-    systemctl is-enabled --quiet awg-notify-watch.timer 2>/dev/null && watch_state="включен" || true
-    current="$(/usr/local/sbin/awg-notify status 2>/dev/null || echo NOTIFY_CONFIGURED=no)"
-    daily_state="отключена"
-    if grep -Fxq 'NOTIFY_PREF_DAILY_REPORT=on' <<<"$current"; then
-      daily_state="включена"
-      systemctl is-enabled --quiet awg-notify-daily.timer 2>/dev/null || daily_state="ожидает включения доставки"
-    fi
+    current="$(/usr/local/sbin/awg-notify status 2>/dev/null)" || current=""
+    summary="$(notify_menu_header "$current" "$note_state")"
     choice="$(dialog --backtitle "$BACKTITLE" --title "Telegram" --item-help --menu \
-      "Доставка: $note_state. Watch: $watch_state. Сводка: $daily_state.
-$(grep -E '^NOTIFY_(CONFIGURED|PENDING|LAST_ROUTE)=' <<<"$current" || true)
-
-Типы уведомлений — отдельными галочками. Оповещения не управляют VPN и MikroTik." 23 106 7 \
+      "$summary" 23 106 6 \
       1 "Настроить Telegram-бота" "Защищённый ввод токена и привязка чата." \
       2 "Проверить доставку" "Тестовое сообщение по разрешённым VPN-маршрутам." \
       3 "Доставка Telegram [$note_state]" "Включить или выключить доставку, Watch, загрузку и расписание сводки." \
-      4 "Типы уведомлений [галочки]" "Отказ, восстановление, запуск, сводка, нода и транспорт." \
-      5 "Состояние и очередь" "Просмотр без токена и секретов." \
-      6 "Исправить привязку чата" "Безопасная повторная привязка /pair." \
+      4 "Типы уведомлений" "Выбрать события для оповещений." \
+      5 "Исправить привязку чата" "Безопасная повторная привязка /pair." \
       0 "Назад" "Возврат в системное меню." 3>&1 1>&2 2>&3)" || return 0
     case "$choice" in
       1) run_interactive "Настройка Telegram-бота" /usr/local/sbin/awg-notify configure ;;
@@ -2861,22 +3072,14 @@ $(grep -E '^NOTIFY_(CONFIGURED|PENDING|LAST_ROUTE)=' <<<"$current" || true)
       3)
         if [[ "$note_state" == "включена" ]]; then
           if confirm "Доставка Telegram" "Выключить все уведомления? Очередь и выбор типов останутся сохранёнными."; then
-            title="Telegram — выключение доставки"
-            capture systemctl disable --now awg-notify-flush.timer || true
-            capture systemctl disable --now awg-notify-watch.timer || true
-            capture systemctl disable --now awg-notify-daily.timer || true
-            capture systemctl disable --now awg-notify-boot.service || true
+            notify_apply_delivery off "" || true
           fi
         elif grep -Fxq 'NOTIFY_CONFIGURED=yes' <<<"$current"; then
           if confirm "Доставка Telegram" "Включить уведомления через настроенного бота? VPN и MikroTik не меняются."; then
-            title="Telegram — включение доставки"
-            capture systemctl enable --now awg-notify-flush.timer || true
-            capture systemctl enable --now awg-notify-watch.timer || true
-            capture systemctl enable awg-notify-boot.service || true
             if grep -Fxq 'NOTIFY_PREF_DAILY_REPORT=on' <<<"$current"; then
-              notify_sync_daily_schedule "DAILY_REPORT" || msg "Telegram" "Не удалось включить таймер сводки."
+              notify_apply_delivery on "DAILY_REPORT" || true
             else
-              notify_sync_daily_schedule "" || msg "Telegram" "Не удалось отключить таймер сводки."
+              notify_apply_delivery on "" || true
             fi
           fi
         else
@@ -2884,8 +3087,7 @@ $(grep -E '^NOTIFY_(CONFIGURED|PENDING|LAST_ROUTE)=' <<<"$current" || true)
         fi
         ;;
       4) notify_types_menu ;;
-      5) title="Telegram — состояние"; capture /usr/local/sbin/awg-notify status || true ;;
-      6) if [[ -x /usr/local/sbin/awg-notify-pair-repair ]]; then
+      5) if [[ -x /usr/local/sbin/awg-notify-pair-repair ]]; then
            run_interactive "Исправление Telegram chat ID" /usr/local/sbin/awg-notify-pair-repair
          else
            msg "Telegram" "Помощник привязки чата ещё не установлен."

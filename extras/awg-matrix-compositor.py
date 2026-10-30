@@ -17,7 +17,66 @@ ESC = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]|\x1b\([A-Za-z0-9]")
 SOCKET = "awg-matrix-render-%s-%s" % (os.getuid(), os.getpid())
 PALETTE = [(190,255,190),(90,255,90),(0,255,0),(0,200,0),(0,140,0),(0,85,0),(0,42,0)]
 
-BUTTON_RE = re.compile(r"<\s*(?:ОК|OK|Да|Нет|Закрыть|Отмена)\s*>", re.IGNORECASE)
+BUTTON_RE = re.compile(r"<\s*(?:ОК|OK|Да|Нет|Yes|No|Проверить|Закрыть|Close|Отмена|Cancel)\s*>", re.IGNORECASE)
+
+def editbox_content_span(row):
+    """Inner column interval for a framed, multi-line dialog editor, if any.
+
+    The editor has an outer and inner vertical border on each side. A menu
+    selection or a shadow has no such nested border. This is presentation
+    detection only; the config itself is never inspected or recorded.
+    """
+    walls = [x for x, cell in enumerate(row)
+             if cell and cell[0] == "│" and cell[2] == 4]
+    if len(walls) != 4:
+        return None
+    outer_l, inner_l, inner_r, outer_r = walls
+    if (1 <= inner_l - outer_l <= 3 and
+            1 <= outer_r - inner_r <= 3 and
+            inner_r - inner_l >= 24):
+        return inner_l + 1, inner_r
+    return None
+
+
+def editbox_focus(screen):
+    """True only while the editor surface, not a footer button, has focus."""
+    # Selected menu rows also have an opaque highlighted label inside the
+    # same nested frame. Do not interpret that menu selection as field focus.
+    if menu_has_selected_item(screen):
+        return False
+    for row in screen:
+        span = editbox_content_span(row)
+        if span and any(cell and cell[2] == 0 and cell[3] and cell[1] == 7
+                        for cell in row[span[0]:span[1]]):
+            return True
+    return False
+
+
+def menu_has_selected_item(screen):
+    """Distinguish an actual highlighted menu option from an editbox cursor.
+
+    Both widgets draw four nested vertical borders, so looking at the frame
+    alone incorrectly reclassifies all menus as text editors. A menu option
+    has a highlighted yellow tag *before* a white highlighted description.
+    Plain editbox content does not use this paired tag/label style.
+    """
+    for row in screen:
+        line = "".join(cell[0] if cell is not None else " " for cell in row)
+        if BUTTON_RE.search(line):
+            continue
+        tags = [i for i, c in enumerate(row)
+                if c and c[0].isalnum() and c[1:] == (3, 0, True)]
+        labels = [i for i, c in enumerate(row)
+                  if c and c[0].isalpha() and c[1:] == (7, 0, True)]
+        if tags and labels and min(tags) < min(labels):
+            return True
+    return False
+
+
+def effective_editor_span(row, selected_menu):
+    """Only an actual text editor may suppress menu-style highlighting."""
+    return None if selected_menu else editbox_content_span(row)
+
 
 def shadow_row_columns(row):
     """Identify the bottom drop-shadow: long *blank* white-on-black runs.
@@ -26,6 +85,11 @@ def shadow_row_columns(row):
     but has text on that row. Its bottom shadow consists entirely of spaces.
     Never classify a blank drop-shadow as a highlighted menu item.
     """
+    # A focused editbox first line is a long, blank 7/0/bold span. It
+    # resembles the old shadow heuristic but MUST remain opaque: otherwise
+    # Matrix rain shines through the editable field.
+    if editbox_content_span(row):
+        return set()
     run = []
     shadow = set()
     for x, cell in enumerate([*row, None]):
@@ -90,11 +154,263 @@ def parse_line(line, cols):
         x+=1
     return out
 
+
+# The Matrix renderer refreshes at 20 fps, but clipboard input must NOT be
+# throttled to one keystroke per redraw. A config paste can contain thousands
+# of characters. Drain ncurses' ready input and forward consecutive printable
+# characters through one literal tmux call (not a subprocess per character).
+# Flush before control keys to preserve their order and native dialog behavior.
+
+# Native mouse escape bytes are unsafe to inject into the inner tmux dialog:
+# on some terminals ESC inside the sequence closes the widget. Instead, map a
+# click to ordinary dialog keyboard actions, using ONLY the currently visible,
+# validated tmux snapshot. A row click selects; only an explicit button click
+# can submit. Unsupported widgets and out-of-surface clicks do nothing.
+ANY_BUTTON_RE = re.compile(r"<[^<>]{1,28}>")
+
+def menu_keys_for_click(screen, x, y, activate_selected=False):
+    """Return safe keyboard steps for the visible item/button, else ()."""
+    if not screen or y < 0 or y >= len(screen) or x < 0 or x >= len(screen[y]):
+        return ()
+    row = screen[y]
+    line = "".join(cell[0] if cell is not None else " " for cell in row)
+
+    buttons = list(BUTTON_RE.finditer(line))
+    if buttons and y >= len(screen) // 2:
+        # An unrecognized button makes Tab order ambiguous: do not guess.
+        if len(buttons) != len(list(ANY_BUTTON_RE.finditer(line))):
+            return ()
+        for index, match in enumerate(buttons):
+            if match.start() <= x < match.end():
+                active = [
+                    idx for idx, button in enumerate(buttons)
+                    if any(
+                        cell is not None and cell[2] == 0 and cell[3]
+                        and cell[1] in (3, 7)
+                        for cell in row[button.start():button.end()]
+                    )
+                ]
+                # A solitary <OK>/<Close> token in textbox prose is NOT
+                # necessarily a dialog button. Require real active styling.
+                has_editor = (
+                    not menu_has_selected_item(screen) and
+                    any(editbox_content_span(cells) for cells in screen)
+                )
+                field_focused = has_editor and editbox_focus(screen)
+                # Input focus and highlighted button simultaneously is an
+                # inconsistent snapshot. Never guess where Enter would land.
+                if field_focused and active:
+                    return ()
+                if len(active) == 1:
+                    # Editboxes cycle: field -> OK -> Cancel -> field.
+                    # Plain menus cycle between buttons without a field.
+                    cycle = len(buttons) + (1 if has_editor else 0)
+                    steps = (index - active[0]) % cycle
+                elif not active and has_editor and editbox_focus(screen):
+                    # While typing, neither button is highlighted; Tab
+                    # leaves the editor and focuses the first button.
+                    steps = index + 1
+                else:
+                    return ()
+                return ("Tab",) * steps + ("Enter",)
+        return ()
+
+    # Only a real menu/list with exactly one highlighted item can be targeted.
+    # Selected item tag=yellow-on-black, label=white-on-black. This excludes
+    # prose, the animated background, text inputs and dialog buttons.
+    selected = []
+    for sy, cells in enumerate(screen):
+        caption = "".join(cell[0] if cell is not None else " " for cell in cells)
+        if BUTTON_RE.search(caption):
+            continue
+        tag_x = [i for i, c in enumerate(cells)
+                 if c and c[0].isalnum() and c[1] == 3
+                 and c[2] == 0 and c[3]]
+        label_x = [i for i, c in enumerate(cells)
+                   if c and c[0].isalpha() and c[1] == 7
+                   and c[2] == 0 and c[3]]
+        if tag_x and label_x and min(tag_x) < min(label_x):
+            selected.append((sy, min(tag_x), min(label_x)))
+    if len(selected) != 1:
+        return ()
+    sy, tag_col, label_col = selected[0]
+    if abs(y - sy) > 40:
+        return ()
+    # Every intervening row must have a tag and label in the SAME columns.
+    # This stops a click below the list or on a different dialog widget from
+    # causing an unintended long run of arrow presses.
+    for cy in range(min(y, sy), max(y, sy) + 1):
+        cells = screen[cy]
+        if max(tag_col, label_col) >= len(cells):
+            return ()
+        tag, label = cells[tag_col], cells[label_col]
+        if (not tag or not label or not tag[0].isalnum()
+                or not label[0].isalpha() or tag[2] not in (0, 4)
+                or label[2] not in (0, 4)):
+            return ()
+    # Click the text/tag itself, not blank padding, borders or rain.
+    target = screen[y][x]
+    if x < tag_col or not target or not target[0].isalnum():
+        return ()
+    if target[2] not in (0, 4):
+        return ()
+    delta = y - sy
+    if delta == 0:
+        return ("Enter",) if activate_selected else ()
+    return (("Down",) * delta if delta > 0 else ("Up",) * -delta)
+
+
+def forward_verified_click(x, y, screen, state):
+    """Reject stale screenshots before sending any click-derived key."""
+    if screen is None:
+        return
+    if not screen or y < 0 or y >= len(screen):
+        return
+    width = len(screen[y])
+    if not 0 <= x < width:
+        return
+    raw = tmux("capture-pane", "-e", "-p", "-t", "menu:0.0", capture=True)
+    if not raw:
+        return
+    fresh = [parse_line(line, width) for line in raw.splitlines()[:len(screen)]]
+    if fresh != screen:
+        return
+    keys = menu_keys_for_click(screen, x, y)
+    # Two distinct clicks are needed for a menu item. The first arms the
+    # exact visible row (or selects it); the second, only if that same row is
+    # now highlighted, activates it. A highlighted row reached by keyboard
+    # or wheel is NOT automatically armed for mouse activation.
+    row_text = "".join(cell[0] if cell is not None else " "
+                       for cell in screen[y]).strip()
+    item_id = (y, row_text)
+    if not keys:
+        if menu_keys_for_click(screen, x, y, activate_selected=True) == ("Enter",):
+            if state.get("armed_item") != item_id:
+                state["armed_item"] = item_id
+                return
+            keys = ("Enter",)
+        else:
+            state.pop("armed_item", None)
+            return
+    elif all(key in ("Up", "Down") for key in keys):
+        state["armed_item"] = item_id
+    else:
+        state.pop("armed_item", None)
+    # A client may report RELEASED and CLICKED for the same press. Do not
+    # submit a button twice, especially across a dialog transition.
+    if keys[-1] == "Enter":
+        state.pop("armed_item", None)
+        stamp = state.get("button_click")
+        now = time.monotonic()
+        if stamp and stamp[:2] == (x, y) and now - stamp[2] < 0.4:
+            return
+        state["button_click"] = (x, y, now)
+    tmux("send-keys", "-t", "menu:0.0", *keys)
+
+
+def forward_pending_input(stdscr, captured=None, mouse_state=None):
+    navigation = {
+        curses.KEY_UP: "Up", curses.KEY_DOWN: "Down",
+        curses.KEY_LEFT: "Left", curses.KEY_RIGHT: "Right",
+        curses.KEY_BACKSPACE: "BSpace", curses.KEY_DC: "DC",
+        curses.KEY_PPAGE: "PPage", curses.KEY_NPAGE: "NPage",
+        curses.KEY_HOME: "Home", curses.KEY_END: "End",
+        curses.KEY_BTAB: "BTab",
+    }
+    literal = []
+    if mouse_state is None:
+        mouse_state = {}
+
+    def flush_literal():
+        if literal:
+            # -- keeps pasted text starting with "-" out of tmux option parsing.
+            tmux("send-keys", "-t", "menu:0.0", "-l", "--", "".join(literal))
+            literal.clear()
+
+    # Cap work per frame so rain and window resizing remain responsive during
+    # enormous pastes; the remaining PTY input stays queued for the next frame.
+    for _ in range(8192):
+        try:
+            key = stdscr.get_wch()
+        except curses.error:
+            break
+        if key == curses.KEY_MOUSE:
+            # Xterm-style terminals report wheel notches as mouse buttons 4/5.
+            # Handle one arrow per wheel event instead of relying on the
+            # terminal's multi-arrow scrolling fallback.
+            flush_literal()
+            try:
+                _, mx, my, _, buttons = curses.getmouse()
+            except curses.error:
+                continue
+            if buttons & curses.BUTTON4_PRESSED:
+                mouse_state.pop("armed_item", None)
+                tmux("send-keys", "-t", "menu:0.0", "Up")
+            elif buttons & curses.BUTTON5_PRESSED:
+                mouse_state.pop("armed_item", None)
+                tmux("send-keys", "-t", "menu:0.0", "Down")
+            elif buttons & curses.BUTTON1_PRESSED:
+                mouse_state["down"] = (mx, my)
+            elif buttons & curses.BUTTON1_RELEASED:
+                down = mouse_state.pop("down", None)
+                if down == (mx, my):
+                    mouse_state["last_release"] = (mx, my, time.monotonic())
+                    forward_verified_click(mx, my, captured, mouse_state)
+            elif buttons & curses.BUTTON1_CLICKED:
+                mouse_state.pop("down", None)
+                # Some terminals emit CLICKED as well as PRESS/RELEASE for
+                # one physical click. Never interpret that as a second click.
+                recent = mouse_state.get("last_release")
+                if (recent and recent[:2] == (mx, my) and
+                        time.monotonic() - recent[2] < 0.3):
+                    continue
+                forward_verified_click(mx, my, captured, mouse_state)
+        elif key in navigation:
+            flush_literal()
+            mouse_state.pop("armed_item", None)
+            tmux("send-keys", "-t", "menu:0.0", navigation[key])
+        elif key in ("\n", "\r", curses.KEY_ENTER):
+            flush_literal()
+            mouse_state.pop("armed_item", None)
+            tmux("send-keys", "-t", "menu:0.0", "Enter")
+        elif key == "\x1b":
+            flush_literal()
+            mouse_state.pop("armed_item", None)
+            tmux("send-keys", "-t", "menu:0.0", "Escape")
+        elif key in ("\x7f", "\b"):
+            flush_literal()
+            mouse_state.pop("armed_item", None)
+            tmux("send-keys", "-t", "menu:0.0", "BSpace")
+        elif key == "\t":
+            flush_literal()
+            mouse_state.pop("armed_item", None)
+            tmux("send-keys", "-t", "menu:0.0", "Tab")
+        elif key == "\x03":
+            flush_literal()
+            return True
+        elif isinstance(key, str) and key.isprintable():
+            mouse_state.pop("armed_item", None)
+            literal.append(key)
+            if len(literal) >= 2048:
+                flush_literal()
+    flush_literal()
+    return False
+
 def main(stdscr):
     locale.setlocale(locale.LC_ALL, "")
     curses.curs_set(0)
     stdscr.nodelay(True)
     stdscr.keypad(True)
+    # Request native wheel events from SSH terminals that support xterm mouse
+    # tracking. Without it, a wheel notch may be emulated as several arrow
+    # keys and skip multiple menu entries. No tracking is enabled in classic UI.
+    try:
+        curses.mousemask(curses.BUTTON4_PRESSED | curses.BUTTON5_PRESSED |
+                         curses.BUTTON1_PRESSED | curses.BUTTON1_RELEASED |
+                         curses.BUTTON1_CLICKED)
+        curses.mouseinterval(0)
+    except curses.error:
+        pass
     curses.start_color()
     curses.use_default_colors()
     for i,c in enumerate(PALETTE):
@@ -129,6 +445,7 @@ def main(stdscr):
     last=time.monotonic()
     last_snapshot=0
     captured=[]
+    mouse_state={}
     while True:
         h,w=stdscr.getmaxyx()
         if (h,w)!=dims:
@@ -166,12 +483,17 @@ def main(stdscr):
             s["y"]+=s["speed"]*dt
             if s["y"]-s["len"]>h: s["y"]=rng.uniform(-h,0)
         for y,row in enumerate(captured):
+            if y == 0:
+                selected_menu = menu_has_selected_item(captured)
             # Dialog button row contains < ОК > etc. Color *all* button glyphs alike.
             label = "".join(cell[0] if cell is not None else " " for cell in row)
             button_row = bool(BUTTON_RE.search(label))
             shadow = shadow_row_columns(row)
+            editor_span = effective_editor_span(row, selected_menu)
             highlight = [x for x, cell in enumerate(row) if cell is not None and
-                         x not in shadow and cell[2] == 0 and cell[3] and
+                         x not in shadow and
+                         not (editor_span and editor_span[0] <= x < editor_span[1]) and
+                         cell[2] == 0 and cell[3] and
                          cell[1] in (3, 7) and cell[0] != " "]
             highlighted_cells = set()
             if highlight and not button_row:
@@ -186,6 +508,11 @@ def main(stdscr):
                         continue
                     bg = 0
                 role = overlay_role(ch, fg, bg, bold, button_row)
+                if (editor_span and editor_span[0] <= x < editor_span[1]
+                        and role == "selection"):
+                    # The editable text row is content, not a green
+                    # menu highlight; keep its background fully opaque.
+                    role = "panel"
                 if x in highlighted_cells and role not in (None, "topline"):
                     role = "selection"
                 if role is None:
@@ -207,37 +534,24 @@ def main(stdscr):
                 except curses.error:
                     pass
         stdscr.refresh()
-        try:
-            key = stdscr.get_wch()
-        except curses.error:
-            key = None
-        navigation = {
-            curses.KEY_UP: "Up", curses.KEY_DOWN: "Down",
-            curses.KEY_LEFT: "Left", curses.KEY_RIGHT: "Right",
-            curses.KEY_BACKSPACE: "BSpace", curses.KEY_DC: "DC",
-            curses.KEY_PPAGE: "PPage", curses.KEY_NPAGE: "NPage",
-            curses.KEY_HOME: "Home", curses.KEY_END: "End",
-            curses.KEY_BTAB: "BTab",
-        }
-        if key in navigation:
-            tmux("send-keys", "-t", "menu:0.0", navigation[key])
-        elif key in ("\n", "\r", curses.KEY_ENTER):
-            tmux("send-keys", "-t", "menu:0.0", "Enter")
-        elif key in ("\x1b",):
-            tmux("send-keys", "-t", "menu:0.0", "Escape")
-        elif key in ("\x7f", "\b"):
-            tmux("send-keys", "-t", "menu:0.0", "BSpace")
-        elif key == "\t":
-            tmux("send-keys", "-t", "menu:0.0", "Tab")
-        elif key == "\x03":
+        if forward_pending_input(stdscr, captured, mouse_state):
             break
-        elif isinstance(key, str) and key.isprintable():
-            tmux("send-keys", "-t", "menu:0.0", "-l", key)
         time.sleep(max(0,1/20-(time.monotonic()-now)))
+
+def run_with_mouse_cleanup(stdscr):
+    try:
+        return main(stdscr)
+    finally:
+        # Stop terminal-side mouse reporting before curses restores the TTY.
+        try:
+            curses.mousemask(0)
+        except curses.error:
+            pass
+
 
 if __name__=="__main__":
     try:
-        code = curses.wrapper(main)
+        code = curses.wrapper(run_with_mouse_cleanup)
     finally:
         subprocess.run(["tmux","-L",SOCKET,"kill-server"],capture_output=True)
     sys.exit(code or 0)
