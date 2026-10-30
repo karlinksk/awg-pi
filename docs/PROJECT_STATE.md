@@ -10,6 +10,44 @@
 
 ## Датированный журнал
 
+### 2026-10-30 — test Pi: настоящая замена файла Xray и rollback той же версии PASS
+
+- Повторный preflight: test SSD root, выбран AWG, TRANSIT SAFE/ACTIVE/READY,
+  таблицы 100/101 через awg0, Xray inactive, SSH/DNS/AWG/Mihomo active;
+  failed units/recovery timers и незавершённых engine PENDING нет. Installed
+  common и Xray installer SHA256 соответствуют source `55b2dc3`.
+- Официальный архив Xray 26.3.27 получен через существующий `awg-fetch`
+  (DIRECT); literal pinned SHA256
+  `4d30283ae614e3057f730f67cd088a42be6fdf91f8639d82cb69e48cde80413c`
+  проверен до extraction/execution. Проверены единственный xray entry, размер,
+  executable version и совпадение payload с установленным бинарником.
+- Под shared production maintenance lock выполнены **реальные операции на**
+  `/usr/local/bin/awg-xray-vless-core`: production `awg_engine_inactive`,
+  `awg_engine_publish`, version postcheck и `awg_engine_commit`; затем та же
+  публикация с намеренным exit 23 до commit. Штатный EXIT rollback сообщил
+  RESTORED, вернул исходные bytes/uid/gid/mode; обе резервные копии проверены,
+  PENDING удалён. Изменение inode подтвердило настоящие rename/replacement
+  и восстановление, хотя исходный и candidate payload **одинаковы**.
+- **Область теста:** функции публикации/отката, используемые Xray installer,
+  вызваны acceptance harness напрямую. `ensure` на уже совпадающей версии
+  закономерно дал бы no-op. Production fault hook, искусственная старая версия,
+  обход SHA или новая upstream версия не добавлялись. Это не доказательство
+  полного download-to-ensure upgrade или совместимости разных версий.
+- Перед заменой подготовлены root-only original/baseline и независимый
+  180-секундный systemd recovery timer с guard/hash/transport проверками.
+  Recovery prerequisite check PASS; watchdog restore **не понадобился**.
+  После отдельного postflight таймер снят; timer/service inactive и отсутствует
+  в list-timers. Попытка stop уже выгруженного transient service вернула ошибку;
+  отдельная проверка подтвердила отсутствие активного/ожидающего восстановления.
+- Postflight **27/27** protected file hashes/absence сохранены, все engine
+  bytes неизменны, service start timestamps прежние. AWG продолжает быть
+  выбранным; TRANSIT SAFE/ACTIVE/READY, Xray inactive. Не запускались Xray/VPN,
+  не менялись нода, DNS, MikroTik/SSTP или рабочая microSD. Свидетельства
+  сохранены приватно на test Pi; runtime helpers остались `55b2dc3`.
+- **Открыто:** другой-version upgrade, фактическое восстановление watchdog,
+  SIGKILL/питание, Xray service/TUN/LAN, реальные AWG/Mihomo engine updates,
+  clean install/полный upgrade кандидата. PR #171 draft; v1.3.1 не выпущен.
+
 ### 2026-10-30 — test Pi: helpers установленного updater и безопасный no-op PASS
 
 - Первый preflight установки остановился **до замены файлов**: эксклюзивный
