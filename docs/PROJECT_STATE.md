@@ -10,6 +10,35 @@
 
 ## Датированный журнал
 
+### 2026-10-30 — test Pi: helpers установленного updater и безопасный no-op PASS
+
+- Первый preflight установки остановился **до замены файлов**: эксклюзивный
+  maintenance lock конфликтовал с повторным shared lock в `awg-route mode status`.
+  Исправление `55b2dc31125e3a5eba30ae77b063121aef5314b1` использует существующий
+  `AWG_MAINTENANCE=1` только для вложенного чтения статуса. Добавлен regression
+  с настоящим flock. На Pi 20/20 целевых тестов и upgrade policy PASS;
+  [CI 41003663701](https://github.com/karlinksk/awg-pi/actions/runs/41003663701)
+  этого source commit: shell SUCCESS, awg-v31 SUCCESS.
+- На тестовой Pi (SSD root) установлены **только шесть управляющих файлов**
+  `awg-common`, `awg-core-update`, `awg-mihomo-install`, `awg-xray-install`,
+  `awg-update`, `awg-menu` из точного `55b2dc3`. SHA256 всех installed файлов
+  совпали с source; root ownership и permissions проверены. Приватная резервная
+  копия прежних шести файлов проверена против source PR #170 `b1b233c7` (6/6).
+- Реальные read-only guard probes под maintenance lock: работающий/выбранный
+  AWG и работающий Mihomo возвращают **DEFERRED, exit 3**. Статусы трёх движков
+  совпадают с pinned versions. Установленный `awg-update --yes all` вернул
+  core/mihomo/xray OK как **no-op**, без замены какого-либо engine binary.
+- Независимый postflight: 27/27 protected file hashes/absence сохранены,
+  включая engine binaries, Matrix compositor, private VPN/provider/selected
+  state. TRANSIT SAFE/ACTIVE/READY, обе таблицы через AWG; SSH/DNS/AWG/Mihomo
+  active, Xray inactive. Service start timestamps не изменились. Нет новых
+  recovery timers или failed units. MikroTik/SSTP, рабочая microSD и нода
+  не менялись; перезапуска VPN не было.
+- **Граница PASS:** установка helpers и безопасный общий no-op/guard refusal.
+  **Не проверено:** настоящая замена engine binary и аппаратный rollback,
+  clean install/полный upgrade кандидата, новые LAN/fault/reboot проверки.
+  PR #171 остаётся draft поверх #170, не merged/released/production-installed.
+
 ### 2026-10-30 — безопасное обслуживание движков, кандидат поверх Draft PR #170
 
 - Отдельная ветка `fix/v1.3.1-safe-engine-updates` от `b1b233c7`; PR #170
