@@ -889,6 +889,469 @@ Evidence now excludes the simple `mips` stack, `auto-detect-interface`, domain v
 
 **Срез: 2026-10-18.** Документ — короткая точка входа для следующего разговора или инженера. Это **не** протокол успешных испытаний: актуальное состояние устройства нужно проверять отдельно. При изменении решений обновлять этот файл вместе с соответствующей задачей. Не публиковать приватные IP, ключи, адреса подписок и данные пользователя.
 
+## Актуальное состояние Telegram на тестовой Pi — 2026-10-22 16:19 +07
+
+- **Установлено на awg-upgrade (не на рабочую microSD):** новое меню,
+  SHA-256 `bcc82ecbf97cc0c1d61fdec8529180e41f3a4f4596c202a3797a3ce3bf155057`.
+  В «Системные функции» сохранён пункт 9 Desktop Commander и добавлен
+  пункт 10 «Telegram — уведомления». Помощник /pair установлен только
+  для root (0700). Старое меню сохранено в защищённой резервной копии;
+  работающий VPN, SSH, DNS и MikroTik при установке не изменялись.
+- **Проверено на Pi:** Bash-синтаксис нового меню и обновлятора PASS;
+  изолированные тесты Telegram/installer **52/52 PASS**. Все три Telegram
+  timer включены; Watch неоднократно возвращает `up`, очередь отправки
+  `pending=0`. SSH/dnsmasq/health/selection/Mihomo active, таблицы
+  маршрутизации 100/101 — `mihomo0`. Получение одиночного сообщения
+  Telegram подтверждено; реальный failover не воспроизводили.
+- **В draft PR #158, но не в main/release:** исходники нового меню,
+  модуля, /pair, 7 units и wiring в `install.sh`. Добавлен список файлов
+  Telegram в backup/rollback `src/awg-update` с сохранением состояния
+  включения таймеров и boot-сервиса. Реальный полный upgrade/rollback,
+  clean-install и LAN/reboot пока НЕ проверены.
+- **Дальше:** не развивать мониторинг сверх необходимого. Приоритет
+  draft PR #115, затем clean-install/LAN/failover/reboot gate и v1.3.0.
+
+## Изменение 2026-10-22 — AWG Notify (второстепенная задача)
+
+- Согласована отдельная Telegram-подсистема для состояния шлюза,
+  переключений и восстановления. Разрешены доставки через любой
+  **проверенно рабочий** путь, включая AWG, Mihomo и MikroTik SSTP.
+  Интерфейс Pi `eth0` сам по себе **не доказывает SSTP**: необходима
+  отдельная проверка фактического выхода через RouterOS.
+- Создан **draft PR #158** ([AWG Notify](https://github.com/karlinksk/awg-pi/pull/158)),
+  зависимый от draft PR #115. Есть Python-очередь SQLite, ограниченный
+  Telegram-отправитель, пассивные systemd units, installer wiring и
+  первоначальные hooks успешного переключения; **не merged и не released; на тестовой Pi установлен пассивно,
+  на рабочей microSD не установлен**. На тестовой Pi **29/29** изолированных
+  unit/installer/UI-contract тестов PASS, Bash-синтаксис PASS. Дополнительно
+  подтверждена установка от root: SHA-256 бинарника соответствует pin,
+  7 systemd units установлены и успешно проверены systemd-analyze verify.
+  Токен бота установлен, но chat ID ошибочно равен 1; реальная привязка
+  ещё не PASS. Bot API через AWG/Mihomo отвечает getMe=200, webhook отсутствует,
+  getUpdates возвращает 0. Подготовлен отдельный безопасный мастер повторной
+  привязки через /pair с проверкой публичного имени бота; 43/43 теста PASS.
+  Таймеры уведомлений выключены; SSH,
+  dnsmasq, health и selection monitor активны, таблицы 100/101 через mihomo0.
+  Привязка повторно выполнена успешно (PAIR_VERIFIED=YES,
+  CHAT_ID_REPLACED=YES). Пользователь ответил «да» на вопрос о получении
+  Telegram-сообщения после flush; получение подтверждено им, но JSON-вывод
+  flush и пустота очереди ещё не проверены. SSTP egress, автоматические
+  события переключения на установленной Pi, аппаратный failover,
+  reboot/clean-install остаются неподтверждёнными.
+- Не изменены MikroTik/SSTP, DNS, PBR, действующий транспорт, рабочая
+  microSD. Telegram должен оставаться необязательным и выключенным до
+  настройки; никакие токены не помещать в GitHub.
+- Приоритет **не меняется**: PR #115, clean-install/LAN/failover/reboot
+  gate и стабильный релиз v1.3.0 идут впереди AWG Notify.
+
+## Отдельная проверка AWG Notify — 2026-10-22, тестовая Pi
+
+- Включены flush/watch/daily таймеры и boot.service. Все три таймера
+  активны; ежедневная сводка запланирована на 23 октября в 09:00 +07.
+  В журнале доставки 14:54:48 +07: pending=0, sent=1; пользователь
+  подтвердил получение Telegram-сообщения. SSH, dnsmasq и штатные
+  мониторы активны, таблицы 100/101 по-прежнему через mihomo0.
+- **Блокер доверия к оповещениям:** дополнительный наблюдатель дважды
+  записал suspect/down, хотя Mihomo API HTTP 200, proxy HTTP 200,
+  TUN OpenAI HTTP 401, Telegram TUN HTTP 302 и непривилегированная
+  команда awg-transport check mihomo возвратила healthy. Причина
+  root-проверки пока не подтверждена (возможен устаревший pinned
+  egress-IP). Реальный отказ шлюза и LAN-клиента НЕ доказан. До выяснения
+  предпочтительно временно отключить **только watch.timer**, оставив
+  доставку Telegram, ежедневную сводку и основные службы работающими.
+- Изолированная отправка Telegram проверена. Автоматические
+  failover-события, чистая установка, LAN/reboot и SSTP остаются
+  неподтверждёнными. Приоритет PR #115 не меняется.
+
+## Диагностика ложного отказа Telegram Watch — 2026-10-22
+
+- На тестовой Pi привилегированная диагностика: TUN UP, Mihomo API PASS,
+  proxy egress PASS, закреплённый выходной IP не настроен, HTTPS OpenAI через
+  TUN PASS_401, `awg-transport check mihomo` от root HEALTHY.
+- Причина ложного `NOTIFY_WATCH=down` на уровне исходника:
+  `awg-notify-watch.service` разрешал только AF_UNIX/AF_INET/AF_INET6,
+  однако штатный check использует `ip link show` через AF_NETLINK.
+  Исправление в **draft PR #158** добавляет AF_NETLINK только этому
+  дополнительному наблюдателю. 44/44 rootless тестов и systemd-analyze
+  verify PASS на тестовой Pi. Испытание исправленной systemd-изоляции
+  от root **ещё не проведено**; для него подготовлен pinned сценарий с
+  проверкой old/new и откатом. Watch timer оператором выключен,
+  Telegram flush/daily и исходные службы шлюза остаются включены.
+- Не смешивать тест кода с подтверждённым исправлением на устройстве.
+  Приоритет main PR #115 / clean install / LAN / failover / reboot без изменений.
+
+## Исправление тестового NETLINK-инсталлятора — 2026-10-22
+
+- Первая попытка запуска со `sudo` остановилась на `ROOT_REQUIRED`
+  из-за ошибочно экранированного Bash `\${EUID}`. Процесс остановился
+  до установки исправления и не изменил systemd/VPN.
+- В draft PR #158 исправлены расширения Bash-переменных в сценарии,
+  добавлен регрессионный тест. На тестовой Pi **45/45** тестов PASS,
+  Bash-синтаксис PASS; непривилегированный запуск корректно отвергается.
+  Исправленный сценарий доступен в изолированном каталоге, SHA-256
+  `5f99a0960dac318e01afe9b114e82271371a922709ebe9c82641f09c478ffa01`.
+- Положительное испытание под root и установка исправленной службы
+  **ожидаются**. Watch timer выключен, действующий шлюз не менялся.
+
+## AWG Notify: реальный systemd Watch PASS — 2026-10-22
+
+- Пользователь выполнил закреплённый по SHA-256 root-only сценарий на **тестовой Pi**:
+  `OLD_FALSE_DOWN_BASELINE=CLEARED`, `WATCH_RUNTIME=PASS_UP`,
+  `NOTIFY_EVENTS_NEWLY_QUEUED=0`, `NOTIFY_WATCH_TIMER=DISABLED`,
+  `TRANSPORT_CHANGE=NONE`. Сохранён backup SQLite в `/run`, очередь
+  не очищалась. Это проверка одного настоящего systemd-запуска исправленного
+  наблюдателя, **не реальная имитация отказа VPN**.
+- Независимо проверено в журнале: **15:27:27 +07** `NOTIFY_WATCH=up`,
+  systemd unit `Result=success`, `ExecMainStatus=0`, `AF_NETLINK`
+  разрешён. Flush/daily таймеры активны, watch timer остаётся выключен
+  до отдельного включения оператором. SSH/dnsmasq/health/selection работают,
+  таблицы 100/101 через mihomo0. 49/49 rootless тестов PASS.
+- Исправленная служба **installed only on test Pi**, находится в
+  **draft PR #158**, не merged/released/production. Длительный таймер,
+  автоматические node/transport hooks, реальные failover/LAN/reboot,
+  SSTP egress не доказаны. После штатного включения watch проверить
+  несколько циклов `up` без ложных событий, затем вернуться к PR #115
+  и clean-install release gate.
+
+## AWG Notify Watch включён — 2026-10-22 16:00 +07
+
+- Оператор подтвердил enabled/active после включения awg-notify-watch.timer.
+  Независимая проверка на тестовой Pi: timer enabled/active с 15:59:57 +07;
+  два последовательных **автоматических** запуска в 15:59:58 и
+  16:01:29 вернули NOTIFY_WATCH=up, оба завершились без ошибок.
+- Telegram flush/daily timers активны, pending=0 по последнему журналу;
+  SSH, dnsmasq, health, selection-monitor и Mihomo работают;
+  таблицы 100/101 остаются через mihomo0. Ложных VPN_LOST при первом
+  и втором автоматических циклах не обнаружено.
+- **Проверено:** old-vs-new AF_NETLINK, реальный root unit, два
+  автоматических цикла. **Не проверено:** следующие несколько циклов,
+  реальный отказ/восстановление, failover, LAN-клиент, reboot,
+  clean-install, SSTP egress. Только тестовая Pi и draft PR #158;
+  релизный приоритет PR #115 неизменен.
+
+## Последний срез 2026-10-22 16:25 +07 — меню Telegram и инсталлятор
+
+- В **draft PR #158** объединены последние UI-доработки тестовой Pi
+  (цветовая схема, белые хлебные крошки, отключение рваного скролла,
+  Mihomo/Xray-экраны), Desktop Commander (системный пункт 9),
+  Telegram (новый системный пункт 10), а также мастера первого и
+  второго VPN-транспорта для чистой установки. Прежний конфликт
+  «Telegram vs DC: пункт 9» устранён.
+- `install.sh` в ветке #158 устанавливает новый
+  `src/awg-menu`, `src/awg-notify.py`, root-only
+  `scripts/awg-notify-pair-repair.py` и семь systemd units.
+  Уведомления на новой системе по умолчанию не запускаются до настройки.
+  Никакие токены не добавлялись в репозиторий.
+- На тестовой Pi обнаружена **частичная установка** промежуточного
+  объединённого меню (SHA-256 bcc82ec..., Desktop Commander 9 /
+  Telegram 10) и root-only помощника привязки; команда замены
+  системного меню этим сеансом не запускалась, время файла 16:17 +07.
+  Окончательная версия с дополнительным мастером VPN (SHA-256
+  1e46c5cc...) **только staged**, root-установка ещё ожидается.
+  Подготовлен pin-checked test-Pi-only сценарий с резервной копией
+  и откатом, не перезапускающий VPN и не меняющий DNS/PBR/MikroTik.
+- На тестовой Pi **52/52 изолированных Telegram/menu/installer тестов
+  PASS**, bash -n и Python compile PASS. Systemd Watch работает;
+  3 таймера активны. Это **не** PASS полноценных clean-install,
+  upgrade, LAN, failover или reboot. PR #158/#159 остаются draft,
+  приоритет PR #115 и стабильного v1.3.0 не изменился.
+
+## 2026-10-22 Telegram: отдельные переключатели событий в меню
+
+- В draft PR #158 добавлен `dialog --checklist` с шестью категориями:
+  VPN_LOST, VPN_RESTORED, BOOT, DAILY_REPORT, NODE_SWITCH,
+  TRANSPORT_SWITCH (включая TRANSPORT_FAILOVER). ОК сохраняет настройки
+  атомарно в root-owned `/etc/awg-pbr/notify/events-policy.json`
+  (0600), Отмена не меняет их. Выключение категории останавливает
+  формирование **новых** сообщений, но не удаляет существующую очередь,
+  не меняет VPN/DNS/PBR и не перезапускает службы.
+- На установке без preferences-файла четыре ранее действующих события
+  (отказ, восстановление, загрузка, сводка) остаются разрешены,
+  переключения нод/транспорта OFF до явного включения. Чистый
+  инсталлятор по-прежнему оставляет уведомления/timers выключенными.
+  Отправители node/transport пока присутствуют в исходниках draft PR,
+  но **не установлены и не проверены** на тестовой Pi.
+- Новое меню собрали поверх **фактически установленного Matrix UI**,
+  сохранили Desktop Commander (системный пункт 9), Telegram (пункт 10),
+  мастер настройки первого/второго транспорта. В PR #158 `install.sh`
+  уже разворачивает обновлённые `src/awg-menu` и `src/awg-notify.py`.
+  Локальные **59/59** изолированных тестов PASS, bash -n и Python
+  compile PASS. Подготовлен root-only pinned скрипт
+  `scripts/awg-notify-switches-test-install.py`, с backup/rollback
+  и проверкой неизменности активных шлюзовых служб/политик.
+- На тестовой Pi полный переключаемый интерфейс и новый отправитель
+  **ещё не установлены**: проверен только staging. PR #158 draft/open,
+  #115 draft/open, main/release/production не изменены. Clean-install,
+  upgrade, LAN, failover, reboot и реальная доставка выключаемых типов
+  остаются отдельными воротами.
+
+## Telegram: переключатели типов сообщений — 2026-10-22
+
+- По запросу пользователя в **draft PR #158** добавлен экран
+  `Система → Telegram → Типы уведомлений [галочки]` с независимыми
+  on/off категориями `VPN_LOST`, `VPN_RESTORED`, `BOOT`,
+  `DAILY_REPORT`, `NODE_SWITCH`, `TRANSPORT_SWITCH`.
+  `Space` переключает выбор, `ОК` атомарно сохраняет,
+  `Отмена` отменяет. `TRANSPORT_FAILOVER` относится к
+  `TRANSPORT_SWITCH`.
+- Предпочтения сохраняются отдельно от токена и очереди в
+  `/etc/awg-pbr/notify/events-policy.json` (0600/root, атомарная
+  запись). Отсутствие файла включает исторические категории
+  авария/восстановление/загрузка/сводка, а node/transport switch — OFF;
+  **на чистой установке доставка и таймеры остаются OFF до настройки**.
+  Меню и notifier в `src/` + `install.sh` уже изменены для будущего
+  инсталлятора. Включение галочки само по себе не доказывает установку
+  соответствующего автоматического hook на текущей Pi.
+- На тестовой Pi код только staged: **65/65** изолированных тестов
+  PASS; `bash -n`, Python compile PASS, rootless installer корректно
+  отказывает `ROOT_REQUIRED`. Подготовлен pinned root-only сценарий
+  точечного обновления двух исполняемых файлов с откатом и проверкой
+  SSH/dnsmasq/основных служб/маршрутов/таймеров.
+  **Под sudo он ещё не выполнен**, текущее Matrix-меню и Telegram на
+  Pi не менялись. PR #158 остаётся draft, не merged/released.
+- Никаких реальных переключений маршрутов, проверок SSTP, reboot/LAN
+  или чистой установки этим не подтверждено. Главный приоритет
+  по-прежнему PR #115 и стабильный v1.3.0.
+
+## Matrix UI и Telegram-переключатели в инсталляторе — 2026-10-22
+
+- **Draft PR #158** включает сохранённое тестовое меню с Matrix и
+  отдельным экраном Telegram с шестью чекбоксами. В `install.sh`
+  добавлены `tmux`, `extras/awg-matrix-compositor.py` и настройка
+  `menu-appearance`: на новой системе Matrix, при обновлении
+  сохраняется выбранный стиль, если файл отсутствует на обновляемой
+  системе — безопасное Classic. Путь аварийного доступа:
+  `sudo awg-menu --classic`.
+- Компонент Matrix из тестовой Pi перенесён в репозиторий с совпадающим
+  SHA-256 `6acc3f821f098128ca3c96375c10c13b74dc976070ef0edf2e5d3e905b6f180e`.
+  Настройки Telegram — отдельный root-only JSON, очередь и токен не
+  затрагиваются; система доставки в новой ОС по умолчанию выключена.
+- Проверено на тестовой Pi: **66/66 rootless tests PASS**, bash -n
+  инсталлятора/меню, py_compile всех обновляемых Python — PASS;
+  staged SHA-256 меню `03fa7783...`, notifier `6eab64b8...`,
+  pinned upgrade script `b5b67ad...`. **Полная сборка ПО только в
+  draft PR, root upgrade этих двух файлов пока не выполнен**, поэтому
+  Telegram-переключатели в установленном меню ещё недоступны.
+- Не объявлять clean-install, upgrade, LAN, failover, reboot, SSTP
+  и реальный интерактивный Matrix/Telegram checklist PASS до
+  испытания. Главная задача — **PR #115 и v1.3.0**; PR #158/#159
+  не merged/released.
+
+## Telegram checklist установлен на тестовой Pi — 2026-10-22 21:27 +07
+
+- Оператор выполнил pinned root-only скрипт
+  `awg-notify-checklist-test-install.py`, сообщил
+  `CHECKLIST_INSTALL=PASS_TEST_PI_ONLY`,
+  `TELEGRAM_EVENT_SWITCHES=6`,
+  `MATRIX_AND_DESKTOP_COMMANDER=PRESERVED`,
+  `NOTIFY_POLICY_FILE=UNMODIFIED`,
+  `EXISTING_QUEUE_AND_BOT_SECRET=UNMODIFIED`,
+  `NETWORK_AND_NOTIFIER_UNCHANGED=YES`.
+  Путь root-only резервной копии по отчёту скрипта:
+  `/var/backups/awg-gateway/telegram-checklist-b7eon880`.
+- Независимая read-only проверка на `awg-upgrade`:
+  установленные SHA-256 `awg-menu=03fa77837a1c8c624562ec2722b06a42836c30b4c232440a3faf93d7dfeb5b85`
+  и `awg-notify=6eab64b8ea3dab459130c32516b693c049f17d1d0e631c1d17a76157ac0139a3`,
+  совпадают с подготовленными и зарегистрированными в draft PR #158
+  исходниками. В установленном меню есть обработчик
+  `notify_types_menu`, Matrix `appearance_menu`, Desktop Commander,
+  и мастер первого/второго VPN-транспорта. Bash/Python syntax PASS.
+- Все четыре Telegram activation units enabled; Watch по журналу
+  в 21:24:35, 21:26:06 и 21:27:40 — `NOTIFY_WATCH=up`,
+  отправитель — `pending=0`, `sent=0`. SSH, dnsmasq,
+  awg-pbr-health, awg-selection-monitor, awg-mihomo — active.
+  Таблицы 100/101 по-прежнему `mihomo0`. Смена VPN не проводилась.
+- **Статус installed on test Pi** подтверждён; это не значит
+  `merged`, `released` или `clean-install PASS`.
+  Не проверены ручная работа чекбоксов в Termius Matrix, фильтрация
+  реальных событий после их переключения, авто-hook node/transport,
+  а также LAN/failover/reboot/SSTP и релизный gate v1.3.0.
+  Root-only backup нельзя прочитать непривилегированным агентом.
+  Продолжаем PR #115 как основной приоритет.
+
+## Инцидент 2026-10-22 23:58 +07 — подтверждённый failover и отсутствие Telegram event
+
+- 2026-10-22 **23:58:03 +07** на **тестовой Pi `awg-upgrade`**
+  в `awg-selection-monitor.service` достоверно зафиксировано
+  `FAILOVER=mihomo->awg`. Срез 2026-10-23 **07:13–07:18 +07**:
+  `awg-selection status` показывает `AUTO / current=awg`,
+  `awg-quick@awg0` active, `awg-mihomo` inactive, fwmark таблицы
+  100/101 через `awg0`, SSH/dnsmasq/selection/health активны.
+  **AWG-bound HTTPS** к `api.openai.com/v1/models` дал 401 с
+  успешным TLS; к `api.telegram.org/` — 302 с успешным TLS.
+  Это **Pi-bound transport**, не LAN-клиент и не подтверждение
+  реальной отправки сообщения через Telegram Bot API.
+- Непосредственно перед переключением в 23:56:57 Mihomo получил
+  `127.0.0.1:17892 connect: connection refused` к локальному
+  Xray SOCKS; Xray service ныне disabled/inactive. Истечение
+  HoneyVPN trial **не доказано** этим диагнозом, потому что отказ
+  происходил на localhost до обращения к провайдеру.
+- Telegram Watch: 23:57:31 `suspect`, 23:59:01 `up` после
+  перехода AWG, поэтому двух последовательных `down` не было.
+  Telegram flush во время события, в 23:58:33, и последующие
+  запуски показывают `pending=0, sent=0`. В установленных
+  `/usr/local/sbin/awg-transport` и `awg-selection-monitor`
+  **нет emit-hook для TRANSPORT_FAILOVER** (grep без совпадений),
+  хотя код уже staged **только в draft PR #158**. Это основная
+  доказанная причина отсутствия сообщения. Отдельно root-only
+  значение `TRANSPORT_SWITCH` в preferences не удалось прочитать;
+  его default — OFF; нельзя утверждать фактическую галочку.
+- Безопасный диагностический срез без секретов сохранён на Pi:
+  `/home/karlinks/awg-pi-failover-snapshot-20261023.txt`
+  (режим 0600, пользователь karlinks). В ходе проверки не менялись
+  VPN, MikroTik, DNS, SSH/SSTP, ноды, systemd units или уведомления.
+- Следующий шаг: прежде чем менять действующий AWG, отдельным
+  тестом проверить root-only preferences без выдачи credentials;
+  затем внедрить проверенный event emit в test-Pi selector/transport
+  с rollback и **без реальной имитации отказа работающего VPN**.
+  Проверить фактический enqueue и доставку через AWG и только
+  затем заявлять `TELEGRAM_FAILOVER=PASS`. Главный релизный
+  приоритет — PR #115/clean-install/LAN/failover/reboot/v1.3.0;
+  PR #158 остаётся draft/unmerged.
+
+## Telegram failover hooks — prepared acceptance, 2026-10-23 07:39 +07
+
+- На тестовой Pi `awg-upgrade` подтверждён активный AWG,
+  работающий SSH/dnsmasq/pbr-health/selection-monitor, обе таблицы
+  100/101 через `awg0`; исходный инцидент failover 23:58
+  22 октября описан выше.
+- По результату сравнения `/usr/local/sbin` с draft PR #158
+  установленные `awg-transport` и `awg-selection-monitor` отличаются
+  от draft **только изолированными уведомлениями** (11 и 9 строк
+  добавлений). Никакая маршрутизация, policy, preflight и логика
+  принятия решений изменению не подвергаются.
+- В draft PR #158 сохранён root-only сценарий
+  `scripts/awg-notify-failover-hook-accept.py` (SHA-256
+  `0e7d4d7b5298b954cf0fb6f8f403dd5c77e97de58c455292952e9a8a52823d62`),
+  ожидающий **операторского sudo** на тестовой Pi. Проверяет
+  SHA исходных/целевых файлов, создаёт root-only backup двух
+  скриптов, атомарно обновляет их, перезапускает **только selection
+  monitor** для активации хука, проверяет SSH/DNS/PBR/AWG и таймеры,
+  откатывает скрипты при проверочной ошибке.
+- В том же сценарии шесть типов сообщений тестируются на изолированной
+  очереди и временном preferences JSON (live policy, bot secret и
+  live SQLite не меняются). Только затем шесть явно помеченных
+  **синтетических** TEST-событий отправляются в реальный Telegram Bot
+  API **строго через `awg0`**, без DIRECT/SSTP и без отключения
+  транспорта. Rootless статические и unit/regression тесты
+  `70/70 PASS`, Bash/Python syntax PASS, read-only importer PASS.
+  **Реальная root-установка и Telegram-отправка ещё не выполнены.**
+- После выполнения проверить фактический
+  `LIVE_PREF_TRANSPORT_SWITCH`: default `off`, если пользователь
+  не включил галочку. Без `on` будущий настоящий failover
+  правильно останется без Telegram-сообщения. Не менять другие
+  галочки принудительно; не объявлять real failover event PASS
+  по тестовой имитации.
+
+## Telegram-меню: устранено дублирование в исходниках — 2026-10-23 09:25 +07
+
+- Пользователь показал screenshot действующего меню: 3/4 «включить/
+  выключить уведомления», 5/6 «включить/выключить сводку» плюс галочка
+  `DAILY_REPORT`; повторялась и строка хлебных крошек.
+- **Draft PR #158** обновлён: 1 бот, 2 тест доставки,
+  3 **единый переключатель доставки**, 4 **шесть галочек**
+  (включая единственное управление сводкой в 09:00),
+  5 состояние/очередь, 6 исправить chat ID, 0 назад.
+  Заголовок теперь просто `Telegram`, вложенный `Типы уведомлений`;
+  избыточные крошки устранены.
+- При явном сохранении типов синхронизируется системный
+  `awg-notify-daily.timer`: только если включена общая доставка
+  и галочка `DAILY_REPORT`; при выключении общей доставки
+  останавливаются delivery, Watch, boot и daily timers. Секреты,
+  очередь, VPN и MikroTik в обработчиках меню не меняются.
+- **73/73 rootless тестов PASS** (в том числе 4 mocked systemctl
+  сценария), bash -n PASS. Новый menu source staged на Pi
+  SHA-256 `d12c44952db7ba1270b0f71cc48cb0947994f0bd454eff3a0f84b7e73aa2dc53`.
+  Пассивный тестовый installer для одного файла (backup/rollback,
+  SHA pins) `scripts/awg-notify-menu-dedupe-test-install.py`,
+  SHA-256 `2ad5d57807d03240242b630a5c38b23ee0dbf30bfd9014c83d945902e0bb7aab`.
+- **Ещё НЕ УСТАНОВЛЕНО на test Pi**: в
+  `/usr/local/sbin/awg-menu` по-прежнему прежний SHA
+  `03fa77837a1c8c624562ec2722b06a42836c30b4c232440a3faf93d7dfeb5b85`.
+  В ходе диагностики и подготовки тестов не менялись PBR,
+  active AWG, таймеры, DNS, SSH, MikroTik. Пользователь пока не
+  запускал ранее подготовленный root acceptance для уведомлений
+  при реальном failover. PR #115 по-прежнему основной release gate.
+
+## Telegram menu de-duplication installed — 2026-10-23 10:28 +07
+
+- User executed root-only `awg-notify-menu-dedupe-test-install.py`
+  successfully on test Pi `awg-upgrade`, returned
+  `MENU_DEDUPE=PASS_TEST_PI_ONLY`, `SERVICES_ROUTES_TIMERS=UNCHANGED`,
+  `USER_PREFERENCES_BOT_QUEUE=UNCHANGED`,
+  `AWG_FAILOVER_HOOKS=NOT_TOUCHED`.
+  Root-only backup reported
+  `/var/backups/awg-gateway/telegram-menu-dedupe-f3er0xui`.
+- Independently verified `/usr/local/sbin/awg-menu` SHA-256
+  `d12c44952db7ba1270b0f71cc48cb0947994f0bd454eff3a0f84b7e73aa2dc53`
+  matches approved staged source; syntax `bash -n` PASS.
+  Old redundant daily-summary ON/OFF menu commands removed; item 3
+  now toggles delivery, item 4 opens checklist, item 6 repairs pairing.
+- Live `awg-transport` SHA-256 `d5eb7639...`,
+  `awg-selection-monitor` SHA-256 `e98b697d...` remain unmodified.
+  Thus previous failover Telegram emit root defect is **not yet fixed
+  in running selection monitor**. Staged hook acceptance/root install
+  script remains `scripts/awg-notify-failover-hook-accept.py`
+  pinned SHA-256 `0e7d4d7b5298b954cf0fb6f8f403dd5c77e97de58c455292952e9a8a52823d62`.
+  Its six synthetic Bot API messages **have not yet been sent**;
+  operator has not run that script.
+- UI code is **installed on test Pi**, not merged/released.
+  Actual visual checkbox interaction, LAN/failover/reboot/clean install
+  release gate still unconfirmed. No MikroTik changes.
+  
+## Telegram hooks installed and six synthetic Bot API sends PASS — 2026-10-23 10:34 +07
+
+- Test Pi `awg-upgrade`: operator executed pinned
+  `scripts/awg-notify-failover-hook-accept.py`, received
+  `HOOK_INSTALL=PASS_TEST_PI_ONLY`, `NODE_HOOK=INSTALLED`,
+  `FAILOVER_HOOK=INSTALLED`,
+  `SERVICES_DNS_PBR_TIMERS=UNCHANGED` and
+  `LIVE_QUEUE_SECRET_PREFERENCES=UNMODIFIED`. Root-only backup
+  reported `/var/backups/awg-gateway/notify-failover-hooks-hjcvepti`.
+- All six actual root-only event preferences reported **on**:
+  VPN_LOST, VPN_RESTORED, BOOT, DAILY_REPORT, NODE_SWITCH,
+  TRANSPORT_SWITCH. Operator test `ALL_SIX_CHECKBOX_GATES=PASS`,
+  `WATCH_FAILURE_AND_RECOVERY_GATES=PASS` used isolated database
+  and isolated temporary preferences. Six explicitly labeled
+  synthetic notifications accepted by **actual Telegram Bot API
+  via awg0**, batches 2+2+2, pending 4→2→0;
+  `TEST_BOT_DELIVERY=6_OF_6_API_OK_VIA_AWG0`.
+  **Receipt later confirmed by user (6/6) on 2026-10-23**;
+  this is not proof of a new real automatic failover.
+- Independently verified at 10:33–10:34 +07:
+  `/usr/local/sbin/awg-transport` SHA-256
+  `00207041308e591040a4b45e7e9efbb8820161e3127f905107bdecaba7ecf110`;
+  `/usr/local/sbin/awg-selection-monitor` SHA-256
+  `569e6ac66561fc04ccf98f34378e96a6e03bc46daf5e61e5b6e8dc75a8d06b99`;
+  notify binary SHA `6eab64b8...`, menu SHA `d12c4495...`.
+  All are matching staged PR #158 source. All root-owned 0755,
+  `bash -n` PASS. Selection monitor active since 10:33:02,
+  `Result=success`, `NRestarts=0`. Selected transport still AWG
+  with policy AUTO order Mihomo,AWG; PBR tables 100/101 both
+  `default dev awg0`. SSH, dnsmasq, pbr-health and Watch/flush/daily
+  active/enabled; boot enabled. Watch repeated `up`, flush
+  `pending=0` throughout independent read-only observation.
+- **Status: installed only on TEST PI**; PR #158 remains
+  **draft / not merged** and PR #115 still draft. Real
+  HoneyVPN→AWG follow-up alert, fresh clean install, LAN, reboot
+  and MikroTik SSTP paths **not** release-accepted; production
+  microSD/router unmodified.
+
+## User confirmed Telegram receipt 6/6 — 2026-10-23
+
+- Оператор подтвердил получение **всех 6 из 6** тестовых уведомлений
+  на своём Telegram-клиенте после `TEST_BOT_DELIVERY=6_OF_6_API_OK_VIA_AWG0`.
+  Таким образом, **синтетическая end-to-end доставка — PASS
+  (user-confirmed)**: 6 типов → изолированная тестовая очередь →
+  Telegram Bot API по `awg0` → пользовательский Telegram.
+- Эта проверка НЕ доказывает отправку уведомления при **новом настоящем**
+  автоматическом переключении Mihomo→AWG, не проверяет LAN,
+  clean-install или reboot. Глобальная доставка и все 6 событий
+  ранее подтверждены включёнными на тестовой Pi; никаких настроек
+  при получении подтверждения не меняли.
+- PR #158 (реализация) и PR #159 (этот PROJECT_STATE) остаются
+  **draft/unmerged**, PR #115 остаётся главным выпускным приоритетом.
+
 ## 1. Главная цель и границы работ
 
 Закончить **AWG Pi Gateway v1.3.0**: воспроизводимый шлюз для Raspberry Pi 4 / чистой Debian 13 ARM64 с двумя транспортами **AmneziaWG** и **Mihomo**. Инсталлятор должен сразу устанавливать всё необходимое, **включая FFmpeg/FFprobe, Stage18 Node.js и yt-dlp** и сами движки — даже если VPN-профиль/подписка будут внесены позднее. После ввода AWG-профиля и/или Mihomo-подписки система должна штатно подбирать пригодные ноды, работать после перезагрузки, сохранять политики и обеспечивать предусмотренный резервный путь.
