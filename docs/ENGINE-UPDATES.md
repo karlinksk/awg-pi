@@ -35,6 +35,9 @@ engines once**, continuing after a refusal/failure and printing a result for
 each. Any incomplete operation returns nonzero. Gateway installation remains
 the separate `gateway` action/menu item, because its installer can restart
 services. The old “all” path could run AWG twice after failure; that is removed.
+Individual helpers use exit 3 for an in-use engine or busy maintenance lock;
+`all` labels those operations DEFERRED separately from failures and shows a
+Russian result summary. A failed guard/state check is an error, not a deferral.
 
 ## Backup and recovery
 

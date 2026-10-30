@@ -29,7 +29,7 @@ if "$0" status >/dev/null 2>&1;then
   exit 0
 fi
 if systemctl is-active --quiet awg-xray-vless.service;then
-  echo "XRAY_INSTALL=REFUSED_RUNNING_SERVICE" >&2;exit 1
+  echo "XRAY_INSTALL=REFUSED_RUNNING_SERVICE" >&2;exit 3
 fi
 awg_engine_lock
 awg_engine_inactive xray awg-xray-vless.service

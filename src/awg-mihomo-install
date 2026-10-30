@@ -103,7 +103,7 @@ if [[ "$command_mode" == ensure ]]; then
   fi
   if "$SYSTEMCTL_BIN" is-active --quiet awg-mihomo.service 2>/dev/null; then
     echo "Mihomo engine repair refused while awg-mihomo.service is active. Switch active transport to AWG first." >&2
-    exit 1
+    exit 3
   fi
 fi
 

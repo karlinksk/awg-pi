@@ -75,7 +75,7 @@ printf 'Mode ID: transit\nTransit guard: %s\n' "${TEST_GUARD-SAFE}"
         for engine, selected in [('awg', 'awg'), ('mihomo', 'mihomo'), ('xray', 'mihomo')]:
             (self.p / 'transport').write_text(selected)
             r = self.helper(f'awg_engine_inactive {engine} test.service')
-            self.assertNotEqual(r.returncode, 0)
+            self.assertEqual(r.returncode, 3)
             self.assertIn('REFUSED_SELECTED_TRANSPORT', r.stderr)
 
     def test_missing_or_invalid_configured_transport_refused(self):

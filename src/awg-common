@@ -219,7 +219,7 @@ awg_transport_device(){
 # the same lock as transport/node selection until publish and rollback finish.
 awg_engine_lock(){
   exec 8>"${AWG_LOCK_FILE:-/run/awg-maintenance.lock}"
-  flock -n 8 || { echo 'ENGINE_UPDATE=BUSY' >&2; return 1; }
+  flock -n 8 || { echo 'ENGINE_UPDATE=BUSY' >&2; return 3; }
 }
 
 awg_engine_inactive(){
@@ -237,7 +237,7 @@ awg_engine_inactive(){
   state="$("${SYSTEMCTL_BIN:-systemctl}" show -p ActiveState --value "$service")" || return 1
   case "$state" in inactive|failed) ;; *)
     echo "ENGINE_UPDATE=REFUSED_RUNNING_OR_UNKNOWN engine=$engine state=$state" >&2
-    return 1 ;;
+    case "$state" in active|activating|deactivating|reloading) return 3 ;; *) return 1 ;; esac ;;
   esac
   selected="$(cat "$AWG_TRANSPORT_FILE" 2>/dev/null || true)"
   case "$selected" in awg|mihomo|unconfigured|'') ;; *)
@@ -247,7 +247,7 @@ awg_engine_inactive(){
   # transport is selected, even if the sidecar currently appears inactive.
   if [[ "$selected" == "$engine" || ( "$engine" == xray && "$selected" == mihomo ) ]]; then
     echo "ENGINE_UPDATE=REFUSED_SELECTED_TRANSPORT engine=$engine" >&2
-    return 1
+    return 3
   fi
   # A missing file is legitimate only on a fresh, unconfigured installation.
   if [[ -z "$selected" && -e "${AWG_ENV_FILE:-/etc/awg-pbr/env}" ]]; then

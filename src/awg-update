@@ -495,8 +495,14 @@ all_engines(){
     fi
     if (( rc == 0 )); then
       echo "ENGINE_RESULT=$engine OK"
+      echo "$engine: проверка / обновление завершено."
+    elif (( rc == 3 )); then
+      echo "ENGINE_RESULT=$engine DEFERRED rc=$rc"
+      echo "$engine: отложено — движок используется или идёт другая операция. Рабочий транспорт сохранён."
+      failed=1
     else
-      echo "ENGINE_RESULT=$engine FAILED_OR_DEFERRED rc=$rc"
+      echo "ENGINE_RESULT=$engine FAILED rc=$rc"
+      echo "$engine: проверка / обновление не выполнено; см. диагностику выше."
       failed=1
     fi
   done
