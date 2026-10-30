@@ -107,7 +107,7 @@ class TransitStatusUI(unittest.TestCase):
         self.assertIn('"$AWG_ROUTE" mode status',screen)
         for forbidden in ("systemctl restart"," mode transit","nft add","ip route add"):
             self.assertNotIn(forbidden,screen)
-        self.assertIn("2) restart_active_transport || true",block)
+        self.assertIn("2)\n          restart_active_transport || true\n          ;;", block)
         self.assertIn('1 "Включить VPN-политику"',block)
 
 if __name__=="__main__":
