@@ -17,7 +17,36 @@ ESC = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]|\x1b\([A-Za-z0-9]")
 SOCKET = "awg-matrix-render-%s-%s" % (os.getuid(), os.getpid())
 PALETTE = [(190,255,190),(90,255,90),(0,255,0),(0,200,0),(0,140,0),(0,85,0),(0,42,0)]
 
-BUTTON_RE = re.compile(r"<\s*(?:ОК|OK|Да|Нет|Yes|No|Закрыть|Close|Отмена|Cancel)\s*>", re.IGNORECASE)
+BUTTON_RE = re.compile(r"<\s*(?:ОК|OK|Да|Нет|Yes|No|Проверить|Закрыть|Close|Отмена|Cancel)\s*>", re.IGNORECASE)
+
+def editbox_content_span(row):
+    """Inner column interval for a framed, multi-line dialog editor, if any.
+
+    The editor has an outer and inner vertical border on each side. A menu
+    selection or a shadow has no such nested border. This is presentation
+    detection only; the config itself is never inspected or recorded.
+    """
+    walls = [x for x, cell in enumerate(row)
+             if cell and cell[0] == "│" and cell[2] == 4]
+    if len(walls) != 4:
+        return None
+    outer_l, inner_l, inner_r, outer_r = walls
+    if (1 <= inner_l - outer_l <= 3 and
+            1 <= outer_r - inner_r <= 3 and
+            inner_r - inner_l >= 24):
+        return inner_l + 1, inner_r
+    return None
+
+
+def editbox_focus(screen):
+    """True only while the editor surface, not a footer button, has focus."""
+    for row in screen:
+        span = editbox_content_span(row)
+        if span and any(cell and cell[2] == 0 and cell[3] and cell[1] == 7
+                        for cell in row[span[0]:span[1]]):
+            return True
+    return False
+
 
 def shadow_row_columns(row):
     """Identify the bottom drop-shadow: long *blank* white-on-black runs.
@@ -26,6 +55,11 @@ def shadow_row_columns(row):
     but has text on that row. Its bottom shadow consists entirely of spaces.
     Never classify a blank drop-shadow as a highlighted menu item.
     """
+    # A focused editbox first line is a long, blank 7/0/bold span. It
+    # resembles the old shadow heuristic but MUST remain opaque: otherwise
+    # Matrix rain shines through the editable field.
+    if editbox_content_span(row):
+        return set()
     run = []
     shadow = set()
     for x, cell in enumerate([*row, None]):
@@ -128,9 +162,23 @@ def menu_keys_for_click(screen, x, y, activate_selected=False):
                 ]
                 # A solitary <OK>/<Close> token in textbox prose is NOT
                 # necessarily a dialog button. Require real active styling.
-                if len(active) != 1:
+                has_editor = any(editbox_content_span(cells) for cells in screen)
+                field_focused = has_editor and editbox_focus(screen)
+                # Input focus and highlighted button simultaneously is an
+                # inconsistent snapshot. Never guess where Enter would land.
+                if field_focused and active:
                     return ()
-                steps = (index - active[0]) % len(buttons)
+                if len(active) == 1:
+                    # Editboxes cycle: field -> OK -> Cancel -> field.
+                    # Plain menus cycle between buttons without a field.
+                    cycle = len(buttons) + (1 if has_editor else 0)
+                    steps = (index - active[0]) % cycle
+                elif not active and has_editor and editbox_focus(screen):
+                    # While typing, neither button is highlighted; Tab
+                    # leaves the editor and focuses the first button.
+                    steps = index + 1
+                else:
+                    return ()
                 return ("Tab",) * steps + ("Enter",)
         return ()
 
@@ -406,8 +454,11 @@ def main(stdscr):
             label = "".join(cell[0] if cell is not None else " " for cell in row)
             button_row = bool(BUTTON_RE.search(label))
             shadow = shadow_row_columns(row)
+            editor_span = editbox_content_span(row)
             highlight = [x for x, cell in enumerate(row) if cell is not None and
-                         x not in shadow and cell[2] == 0 and cell[3] and
+                         x not in shadow and
+                         not (editor_span and editor_span[0] <= x < editor_span[1]) and
+                         cell[2] == 0 and cell[3] and
                          cell[1] in (3, 7) and cell[0] != " "]
             highlighted_cells = set()
             if highlight and not button_row:
@@ -422,6 +473,11 @@ def main(stdscr):
                         continue
                     bg = 0
                 role = overlay_role(ch, fg, bg, bold, button_row)
+                if (editor_span and editor_span[0] <= x < editor_span[1]
+                        and role == "selection"):
+                    # The editable text row is content, not a green
+                    # menu highlight; keep its background fully opaque.
+                    role = "panel"
                 if x in highlighted_cells and role not in (None, "topline"):
                     role = "selection"
                 if role is None:
