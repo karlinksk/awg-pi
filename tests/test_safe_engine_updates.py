@@ -37,6 +37,10 @@ if [[ "$1" == is-active ]]; then [[ "${TEST_STATE:-inactive}" == active ]]; exit
 exit 99
 ''')
         self.script('route', '''echo "route $*" >>"$TEST_LOG"
+if [[ "${AWG_MAINTENANCE:-0}" != 1 ]]; then
+  exec 9>"$AWG_LOCK_FILE"
+  flock -sn 9 || exit 1
+fi
 printf 'Mode ID: transit\nTransit guard: %s\n' "${TEST_GUARD-SAFE}"
 ''')
         self.script('sudo', 'echo UNEXPECTED_SUDO >&2; exit 99\n')
@@ -101,6 +105,14 @@ printf 'Mode ID: transit\nTransit guard: %s\n' "${TEST_GUARD-SAFE}"
             r = self.helper('awg_engine_lock')
             self.assertNotEqual(r.returncode, 0)
             self.assertIn('BUSY', r.stderr)
+
+    def test_transit_status_inside_exclusive_maintenance_lock(self):
+        (self.p / 'mode').write_text('transit')
+        (self.p / 'transport').write_text('awg')
+        r = self.helper('awg_engine_lock\nawg_engine_inactive xray test.service')
+        self.assertEqual(r.returncode, 0, r.stderr)
+        r = self.helper('awg_engine_lock\nawg_engine_inactive awg test.service')
+        self.assertEqual(r.returncode, 3, r.stderr)
 
     def publish(self, tail):
         (self.p / 'old').write_text('original')
