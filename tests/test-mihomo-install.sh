@@ -3,7 +3,8 @@ set -Eeuo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 TMP="$(mktemp -d)"
-trap 'rm -rf "$TMP"' EXIT
+# The updater's intentionally root-only backups are inside this disposable tree.
+trap '[[ "$TMP" == /tmp/tmp.* ]] && sudo rm -rf -- "$TMP"' EXIT
 
 mkdir -p "$TMP/bin"
 
