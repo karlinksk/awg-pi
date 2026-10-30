@@ -10,6 +10,55 @@
 
 ## Датированный журнал
 
+### 2026-10-30 — полный Xray reinstall и обслуживание резервного Mihomo PASS
+
+- Source `719706c85df961f9c19f38641b8773a193511b46` добавляет явный
+  `awg-xray-install reinstall`: пропускается только matching-version no-op,
+  все service/transport/lock/SHA256/backup/postcheck guards сохранены.
+  `ensure` и `all` по-прежнему не переустанавливают совпадающую версию.
+  22/22 целевых rootless теста на Pi PASS; [source CI 41005092395](https://github.com/karlinksk/awg-pi/actions/runs/41005092395)
+  shell SUCCESS / awg-v31 SUCCESS. Existing installer уже доставляет этот helper.
+- На test SSD Pi с выбранным AWG установлен только новый Xray installer из
+  точного `719706c`, с SHA256 и backup старого helper. **Штатная команда
+  `awg-xray-install reinstall`** сама выполнила network fetch, проверку
+  literal pinned SHA256, extraction, version check, backup, реальный rename
+  бинарника и postcheck/commit. Новый inode подтверждён; payload 26.3.27
+  byte-identical исходному. Engine backup проверен, PENDING отсутствует.
+  Это полный путь same-version reinstall, не different-version upgrade.
+- Xray trial защищён независимым 180s recovery timer и root-only original /
+  baseline. Отдельный postflight: 27/27 protected hashes/absence сохранены,
+  все службы и их start timestamps прежние, Xray inactive. Timer снят,
+  watchdog restore не понадобился. Остальные runtime helpers остаются `55b2dc3`.
+- Для Mihomo заранее проверены literal pinned gzip SHA256, совпадение
+  candidate/installed payload, byte-identical renderer/current config,
+  текущий controller-selected native node и enabled policy. AWG local health
+  и Pi-bound HTTPS200/curl0 PASS до обслуживания. Подготовлены root-only
+  original/baseline, независимый 180s restore-and-restart timer и отдельный
+  конечный observer HTTPS через awg0. Recovery prerequisite check PASS.
+- Остановлена **только резервная** awg-mihomo.service под maintenance lock.
+  Затем штатный `awg-mihomo-install --mode auto` сам выполнил network fetch,
+  pinned SHA256/version validation, backup, реальный binary rename и commit.
+  Guard на время установки держит собственный maintenance lock. Резервный
+  Mihomo запущен обратно; controller node и enablement совпали с baseline.
+- Независимый postflight: **27/27** protected hashes/absence сохранены,
+  AWG/SSH/DNS start timestamps неизменны, изменился только ожидаемый start
+  timestamp резервного Mihomo. Обе таблицы через AWG, TRANSIT SAFE/ACTIVE/READY,
+  Xray inactive; нода/конфигурация не менялись. Observer: **9/9** Pi-bound AWG
+  example.com HTTPS200/curl0, затем отдельные awg0 и mihomo0 HTTPS200/curl0.
+  Это ограниченное Pi TUN наблюдение, не доказательство всех LAN flows/no-loss.
+  Mihomo timer снят; watchdog restore не понадобился. Production binary
+  contents обоих движков совпадают с исходными, версии не повышались.
+- Финальный `awg-update --yes all`: core/mihomo/xray OK как matching-version
+  no-op. Read-only guard активного AWG вернул DEFERRED/exit3. **Реальная замена
+  активного AWG отложена**, так как нельзя останавливать/переключать incumbent
+  в рамках текущего инварианта. Не подменялись версии/бинарники для обхода guard.
+- **Открыто:** real AWG binary transaction, Mihomo fault/rollback, different-
+  version compatibility, watchdog execution, clean install/полный Gateway
+  upgrade и относящиеся к ним hardware gates. Это обслуживание двух движков,
+  не полный Gateway upgrade/новая LAN/failover/reboot acceptance. MikroTik/SSTP,
+  рабочая microSD, active transport и private node сохранены. PR #171 draft,
+  не merged/tagged/released/production-installed.
+
 ### 2026-10-30 — test Pi: настоящая замена файла Xray и rollback той же версии PASS
 
 - Повторный preflight: test SSD root, выбран AWG, TRANSIT SAFE/ACTIVE/READY,
