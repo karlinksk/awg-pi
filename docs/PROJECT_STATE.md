@@ -10,6 +10,68 @@
 
 ## Датированный журнал
 
+### 2026-10-30 — AWG source reinstall/трёхфайловый rollback и полный preserving upgrade PASS
+
+- Владелец разрешил переключение транспорта для испытаний. До изменения
+  проверены оба backend/TUN, исходная native Mihomo node, отсутствие AWG
+  profile shell hooks и unit overrides. Исходное состояние: Transit/AWG,
+  оба backend active, Xray inactive; SSH и управление доступны.
+- `73a22fd` добавил явный `awg-core-update --yes reinstall`, сохраняя pinned
+  revisions, maintenance lock и running/selected-engine refusals. Первая
+  ограниченная systemd-попытка остановилась **до публикации бинарников**:
+  Go без HOME/GOPATH не нашёл module cache. Original files/private state/node
+  и выбор AWG независимо подтверждены после возврата. Failed trial unit
+  очищен адресно; отсутствие финальной recovery receipt не считается PASS.
+- Исправление **`409774ccfe0d2c2fa681d91e93eff717e2ae812c`** задаёт отдельные
+  GOCACHE/GOMODCACHE внутри приватного build temp, без зависимости от HOME.
+  Добавлен regression полного shell-path без HOME с проверкой обоих cache
+  paths/cleanup. Pi: **26/26** targeted PASS; [source CI 41033729345](https://github.com/karlinksk/awg-pi/actions/runs/41033729345)
+  shell SUCCESS / awg-v31 SUCCESS. Установлен точный helper `409774c`.
+- При повторе независимый systemd timer реально выполнил readiness rehearsal
+  без engine mutation; отдельный rescue вооружён до handover. Выбран прежний
+  Mihomo, остановлен только standby AWG. Штатный `awg-core-update --yes reinstall`
+  в systemd unit **без HOME**, с RuntimeMaxSec=240s, выполнил clone/проверку
+  обоих pinned revisions, настоящую Go/C сборку, backup, установку и postchecks.
+  Go toolchain не заменялся. Новый core build metadata содержит точный
+  `vcs.revision=b5928efb6ca19f0153958460c3d141f04abc5c2e`; tools revision
+  `ee0f0a9aa34ff0a0da4b3433b9512781cfe02843` проверен updater до сборки.
+- **Реальный трёхфайловый error rollback:** пока AWG inactive под Mihomo,
+  production publisher установил доверенные исходные backup binaries поверх
+  собранных файлов; намеренный exit23 вызвал EXIT rollback обратно к новой
+  сборке. Все три hash/backup/PENDING проверки PASS; один payload реально
+  отличался, это не только same-byte rename. Unit/private profile неизменны.
+- Повторный trial занял80.66s; observer через активный mihomo0 **20/20 HTTPS200,
+  curl0**. После старта AWG его Pi-bound HTTPS/health PASS; выбран исходный
+  AWG, восстановлен standby Mihomo, прежняя node и enablements. Независимый
+  postflight:26/26 private hashes/absence, исходная unit, pinned versions и
+  оба TUN HTTPS PASS; rescue снят, watchdog restore не понадобился.
+  DNS-служба штатно перезапускалась существующим route reload при handover;
+  DNS policy/config hashes сохранены. Новых LAN/no-loss/reboot PASS нет.
+- **Полный existing-install upgrade** затем реально выполнен неизменённым
+  `install.sh` blob `9b10378982d0dbbc8f09f6916fba73c163717bf5` (тот же v1.3.0),
+  с **AWG_PI_REF=409774c** и upgrade-auto на test SSD Pi. Перед ним проверен
+  приватный gateway snapshot (3079 archive entries), root-only restore script
+  и независимый readiness rehearsal; recovery timer вооружён заранее.
+- Для этого trial APT_CONFIG только дочернего процесса фиксировал все уже
+  установленные версии (priority1001; новые/другие версии запрещены). Apt
+  simulation не предлагала изменений. Это **preserving upgrade при frozen OS
+  dependencies**, не проверка обновления пакетов ОС. Installer сам прошёл все
+  стадии, включая fetch helpers, units, service reloads и финальную диагностику.
+- Independent postflight: **78/78** source deliveries SHA256/owner/mode PASS
+  (75 helper/unit calls +3 manual Python deliveries), **26/26** original
+  protected files сохранены. Допустимое дополнение — одна root:600 копия
+  awg0.conf.bak с исходными bytes. Полный dpkg manifest и все engine hashes
+  byte-identical pre-upgrade. Исходный AWG/standby Mihomo, private node,
+  enablements и Transit SAFE/ACTIVE/READY восстановлены, оба TUN HTTPS200/curl0.
+  `all`: три matching-version no-op OK. Snapshot rescue снят; restore не нужен.
+- Runtime helpers теперь полностью соответствуют source **409774c**.
+  Объявленная Gateway version остаётся **1.3.0**: это draft-source preserving
+  upgrade, не выпуск v1.3.1. MikroTik/SSTP и рабочая microSD не менялись.
+  Ранее принятые v1.3.0 clean-install/reboot/network receipts сохраняют свою
+  исходную область; новая clean install/reboot или corrected full-image restore
+  не выполнялись. IMAGE_BOOT_ACCEPT=FAIL/owner exception сохранены. Открыты
+  different-version compatibility и release review; PR #171 draft, не release.
+
 ### 2026-10-30 — полный Xray reinstall и обслуживание резервного Mihomo PASS
 
 - Source `719706c85df961f9c19f38641b8773a193511b46` добавляет явный

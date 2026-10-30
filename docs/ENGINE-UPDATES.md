@@ -93,3 +93,25 @@ for both fresh installs and upgrades; no Pi-only helper is required.
 Real binary replacement/rollback, clean install/upgrade of this candidate and
 LAN no-leak observations are separate hardware gates. Do not infer them from
 mocked tests, version output, existing v1.3.0 acceptance or an earlier UI CI.
+
+### Test-Pi evidence on 2026-10-30
+
+Source `409774c` has real, scoped acceptance: full pinned Xray reinstall;
+full standby Mihomo reinstall/restart preserving its node; full pinned AWG
+source rebuild/reinstall under Mihomo, and a real three-file failure rollback
+with a differing core payload. The first no-HOME build failure was corrected
+using private Go caches and retested in the same bounded systemd environment.
+26 targeted rootless regressions and exact-source hosted CI passed.
+
+The full configured Gateway installer also ran from that exact source,
+preserving settings and returning to the original AWG selection. Independent
+checks verified 78 delivered source files/units, 26 original private files,
+engine hashes, policies, both Pi-bound TUN HTTPS and timer retirement. OS
+packages were held at existing versions with process-local APT preferences;
+no OS-package upgrade acceptance is claimed. Internal Gateway version remains
+1.3.0, not a published v1.3.1. See PROJECT_STATE for the exact evidence ledger.
+
+New-version compatibility, new clean-media installation/reboot, full-image
+restore and arbitrary LAN/no-loss behavior are not established by these trials.
+Existing v1.3.0 evidence and its accepted media exception retain their scope;
+do not repeat historical gates without a concrete material change.
