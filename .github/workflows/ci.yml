@@ -11,6 +11,7 @@ on:
   pull_request:
     branches:
       - main
+      - 'fix/v1.3.1-*'
       - 'develop/v1.3.0'
       - 'integration/v1.3.0-*'
 
@@ -53,6 +54,7 @@ jobs:
           bash -n src/awg-pbr-health
           bash -n src/awg-opencck-update
           bash -n src/awg-core-update
+          bash -n src/awg-xray-install
           bash -n src/awg-update
           bash -n src/awg-traffic
           bash -n src/awg-menu
@@ -209,3 +211,8 @@ jobs:
           sudo make -C work/core PREFIX=/usr install
       - name: Real isolated profile preflight
         run: sudo python3 tests/test-core-v31.py
+      - name: Verify pinned updater build artifacts (no live engine replacement)
+        run: |
+          test "$(work/core/amneziawg-go --version | head -n1)" = 'amneziawg-go v3.1.20260828'
+          work/tools/src/wg --version | grep -F 'amneziawg-tools v3.1.20260812 - '
+          bash -n work/tools/src/wg-quick/linux.bash
