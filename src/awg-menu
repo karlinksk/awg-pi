@@ -2486,6 +2486,63 @@ restart_active_transport(){
     return 1
   fi
 }
+# Read-only Transit status translation; route readiness is not VPN connectivity.
+transit_mode_status_text(){
+  local raw="$1" line mode="" guard="" rule="" routes=""
+  local m=0 g=0 p=0 r=0
+  local guard_text="не удалось проверить" rule_text="не удалось проверить"
+  local route_text="не удалось проверить"
+  while IFS= read -r line; do
+    case "$line" in
+      "Mode ID: "*) ((m+=1)); mode="${line#Mode ID: }" ;;
+      "Transit guard: "*) ((g+=1)); guard="${line#Transit guard: }" ;;
+      "Transit policy rule: "*) ((p+=1)); rule="${line#Transit policy rule: }" ;;
+      "Transit VPN table: "*) ((r+=1)); routes="${line#Transit VPN table: }" ;;
+    esac
+  done <<< "$raw"
+  if (( m != 1 )) || [[ "$mode" != transit ]]; then
+    printf '%s\n' 'Режим работы: не удалось подтвердить транзитный режим' '' \
+      'Защита от прямого выхода при сбое VPN: не удалось проверить' \
+      'Правило маршрутизации: не удалось проверить' \
+      'VPN-маршруты: не удалось проверить'
+    return 0
+  fi
+  if (( g == 1 )); then
+    case "$guard" in
+      SAFE) guard_text="настроена" ;;
+      LOCKDOWN) guard_text="блокировка действует, VPN-путь не готов" ;;
+      UNSAFE) guard_text="не обеспечена — требуется проверка" ;;
+    esac
+  fi
+  if (( p == 1 )); then
+    case "$rule" in
+      ACTIVE) rule_text="действует" ;;
+      INACTIVE) rule_text="не действует" ;;
+    esac
+  fi
+  if (( r == 1 )); then
+    case "$routes" in
+      READY) route_text="готовы" ;;
+      NOT_READY) route_text="не готовы" ;;
+    esac
+  fi
+  printf '%s\n' 'Режим работы: Транзитный VPN для MikroTik' '' \
+    "Защита от прямого выхода при сбое VPN: $guard_text" \
+    "Правило маршрутизации: $rule_text" \
+    "VPN-маршруты: $route_text"
+}
+
+transit_mode_status_screen(){
+  local raw
+  if raw="$("$AWG_ROUTE" mode status 2>/dev/null)"; then
+    transit_mode_status_text "$raw" > "$TMP"
+  else
+    transit_mode_status_text "" > "$TMP"
+  fi
+  dialog --backtitle "$BACKTITLE" --title "Режим TRANSIT — состояние" \
+    --textbox "$TMP" 23 108 || true
+}
+
 vpn_menu(){
   local choice mode
   while true; do
@@ -2502,10 +2559,7 @@ vpn_menu(){
         6 "Политика выбора транспорта" "Настроить автоматическое переключение между AWG и Mihomo." \
         0 "Назад" "Возвращает в главное меню без изменений." 3>&1 1>&2 2>&3)" || return 0
       case "$choice" in
-        1)
-          title="Режим TRANSIT"
-          capture_ru "$AWG_ROUTE" mode status || true
-          ;;
+        1) transit_mode_status_screen ;;
         2)
           restart_active_transport || true
           ;;
