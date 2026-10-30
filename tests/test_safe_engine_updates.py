@@ -189,6 +189,35 @@ exec /usr/bin/mv "$@"
         self.assertNotIn('systemctl stop', source)
         self.assertNotIn('ls-remote', source)
 
+    def awg_matching_fixture(self):
+        self.script('amneziawg-go', "echo 'amneziawg-go v3.1.20260828'\n")
+        self.script('awg', "echo 'amneziawg-tools v3.1.20260812 - fixture'\n")
+        self.script('awg-quick', 'exit 0\n')
+        self.script('git', 'echo UNEXPECTED_GIT >&2; exit 99\n')
+
+    def test_awg_matching_ensure_remains_noop(self):
+        self.awg_matching_fixture()
+        r = self.updater('awg-core-update', '--yes', TEST_STATE='active')
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn('CORE_UPDATE=VERSION_MATCH', r.stdout)
+        self.assertFalse((self.p / 'backups').exists())
+
+    def test_awg_matching_reinstall_still_refuses_running_engine(self):
+        self.awg_matching_fixture()
+        (self.p / 'mode').write_text('transit')
+        r = self.updater('awg-core-update', '--yes', 'reinstall', TEST_STATE='active')
+        self.assertEqual(r.returncode, 3, r.stderr)
+        self.assertNotIn('UNEXPECTED_GIT', r.stderr)
+        self.assertFalse((self.p / 'backups').exists())
+
+    def test_awg_reinstall_still_refuses_selected_inactive_engine(self):
+        self.awg_matching_fixture()
+        (self.p / 'transport').write_text('awg')
+        r = self.updater('awg-core-update', '--yes', 'reinstall')
+        self.assertEqual(r.returncode, 3, r.stderr)
+        self.assertIn('REFUSED_SELECTED_TRANSPORT', r.stderr)
+        self.assertFalse((self.p / 'backups').exists())
+
     def test_mihomo_direct_install_cannot_bypass_active_guard(self):
         r = self.updater('awg-mihomo-install', TEST_STATE='active')
         self.assertNotEqual(r.returncode, 0)

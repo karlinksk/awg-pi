@@ -18,6 +18,12 @@ publish/postcheck path and retains every running/selected-engine refusal.
 It does not accept arbitrary versions or disable safety checks. Ordinary
 `ensure` and `awg-update all` remain no-ops on matching versions.
 
+`awg-core-update --yes reinstall` explicitly rebuilds and reinstalls the
+release-pinned AWG sources. It retains the running/selected-engine refusals,
+maintenance lock, backups and postchecks; transport switching and standby
+shutdown are separate guarded maintenance actions. Normal `--yes` remains a
+no-op on matching versions. No Go toolchain replacement is performed.
+
 ## No interruption of the incumbent
 
 - Matching versions are a no-op, including on a running engine.

@@ -24,18 +24,22 @@ status(){
   "$BIN_ROOT/awg" --version 2>/dev/null | head -n1 || true
   if matches; then echo CORE_UPDATE=VERSION_MATCH; else echo CORE_UPDATE=REPAIR_REQUIRED; return 1; fi
 }
-case "${1:-}" in
-  status) status; exit $? ;;
-  ''|--yes) ;;
-  *) echo 'Usage: awg-core-update [status|--yes]' >&2; exit 2 ;;
-esac
+ASSUME_YES=0
+if [[ "${1:-}" == --yes ]]; then ASSUME_YES=1; shift; fi
+command_mode="${1:-ensure}"
 (( $# <= 1 )) || exit 2
-if matches; then status; exit 0; fi
+case "$command_mode" in
+  status) status; exit $? ;;
+  ensure|reinstall) ;;
+  *) echo 'Usage: awg-core-update [--yes] [status|reinstall]' >&2; exit 2 ;;
+esac
+# Explicit reinstall keeps the normal pinned source and inactive-engine guards.
+if [[ "$command_mode" == ensure ]] && matches; then status; exit 0; fi
 awg_engine_lock
 # Never stop AWG, call failopen, edit vpn-enabled or touch routing, even on
 # rollback. Active/selected AWG is deferred; the incumbent stays untouched.
 awg_engine_inactive awg awg-quick@awg0.service
-if [[ "${1:-}" != --yes ]]; then
+if (( ASSUME_YES == 0 )); then
   read -r -p 'Install release-pinned AWG on the inactive engine? [y/N]: ' answer </dev/tty
   [[ "$answer" =~ ^[Yy] ]] || exit 0
 fi
