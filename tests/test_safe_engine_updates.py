@@ -218,6 +218,40 @@ exec /usr/bin/mv "$@"
         self.assertIn('REFUSED_SELECTED_TRANSPORT', r.stderr)
         self.assertFalse((self.p / 'backups').exists())
 
+    def test_awg_reinstall_without_home_uses_private_go_caches(self):
+        self.awg_matching_fixture()
+        self.script('go', 'exit 0\n')
+        self.script('git', '''if [[ "$1" == clone ]]; then
+  destination="${@: -1}"
+  mkdir -p "$destination/.git" "$destination/src/wg-quick"
+elif [[ "$1" == -C && "$3" == rev-parse ]]; then
+  if [[ "$2" == */go ]]; then echo b5928efb6ca19f0153958460c3d141f04abc5c2e
+  else echo ee0f0a9aa34ff0a0da4b3433b9512781cfe02843; fi
+else exit 99; fi
+''')
+        self.script('make', '''set -Eeuo pipefail
+[[ "${GOCACHE:-}" == "$TMPDIR"/tmp.*/go-build-cache ]]
+[[ "${GOMODCACHE:-}" == "$TMPDIR"/tmp.*/go-module-cache ]]
+[[ -z "${HOME:-}" ]]
+echo PRIVATE_GO_CACHES >>"$TEST_LOG"
+directory="$2"
+if [[ "$directory" == */go ]]; then
+  printf '#!/bin/bash\\necho "amneziawg-go v3.1.20260828"\\n' >"$directory/amneziawg-go"
+  chmod +x "$directory/amneziawg-go"
+else
+  printf '#!/bin/bash\\necho "amneziawg-tools v3.1.20260812 - fixture"\\n' >"$directory/wg"
+  printf '#!/bin/bash\\nexit 0\\n' >"$directory/wg-quick/linux.bash"
+  chmod +x "$directory/wg" "$directory/wg-quick/linux.bash"
+fi
+''')
+        self.env.pop('HOME', None)
+        self.env.update(TMPDIR=str(self.p), GOCACHE='/unused', GOMODCACHE='/unused')
+        r = self.updater('awg-core-update', '--yes', 'reinstall')
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn('CORE_UPDATE=PINNED_VERIFIED', r.stdout)
+        self.assertEqual((self.p / 'calls').read_text().count('PRIVATE_GO_CACHES'), 2)
+        self.assertFalse(list(self.p.glob('tmp.*')))
+
     def test_mihomo_direct_install_cannot_bypass_active_guard(self):
         r = self.updater('awg-mihomo-install', TEST_STATE='active')
         self.assertNotEqual(r.returncode, 0)

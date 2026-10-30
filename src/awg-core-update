@@ -47,6 +47,9 @@ command -v go >/dev/null || { echo CORE_UPDATE=MISSING_GO_TOOLCHAIN >&2; exit 1;
 temp="$(mktemp -d)"
 AWG_ENGINE_TEMP="$temp"
 trap 'rm -rf -- "$temp"' EXIT
+# A bounded systemd maintenance unit may have no HOME/GOPATH. Keep both Go
+# caches private to this build instead of depending on the invoking session.
+export GOCACHE="$temp/go-build-cache" GOMODCACHE="$temp/go-module-cache"
 checkout(){
   local repo="$1" tag="$2" revision="$3" dir="$4"
   git clone --depth 1 --branch "$tag" "$repo" "$dir"
