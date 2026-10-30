@@ -20,11 +20,15 @@ if [[ "$command_mode" == status ]]; then
   echo "XRAY_VLESS_CORE=PINNED_VERSION_OK version=${VERSION}"
   exit 0
 fi
-[[ "$command_mode" == ensure ]] || { echo "Usage: awg-xray-install ensure|status" >&2;exit 2; }
+[[ "$command_mode" == ensure || "$command_mode" == reinstall ]] || {
+  echo "Usage: awg-xray-install ensure|reinstall|status" >&2;exit 2;
+}
 (( $# == 0 )) || exit 2
 [[ "$(dpkg --print-architecture 2>/dev/null || uname -m)" == arm64 ]] ||
   { echo "XRAY_INSTALL=ARM64_ONLY" >&2;exit 2; }
-if "$0" status >/dev/null 2>&1;then
+# Explicit same-version repair still uses every normal service/transport/hash
+# guard. No forced version mismatch or unsafe binary removal is necessary.
+if [[ "$command_mode" == ensure ]] && "$0" status >/dev/null 2>&1;then
   echo XRAY_INSTALL=ALREADY_PRESENT
   exit 0
 fi

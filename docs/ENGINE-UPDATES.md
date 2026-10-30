@@ -12,6 +12,12 @@ check the executable version. Environment variables cannot override the
 Mihomo version or expected SHA256. A mirror URL still needs the pinned SHA.
 No new upstream version is added by this maintenance change.
 
+`awg-xray-install reinstall` explicitly reinstalls that same pinned build,
+even when the version matches. It uses the complete normal fetch/SHA256/backup/
+publish/postcheck path and retains every running/selected-engine refusal.
+It does not accept arbitrary versions or disable safety checks. Ordinary
+`ensure` and `awg-update all` remain no-ops on matching versions.
+
 ## No interruption of the incumbent
 
 - Matching versions are a no-op, including on a running engine.

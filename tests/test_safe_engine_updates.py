@@ -209,6 +209,23 @@ exec /usr/bin/mv "$@"
         self.assertIn('REFUSED_RUNNING_SERVICE', r.stderr)
         self.assertFalse((self.bin / 'xray').exists())
 
+    def test_xray_reinstall_matching_running_engine_is_deferred(self):
+        self.script('xray', "echo 'Xray 26.3.27 (matching)'\n")
+        old = (self.bin / 'xray').read_bytes()
+        r = self.updater('awg-xray-install', 'reinstall', TEST_STATE='active')
+        self.assertEqual(r.returncode, 3, r.stderr)
+        self.assertEqual((self.bin / 'xray').read_bytes(), old)
+        self.assertFalse((self.p / 'backups').exists())
+
+    def test_xray_reinstall_matching_engine_still_verifies_hash(self):
+        self.xray_fixture()
+        self.script('xray', "echo 'Xray 26.3.27 (matching)'\n")
+        old = (self.bin / 'xray').read_bytes()
+        r = self.updater('awg-xray-install', 'reinstall')
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn('HASH_MISMATCH', r.stderr)
+        self.assertEqual((self.bin / 'xray').read_bytes(), old)
+
     def xray_fixture(self, version='26.3.27'):
         archive = self.p / 'xray.zip'
         binary = (f"#!/bin/sh\necho 'Xray {version} (fixture)'; exit 0\n#").encode()
@@ -243,11 +260,14 @@ exit 1
 fi
 exec /usr/bin/sha256sum "$@"
 ''')
-        r = self.updater('awg-xray-install', 'ensure')
-        self.assertEqual(r.returncode, 0, r.stderr)
-        self.assertIn('PINNED_VERIFIED', r.stdout)
-        self.assertNotIn('start ', (self.p / 'calls').read_text())
-        self.assertTrue(list((self.p / 'backups').glob('*/SHA256SUMS')))
+        for version, command in [('0.0.1', 'ensure'), ('26.3.27', 'reinstall')]:
+            with self.subTest(command=command):
+                self.script('xray', f"echo 'Xray {version} (fixture)'\n")
+                r = self.updater('awg-xray-install', command)
+                self.assertEqual(r.returncode, 0, r.stderr)
+                self.assertIn('PINNED_VERIFIED', r.stdout)
+                self.assertNotIn('start ', (self.p / 'calls').read_text())
+                self.assertTrue(list((self.p / 'backups').glob('*/SHA256SUMS')))
 
     def test_pins_and_installer_delivery(self):
         installer = (ROOT / 'install.sh').read_text()
