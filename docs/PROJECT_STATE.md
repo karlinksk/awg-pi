@@ -10,6 +10,213 @@
 
 ## Датированный журнал
 
+### 2026-10-30 — AWG source reinstall/трёхфайловый rollback и полный preserving upgrade PASS
+
+- Владелец разрешил переключение транспорта для испытаний. До изменения
+  проверены оба backend/TUN, исходная native Mihomo node, отсутствие AWG
+  profile shell hooks и unit overrides. Исходное состояние: Transit/AWG,
+  оба backend active, Xray inactive; SSH и управление доступны.
+- `73a22fd` добавил явный `awg-core-update --yes reinstall`, сохраняя pinned
+  revisions, maintenance lock и running/selected-engine refusals. Первая
+  ограниченная systemd-попытка остановилась **до публикации бинарников**:
+  Go без HOME/GOPATH не нашёл module cache. Original files/private state/node
+  и выбор AWG независимо подтверждены после возврата. Failed trial unit
+  очищен адресно; отсутствие финальной recovery receipt не считается PASS.
+- Исправление **`409774ccfe0d2c2fa681d91e93eff717e2ae812c`** задаёт отдельные
+  GOCACHE/GOMODCACHE внутри приватного build temp, без зависимости от HOME.
+  Добавлен regression полного shell-path без HOME с проверкой обоих cache
+  paths/cleanup. Pi: **26/26** targeted PASS; [source CI 41033729345](https://github.com/karlinksk/awg-pi/actions/runs/41033729345)
+  shell SUCCESS / awg-v31 SUCCESS. Установлен точный helper `409774c`.
+- При повторе независимый systemd timer реально выполнил readiness rehearsal
+  без engine mutation; отдельный rescue вооружён до handover. Выбран прежний
+  Mihomo, остановлен только standby AWG. Штатный `awg-core-update --yes reinstall`
+  в systemd unit **без HOME**, с RuntimeMaxSec=240s, выполнил clone/проверку
+  обоих pinned revisions, настоящую Go/C сборку, backup, установку и postchecks.
+  Go toolchain не заменялся. Новый core build metadata содержит точный
+  `vcs.revision=b5928efb6ca19f0153958460c3d141f04abc5c2e`; tools revision
+  `ee0f0a9aa34ff0a0da4b3433b9512781cfe02843` проверен updater до сборки.
+- **Реальный трёхфайловый error rollback:** пока AWG inactive под Mihomo,
+  production publisher установил доверенные исходные backup binaries поверх
+  собранных файлов; намеренный exit23 вызвал EXIT rollback обратно к новой
+  сборке. Все три hash/backup/PENDING проверки PASS; один payload реально
+  отличался, это не только same-byte rename. Unit/private profile неизменны.
+- Повторный trial занял80.66s; observer через активный mihomo0 **20/20 HTTPS200,
+  curl0**. После старта AWG его Pi-bound HTTPS/health PASS; выбран исходный
+  AWG, восстановлен standby Mihomo, прежняя node и enablements. Независимый
+  postflight:26/26 private hashes/absence, исходная unit, pinned versions и
+  оба TUN HTTPS PASS; rescue снят, watchdog restore не понадобился.
+  DNS-служба штатно перезапускалась существующим route reload при handover;
+  DNS policy/config hashes сохранены. Новых LAN/no-loss/reboot PASS нет.
+- **Полный existing-install upgrade** затем реально выполнен неизменённым
+  `install.sh` blob `9b10378982d0dbbc8f09f6916fba73c163717bf5` (тот же v1.3.0),
+  с **AWG_PI_REF=409774c** и upgrade-auto на test SSD Pi. Перед ним проверен
+  приватный gateway snapshot (3079 archive entries), root-only restore script
+  и независимый readiness rehearsal; recovery timer вооружён заранее.
+- Для этого trial APT_CONFIG только дочернего процесса фиксировал все уже
+  установленные версии (priority1001; новые/другие версии запрещены). Apt
+  simulation не предлагала изменений. Это **preserving upgrade при frozen OS
+  dependencies**, не проверка обновления пакетов ОС. Installer сам прошёл все
+  стадии, включая fetch helpers, units, service reloads и финальную диагностику.
+- Independent postflight: **78/78** source deliveries SHA256/owner/mode PASS
+  (75 helper/unit calls +3 manual Python deliveries), **26/26** original
+  protected files сохранены. Допустимое дополнение — одна root:600 копия
+  awg0.conf.bak с исходными bytes. Полный dpkg manifest и все engine hashes
+  byte-identical pre-upgrade. Исходный AWG/standby Mihomo, private node,
+  enablements и Transit SAFE/ACTIVE/READY восстановлены, оба TUN HTTPS200/curl0.
+  `all`: три matching-version no-op OK. Snapshot rescue снят; restore не нужен.
+- Runtime helpers теперь полностью соответствуют source **409774c**.
+  Объявленная Gateway version остаётся **1.3.0**: это draft-source preserving
+  upgrade, не выпуск v1.3.1. MikroTik/SSTP и рабочая microSD не менялись.
+  Ранее принятые v1.3.0 clean-install/reboot/network receipts сохраняют свою
+  исходную область; новая clean install/reboot или corrected full-image restore
+  не выполнялись. IMAGE_BOOT_ACCEPT=FAIL/owner exception сохранены. Открыты
+  different-version compatibility и release review; PR #171 draft, не release.
+
+### 2026-10-30 — полный Xray reinstall и обслуживание резервного Mihomo PASS
+
+- Source `719706c85df961f9c19f38641b8773a193511b46` добавляет явный
+  `awg-xray-install reinstall`: пропускается только matching-version no-op,
+  все service/transport/lock/SHA256/backup/postcheck guards сохранены.
+  `ensure` и `all` по-прежнему не переустанавливают совпадающую версию.
+  22/22 целевых rootless теста на Pi PASS; [source CI 41005092395](https://github.com/karlinksk/awg-pi/actions/runs/41005092395)
+  shell SUCCESS / awg-v31 SUCCESS. Existing installer уже доставляет этот helper.
+- На test SSD Pi с выбранным AWG установлен только новый Xray installer из
+  точного `719706c`, с SHA256 и backup старого helper. **Штатная команда
+  `awg-xray-install reinstall`** сама выполнила network fetch, проверку
+  literal pinned SHA256, extraction, version check, backup, реальный rename
+  бинарника и postcheck/commit. Новый inode подтверждён; payload 26.3.27
+  byte-identical исходному. Engine backup проверен, PENDING отсутствует.
+  Это полный путь same-version reinstall, не different-version upgrade.
+- Xray trial защищён независимым 180s recovery timer и root-only original /
+  baseline. Отдельный postflight: 27/27 protected hashes/absence сохранены,
+  все службы и их start timestamps прежние, Xray inactive. Timer снят,
+  watchdog restore не понадобился. Остальные runtime helpers остаются `55b2dc3`.
+- Для Mihomo заранее проверены literal pinned gzip SHA256, совпадение
+  candidate/installed payload, byte-identical renderer/current config,
+  текущий controller-selected native node и enabled policy. AWG local health
+  и Pi-bound HTTPS200/curl0 PASS до обслуживания. Подготовлены root-only
+  original/baseline, независимый 180s restore-and-restart timer и отдельный
+  конечный observer HTTPS через awg0. Recovery prerequisite check PASS.
+- Остановлена **только резервная** awg-mihomo.service под maintenance lock.
+  Затем штатный `awg-mihomo-install --mode auto` сам выполнил network fetch,
+  pinned SHA256/version validation, backup, реальный binary rename и commit.
+  Guard на время установки держит собственный maintenance lock. Резервный
+  Mihomo запущен обратно; controller node и enablement совпали с baseline.
+- Независимый postflight: **27/27** protected hashes/absence сохранены,
+  AWG/SSH/DNS start timestamps неизменны, изменился только ожидаемый start
+  timestamp резервного Mihomo. Обе таблицы через AWG, TRANSIT SAFE/ACTIVE/READY,
+  Xray inactive; нода/конфигурация не менялись. Observer: **9/9** Pi-bound AWG
+  example.com HTTPS200/curl0, затем отдельные awg0 и mihomo0 HTTPS200/curl0.
+  Это ограниченное Pi TUN наблюдение, не доказательство всех LAN flows/no-loss.
+  Mihomo timer снят; watchdog restore не понадобился. Production binary
+  contents обоих движков совпадают с исходными, версии не повышались.
+- Финальный `awg-update --yes all`: core/mihomo/xray OK как matching-version
+  no-op. Read-only guard активного AWG вернул DEFERRED/exit3. **Реальная замена
+  активного AWG отложена**, так как нельзя останавливать/переключать incumbent
+  в рамках текущего инварианта. Не подменялись версии/бинарники для обхода guard.
+- **Открыто:** real AWG binary transaction, Mihomo fault/rollback, different-
+  version compatibility, watchdog execution, clean install/полный Gateway
+  upgrade и относящиеся к ним hardware gates. Это обслуживание двух движков,
+  не полный Gateway upgrade/новая LAN/failover/reboot acceptance. MikroTik/SSTP,
+  рабочая microSD, active transport и private node сохранены. PR #171 draft,
+  не merged/tagged/released/production-installed.
+
+### 2026-10-30 — test Pi: настоящая замена файла Xray и rollback той же версии PASS
+
+- Повторный preflight: test SSD root, выбран AWG, TRANSIT SAFE/ACTIVE/READY,
+  таблицы 100/101 через awg0, Xray inactive, SSH/DNS/AWG/Mihomo active;
+  failed units/recovery timers и незавершённых engine PENDING нет. Installed
+  common и Xray installer SHA256 соответствуют source `55b2dc3`.
+- Официальный архив Xray 26.3.27 получен через существующий `awg-fetch`
+  (DIRECT); literal pinned SHA256
+  `4d30283ae614e3057f730f67cd088a42be6fdf91f8639d82cb69e48cde80413c`
+  проверен до extraction/execution. Проверены единственный xray entry, размер,
+  executable version и совпадение payload с установленным бинарником.
+- Под shared production maintenance lock выполнены **реальные операции на**
+  `/usr/local/bin/awg-xray-vless-core`: production `awg_engine_inactive`,
+  `awg_engine_publish`, version postcheck и `awg_engine_commit`; затем та же
+  публикация с намеренным exit 23 до commit. Штатный EXIT rollback сообщил
+  RESTORED, вернул исходные bytes/uid/gid/mode; обе резервные копии проверены,
+  PENDING удалён. Изменение inode подтвердило настоящие rename/replacement
+  и восстановление, хотя исходный и candidate payload **одинаковы**.
+- **Область теста:** функции публикации/отката, используемые Xray installer,
+  вызваны acceptance harness напрямую. `ensure` на уже совпадающей версии
+  закономерно дал бы no-op. Production fault hook, искусственная старая версия,
+  обход SHA или новая upstream версия не добавлялись. Это не доказательство
+  полного download-to-ensure upgrade или совместимости разных версий.
+- Перед заменой подготовлены root-only original/baseline и независимый
+  180-секундный systemd recovery timer с guard/hash/transport проверками.
+  Recovery prerequisite check PASS; watchdog restore **не понадобился**.
+  После отдельного postflight таймер снят; timer/service inactive и отсутствует
+  в list-timers. Попытка stop уже выгруженного transient service вернула ошибку;
+  отдельная проверка подтвердила отсутствие активного/ожидающего восстановления.
+- Postflight **27/27** protected file hashes/absence сохранены, все engine
+  bytes неизменны, service start timestamps прежние. AWG продолжает быть
+  выбранным; TRANSIT SAFE/ACTIVE/READY, Xray inactive. Не запускались Xray/VPN,
+  не менялись нода, DNS, MikroTik/SSTP или рабочая microSD. Свидетельства
+  сохранены приватно на test Pi; runtime helpers остались `55b2dc3`.
+- **Открыто:** другой-version upgrade, фактическое восстановление watchdog,
+  SIGKILL/питание, Xray service/TUN/LAN, реальные AWG/Mihomo engine updates,
+  clean install/полный upgrade кандидата. PR #171 draft; v1.3.1 не выпущен.
+
+### 2026-10-30 — test Pi: helpers установленного updater и безопасный no-op PASS
+
+- Первый preflight установки остановился **до замены файлов**: эксклюзивный
+  maintenance lock конфликтовал с повторным shared lock в `awg-route mode status`.
+  Исправление `55b2dc31125e3a5eba30ae77b063121aef5314b1` использует существующий
+  `AWG_MAINTENANCE=1` только для вложенного чтения статуса. Добавлен regression
+  с настоящим flock. На Pi 20/20 целевых тестов и upgrade policy PASS;
+  [CI 41003663701](https://github.com/karlinksk/awg-pi/actions/runs/41003663701)
+  этого source commit: shell SUCCESS, awg-v31 SUCCESS.
+- На тестовой Pi (SSD root) установлены **только шесть управляющих файлов**
+  `awg-common`, `awg-core-update`, `awg-mihomo-install`, `awg-xray-install`,
+  `awg-update`, `awg-menu` из точного `55b2dc3`. SHA256 всех installed файлов
+  совпали с source; root ownership и permissions проверены. Приватная резервная
+  копия прежних шести файлов проверена против source PR #170 `b1b233c7` (6/6).
+- Реальные read-only guard probes под maintenance lock: работающий/выбранный
+  AWG и работающий Mihomo возвращают **DEFERRED, exit 3**. Статусы трёх движков
+  совпадают с pinned versions. Установленный `awg-update --yes all` вернул
+  core/mihomo/xray OK как **no-op**, без замены какого-либо engine binary.
+- Независимый postflight: 27/27 protected file hashes/absence сохранены,
+  включая engine binaries, Matrix compositor, private VPN/provider/selected
+  state. TRANSIT SAFE/ACTIVE/READY, обе таблицы через AWG; SSH/DNS/AWG/Mihomo
+  active, Xray inactive. Service start timestamps не изменились. Нет новых
+  recovery timers или failed units. MikroTik/SSTP, рабочая microSD и нода
+  не менялись; перезапуска VPN не было.
+- **Граница PASS:** установка helpers и безопасный общий no-op/guard refusal.
+  **Не проверено:** настоящая замена engine binary и аппаратный rollback,
+  clean install/полный upgrade кандидата, новые LAN/fault/reboot проверки.
+  PR #171 остаётся draft поверх #170, не merged/released/production-installed.
+
+### 2026-10-30 — безопасное обслуживание движков, кандидат поверх Draft PR #170
+
+- Отдельная ветка `fix/v1.3.1-safe-engine-updates` от `b1b233c7`; PR #170
+  остаётся draft, v1.3.1 не выпущен. Старый AWG updater действительно вызывал
+  FAIL-OPEN при остановке AWG. Кандидат полностью убирает остановку/маршрутные
+  изменения: выбранный или запущенный движок нельзя заменить. TRANSIT требует
+  SAFE/LOCKDOWN перед заменой; автоматического переключения транспорта нет.
+- AWG использует те же pinned Git commits, что installer/CI. Mihomo/Xray —
+  существующие pinned SHA256/версии; произвольный newest не добавлен. Общий
+  lock, приватные резервные копии, атомарная замена файлов, проверка версии
+  после установки и откат байтов/отсутствия при ошибке или TERM/INT. SIGKILL /
+  питание и атомарность трёх файлов AWG как группы не заявляются.
+- Меню и `awg-update all` охватывают три движка, продолжают обход после отказа
+  и выводят общий результат с ненулевым кодом при неполном обновлении. Gateway
+  в `all` только проверяется; его потенциально прерывающая службы установка
+  остаётся отдельным действием. Подписки/ноды/DNS не изменяются. Доставка всех
+  исправленных helpers уже включена в clean-install и upgrade `install.sh`.
+- **Verified:** чтение тестовой Pi: SSD root `/dev/sda2`, TRANSIT SAFE/ACTIVE/READY,
+  SSH/DNS активны, AWG/Mihomo запущены, Xray inactive; Mihomo 1.19.32,
+  Xray 26.3.27, AWG go 3.1.20260828/tools 3.1.20260812. Временная изолированная
+  копия: 19/19 rootless regression PASS и Bash syntax PASS; это не реальная
+  замена установленного движка. Первые два падения новой fixture были из-за
+  подстановки default вместо пустого значения; исправлены и повторены.
+- **Unverified / next:** точный финальный commit CI, реальная замена и откат
+  неактивного движка, clean install/upgrade и актуальные hardware gates этой
+  версии. На Pi системные файлы/службы не устанавливались и не перезапускались;
+  MikroTik/SSTP, рабочая microSD, VPN/DNS/нода не менялись.
+  Подробные ограничения и восстановление: [ENGINE-UPDATES.md](ENGINE-UPDATES.md).
+
 Записи ниже сохраняют состояние на момент проверки. Старые draft/not tagged/not released/remaining gate не являются текущим статусом GitHub. Применяйте более позднюю проверенную запись, сохраняя границы доказательств.
 
 ### 2026-10-26 — release source promoted to main; tag/publication distinct

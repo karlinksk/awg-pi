@@ -11,6 +11,7 @@ on:
   pull_request:
     branches:
       - main
+      - 'fix/v1.3.1-*'
       - 'develop/v1.3.0'
       - 'integration/v1.3.0-*'
 
@@ -53,6 +54,7 @@ jobs:
           bash -n src/awg-pbr-health
           bash -n src/awg-opencck-update
           bash -n src/awg-core-update
+          bash -n src/awg-xray-install
           bash -n src/awg-update
           bash -n src/awg-traffic
           bash -n src/awg-menu
@@ -203,9 +205,19 @@ jobs:
           cache-dependency-path: work/core/go.sum
       - name: Build pinned AWG v3.1 tools and core
         run: |
+          # SHA checkouts alone omit tag metadata used by both version builders.
+          git -C work/core fetch --depth 1 origin tag v3.1.20260828
+          test "$(git -C work/core rev-parse v3.1.20260828)" = b5928efb6ca19f0153958460c3d141f04abc5c2e
+          git -C work/tools fetch --depth 1 origin tag v3.1.20260812
+          test "$(git -C work/tools rev-parse v3.1.20260812)" = ee0f0a9aa34ff0a0da4b3433b9512781cfe02843
           make -C work/tools/src
           sudo make -C work/tools/src install PREFIX=/usr WITH_WGQUICK=yes WITH_SYSTEMDUNITS=no
           make -C work/core
           sudo make -C work/core PREFIX=/usr install
       - name: Real isolated profile preflight
         run: sudo python3 tests/test-core-v31.py
+      - name: Verify pinned updater build artifacts (no live engine replacement)
+        run: |
+          test "$(work/core/amneziawg-go --version | head -n1)" = 'amneziawg-go v3.1.20260828'
+          work/tools/src/wg --version | grep -F 'amneziawg-tools v3.1.20260812 - '
+          bash -n work/tools/src/wg-quick/linux.bash

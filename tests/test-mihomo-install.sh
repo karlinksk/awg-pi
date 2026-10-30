@@ -3,7 +3,8 @@ set -Eeuo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 TMP="$(mktemp -d)"
-trap 'rm -rf "$TMP"' EXIT
+# The updater's intentionally root-only backups are inside this disposable tree.
+trap '[[ "$TMP" == /tmp/tmp.* ]] && sudo rm -rf -- "$TMP"' EXIT
 
 mkdir -p "$TMP/bin"
 
@@ -57,6 +58,10 @@ chmod +x "$TMP/bin/fetch"
 
 cat >"$TMP/bin/systemctl" <<'MOCK'
 #!/usr/bin/env bash
+if [[ "${1:-}" == show ]]; then
+  if [[ "${MOCK_MIHOMO_ACTIVE:-0}" == 1 ]]; then echo active; else echo inactive; fi
+  exit 0
+fi
 if [[ "${1:-}" == is-active && "${2:-}" == --quiet && "${3:-}" == awg-mihomo.service ]]; then
   [[ "${MOCK_MIHOMO_ACTIVE:-0}" == 1 ]] && exit 0
   exit 3
@@ -65,9 +70,30 @@ exit 0
 MOCK
 chmod +x "$TMP/bin/systemctl"
 
+# Synthetic gzip fixture only. Production still uses its literal pinned SHA.
+cat >"$TMP/bin/sha256sum" <<'MOCK'
+#!/usr/bin/env bash
+if [[ "${1:-}" == -c ]]; then
+  read -r expected archive
+  [[ "$expected" == 9dd862e28b46ff7d775f169cceebc28deccaa0a9e804237d421cd2571e0caba0 ||
+     "$expected" == ba3ce607747a07f948fc35780e108a4a7c7f552a38b9bd4d115f313ebcb89c20 ]] || exit 1
+  printf '%s  %s\n' "$MOCK_ARCHIVE_SHA" "$archive" | /usr/bin/sha256sum -c -
+else
+  exec /usr/bin/sha256sum "$@"
+fi
+MOCK
+chmod +x "$TMP/bin/sha256sum"
+
 run_install(){
   local target="$1"; shift
   sudo env \
+    PATH="$TMP/bin:$PATH" \
+    AWG_COMMON_FILE="$ROOT/src/awg-common" \
+    AWG_LOCK_FILE="$TMP/maintenance.lock" \
+    AWG_TRANSPORT_FILE="$TMP/transport" \
+    AWG_ENV_FILE="$TMP/no-env" \
+    AWG_ENGINE_BACKUP_ROOT="$TMP/backups" \
+    MOCK_ARCHIVE_SHA="$SHA" \
     AWG_FETCH_BIN="$TMP/bin/fetch" \
     MIHOMO_TARGET="$target" \
     MIHOMO_INSTALL_ASSET_URL="https://example.invalid/mihomo.gz" \

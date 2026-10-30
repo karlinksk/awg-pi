@@ -215,3 +215,124 @@ awg_transport_device(){
   esac
 }
 
+# Engine maintenance never stops a running service or changes routing. Hold
+# the same lock as transport/node selection until publish and rollback finish.
+awg_engine_lock(){
+  exec 8>"${AWG_LOCK_FILE:-/run/awg-maintenance.lock}"
+  flock -n 8 || { echo 'ENGINE_UPDATE=BUSY' >&2; return 3; }
+}
+
+awg_engine_inactive(){
+  local engine="$1" service="$2" state selected mode status
+  mode="$(awg_mode_get)" || return 1
+  if [[ "$mode" == transit ]]; then
+    # The caller already holds the exclusive maintenance lock. The read-only
+    # route status must not attempt a second, shared lock on the same file.
+    status="$(AWG_MAINTENANCE=1 "${AWG_ROUTE_BIN:-/usr/local/sbin/awg-route}" mode status)" || return 1
+    if ! awk -F': ' '
+      $1=="Mode ID" {m++; okm=($2=="transit")}
+      $1=="Transit guard" {g++; okg=($2=="SAFE" || $2=="LOCKDOWN")}
+      END {exit !(m==1 && g==1 && okm && okg)}' <<<"$status"; then
+      echo 'ENGINE_UPDATE=UNSAFE_TRANSIT' >&2; return 1
+    fi
+  fi
+  state="$("${SYSTEMCTL_BIN:-systemctl}" show -p ActiveState --value "$service")" || return 1
+  case "$state" in inactive|failed) ;; *)
+    echo "ENGINE_UPDATE=REFUSED_RUNNING_OR_UNKNOWN engine=$engine state=$state" >&2
+    case "$state" in active|activating|deactivating|reloading) return 3 ;; *) return 1 ;; esac ;;
+  esac
+  selected="$(cat "$AWG_TRANSPORT_FILE" 2>/dev/null || true)"
+  case "$selected" in awg|mihomo|unconfigured|'') ;; *)
+    echo 'ENGINE_UPDATE=UNKNOWN_TRANSPORT' >&2; return 1 ;;
+  esac
+  # Xray shares the Mihomo TUN: conservatively defer it whenever that
+  # transport is selected, even if the sidecar currently appears inactive.
+  if [[ "$selected" == "$engine" || ( "$engine" == xray && "$selected" == mihomo ) ]]; then
+    echo "ENGINE_UPDATE=REFUSED_SELECTED_TRANSPORT engine=$engine" >&2
+    return 3
+  fi
+  # A missing file is legitimate only on a fresh, unconfigured installation.
+  if [[ -z "$selected" && -e "${AWG_ENV_FILE:-/etc/awg-pbr/env}" ]]; then
+    echo 'ENGINE_UPDATE=UNKNOWN_TRANSPORT' >&2; return 1
+  fi
+}
+
+# Caller validates candidates first, then validates installed executables and
+# commits. EXIT/signal recovery only touches these binaries, never VPN state.
+awg_engine_publish(){
+  local engine="$1" source target stage i=0
+  shift
+  umask 077
+  local root="${AWG_ENGINE_BACKUP_ROOT:-/var/backups/awg-gateway}"
+  install -d -m 700 "$root"
+  AWG_ENGINE_BACKUP="$(mktemp -d "$root/engine-$engine.XXXXXXXX")"
+  AWG_ENGINE_TARGETS=()
+  AWG_ENGINE_STAGES=()
+  AWG_ENGINE_PENDING=0
+  trap 'awg_engine_recover' EXIT
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
+  while (( $# )); do
+    source="$1"; target="$2"; shift 2
+    [[ ! -L "$target" && ( ! -e "$target" || -f "$target" ) ]] || return 1
+    AWG_ENGINE_TARGETS+=("$target")
+    if [[ -e "$target" ]]; then
+      cp -p -- "$target" "$AWG_ENGINE_BACKUP/$i"
+      cmp -s -- "$target" "$AWG_ENGINE_BACKUP/$i" || return 1
+      sha256sum "$AWG_ENGINE_BACKUP/$i" >>"$AWG_ENGINE_BACKUP/SHA256SUMS"
+    else
+      touch "$AWG_ENGINE_BACKUP/$i.absent"
+    fi
+    stage="$(mktemp "${target}.update.XXXXXXXX")"
+    AWG_ENGINE_STAGES+=("$stage")
+    install -m 755 -- "$source" "$stage"
+    ((i+=1))
+  done
+  printf '%s\n' "${AWG_ENGINE_TARGETS[@]}" >"$AWG_ENGINE_BACKUP/targets"
+  touch "$AWG_ENGINE_BACKUP/PENDING"
+  AWG_ENGINE_PENDING=1
+  for i in "${!AWG_ENGINE_TARGETS[@]}"; do
+    mv -fT -- "${AWG_ENGINE_STAGES[$i]}" "${AWG_ENGINE_TARGETS[$i]}"
+  done
+  echo "ENGINE_BACKUP=$AWG_ENGINE_BACKUP"
+}
+
+awg_engine_recover(){
+  local rc=$? i target stage failed=0
+  trap - EXIT INT TERM
+  if [[ "${AWG_ENGINE_PENDING:-0}" == 1 ]]; then
+    if [[ -s "$AWG_ENGINE_BACKUP/SHA256SUMS" ]] &&
+       ! sha256sum -c "$AWG_ENGINE_BACKUP/SHA256SUMS" >/dev/null; then
+      echo "ENGINE_ROLLBACK=FAILED_BACKUP_HASH backup=$AWG_ENGINE_BACKUP" >&2
+      exit 1
+    fi
+    for i in "${!AWG_ENGINE_TARGETS[@]}"; do
+      target="${AWG_ENGINE_TARGETS[$i]}"
+      if [[ -f "$AWG_ENGINE_BACKUP/$i" ]]; then
+        stage="$(mktemp "${target}.restore.XXXXXXXX")" &&
+          cp -p -- "$AWG_ENGINE_BACKUP/$i" "$stage" &&
+          mv -fT -- "$stage" "$target" &&
+          cmp -s -- "$AWG_ENGINE_BACKUP/$i" "$target" || failed=1
+      elif [[ -f "$AWG_ENGINE_BACKUP/$i.absent" ]]; then
+        rm -f -- "$target" || failed=1
+      fi
+    done
+    if (( failed )); then
+      echo "ENGINE_ROLLBACK=FAILED backup=$AWG_ENGINE_BACKUP" >&2
+    else
+      rm -f -- "$AWG_ENGINE_BACKUP/PENDING"
+      echo 'ENGINE_ROLLBACK=RESTORED' >&2
+    fi
+    (( rc != 0 )) || rc=1
+  fi
+  for stage in "${AWG_ENGINE_STAGES[@]}"; do rm -f -- "$stage"; done
+  [[ -z "${AWG_ENGINE_TEMP:-}" ]] || rm -rf -- "$AWG_ENGINE_TEMP"
+  exit "$rc"
+}
+
+awg_engine_commit(){
+  rm -f -- "$AWG_ENGINE_BACKUP/PENDING"
+  AWG_ENGINE_PENDING=0
+  echo 'ENGINE_UPDATE=PINNED_VERIFIED'
+}
+

@@ -3,15 +3,16 @@ set -Eeuo pipefail
 
 [[ ${EUID:-$(id -u)} -eq 0 ]] || exec sudo "$0" "$@"
 
-MIHOMO_VERSION="${MIHOMO_VERSION:-1.19.32}"
+MIHOMO_VERSION=1.19.32
 MIHOMO_TARGET="${MIHOMO_TARGET:-/usr/local/bin/mihomo}"
 CURL_BIN="${CURL_BIN:-curl}"
 AWG_ENV_FILE="${AWG_ENV_FILE:-/etc/awg-pbr/env}"
 AWG_FETCH_BIN="${AWG_FETCH_BIN:-/usr/local/sbin/awg-fetch}"
 MIHOMO_INSTALL_FETCH_MODE="${MIHOMO_INSTALL_FETCH_MODE:-auto}"
 MIHOMO_INSTALL_ASSET_URL="${MIHOMO_INSTALL_ASSET_URL:-}"
-MIHOMO_INSTALL_ASSET_SHA256="${MIHOMO_INSTALL_ASSET_SHA256:-}"
 SYSTEMCTL_BIN="${SYSTEMCTL_BIN:-systemctl}"
+# shellcheck disable=SC1090
+source "${AWG_COMMON_FILE:-/usr/local/lib/awg-pi/common.sh}"
 
 
 usage(){
@@ -102,9 +103,12 @@ if [[ "$command_mode" == ensure ]]; then
   fi
   if "$SYSTEMCTL_BIN" is-active --quiet awg-mihomo.service 2>/dev/null; then
     echo "Mihomo engine repair refused while awg-mihomo.service is active. Switch active transport to AWG first." >&2
-    exit 1
+    exit 3
   fi
 fi
+
+awg_engine_lock
+awg_engine_inactive mihomo awg-mihomo.service
 
 [[ "$MIHOMO_INSTALL_FETCH_MODE" == router ]] && MIHOMO_INSTALL_FETCH_MODE=direct
 case "$MIHOMO_INSTALL_FETCH_MODE" in
@@ -132,10 +136,11 @@ case "$(dpkg --print-architecture 2>/dev/null || uname -m)" in
     ;;
 esac
 
-sha256="${MIHOMO_INSTALL_ASSET_SHA256:-$pinned_sha256}"
+sha256="$pinned_sha256"
 api_url="${MIHOMO_INSTALL_ASSET_URL:-https://api.github.com/repos/MetaCubeX/mihomo/releases/assets/$asset_id}"
 
 tmpdir="$(mktemp -d)"
+AWG_ENGINE_TEMP="$tmpdir"
 trap 'rm -rf "$tmpdir"' EXIT
 archive="$tmpdir/$asset"
 binary="$tmpdir/mihomo"
@@ -185,12 +190,17 @@ if ! gzip -dc "$archive" >"$binary"; then
   exit 1
 fi
 chmod 755 "$binary"
-if ! "$binary" -v | grep -Fq "Mihomo Meta v${MIHOMO_VERSION}"; then
+if [[ "$("$binary" -v | head -n1)" != "Mihomo Meta v${MIHOMO_VERSION}" &&
+      "$("$binary" -v | head -n1)" != "Mihomo Meta v${MIHOMO_VERSION} "* ]]; then
   echo "Mihomo binary version mismatch; expected v${MIHOMO_VERSION}" >&2
   exit 1
 fi
 
-install -m 755 "$binary" "$MIHOMO_TARGET"
+awg_engine_inactive mihomo awg-mihomo.service
+awg_engine_publish mihomo "$binary" "$MIHOMO_TARGET"
+[[ "$(installed_version)" == "$MIHOMO_VERSION" ]]
+awg_engine_commit
+rm -rf -- "$tmpdir"
 printf 'MIHOMO_VERSION=%s\n' "$MIHOMO_VERSION"
 printf 'MIHOMO_BINARY=%s\n' "$MIHOMO_TARGET"
 printf 'MIHOMO_BINARY_FETCH_PATH=%s\n' "$fetch_path"

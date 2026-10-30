@@ -8,28 +8,38 @@ ARCHIVE_SHA256=4d30283ae614e3057f730f67cd088a42be6fdf91f8639d82cb69e48cde80413c
 TARGET="${AWG_XRAY_BINARY:-/usr/local/bin/awg-xray-vless-core}"
 FETCH="${AWG_XRAY_FETCH:-/usr/local/sbin/awg-fetch}"
 MODE="${AWG_XRAY_FETCH_MODE:-auto}"
+# shellcheck disable=SC1090
+source "${AWG_COMMON_FILE:-/usr/local/lib/awg-pi/common.sh}"
 ARCHIVE_URL="https://github.com/XTLS/Xray-core/releases/download/v${VERSION}/Xray-linux-arm64-v8a.zip"
 command_mode="${1:-ensure}";shift || :
 if [[ "$command_mode" == status ]]; then
   if [[ ! -x "$TARGET" ]]; then echo XRAY_VLESS_CORE=MISSING;exit 1;fi
   line="$("$TARGET" version 2>/dev/null | head -n1)"
+  printf 'Xray engine: installed=%s supported=%s\n' "${line:-unknown}" "$VERSION"
   [[ "$line" == "Xray ${VERSION} "* ]] || { echo XRAY_VLESS_CORE=VERSION_MISMATCH;exit 1; }
   echo "XRAY_VLESS_CORE=PINNED_VERSION_OK version=${VERSION}"
   exit 0
 fi
-[[ "$command_mode" == ensure ]] || { echo "Usage: awg-xray-install ensure|status" >&2;exit 2; }
+[[ "$command_mode" == ensure || "$command_mode" == reinstall ]] || {
+  echo "Usage: awg-xray-install ensure|reinstall|status" >&2;exit 2;
+}
 (( $# == 0 )) || exit 2
 [[ "$(dpkg --print-architecture 2>/dev/null || uname -m)" == arm64 ]] ||
   { echo "XRAY_INSTALL=ARM64_ONLY" >&2;exit 2; }
-if "$0" status >/dev/null 2>&1;then
+# Explicit same-version repair still uses every normal service/transport/hash
+# guard. No forced version mismatch or unsafe binary removal is necessary.
+if [[ "$command_mode" == ensure ]] && "$0" status >/dev/null 2>&1;then
   echo XRAY_INSTALL=ALREADY_PRESENT
   exit 0
 fi
 if systemctl is-active --quiet awg-xray-vless.service;then
-  echo "XRAY_INSTALL=REFUSED_RUNNING_SERVICE" >&2;exit 1
+  echo "XRAY_INSTALL=REFUSED_RUNNING_SERVICE" >&2;exit 3
 fi
+awg_engine_lock
+awg_engine_inactive xray awg-xray-vless.service
 [[ -x "$FETCH" ]] || { echo "XRAY_INSTALL=MISSING_BOOTSTRAP_FETCH" >&2;exit 1; }
 temp="$(mktemp -d)"
+AWG_ENGINE_TEMP="$temp"
 trap 'rm -rf -- "$temp"' EXIT
 chmod 700 "$temp"
 "$FETCH" --mode "$MODE" --url "$ARCHIVE_URL" --output "$temp/xray.zip" -- \
@@ -50,6 +60,10 @@ os.chmod(sys.argv[2],0o700)
 PY
 [[ "$("$temp/xray" version | head -n1)" == "Xray ${VERSION} "* ]] ||
   { echo "XRAY_INSTALL=VERSION_MISMATCH" >&2;exit 1; }
-install -o root -g root -m 0755 "$temp/xray" "$TARGET"
+awg_engine_inactive xray awg-xray-vless.service
+awg_engine_publish xray "$temp/xray" "$TARGET"
+[[ "$("$TARGET" version | head -n1)" == "Xray ${VERSION} "* ]]
+awg_engine_commit
+rm -rf -- "$temp"
 echo "XRAY_INSTALL=PINNED_VERIFIED version=$VERSION"
 echo "XRAY_SERVICE_AUTOSTART=DISABLED"

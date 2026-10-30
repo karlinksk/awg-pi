@@ -21,6 +21,7 @@ PUBLIC_VERSION_FILE=/usr/share/awg-pbr/version
 BACKUP_ROOT=/var/backups/awg-gateway
 CORE_UPDATE=/usr/local/sbin/awg-core-update
 MIHOMO_INSTALLER=/usr/local/sbin/awg-mihomo-install
+XRAY_INSTALLER=/usr/local/sbin/awg-xray-install
 ASSUME_YES=0
 
 confirm(){
@@ -453,11 +454,59 @@ show_status(){
   latest="$(latest_release 2>/dev/null || true)"
   echo "AWG Pi Gateway: installed=$cur latest=${latest:-unknown}"
   if [[ -x "$CORE_UPDATE" ]]; then
-    echo "AmneziaWG core updater: available"
+    "$CORE_UPDATE" status || true
   else
     echo "AmneziaWG core updater: missing"
   fi
   mihomo_status
+  if [[ -x "$XRAY_INSTALLER" ]]; then
+    "$XRAY_INSTALLER" status || true
+  else
+    echo "Xray engine updater: missing"
+  fi
+  echo 'Engine status compares versions; it does not attest installed binary hashes.'
+  echo 'Subscriptions are separate: engines do not refresh providers or select nodes.'
+}
+
+xray_ensure(){
+  [[ -x "$XRAY_INSTALLER" ]] || { echo 'Xray engine updater: missing' >&2; return 1; }
+  "$XRAY_INSTALLER" ensure
+}
+
+all_engines(){
+  local engine rc failed=0 helper
+  # Gateway installation can restart the dataplane and has its own explicit
+  # menu/confirmation. Never sneak that disruptive operation into engine repair.
+  show_status
+  echo 'Gateway: check only; install separately using awg-update gateway.'
+  for engine in core mihomo xray; do
+    case "$engine" in
+      core) helper="$CORE_UPDATE" ;;
+      mihomo) helper="$MIHOMO_INSTALLER" ;;
+      xray) helper="$XRAY_INSTALLER" ;;
+    esac
+    rc=0
+    if [[ ! -x "$helper" ]]; then
+      rc=127
+    elif [[ "$engine" == core ]]; then
+      "$helper" --yes || rc=$?
+    else
+      "$helper" ensure || rc=$?
+    fi
+    if (( rc == 0 )); then
+      echo "ENGINE_RESULT=$engine OK"
+      echo "$engine: проверка / обновление завершено."
+    elif (( rc == 3 )); then
+      echo "ENGINE_RESULT=$engine DEFERRED rc=$rc"
+      echo "$engine: отложено — движок используется или идёт другая операция. Рабочий транспорт сохранён."
+      failed=1
+    else
+      echo "ENGINE_RESULT=$engine FAILED rc=$rc"
+      echo "$engine: проверка / обновление не выполнено; см. диагностику выше."
+      failed=1
+    fi
+  done
+  return "$failed"
 }
 
 cmd="${1:-}"
@@ -490,31 +539,33 @@ case "$cmd" in
   mihomo)
     mihomo_ensure
     ;;
+  xray)
+    xray_ensure
+    ;;
   all)
-    gateway_update
-    if [[ -x "$CORE_UPDATE" ]]; then
-      (( ASSUME_YES == 1 )) && "$CORE_UPDATE" --yes || "$CORE_UPDATE"
-    fi
-    mihomo_ensure
+    confirm 'Check all engines and repair only inactive engines with release-pinned builds?' || exit 0
+    all_engines
     ;;
   "")
     echo "1) AWG Pi Gateway"
     echo "2) AmneziaWG core"
     echo "3) Mihomo engine (supported pinned version)"
-    echo "4) Всё"
+    echo "4) Все движки (Gateway — только проверка)"
     echo "5) Только показать версии"
+    echo "6) Xray engine (supported pinned version)"
     read -r -p "Выбор [5]: " choice </dev/tty
     case "${choice:-5}" in
       1) gateway_update ;;
       2) exec "$CORE_UPDATE" ;;
       3) mihomo_ensure ;;
-      4) gateway_update; "$CORE_UPDATE"; mihomo_ensure ;;
+      4) all_engines ;;
       5) show_status ;;
+      6) xray_ensure ;;
       *) echo "Неверный выбор" >&2; exit 2 ;;
     esac
     ;;
   *)
-    echo "Использование: awg-update [--yes] {status|backup|gateway|core|mihomo|all}" >&2
+    echo "Использование: awg-update [--yes] {status|backup|gateway|core|mihomo|xray|all}" >&2
     exit 2
     ;;
 esac
